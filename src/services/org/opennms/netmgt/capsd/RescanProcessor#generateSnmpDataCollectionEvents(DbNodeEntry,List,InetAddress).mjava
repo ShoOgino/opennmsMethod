@@ -1,0 +1,62 @@
+    /**
+     * Determines if any SNMP data collection related events need to be
+     * generated based upon the results of the current rescan. If necessary will
+     * generate one of the following events: 'reinitializePrimarySnmpInterface'
+     * 'primarySnmpInterfaceChanged'
+     * 
+     * @param nodeEntry
+     *            DbNodeEntry object of the node being rescanned.
+     * @param oldPriIfs
+     *            List of Previous primary SNMP interface(s) (from the DB).
+     * @param primarySnmpIf
+     *            Primary SNMP interface as determined by the current rescan.
+     */
+    private void generateSnmpDataCollectionEvents(DbNodeEntry nodeEntry, List oldPriIfs, InetAddress primarySnmpIf) {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // THE FOLLOWING LOGIC IS QUESTIONABLE!!!
+        // NOTE: If SNMP service was not previously supported on this node
+        // then the 'oldPriIfs' list will be empty. If this is the case
+        // then no need to generate primarySnmpInterfaceChanged event,
+        // the nodeGainedService event generated due to the addition of
+        // SNMP is sufficient.
+        boolean reInit = true;
+        Iterator opiter = oldPriIfs.iterator();
+        if (!opiter.hasNext() && primarySnmpIf != null) {
+            reInit = false;
+            if (log.isDebugEnabled())
+                log.debug("generateSnmpDataCollectionEvents: Either SNMP support was recently enabled on this node, or node doesn't support ipAddrTable MIB.");
+            createPrimarySnmpInterfaceChangedEvent(nodeEntry.getNodeId(), primarySnmpIf, null);
+        } else {
+            InetAddress op = null;
+            while (opiter.hasNext()) {
+                op = (InetAddress) opiter.next();
+                // A PrimarySnmpInterfaceChanged event is generated if the scan
+                // found a different primary SNMP interface than what is stored
+                // in the database.
+                //
+                if (primarySnmpIf != null && !op.equals(primarySnmpIf)) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("generateSnmpDataCollectionEvents: primary SNMP interface has changed.  Was: " + op.getHostAddress() + " Is: " + primarySnmpIf.getHostAddress());
+                    }
+                    createPrimarySnmpInterfaceChangedEvent(nodeEntry.getNodeId(), primarySnmpIf, op);
+                    reInit = false;
+                }
+            }
+        }
+
+        // An interface map is built by the SNMP poller when the primary
+        // SNMP interface is initialized by the service monitor. This map
+        // is used to associate each interface on the node with its
+        // ifIndex and ifLabel for purposes of performing data collection
+        // and storage. If an ifIndex has changed for one or more
+        // interfaces or if a new interface was added to the node then
+        // the primary SNMP interface must be reinitialized so that this
+        // interface map can be rebuilt with the new information.
+        if (reInit && (m_ifIndexOnNodeChangedFlag || m_snmpIfTableChangedFlag)) {
+            if (log.isDebugEnabled())
+                log.debug("generateSnmpDataCollectionEvents: Generating reinitializeSnmpInterface event for interface " + primarySnmpIf.getHostAddress());
+            createReinitializePrimarySnmpInterfaceEvent(nodeEntry.getNodeId(), primarySnmpIf);
+        }
+    }
+
