@@ -1,0 +1,189 @@
+	/**
+	 * Primarily, this method is responsible for assigning the node's nodeLabel
+	 * value using information collected from the node's various interfaces.
+	 * Additionally, if the node talks NetBIOS/SMB, then the node's NetBIOS name
+	 * and operating system fields are assigned.
+	 *
+	 * @param collectorMap		Map of IfCollector objects, one per interface.
+	 * @param dbNodeEntry		Node entry, as it exists in the database.
+	 * @param currNodeEntry		Current node entry, as collected during the 
+	 * 				current rescan.
+	 * @param currPrimarySnmpIf	Primary SNMP interface, as determined from the
+	 * 				collection retrieved during the current rescan.
+	 */
+	private void setNodeLabelAndSmbInfo(Map         collectorMap,
+					    DbNodeEntry dbNodeEntry,
+					    DbNodeEntry currNodeEntry,
+					    InetAddress	currPrimarySnmpIf)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		boolean labelSet = false;
+		IfSmbCollector savedSmbcRef = null;
+		
+		// Does the node entry in database have a NetBIOS name?
+		//
+		if (dbNodeEntry.getNetBIOSName() != null)
+		{
+			// Yes it does, so search through collected info for all 
+			// interfaces and see if any have a NetBIOS name
+			// which matches the existing one in the database
+			Collection values = collectorMap.values();
+			Iterator iter = values.iterator();
+			while(iter.hasNext() && !labelSet)
+			{
+				IfCollector ifc = (IfCollector)iter.next();
+				IfSmbCollector smbc = ifc.getSmbCollector();
+				if (smbc != null)
+				{
+					if(smbc.getNbtName() != null)
+					{
+						// Save reference to first IfSmbCollector object
+						// for future use.
+						savedSmbcRef = smbc;
+						
+						String netbiosName = smbc.getNbtName().toUpperCase();
+						if (netbiosName.equals(dbNodeEntry.getNetBIOSName()))
+						{
+							// Found a match.
+							labelSet = true;
+							
+							currNodeEntry.setLabel(netbiosName);
+							currNodeEntry.setLabelSource(DbNodeEntry.LABEL_SOURCE_NETBIOS);
+							currNodeEntry.setNetBIOSName(netbiosName);
+							
+							if(smbc.getDomainName() != null)
+								currNodeEntry.setDomainName(smbc.getDomainName());
+
+							if(smbc.getOS() != null)
+								currNodeEntry.setOS(smbc.getOS());
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			// No it does not, attempt to find an interface 
+			// collector that does have a NetBIOS name and
+			// save a reference to that collector
+			//
+			Collection values = collectorMap.values();
+			Iterator iter = values.iterator();
+			while(iter.hasNext())
+			{
+				IfCollector ifc = (IfCollector)iter.next();
+				IfSmbCollector smbc = ifc.getSmbCollector();
+				if (smbc != null && smbc.getNbtName() != null)
+				{
+					savedSmbcRef = smbc;
+				}
+			}
+		}
+	
+		// If node label has not yet been set and SMB info is available 
+		// use that info to set the node label and NetBIOS name
+		//
+		if (!labelSet && savedSmbcRef != null)
+		{
+			labelSet = true;
+					
+			currNodeEntry.setLabel(savedSmbcRef.getNbtName());
+			currNodeEntry.setLabelSource(DbNodeEntry.LABEL_SOURCE_NETBIOS);
+			currNodeEntry.setNetBIOSName(currNodeEntry.getLabel());
+					
+			if(savedSmbcRef.getDomainName() != null)
+				currNodeEntry.setDomainName(savedSmbcRef.getDomainName());
+					
+			if(savedSmbcRef.getOS() != null)
+				currNodeEntry.setOS(savedSmbcRef.getOS());
+		}
+		
+		InetAddress primaryIf = null;
+		if (!labelSet)
+		{
+			// If we get this far no SMB info was available.  Next we want to 
+			// use the IP hostname of the primary managed interface if available.
+			// If the node has no managed interfaces an unmanaged interface will
+			// be selected as primary.
+			primaryIf = determinePrimaryIpInterface(collectorMap);
+			if (primaryIf == null)
+			{
+				log.error("setNodeLabelAndSmbInfo: failed to find primary interface...");
+			}
+			else
+			{
+				String hostName = primaryIf.getHostName();
+				if (!hostName.equals(primaryIf.getHostAddress()))
+				{
+					labelSet = true;
+							
+					currNodeEntry.setLabel(hostName);
+					currNodeEntry.setLabelSource(DbNodeEntry.LABEL_SOURCE_HOSTNAME);
+				}
+			}
+		}
+		
+		// If we get this far no IP hostname info was available.  Next we want
+		// to use MIB-II sysName for the node label.  The primary SNMP interface
+		// has already been determined so use it if available.
+		if (!labelSet && currPrimarySnmpIf != null)
+		{
+			// We prefer to use the collector for the primary SNMP interface
+			// however a collector for the primary SNMP interface may not exist
+			// in the map if a node has only recently had SNMP support enabled
+			// or if the new primary SNMP interface was only recently added to the
+			// node.  At any rate if it exists use it, if not use the
+			// first collector which supports SNMP.
+			IfCollector ifc = (IfCollector)collectorMap.get(currPrimarySnmpIf.getHostAddress());
+			if (ifc == null)
+			{
+				Collection collectors = collectorMap.values();
+				Iterator iter = collectors.iterator();
+				while (iter.hasNext())
+				{
+					ifc = (IfCollector)iter.next();
+					if (ifc.getSnmpCollector() != null)
+						break;
+				}
+			}
+
+			// Sanity check
+			if (ifc == null || ifc.getSnmpCollector() == null)
+			{
+				log.warn("setNodeLabelAndSmbInfo: primary SNMP interface set to " + currPrimarySnmpIf.getHostAddress() + " but no SNMP collector found.");
+			}
+			else
+			{
+			IfSnmpCollector snmpc = ifc.getSnmpCollector();
+			SystemGroup sysgrp = snmpc.getSystemGroup();
+			
+			String str = SystemGroup.getPrintableString((SnmpOctetString)sysgrp.get(SystemGroup.SYS_NAME));
+			if(str != null && str.length() > 0)
+				{
+					labelSet = true;
+					currNodeEntry.setLabel(str);
+					currNodeEntry.setLabelSource(DbNodeEntry.LABEL_SOURCE_SYSNAME);
+			}
+		}
+		}
+		
+		if (!labelSet)
+		{
+			// If we get this far no SNMP info was available so we will default
+			// to the IP address of the primary interface.
+			if (primaryIf != null)
+			{
+				currNodeEntry.setLabel(primaryIf.getHostAddress());
+				currNodeEntry.setLabelSource(DbNodeEntry.LABEL_SOURCE_ADDRESS);
+			} 
+			else
+			{
+				// If all else fails, just use the current values from
+				// the database.
+				currNodeEntry.setLabel(dbNodeEntry.getLabel());
+				currNodeEntry.setLabelSource(dbNodeEntry.getLabelSource());
+			}
+		}
+	}
+

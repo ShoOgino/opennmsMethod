@@ -1,0 +1,87 @@
+	/**
+	 * <p>Preforms the collection for the targeted internet
+	 * address. The success or failure of the collection
+	 * should be tested via the <code>failed</code> method.</p>
+	 *
+	 * <p>No synchronization is preformed, so if this is used
+	 * in a separate thread context synchornization must be 
+	 * added.</p>
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		SnmpSession session = null;
+		try
+		{
+			log.debug("IfSnmpCollector.run: address: " + m_address.getHostAddress() + " Snmp version: " + ((m_peer.getParameters().getVersion()==SnmpSMI.SNMPV1)?"SNMPv1":"SNMPv2"));
+			session = new SnmpSession(m_peer);
+
+			BarrierSignaler signaler = new BarrierSignaler(3);
+			synchronized(signaler)
+			{
+				m_sysGroup    = new SystemGroup(session, signaler);
+				m_ifTable     = new IfTable(session, signaler, m_peer.getParameters().getVersion());
+				m_ipAddrTable = new IpAddrTable(session, signaler, m_peer.getParameters().getVersion());
+
+				try
+				{
+					// wait a maximum of five minutes!
+					//
+					signaler.wait(300000);
+				}
+				catch(InterruptedException e)
+				{
+					m_sysGroup = null;
+					m_ifTable  = null;
+					m_ipAddrTable = null;
+
+					log.warn("IfSnmpCollector: collection interrupted, exiting", e);
+					return;
+				}
+			}
+			
+			// Log any failures 
+			//
+			if (!this.hasSystemGroup())
+				log.info("IfSnmpCollector: failed to collect System group for " + m_address.getHostAddress());
+			if (!this.hasIfTable())
+				log.info("IfSnmpCollector: failed to collect ifTable for " + m_address.getHostAddress());
+			if (!this.hasIpAddrTable())
+				log.info("IfSnmpCollector: failed to collect ipAddrTable for " + m_address.getHostAddress());
+				
+			// If ifTable collection succeeded go after the ifXTable
+			//
+			if (this.hasIfTable())
+			{
+				signaler = new BarrierSignaler(1);
+				synchronized(signaler)
+				{
+					m_ifXTable = new IfXTable(session, signaler, m_peer.getParameters().getVersion());
+					
+					try
+					{
+						signaler.wait(300000);
+					}
+					catch(InterruptedException e)
+					{
+						m_ifXTable = null;
+	
+						log.warn("IfSnmpCollector: ifXTable collection interrupted, exiting", e);
+						return;
+					}
+				}
+			}
+		}
+		catch(java.net.SocketException e)
+		{
+			log.error("Failed to create SNMP session to connect to host " + m_address.getHostAddress(), e);
+		}
+		finally
+		{
+			if(session != null)
+				session.close();
+		}
+	}
+

@@ -1,0 +1,154 @@
+	/**
+	 * <P>Test to see if the passed host-port pair is the 
+	 * endpoint for an FTP server. If there is an FTP server
+	 * at that destination then a value of true is returned
+	 * from the method. Otherwise a false value is returned 
+	 * to the caller.</P>
+	 *
+	 * @param host	The remote host to connect to.
+	 * @param port 	The remote port on the host.
+	 *
+	 * @return True if server supports FTP on the specified 
+	 *	port, false otherwise
+	 */
+	private boolean isServer(InetAddress host, int port, int retries, int timeout)
+	{
+		// get a log to send errors
+		//
+		Category log = ThreadCategory.getInstance(getClass());
+
+		boolean isAServer = false;
+		for (int attempts=0; attempts <= retries && !isAServer; attempts++)
+		{
+			Socket portal = null;
+			try
+			{
+				// create a connected socket
+				//
+				portal = new Socket(host, port);
+				portal.setSoTimeout(timeout); // 3 second blocking time!
+
+				// Allocate a line reader
+				//
+				BufferedReader lineRdr = new BufferedReader(new InputStreamReader(portal.getInputStream()));
+			
+				// Read responses from the server. The initial line should just
+				// be a banner, but go ahead and check for multiline response
+				// in the form of:
+				//
+				// 	221-You have transferred 0 bytes in 0 files.
+				//	221-Total traffic for this session was 102 bytes in 0 transfers.
+				//	221 Thank you for using the FTP service on nethost0.
+				//
+				String result = null;
+				do
+				{
+					result = lineRdr.readLine();
+				
+				} while(result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+
+				if(result == null || result.length() == 0)
+				{
+					log.info("Received truncated response from ftp server " + host.getHostAddress());
+					continue;
+				}
+
+				// Tokenize the last line result
+				//
+				StringTokenizer t = new StringTokenizer(result);
+				int rc = Integer.parseInt(t.nextToken());
+				if(rc > 99 && rc < 600)
+				{
+					//
+					// FTP should recoginize the QUIT command
+					//
+					String cmd = "QUIT\r\n";
+					portal.getOutputStream().write(cmd.getBytes());
+					
+					// Response from QUIT command may be a multi-line response.
+					// We are expecting to get a response with an integer return
+					// code in the first token.  We can't ge sure that the first
+					// response will give us what we want.  Consider the following
+					// reponse for example:
+					//
+					// 	221-You have transferred 0 bytes in 0 files.
+					//	221-Total traffic for this session was 102 bytes in 0 transfers.
+					//	221 Thank you for using the FTP service on nethost0.
+					//
+					// In this case the final line of the response contains the return 
+					// code we are looking for.
+					do
+					{
+						result = lineRdr.readLine();
+
+					} while(result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+
+					if(result == null || result.length() == 0)
+					{
+						log.info("Received truncated response from ftp server " + host.getHostAddress());
+						continue;
+					}
+
+					t  = new StringTokenizer(result);
+					rc = Integer.parseInt(t.nextToken());
+					if(rc > 99 && rc < 600)
+						isAServer = true;
+
+				}
+			}
+			catch(NumberFormatException e)
+			{
+				log.info("FtpPlugin: received invalid result code from server " + host.getHostAddress(), e);
+				isAServer = false;
+			}
+			catch(ConnectException cE)
+			{
+				// Connection refused!!  No need to perform retries.
+				//
+				cE.fillInStackTrace();
+				log.debug("FtpPlugin: connection refused by host " + host.getHostAddress(), cE);
+				isAServer = false;
+				break;
+			}
+			catch(NoRouteToHostException e)
+			{
+				// No route to host!!  No need to perform retries.
+				e.fillInStackTrace();
+				log.info("FtpPlugin: Unable to test host " + host.getHostAddress() + ", no route available", e);
+				isAServer = false;
+				throw new UndeclaredThrowableException(e);
+			}
+			catch(InterruptedIOException e)
+			{
+				// no logging necessary, this is "expected" behavior
+				//
+				isAServer = false;
+			}
+			catch(IOException e)
+			{
+				log.info("FtpPlugin: Error communicating with host " + host.getHostAddress(), e);
+				isAServer = false;
+			}
+			catch(Throwable t)
+			{
+				log.warn("FtpPlugin: Undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
+				isAServer = false;
+			}
+			finally
+			{
+				try
+				{
+					if(portal != null)
+						portal.close();
+				}
+				catch(IOException e) { }
+			}
+		}
+
+		//
+		// return the success/failure of this
+		// attempt to contact an ftp server.
+		//
+		return isAServer;
+	}
+

@@ -1,0 +1,76 @@
+	/**
+	 * This is the main method that receives the ICMP replies
+	 * from the ICMP recever and processes them. If the replies
+	 * match the expected format then each reply is added to 
+	 * the output queue for discovered elements. 
+	 *
+	 */
+	public void run()
+	{
+		synchronized(this)
+		{
+			m_status = RUNNING;
+		}
+
+		try
+		{
+			for(;;)
+			{
+				// Check our status
+				//
+				synchronized(this)
+				{
+					if(m_status == PAUSED)
+					{
+						wait();
+						continue;
+					}
+					else if(m_status == STOP_PENDING)
+					{
+						break;
+					}
+				}
+
+				// Read the next reply
+				//
+				Reply r = (Reply)m_replyQ.remove();
+				if(r != null && r.isEchoReply() 	&&
+				   r.getIdentity() == m_filterId 	&&
+				   (r.getPacket().getTID() & TID_CONST_KEY) == TID_CONST_KEY)
+				{
+					// Check to make sure it's being polled
+					// Add if to the discovered queue if necessary
+					//
+					boolean doAdd = false;
+					int ndx = (int)(r.getPacket().getTID() & (~TID_CONST_KEY));
+					if(0 <= ndx && ndx < m_pingers.length)
+					{
+						synchronized(m_pingers[ndx])
+						{
+							if(m_pingers[ndx].isPinging(r.getAddress()))
+							{
+								m_pingers[ndx].signal();
+								doAdd = true;
+							}
+						}
+					}
+
+					if(doAdd)
+						m_discoveredQ.add(r);
+				}
+
+			} // end infinate for loop
+		}
+		catch(Exception e)
+		{
+			return;
+		}
+		finally
+		{
+			synchronized(this)
+			{
+				m_status = STOPPED;
+			}
+		}
+	}
+

@@ -1,0 +1,83 @@
+	/**
+         *
+         */
+	private void processTargets(Target[] targets, List targetSiblings, NoticeQueue noticeQueue, long startTime, Map params, int noticeId)
+	        throws IOException, MarshalException, ValidationException
+	{
+		for (int i = 0; i < targets.length; i++)
+		{
+			String interval = (targets[i].getInterval()==null ? "0s" : targets[i].getInterval());
+
+                        String targetName = targets[i].getName();
+			ThreadCategory.getInstance(getClass()).debug("Processing target " + targetName + ":" + interval);
+			
+			long curSendTime = 0;
+			
+			if (GroupFactory.getInstance().hasGroup((targetName)))
+			{
+				Group group = GroupFactory.getInstance().getGroup(targetName);
+				String[] users = group.getUser();
+				
+                                if (users!=null && users.length > 0)
+                                {
+				for (int j = 0; j < users.length; j++)
+				{
+					NotificationTask newTask = makeUserTask(startTime + curSendTime, 
+								        	params,
+										noticeId, 
+										users[j], 
+										targets[i].getCommand(),
+										targetSiblings);
+					
+					if (newTask != null)
+					{
+						noticeQueue.put(new Long(startTime + curSendTime), newTask);
+						targetSiblings.add(newTask);
+						
+						curSendTime += TimeConverter.convertToMillis(interval);
+					}
+				}
+                                }
+                                else
+                                {
+                                        ThreadCategory.getInstance(getClass()).debug("Not sending notice, no users specified for group " + group.getName());
+                                }
+			}
+			else if (UserFactory.getInstance().hasUser(targetName))
+			{
+				NotificationTask newTask = makeUserTask(startTime + curSendTime, 
+							        	params, 
+									noticeId, 
+									targetName, 
+									targets[i].getCommand(),
+									targetSiblings);
+				
+				if (newTask != null)
+				{
+					noticeQueue.put(new Long(startTime + curSendTime), newTask);
+					targetSiblings.add(newTask);
+				}
+			}
+			else if (targetName.indexOf("@") > -1)
+			{
+				NotificationTask newTask = makeEmailTask(startTime + curSendTime, 
+							        	 params, 
+									 noticeId,
+                                                                         targetName,
+									 targets[i].getCommand(),
+                                                                         targetSiblings);
+				
+				if (newTask != null)
+				{
+					noticeQueue.put(new Long(startTime + curSendTime), newTask);
+					targetSiblings.add(newTask);
+				}
+			}
+			else
+			{
+				Category log = ThreadCategory.getInstance(getClass());
+				log.warn("Unrecognized target '" + targetName + "' contained in destinationPaths.xml. Please check the configuration.");
+			}
+		}
+	}
+

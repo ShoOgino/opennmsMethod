@@ -1,0 +1,75 @@
+	/**
+	 * Constructs a new instance of a ThresholdableService object.
+	 *
+	 * @param dbNodeId	The database identifier key for the interfaces' node
+	 * @param address	InetAddress of the interface to collect from
+	 * @param svcName	Service name
+	 * @param pkg		The package containing parms for this collectable service.
+	 *
+	 */
+	ThresholdableService(	int dbNodeId,
+				InetAddress address,
+				String svcName,
+				org.opennms.netmgt.config.threshd.Package pkg)
+	{
+		m_nodeId 	= dbNodeId;
+		m_address	= address; // IPv4NetworkInterface address
+		m_package 	= pkg;
+		m_status	= ServiceThresholder.THRESHOLDING_SUCCEEDED;
+		
+		m_proxy		= Threshd.getInstance().getEventProxy();
+		m_scheduler	= Threshd.getInstance().getScheduler();
+		m_thresholder	= Threshd.getInstance().getServiceThresholder(svcName);
+		m_updates 	= new ThresholderUpdates();
+		
+		// Initialize last scheduled threshold check and last threshold
+		// check times to current time.
+		m_lastScheduledThresholdCheckTime = System.currentTimeMillis();
+		m_lastThresholdCheckTime	  = System.currentTimeMillis();
+		
+		// find the service matching the name
+		//
+		Service svc = null;
+		Enumeration esvc = m_package.enumerateService();
+		while(esvc.hasMoreElements())
+		{
+			Service s = (Service)esvc.nextElement();
+			if(s.getName().equalsIgnoreCase(svcName))
+			{
+				svc = s;
+				break;
+			}
+		}
+		if(svc == null)
+			throw new RuntimeException("Service name not part of package!");
+		
+		// save reference to the service
+		m_service    = svc;
+		
+		// add property list for this service/package combination if
+		// it doesn't already exist in the service property map
+		//
+		m_svcPropKey = m_package.getName() + "." + m_service.getName();
+		synchronized(SVC_PROP_MAP)
+		{
+			if(! SVC_PROP_MAP.containsKey(m_svcPropKey))
+			{
+				Map m = Collections.synchronizedMap(new TreeMap());
+				Enumeration ep = m_service.enumerateParameter();
+				while(ep.hasMoreElements())
+				{
+					Parameter p = (Parameter)ep.nextElement();
+					m.put(p.getKey(), p.getValue());
+				}
+
+				// Add configured service 'interval' attribute as
+				// a property as well.  Needed by the SnmpThresholder
+				// check() method in order to generate the
+				// correct rrdtool fetch command.
+				m.put("interval", Integer.toString((int)m_service.getInterval()));
+				
+				SVC_PROP_MAP.put(m_svcPropKey, m);
+			}
+		}
+	}
+

@@ -1,0 +1,63 @@
+	/**
+	 * <p>Processes the received datagram and adds a new {@link Reply Reply}
+	 * instance to the reply queue. The recieved packet must pass the 
+	 * following criteria:</p>
+	 *
+	 * <ul>
+	 *	<li>ICMP Type == Echo Reply</li>
+	 *	<li>ICMP Identity == Filter ID</li>
+	 *	<li>ICMP Length == {@link Packet#getNetworkSize Packet.getNetworkSize()}</li>
+	 * </ul>
+	 *
+	 * @param pkt	The datagram to process.
+	 *
+	 * @throws java.lang.InterruptedException Thrown if the thread is interrupted.
+	 * @throws org.opennms.core.fiber.FifoQueueException Thrown if a queue exception
+	 *	occurs adding a new reply.
+	 *
+	 */
+	protected void process(DatagramPacket pkt)
+		throws InterruptedException, FifoQueueException
+	{
+		boolean doIt = false;
+		synchronized(this)
+		{
+			doIt = m_paused;
+		}
+
+		if(!doIt)
+		{
+			Reply reply = null;
+			try
+			{
+				reply = Reply.create(pkt);	// create a reply
+			}
+			catch(IllegalArgumentException iaE)
+			{
+				// Throw by Reply.create if the packet
+				// is not of type Packet
+				//
+				// Discard
+				return;
+			}
+			catch(IndexOutOfBoundsException iooB)
+			{
+				// Throw by Reply.create if the packet
+				// is not the correct length
+				//
+				// Discard
+				return;
+			}
+
+			// Test the match criteria
+			//
+			if(reply.isEchoReply() && reply.getIdentity() == m_filterID)
+			{
+				Category log = ThreadCategory.getInstance(getClass());
+				m_replyQ.add(reply);
+				if(log.isDebugEnabled())
+					log.debug("process: received matching echo reply from host " + pkt.getAddress().getHostAddress());
+			}
+		}
+	}
+

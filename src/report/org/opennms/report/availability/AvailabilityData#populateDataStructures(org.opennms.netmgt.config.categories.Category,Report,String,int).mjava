@@ -1,0 +1,99 @@
+	/**
+	 * Populates the data structure for this category. This method only computes for monitored services in this 
+	 * category.
+	 *
+	 * @param categoryGroup Category Group
+	 * @param categoryName Category Name
+	 * @param report Report Castor class
+	 * @param format SVG-specific/all reports
+	 */
+	private void populateDataStructures(org.opennms.netmgt.config.categories.Category cat, Report report, String format, int catIndex) throws Exception
+	{
+		report.setCatCount(catIndex);
+                org.apache.log4j.Category log = ThreadCategory.getInstance(this.getClass());
+                try
+                {
+			String categoryName = cat.getLabel();
+			m_commonRule = m_catFactory.getEffectiveRule(categoryName);
+			Enumeration enumMonitoredSvc = cat.enumerateService();
+                        List monitoredServices = new ArrayList();
+                        while(enumMonitoredSvc.hasMoreElements())
+                        {
+                	        String service = (String)enumMonitoredSvc.nextElement();
+                                monitoredServices.add(service);
+                        }
+                        populateNodesFromDB(cat, monitoredServices);
+			ViewInfo viewInfo = report.getViewInfo();
+                        if(log.isDebugEnabled())
+                        {
+                                log.debug("Nodes " + m_nodes );
+                        }
+			ListIterator cleanNodes = m_nodes.listIterator();
+			while(cleanNodes.hasNext())
+			{
+				Node node = (Node)cleanNodes.next();
+				if( node != null && !node.hasOutages())
+				{
+					cleanNodes.remove();
+				}
+			}
+                        if(log.isDebugEnabled())
+                        {
+                                log.debug("Cleaned Nodes " + m_nodes );
+                        }
+                        TreeMap topOffenders = new TreeMap();
+                        topOffenders = getPercentNode();
+			
+                        if(log.isDebugEnabled())
+                                log.debug("TOP OFFENDERS " + topOffenders);
+			if(m_nodes.size() <= 0)
+				m_nodes = null;
+			if(m_nodes != null)
+			{
+                        	AvailCalculations availCalculations = new AvailCalculations (   m_nodes,
+                                	                                                        m_endTime,
+                                        	                                                m_lastMonthEndTime,
+                                                	                                        monitoredServices,
+                                                        	                                report,
+                                                                	                        topOffenders,
+												cat.getWarning(), 
+												cat.getNormal(),
+												cat.getComment(),
+												cat.getLabel(),
+												format,
+												catIndex,
+												m_sectionIndex);
+				m_sectionIndex = availCalculations.getSectionIndex();
+				report.setSectionCount(m_sectionIndex-1);
+			}
+			else
+			{
+				org.opennms.report.availability.Category category =
+								new org.opennms.report.availability.Category();
+				category.setCatComments(cat.getComment());
+				category.setCatName(cat.getLabel());
+				category.setCatIndex(catIndex);
+				category.setNodeCount(0);
+				category.setIpaddrCount(0);
+				category.setServiceCount(0);
+				Section section = new Section();
+				section.setSectionIndex(m_sectionIndex);
+				org.opennms.report.availability.CatSections catSections = new org.opennms.report.availability.CatSections();
+				catSections.addSection(section);
+				category.addCatSections(catSections);
+				org.opennms.report.availability.Categories categories = report.getCategories();
+				categories.addCategory(category);
+				report.setCategories(categories);
+				report.setSectionCount(m_sectionIndex);
+				m_sectionIndex++;
+			}
+                }
+                catch(Exception e)
+                {
+                        if(log.isEnabledFor(Priority.FATAL))
+				log.fatal("Exception has occured " + e);
+                        e.printStackTrace();
+			throw e;
+                }		
+	}
+

@@ -1,0 +1,117 @@
+	/**
+	 * <p>This method is used to do the main work for the fiber. This
+	 * method is invoked once and will not return until the fiber
+	 * is stopped, or a non-recovereable error occurs.</p>
+	 *
+	 * <p>After starting the status is changed to <code>RUNNING</code>
+	 * and a loop starts. The loop extracts the instances of
+	 * {@link org.opennms.netmgt.ping.Reply Reply} objects and then
+	 * generates XML based event messages that are sent to eventd</p>
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		if(log.isDebugEnabled())
+			log.debug("run: Thread Started");
+
+		synchronized(this)
+		{
+			m_status = RUNNING;
+		}
+
+		for(;;)
+		{
+			// Check for exit!
+			//
+			synchronized(this)
+			{
+				if(m_status != RUNNING)
+					break;
+			}
+
+			// Get the next element from the queue
+			//
+			Reply r = null;
+			try
+			{
+				r = (Reply) m_replies.remove();
+
+				if(log.isDebugEnabled())
+					log.debug("run: received next reply, " + m_replies.size() + " left in queue");
+			}
+			catch(InterruptedException ex)
+			{
+				log.debug("run: thread interrupted", ex);
+				break;
+			}
+			catch(FifoQueueException ex)
+			{
+				log.info("run: queue exception", ex);
+				break;
+			}
+			catch(ClassCastException ex)
+			{
+				log.warn("run: Invalid class type found in queue", ex);
+				continue;
+			}
+
+			// Make sure it's not null
+			//
+			if(r != null)
+			{
+				// Create an event
+				//
+				Event event = new Event();
+				event.setSource(EVENT_SOURCE_VALUE);
+				event.setUei(EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI);
+				event.setInterface(r.getAddress().getHostAddress());
+				try
+				{
+					event.setHost(InetAddress.getLocalHost().getHostName());
+				}
+				catch(UnknownHostException uhE)
+				{
+					event.setHost("unresolved.host");
+					log.warn("Failed to resolve local hostname", uhE);
+				}
+
+				event.setTime(EventConstants.formatToString(new java.util.Date()));
+
+				Parms parms = new Parms();
+				Parm rttParm = new Parm(); // the response time parm
+				rttParm.setParmName("RTT");
+
+				Value v = new Value();
+				v.setType("int");
+				v.setContent(Long.toString(r.getPacket().getReceivedTime() - r.getPacket().getSentTime()));
+				rttParm.setValue(v);
+				parms.addParm(rttParm);
+				event.setParms(parms);
+			
+
+				try
+				{
+					EventIpcManagerFactory.getInstance().getManager().sendNow(event);
+
+					if(log.isDebugEnabled())
+					{
+						log.debug("Sent event: " + EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI);
+					}
+				}
+				catch(Throwable t)
+				{
+					log.warn("run: unexpected throwable exception caught during send to middleware", t);
+				}
+			}
+		} // end for(;;)
+	
+		synchronized(this)
+		{
+			m_status = STOPPED;
+		}
+		if(log.isDebugEnabled())
+			log.debug("run: Thread exiting");
+
+	} // end run
+

@@ -1,0 +1,206 @@
+	/**
+	 * The main collection routine of the class. This method is used
+	 * to poll the address, and any additional interfaces discovered
+	 * via SNMP.
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(IfCollector.class);
+		if(log.isDebugEnabled())
+			log.debug("IfCollector.run: run method invoked to collect information for address " + m_target.getHostAddress());
+
+		// Now go throught the successful plugin checks
+		// and see if either SMB, MSExchange, or SNMP is
+		// supported on the target node
+		//
+		boolean isSnmp = false;
+		boolean isSnmpV2 = false;
+		boolean isSmb = false;
+		boolean hasExchange = false;
+
+		probe(m_target, m_protocols);
+
+		// First run the plugins to find out all the capabilities
+		// for the interface
+		//
+		Iterator iter = m_protocols.iterator();
+		while(iter.hasNext())
+		{
+			SupportedProtocol proto = (SupportedProtocol)iter.next();
+			if(proto.getProtocolName().equalsIgnoreCase("snmp"))
+			{
+				isSnmp = true;
+			}
+			else if(proto.getProtocolName().equalsIgnoreCase("snmpv2"))
+			{
+				isSnmpV2 = true;
+			}
+			else if(proto.getProtocolName().equalsIgnoreCase("smb"))
+			{
+				isSmb = true;
+			}
+			else if(proto.getProtocolName().equalsIgnoreCase("msexchange"))
+			{
+				isSmb = true;
+				hasExchange = true;
+			}
+		}
+
+		// collect the SMB information
+		//
+		if(isSmb)
+		{
+			if(log.isDebugEnabled())
+				log.debug("IfCollector.run: starting SMB collection");
+
+			try
+			{
+				m_smbCollector = new IfSmbCollector(m_target, hasExchange);
+				m_smbCollector.run();
+			}
+			catch(Throwable t)
+			{
+				m_smbCollector = null;
+				log.warn("IfCollector.run: Caught an exception when collecting SMB information from target " + m_target.getHostAddress(), t);
+			}
+
+			if(log.isDebugEnabled())
+				log.debug("IfCollector.run: SMB collection completed");
+		}
+
+		// collect the snmp information if necessary
+		//
+		if((isSnmp || isSnmpV2) && m_doSnmpCollection)
+		{
+			if(log.isDebugEnabled())
+				log.debug("IfCollector.run: starting SNMP collection");
+
+			try
+			{
+				SnmpPeer peer = SnmpPeerFactory.getInstance().getPeer(m_target, (isSnmpV2)?SnmpSMI.SNMPV2:SnmpSMI.SNMPV1);
+				
+				m_snmpCollector = new IfSnmpCollector(peer);
+				m_snmpCollector.run();
+				
+				// now probe the remaining interfaces, if any
+				//
+				if(m_snmpCollector.hasIpAddrTable() && m_snmpCollector.hasIfTable())
+				{
+					m_subTargets = new TreeMap(KnownIPMgr.AddrComparator.comparator);
+					m_nonIpInterfaces = new ArrayList();
+					
+					// Iterate over ifTable entries
+					//
+					Iterator i = m_snmpCollector.getIfTable().getEntries().iterator();
+					while(i.hasNext())
+					{
+						//IpAddrTableEntry entry = (IpAddrTableEntry)i.next();
+						IfTableEntry ifEntry = (IfTableEntry)i.next();
+
+						// Get the ifIndex
+						//
+						SnmpInt32 ifIndex = (SnmpInt32)ifEntry.get(IfTableEntry.IF_INDEX);
+						if(ifIndex == null)
+							continue;
+ 
+						// Get list of all IP addresses for the current ifIndex
+						//
+						List ipAddrs = IpAddrTable.getIpAddresses(m_snmpCollector.getIpAddrTable().getEntries(), ifIndex.getValue());
+						if (ipAddrs == null || ipAddrs.size() == 0)
+						{
+							// Non IP interface
+							InetAddress nonIpAddr = null;
+							try
+							{
+								nonIpAddr = InetAddress.getByName("0.0.0.0");
+							}
+							catch (UnknownHostException e)
+							{
+								log.info("IfCollector.run: Failed to create InetAddress for Non IP interface at ifIndex  "
+									 + ifIndex + " for original target " + m_target.getHostAddress(), e);
+							}
+							
+							if (ipAddrs == null)
+							{
+								ipAddrs = new ArrayList();
+							}
+							ipAddrs.add(nonIpAddr);
+						}
+						
+						// Iterate over this interface's IP address list
+						//
+						Iterator s = ipAddrs.iterator();
+						while (s.hasNext())
+						{
+							InetAddress subtarget = (InetAddress)s.next();
+						
+							// if the target failed to convert  or if it
+							// is equal to the current target then skip it
+							//
+							if(subtarget == null || subtarget.equals(m_target))
+								continue;
+						
+							// now find the ifType
+							//
+							SnmpInt32 ifType = (SnmpInt32)ifEntry.get(IfTableEntry.IF_TYPE);
+	
+							// lookup of if type failed, next!
+							//
+							if(ifType == null)
+								continue;
+	
+							// now check for loopback
+							//
+							if(subtarget.getHostAddress().startsWith("127") || ifType.getValue() == 24)
+							{
+								// Skip if loopback
+								if (log.isDebugEnabled())
+									log.debug("ifCollector.run: Loopback interface: " + subtarget.getHostAddress() + ", skipping...");
+								continue;
+							}
+	
+							// now check for non-IP interface
+							//
+							if(subtarget.getHostAddress().equals("0.0.0.0"))
+							{
+								// its a non-IP interface...add its ifIndex to the non-IP interface list
+								//
+								m_nonIpInterfaces.add(ifIndex);
+								continue;
+							}
+							
+							// ok it appears to be ok, so probe it!
+							//
+							List probelist = new ArrayList();
+							if (log.isDebugEnabled())
+							{
+								log.debug("----------------------------------------------------------------------------------------");
+								log.debug("ifCollector.run: probing subtarget " + subtarget.getHostAddress());
+							}
+							probe(subtarget, probelist);
+	
+							if (log.isDebugEnabled())
+							{
+								log.debug("ifCollector.run: adding subtarget " + subtarget.getHostAddress() + " # supported protocols: "+ probelist.size());
+								log.debug("----------------------------------------------------------------------------------------");
+							}
+							m_subTargets.put(subtarget, probelist);
+						} // end while(more ip addresses)
+					} // end while(more interfaces)
+				} // end if(ipAddrTable and ifTable entries collected)
+			} // end try()
+			catch(Throwable t)
+			{
+				m_snmpCollector = null;
+				log.warn("IfCollector.run: Caught an exception when collecting SNMP information from target " + m_target.getHostAddress(), t);
+			}
+
+			if(log.isDebugEnabled())
+				log.debug("IfCollector.run: SNMP collection completed");
+		} // end if(SNMP supported)
+
+		if(log.isDebugEnabled())
+			log.debug("IfCollector.run: run method exiting after collecting information from address " + m_target.getHostAddress());
+	}
+

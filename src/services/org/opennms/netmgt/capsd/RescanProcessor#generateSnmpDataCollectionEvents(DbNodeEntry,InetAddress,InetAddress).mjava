@@ -1,0 +1,60 @@
+	/**
+	 * Determines if any SNMP data collection related events need to 
+	 * be generated based upon the results of the current rescan.  If
+	 * necessary will generate one of the following events:
+	 *     'reinitializePrimarySnmpInterface'
+	 *     'primarySnmpInterfaceChanged'
+	 * 
+	 * @param nodeEntry	  DbNodeEntry object of the node being rescanned.
+	 * @param oldPrimarySnmpIf  Previous primary SNMP interface (from the DB).
+	 * @param primarySnmpIf   Primary SNMP interface as determined by the 
+	 *                        current rescan.
+	 */
+	private void generateSnmpDataCollectionEvents(DbNodeEntry nodeEntry, InetAddress oldPrimarySnmpIf, InetAddress primarySnmpIf)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		// NOTE:  If SNMP service was not previously supported on this node
+		//        then the 'oldPrimarySnmpIf' variable will be null.
+		//        If this is the case then no need to generate primarySnmpInterfaceChanged
+		// 	  event, the nodeGainedService event generated due to the addition
+		//        of SNMP is sufficient.
+		if (oldPrimarySnmpIf == null && primarySnmpIf != null)
+		{
+			if (log.isDebugEnabled())
+				log.debug("generateSnmpDataCollectionEvents: looks like SNMP support was recently enabled on this node...");
+		}
+		
+		// A PrimarySnmpInterfaceChanged event is generated if the scan
+		// found a different primary SNMP interface than what is stored
+		// in the database.  
+		//
+		else if ( oldPrimarySnmpIf != null && primarySnmpIf != null &&
+			!oldPrimarySnmpIf.equals(primarySnmpIf) )
+		{
+			if (log.isDebugEnabled())
+			{
+				log.debug("generateSnmpDataCollectionEvents: primary SNMP interface has changed.  Was: " + 
+					oldPrimarySnmpIf.getHostAddress() + " Is: " + 
+					primarySnmpIf.getHostAddress());
+			}
+			
+			createPrimarySnmpInterfaceChangedEvent(nodeEntry.getNodeId(), primarySnmpIf, oldPrimarySnmpIf);
+		}
+		
+		// An interface map is built by the SNMP poller when the primary 
+		// SNMP interface is initialized by the service monitor.  This map
+		// is used to associate each interface on the node with its 
+		// ifIndex and ifLabel for purposes of performing data collection 
+		// and storage.  If an ifIndex has changed for one or more 
+		// interfaces or if a new interface was added to the node then
+		// the primary SNMP interface must be reinitialized so that this 
+		// interface map can be rebuilt with the new information.
+		else if (m_ifIndexOnNodeChangedFlag || m_snmpIfTableChangedFlag)
+		{
+			if (log.isDebugEnabled())
+				log.debug("generateSnmpDataCollectionEvents: Generating reinitializeSnmpInterface event for interface " + primarySnmpIf.getHostAddress());
+			createReinitializePrimarySnmpInterfaceEvent(nodeEntry.getNodeId(), primarySnmpIf);
+		}
+	}
+

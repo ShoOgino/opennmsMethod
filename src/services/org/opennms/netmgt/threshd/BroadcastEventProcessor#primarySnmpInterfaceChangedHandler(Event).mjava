@@ -1,0 +1,108 @@
+	/**
+	 * Process the 'primarySnmpInterfaceChanged' event.  
+	 *
+	 * Extract the old and new primary SNMP interface addresses from the
+	 * event parms.  Any ThresholdableService objects located in the collectable 
+	 * services list which match the IP address of the old primary interface and
+	 * have a service name of "SNMP" are flagged for deletion.  This will ensure
+	 * that the old primary interface is no longer collected against.
+	 *
+	 * Finally the new primary SNMP interface is scheduled.  The packages are
+	 * examined and new ThresholdableService objects are created, initialized
+	 * and scheduled for thresholding.
+	 *
+	 * @param event	The event to process.
+	 *
+	 */
+	private void primarySnmpInterfaceChangedHandler(Event event)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("primarySnmpInterfaceChangedHandler:  processing primary SNMP interface changed event...");
+					
+		// Extract the old and new primary SNMP interface adddresses from the event parms.
+		//
+		String oldPrimaryIfAddr = null;
+		String newPrimaryIfAddr = null;
+		Parms parms = event.getParms();
+		if (parms != null)
+		{
+			String parmName = null;
+			Value parmValue = null;
+			String parmContent = null;
+		
+			Enumeration parmEnum = parms.enumerateParm();
+			while(parmEnum.hasMoreElements())
+			{
+				Parm parm = (Parm)parmEnum.nextElement();
+				parmName  = parm.getParmName();
+				parmValue = parm.getValue();
+				if (parmValue == null)
+					continue;
+				else 
+					parmContent = parmValue.getContent();
+	
+				// old primary SNMP interface (optional parameter)
+				if (parmName.equals(EventConstants.PARM_OLD_PRIMARY_SNMP_ADDRESS))
+				{
+					oldPrimaryIfAddr = parmContent;
+				}
+						
+				// old primary SNMP interface (optional parameter)
+				else if (parmName.equals(EventConstants.PARM_NEW_PRIMARY_SNMP_ADDRESS))
+				{
+					newPrimaryIfAddr = parmContent;
+				}
+			}
+		}
+				
+		if (oldPrimaryIfAddr != null)
+		{
+			// Mark the service for deletion so that it will not be rescheduled for 
+			// thresholding.
+			//
+			// Iterate over the ThresholdableService objects in the service updates map 
+			// and mark any which have the same interface address as the old 
+			// primary SNMP interface and a service name of "SNMP" for deletion.
+			//
+			synchronized(m_thresholdableServices)
+			{
+				ThresholdableService tSvc = null;
+				ListIterator liter = m_thresholdableServices.listIterator();
+				while (liter.hasNext())
+				{
+					tSvc = (ThresholdableService)liter.next();
+							
+					InetAddress addr = (InetAddress)tSvc.getAddress();
+					if (addr.getHostAddress().equals(oldPrimaryIfAddr))
+					{
+						synchronized(tSvc)
+						{
+							// Got a match!  Retrieve the ThresholderUpdates object associated
+							// with this ThresholdableService.  
+							ThresholderUpdates updates = tSvc.getThresholderUpdates();
+							
+							// Now set the deleted flag
+							updates.markForDeletion();
+							if (log.isDebugEnabled())
+								log.debug("primarySnmpInterfaceChangedHandler: marking " + oldPrimaryIfAddr + 
+											" as deleted for service SNMP.");
+						}
+						
+						// Now safe to remove the collectable service from 
+						// the collectable services list
+						liter.remove();
+					}
+				}
+			}
+		}
+
+		// Now we can schedule the new service...
+		//
+		Threshd.getInstance().scheduleInterface((int)event.getNodeid(), event.getInterface(), event.getService(), false);
+		
+		if (log.isDebugEnabled())
+			log.debug("primarySnmpInterfaceChangedHandler: processing of primarySnmpInterfaceChanged event for nodeid " + 
+				event.getNodeid() + " completed.");
+	}
+

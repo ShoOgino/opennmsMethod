@@ -1,0 +1,155 @@
+	/**
+	 * This method is responsible for processing 'interfacReparented' events.  
+	 * An 'interfaceReparented' event will have old and new nodeId parms
+	 * associated with it. Node outage processing hierarchy will be updated to 
+	 * reflect the new associations.
+	 *
+	 * @param event	The event to process.
+	 *
+	 */
+	private void interfaceReparentedHandler(Event event)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("interfaceReparentedHandler:  processing interfaceReparented event for " + event.getInterface());
+		
+		// Verify that the event has an interface associated with it
+		if (event.getInterface() == null)
+			return;
+			
+		// Extract the old and new nodeId's from the event parms
+		String oldNodeIdStr = null;
+		String newNodeIdStr = null;
+		Parms parms = event.getParms();
+		if (parms != null)
+		{
+			String parmName = null;
+			Value parmValue = null;
+			String parmContent = null;
+		
+			Enumeration parmEnum = parms.enumerateParm();
+			while(parmEnum.hasMoreElements())
+			{
+				Parm parm = (Parm)parmEnum.nextElement();
+				parmName  = parm.getParmName();
+				parmValue = parm.getValue();
+				if (parmValue == null)
+					continue;
+				else 
+					parmContent = parmValue.getContent();
+	
+				// old nodeid 
+				if (parmName.equals(EventConstants.PARM_OLD_NODEID))
+				{
+					oldNodeIdStr = parmContent;
+				}
+						
+				// new nodeid 
+				else if (parmName.equals(EventConstants.PARM_NEW_NODEID))
+				{
+					newNodeIdStr = parmContent;
+				}
+			}
+		}
+
+		// Only proceed provided we have both an old and a new nodeId
+		//
+		if (oldNodeIdStr == null || newNodeIdStr == null)
+		{
+			log.error("interfaceReparentedHandler: old and new nodeId parms are required, unable to process.");
+			return;
+		}
+		
+		// Update node outage processing hierarchy based on this reparenting 
+		// event.  Must "move" the interface from the "old" PollableNode object
+		// to the "new" PollableNode object as identified by the old and new
+		// nodeid parms.  
+		// 	
+		// In order to perform this "move" a node lock must be obtained on both
+		// PollableNode objects.
+		//
+		
+		// Retrieve old and new PollableNode objects from the Poller's pollable
+		// node map.
+		PollableNode oldPNode = null;
+		PollableNode newPNode = null;
+		try
+		{
+			oldPNode = Poller.getInstance().getNode(Integer.parseInt(oldNodeIdStr));
+			newPNode = Poller.getInstance().getNode(Integer.parseInt(newNodeIdStr));
+		}
+		catch (NumberFormatException nfe)
+		{
+			log.error("interfaceReparentedHandler: failed converting old/new nodeid parm to integer, unable to process.");
+			return;
+		}
+		
+		// Sanity check, make certain we've were able to obtain both 
+		// PollableNode objects.
+		//
+		if (oldPNode == null || newPNode == null)
+		{
+			log.error("interfaceReparentedHandler: old or new nodeId doesn't exist, unable to process.");
+			return;
+		}
+		
+		// Obtain node lock on both pollable node objects and then move the 
+		// interface from the old node to the new node.
+		//
+                boolean ownOldLock = false;
+                boolean ownNewLock = false;
+		
+                try
+                {
+			// Obtain lock on old nodeId...wait indefinitely
+			log.debug("interfaceReparentedHandler: requesting node lock for old nodeId " + oldPNode.getNodeId());
+			ownOldLock = oldPNode.getNodeLock(WAIT_FOREVER);
+			PollableInterface pIf = oldPNode.getInterface(event.getInterface());
+			log.debug("interfaceReparentedHandler: old node lock obtained, removing interface...");
+			oldPNode.removeInterface(pIf);
+			log.debug("interfaceReparentedHandler: recalculating old node status...");
+			oldPNode.recalculateStatus();
+			
+			// Obtain lock on new nodeId...wait indefinitely
+			log.debug("interfaceReparentedHandler: requesting node lock for new nodeId " + newPNode.getNodeId());
+			ownNewLock = newPNode.getNodeLock(WAIT_FOREVER);
+			log.debug("interfaceReparentedHandler: new node lock obtained, adding interface...");
+			newPNode.addInterface(pIf);
+			log.debug("interfaceReparentedHandler: recalculating new node status...");
+			newPNode.recalculateStatus();
+                }
+                catch (InterruptedException iE)
+                {
+                        log.error("interfaceReparentedHandler: thread interrupted...failed to obtain required node locks");
+                        return;
+               	}
+                finally
+                {
+			if (ownOldLock)
+                        {
+                                try
+                                {
+                                	oldPNode.releaseNodeLock();
+                                }
+                                catch (InterruptedException iE)
+                                {
+                                	log.error("interfaceReparentedHandler: thread interrupted...failed to release old node lock on nodeid " + 
+							oldPNode.getNodeId());
+                                }
+                       	}
+
+			if (ownNewLock)
+                        {
+                                try
+                                {
+                                	newPNode.releaseNodeLock();
+                                }
+                                catch (InterruptedException iE)
+                                {
+                                	log.error("interfaceReparentedHandler: thread interrupted...failed to release new node lock on nodeid " + 
+							newPNode.getNodeId());
+                                }
+                       	}
+		}	
+	}
+

@@ -1,0 +1,128 @@
+	/**
+	 * 
+	 */
+	private void sendEvent(String uei, Map properties)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		Event event = new Event();
+		event.setUei(uei);
+		event.setNodeid((long)m_pInterface.getNode().getNodeId());
+		event.setInterface(m_pInterface.getAddress().getHostAddress());
+		event.setService(m_service.getName());
+		event.setSource("OpenNMS.Poller");
+		try
+		{
+			event.setHost(InetAddress.getLocalHost().getHostAddress());
+		}
+		catch(UnknownHostException ex)
+		{
+			event.setHost("unresolved.host");
+		}
+
+		event.setTime(EventConstants.formatToString(new java.util.Date()));
+		
+		// Add parms
+		//
+		Parms parms = null;
+		
+		// Qualifier parm (if available)
+		String qualifier = (String)properties.get("qualifier");
+		if(qualifier != null && qualifier.length() > 0)
+		{
+			if (parms == null)
+				parms = new Parms();
+			Parm parm = new Parm();
+			parm.setParmName("qualifier");
+
+			Value val = new Value();
+			val.setContent(qualifier);
+			val.setEncoding("text");
+			val.setType("string");
+			parm.setValue(val);
+
+			parms.addParm(parm);
+		}
+
+		// Add parms for Timeout, Retry, Attempts for 
+		// 'serviceUnresponsive' event
+		if (uei.equals(EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI))
+		{
+			int timeout = ParameterMap.getKeyedInteger(properties, "timeout", -1);
+			int retry   = ParameterMap.getKeyedInteger(properties, "retry", -1);
+			int attempts = retry + 1;
+			
+			// Timeout parm
+			if (timeout != -1)
+			{
+				if (parms == null)
+					parms = new Parms();
+				Parm parm = new Parm();
+				parm.setParmName("timeout");
+	
+				Value val = new Value();
+				val.setContent(Integer.toString(timeout));
+				val.setEncoding("text");
+				val.setType("string");
+				parm.setValue(val);
+				
+				parms.addParm(parm);
+			}
+			
+			// Retry parm
+			if (retry != -1)
+			{
+				if (parms == null)
+					parms = new Parms();
+				Parm parm = new Parm();
+				parm.setParmName("retry");
+	
+				Value val = new Value();
+				val.setContent(Integer.toString(retry));
+				val.setEncoding("text");
+				val.setType("string");
+				parm.setValue(val);
+				
+				parms.addParm(parm);
+			}
+			
+			// Attempts parm
+			if (attempts > 0)
+			{
+				if (parms == null)
+					parms = new Parms();
+				Parm parm = new Parm();
+				parm.setParmName("attempts");
+	
+				Value val = new Value();
+				val.setContent(Integer.toString(attempts));
+				val.setEncoding("text");
+				val.setType("string");
+				parm.setValue(val);
+	
+				parms.addParm(parm);
+			}
+		}
+		
+		// Set event parms
+		event.setParms(parms);
+		
+		// Send the event
+		//
+		try
+		{
+			EventIpcManagerFactory.getInstance().getManager().sendNow(event);
+			if (log.isDebugEnabled())	
+			{
+				log.debug("Sent event " + uei + " for " + 
+					  m_pInterface.getNode().getNodeId() + "/" + 
+					  m_pInterface.getAddress().getHostAddress() + "/" + 
+					  m_service.getName());
+			}
+		}
+		catch(Throwable t)
+		{
+			log.error("Failed to send the event " + uei + " for interface " + 
+					m_pInterface.getAddress().getHostAddress(), t);
+		}
+	}
+

@@ -1,0 +1,110 @@
+	/**
+	 * The main routine of the DHCP server. This method accepts incomming
+	 * client requests and starts new client handlers to process each
+	 * request.
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		// update the status
+		//
+		synchronized(this)
+		{
+			if(m_status != STARTING)
+				return;
+
+			if (log.isDebugEnabled())
+				log.debug("run: setting status to running...");
+			m_status = RUNNING;
+		}
+
+		if (log.isDebugEnabled())
+			log.debug("run: DHCPD client daemon running...");
+		
+		// Begin accepting connections from clients
+		// For each new client create new DHCP Client Handler
+		// thread to handle the client's requests.
+		//
+		try 
+		{
+			m_server.setSoTimeout(1000); // Wake up every second to check the status
+			
+			for(;;)
+			{
+				synchronized(this)
+				{
+					if(m_status == PAUSED)
+					{
+						try
+						{
+							wait();
+						}
+						catch(InterruptedException e)
+						{
+							// ignore
+						}
+					}
+					else if(m_status != RUNNING)
+						break;
+				}
+
+				Socket sock;
+				try
+				{	
+					sock = m_server.accept();
+				}
+				catch (InterruptedIOException iE)
+				{
+					continue;
+				}
+	
+				// Add the client's new socket connection to the client list
+				//
+				if (log.isDebugEnabled())
+					log.debug("run: got connection request...creating client handler...");
+					
+				try
+				{
+					Client clnt = new Client(sock);
+					m_clients.add(clnt);
+					clnt.addObserver(this);
+					clnt.start();
+				}
+				catch (IOException ioE) 
+				{
+					synchronized(this)
+					{
+						if(m_status == RUNNING)
+							log.error("I/O exception occured creating client handler.", ioE);
+					}
+				}
+			}
+		}
+		catch (IOException ioE) 
+		{
+			synchronized(this)
+			{
+				if(m_status == RUNNING)
+					log.error("I/O exception occured processing incomming request", ioE);
+			}
+		}
+		catch(Throwable t)
+		{
+			synchronized(this)
+			{
+				if(m_status == RUNNING)
+					log.error("An undeclared throwable was caught", t);
+			}
+		}
+		finally
+		{
+			synchronized(this)
+			{
+				m_status = STOPPED;
+			}
+		}
+		
+	}
+

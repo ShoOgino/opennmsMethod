@@ -1,0 +1,82 @@
+	/**
+	 * Builds a list of NodeInfo objects representing each of the
+	 * nodes in the database capable of being scheduled for rescan.
+	 *
+	 * @throws SQLException if there is a problem accessing the database.
+	 */
+	private void loadKnownNodes()
+		throws SQLException
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		Connection db = null;
+		
+		PreparedStatement nodeStmt = null;
+		PreparedStatement ifStmt = null;
+		try
+		{
+			db = DatabaseConnectionFactory.getInstance().getConnection();
+			// Prepare SQL statements in advance
+			//
+			nodeStmt = db.prepareStatement(SQL_RETRIEVE_NODES);
+			ifStmt = db.prepareStatement(SQL_GET_LAST_POLL_TIME);
+		
+			// Retrieve non-deleted nodes from the node table in the database
+			//
+			ResultSet rs = nodeStmt.executeQuery();
+		
+			while (rs.next())
+			{
+				// Retrieve an interface from the ipInterface table in
+				// the database for its last polled/scanned time
+				
+				int nodeId = rs.getInt(1);
+				ifStmt.setInt(1, nodeId);  // set nodeid
+				if (log.isDebugEnabled())
+					log.debug("loadKnownNodes: retrieved nodeid " + nodeId + ", now getting last poll time.");
+			
+				ResultSet rset = ifStmt.executeQuery();
+				if (rset.next())
+				{
+					Timestamp lastPolled = rset.getTimestamp(1);
+					if(lastPolled != null && rset.wasNull() == false)
+					{
+						if (log.isDebugEnabled())
+							log.debug("loadKnownNodes: adding node " + nodeId + " with last poll time " + lastPolled);
+						NodeInfo nodeInfo = new NodeInfo(nodeId, lastPolled, m_interval);
+						m_knownNodes.add(nodeInfo);
+					}
+				}
+				else
+				{
+					if (log.isDebugEnabled())
+						log.debug("Node w/ nodeid " + nodeId + " has no managed interfaces from which to retrieve a last poll time...it will not be scheduled.");
+				}
+			}
+		}
+		finally
+		{
+			try
+			{
+				if (nodeStmt != null)
+					nodeStmt.close();
+			}
+			catch(Exception e) { } 
+
+			try
+			{
+				if (ifStmt != null)
+					ifStmt.close();
+			}
+			catch(Exception e) { }
+
+			try
+			{
+				if(db != null)
+					db.close();
+			}
+			catch(Exception e) { }
+		}
+			
+	}
+

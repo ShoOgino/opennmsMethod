@@ -1,0 +1,76 @@
+	/**
+	 * This method is used to ping a remote host to test for ICMP 
+	 * support. If the remote host responds within the specified
+	 * period, defined by retries and timeouts, then a value of true
+	 * is returned to the caller.
+	 *
+	 * @param ipv4Addr	The address to poll.
+	 * @param retries	The number of times to retry
+	 * @param timeout	The time to wait between each retry.
+	 *
+	 * @return True if the host is reachable and responsed with an echo reply.
+	 *
+	 */
+	private boolean isPingable(InetAddress ipv4Addr, int retries, long timeout)
+	{
+		Category log = ThreadCategory.getInstance(this.getClass());
+
+		// Find an appropritate thread id
+		//
+		Long tidKey = null;
+		long tid = (long)Thread.currentThread().hashCode();
+		synchronized(m_waiting)
+		{
+			while(m_waiting.containsKey(tidKey = new Long(tid)))
+				++tid;
+		}
+
+
+		DatagramPacket pkt   = getDatagram(ipv4Addr, tid);
+		Ping reply           = new Ping(ipv4Addr);
+		m_waiting.put(tidKey, reply);
+
+		for(int attempts = 0; attempts <= retries && !reply.isSignaled(); ++attempts)
+		{
+			// Send the datagram and wait
+			//
+			synchronized(reply)
+			{
+				try
+				{
+					m_icmpSock.send(pkt);
+				}
+				catch(IOException ioE)
+				{
+					log.info("isPingable: Failed to send to address " + ipv4Addr, ioE);
+					break;
+				}
+				catch(Throwable t)
+				{
+					log.info("isPingable: Undeclared throwable exception caught sending to " + ipv4Addr, t);
+					break;
+				}
+			
+				try
+				{
+					reply.wait(timeout);
+				}
+				catch(InterruptedException ex)
+				{
+					// interrupted so return, reset interrupt.
+					//
+					Thread.currentThread().interrupt();
+					break;
+				}
+			}
+		}
+
+		m_waiting.remove(tidKey);
+
+		boolean pingable = false;
+		if(reply.isSignaled())
+			pingable = true;
+
+		return pingable;
+	}
+

@@ -1,0 +1,350 @@
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		// Queue of the lines that are read from the Nessus socket
+		FifoQueue lines = null;
+		// Flag that lets us know if we've found what we're looking for
+		boolean found = false;
+		// DB connection; is connected and disconnected as necessary
+		Connection conn = null;
+
+		// Grab the list of all current open vulnerabilities for the IP address.
+		// We'll use this list to resolve vulnerabilities that are not redetected.
+		try
+		{
+			conn = DatabaseConnectionFactory.getInstance().getConnection();
+		}
+		catch (SQLException ex)
+		{
+			log.error("Could not open DB connection", ex);
+			return;
+		}
+		try
+		{
+			PreparedStatement stmt = conn.prepareStatement(SELECT_ALL_VULNERABILITIES);
+
+			stmt.setString(1, config.targetAddress.getHostAddress());
+
+			ResultSet openVulnerabilitiesRS = stmt.executeQuery();
+
+			while (openVulnerabilitiesRS.next())
+			{
+				openVulnerabilities.add(new Integer(openVulnerabilitiesRS.getInt("vulnerabilityid")));
+			}
+		}
+		catch (SQLException ex)
+		{
+			log.error("Error when querying database for open vulnerabilities.");
+			log.error(ex.getLocalizedMessage(), ex);
+			return;
+		}
+		finally
+		{
+			try
+			{
+				conn.close();
+			}
+			catch (SQLException ex)
+			{
+				log.error("Could not close DB connection", ex);
+			}
+		}
+
+
+		// Perform a Nessus scan of the target IP address. As each vulnerability is
+		// found, a new entry is put into the database or the existing entry is
+		// updated.
+		Socket nessusSocket = null;
+		try
+		{
+			nessusSocket = NessusConnectionFactory.getConnection(
+				config.hostname, config.hostport);
+
+			if (nessusSocket == null)
+			{
+				throw new IOException("Factory returned null connection");
+			}
+
+			InputStream in = nessusSocket.getInputStream();
+			OutputStream out = nessusSocket.getOutputStream();
+
+			log.debug("Attached streams to the Nessus socket.");
+
+			// Login to the server
+			out.write((NTP_VERSION_STRING + "\n").getBytes());
+
+			log.debug("Sent NTP version string.");
+
+			lines = readLines(in);
+
+			// Strip off the protocol/username prompt
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+					log.debug("NTP string response: " + line);
+					if (line.indexOf(NTP_USERNAME_PROMPT) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// Login to the server
+			out.write((config.username + "\n").getBytes());
+
+			log.debug("Sent username string.");
+
+			// Strip off the password prompt
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+					log.debug("Username response: " + line);
+					if (line.indexOf(NTP_PASSWORD_PROMPT) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// Login to the server
+			out.write((config.password  + "\n").getBytes());
+
+			log.debug("Sent password string.");
+
+			// Strip off the rules list
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+
+					// Do any necessary parsing
+					log.debug("Password response: " + line);
+
+					if (line.indexOf((NTP_SEP + NTP_SERVER_ENTITY).trim()) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// Strip off the preferences list
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+
+					// Do any necessary parsing
+					log.debug("Preferences: " + line);
+
+					if (line.indexOf((NTP_SEP + NTP_SERVER_ENTITY).trim()) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// Strip off the rules list
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+
+					// Do any necessary parsing
+					log.debug("Rules: " + line);
+
+					if (line.indexOf((NTP_SEP + NTP_SERVER_ENTITY).trim()) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// Write the preferences list for the scan
+			// (which includes the list of plugins to execute
+			// against the target)
+			out.write(buildPreferencesString().getBytes());
+
+			log.debug("Sent preferences string.");
+
+			// Strip off the PREFERENCES_ERRORS
+			found = false;
+			while (!found)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+
+					// Do any necessary parsing
+					log.debug("Preferences response: " + line);
+
+					if (line.indexOf((NTP_SEP + NTP_SERVER_ENTITY).trim()) != -1)
+					{
+						found = true;
+						break;
+					}
+				}
+				if (!found) lines = readLines(in);
+			}
+
+			// I'm using the NEW_ATTACK directive, since I don't
+			// care about command strings getting too long (which
+			// you would use the LONG_ATTACK directive for).
+			out.write((NTP_CLIENT_ENTITY + NTP_SEP + "NEW_ATTACK" + NTP_SEP +
+				config.targetAddress.toString() + NTP_SEP +
+				NTP_CLIENT_ENTITY + "\n").getBytes());
+
+			log.debug("Sent NEW_ATTACK directive against target: " + config.targetAddress.toString());
+
+			// Read the response to the NEW_ATTACK
+			int returnCode = SCAN_SUCCESS;
+
+			while (
+				(returnCode == SCAN_SUCCESS) ||
+				(returnCode == SCAN_NON_FATAL_ERROR)
+			)
+			{
+				while (lines.size() > 0)
+				{
+					String line = (String)lines.remove();
+
+					log.debug("Nessus attack response: " + line.replace('\n', ' '));
+
+					// Grep out any inappropriate messages
+					if (
+						(line.indexOf("the server killed it") == -1)
+					)
+					{
+						// This processing will update existing vulnerabilities in the database
+						// and add new vulnerability entries as the vulnerabilities are detected
+						returnCode = processScanMessage(line);
+					}
+					else
+					{
+						log.error("Discarded inappropriate Nessus message: " + line);
+					}
+				}
+
+				// If the last read was successful, get more lines
+				if (
+					(returnCode == SCAN_SUCCESS) ||
+					(returnCode == SCAN_NON_FATAL_ERROR)
+				)
+				{
+					lines = readLines(in);
+				}
+			}
+
+			out.write(buildStopWholeTestString().getBytes());
+
+			// If there were open vulnerabilities that were not reconfirmed during this
+			// scanning cycle, then mark them as resolved.
+			if (openVulnerabilities.size() > 0)
+			{
+				try
+				{
+					conn = DatabaseConnectionFactory.getInstance().getConnection();
+				}
+				catch (SQLException ex)
+				{
+					log.error("Could not open DB connection", ex);
+					return;
+				}
+				try
+				{
+					PreparedStatement stmt = conn.prepareStatement(RESOLVE_VULNERABILITY);
+
+					Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
+
+					Iterator vuln = openVulnerabilities.iterator();
+					while (vuln.hasNext())
+					{
+						stmt.setTimestamp(1, currentTime);
+
+						// If the scan ended because of a successful completion
+						// and all plugins were executed (indicating that the
+						// host WAS accessible), resolve the bug
+						if (
+							(returnCode == SCAN_COMPLETE) &&
+							(lastPlugin == totalPlugins)
+						)
+						{
+							stmt.setTimestamp(2, currentTime);
+						}
+						// Otherwise, just leave the resolved field NULL
+						else
+						{
+							stmt.setNull(2, Types.TIMESTAMP);
+						}
+
+						stmt.setInt(3, ((Integer)vuln.next()).intValue());
+
+						stmt.executeUpdate();
+					}
+				}
+				catch (SQLException ex)
+				{
+					log.error("Error when querying database for open vulnerabilities.");
+					log.error(ex.getLocalizedMessage(), ex);
+					return;
+				}
+				finally
+				{
+					try
+					{
+						conn.close();
+					}
+					catch (SQLException ex)
+					{
+						log.error("Could not close DB connection", ex);
+					}
+				}
+			}
+
+			log.debug("Sent STOP_WHOLE_TEST directive against target " + config.targetAddress.toString());
+		}
+		catch (FifoQueueException ex)
+		{
+			log.warn(ex, ex);
+		}
+		catch (InterruptedException ex)
+		{
+			log.warn(ex, ex);
+		}
+		catch (IOException ex)
+		{
+			log.warn(ex, ex);
+		}
+		finally
+		{
+			log.info("Releasing Nessus socket connection");
+			if (nessusSocket != null) NessusConnectionFactory.releaseConnection(nessusSocket);
+		}
+
+		// Update the scheduler flags for this configuration
+		config.setScheduled(false);
+		config.setLastScanned(new java.util.Date());
+	}
+

@@ -1,0 +1,104 @@
+        /**
+	 * <P>Test to see if the passed host-port pair is the 
+	 * endpoint for an HTTP server. If there is an HTTP server
+	 * at that destination then a value of true is returned
+	 * from the method. Otherwise a false value is returned 
+	 * to the caller.</P>
+	 *
+	 * @param host	The remote host to connect to.
+	 * @param port	The remote port to connect to.
+	 *
+	 * @return True if server supports HTTP on the specified 
+	 *	port, false otherwise
+	 */
+	private boolean isServer(InetAddress host, int port, int retries, int timeout)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		boolean isAServer = false;
+		
+		for (int attempts=0; attempts <= retries && !isAServer; attempts++)
+		{
+			log.debug(getClass().getName()+".isServer: attempt " + attempts + " to connect " + host.getHostAddress() + ":" + port + ", timeout=" + timeout);
+
+			Socket  portal    = null; 
+			try
+			{
+				// create a connected socket
+				//
+				portal = new Socket(host, port);
+				portal.setSoTimeout(timeout);	
+
+				BufferedReader lineRdr = new BufferedReader(new InputStreamReader(portal.getInputStream()));
+                                
+				portal.getOutputStream().write(QUERY_STRING.getBytes());
+                                String line = null;
+                                StringBuffer response = new StringBuffer();
+                                while( (line=lineRdr.readLine())!=null)
+                                {
+                                        response.append(line).append(System.getProperty("line.separator"));
+                                }
+                                
+                                if(response.toString() != null && response.toString().indexOf(RESPONSE_STRING)>-1)
+				{
+                                        if (CHECK_RETURN_CODE)
+                                        {
+                                                StringTokenizer t = new StringTokenizer(response.toString());
+                                                t.nextToken();
+                                                int rVal = Integer.parseInt(t.nextToken());
+                                                if(rVal >= 99 && rVal <= 600)
+                                                        isAServer = true;
+                                        }
+                                        else
+                                        {
+                                                isAServer = true;
+                                        }
+				}
+			}
+			catch(NumberFormatException e)
+			{
+				log.debug(getClass().getName()+": failed to parse response code from host " + host.getHostAddress(),  e);
+			}
+			catch(ConnectException e)
+			{
+				// Connection refused!!  No need to perform retries.
+				//
+				e.fillInStackTrace();
+				log.debug(getClass().getName()+": connection refused to host " + host.getHostAddress() , e);
+				break;
+			}
+			catch(NoRouteToHostException e)
+			{
+				// No route to host!! No need to perform retries.
+				e.fillInStackTrace();
+
+				log.warn(getClass().getName()+": No route to host " + host.getHostAddress(), e);
+				throw new UndeclaredThrowableException(e);
+                        }
+			catch(InterruptedIOException e)
+			{
+				// Timed out
+				log.debug(getClass().getName()+": connection request timed out.");
+			}
+			catch(IOException e)
+			{
+				log.warn(getClass().getName()+": An undeclared I/O exception occured contacting host " + host.getHostAddress(), e);
+			}
+			catch(Throwable t)
+			{
+				log.warn(getClass().getName()+": An undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
+			}
+			finally
+			{
+				try
+				{
+					if(portal != null)
+						portal.close();
+				}
+				catch(IOException e) { }
+			}
+		}
+
+		return isAServer;
+	}
+

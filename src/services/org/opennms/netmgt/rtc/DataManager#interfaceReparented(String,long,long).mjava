@@ -1,0 +1,87 @@
+	/**
+	 * Reparent an interface. This effectively means updating the
+	 * nodelist of the categories and the map
+	 *
+	 * Use the ip/oldnodeid combination to get all nodes that will
+	 * be affected - for each of these nodes, remove the old entry
+	 * and add a new one with new keys to the map
+	 *
+	 * <em>Note:</em> Each of these nodes could belong to more than
+	 * one category. However, category rule evaluation is done 
+	 * based ONLY on the IP - therefore changing the nodeID on the
+	 * node should update the categories appropriately
+	 *
+	 * @param ip		the interface to reparent
+	 * @param oldNodeId	the node that the ip belonged to earlier
+	 * @param newNodeId	the node that the ip now belongs to
+	 */
+	public synchronized void interfaceReparented(String ip, long oldNodeId, long newNodeId)
+	{
+		// get all RTCNodes with the ip/oldNodeId
+		String key = Long.toString(oldNodeId) + ip;
+		List nodesList = (List)m_map.get(key);
+		if (nodesList == null)
+		{
+			// nothing to do - simply means ip does not belong
+			// to any of the categories
+			return;
+		}
+		
+		// iterate through this list
+		ListIterator listIter = nodesList.listIterator();
+		while(listIter.hasNext())
+		{
+			RTCNode rtcN = (RTCNode)listIter.next();
+
+			// get the key for this node
+			RTCNodeKey rtcnKey = new RTCNodeKey(rtcN.getNodeID(), rtcN.getIP(), rtcN.getSvcName());
+
+			// remove the node pointed to by this key from the map
+			m_map.remove(rtcnKey);
+
+			// remove this node from the list pointed to
+			// by the nodeid key
+			m_map.delete(oldNodeId, rtcN);
+
+			// remove from current list pointed to by the iterator
+			listIter.remove();
+
+			//
+			// !!!!!NOTE!!!!!!!
+			// This node could belong to more than one
+			// category. However, category rule evaluation is done 
+			// based ONLY on the IP - therefore there is no need to
+			// re-evaluate the validity against the rule
+			//
+
+			// change the nodeid on the RTCNode
+			rtcN.setNodeID(newNodeId);
+
+			// get the new key for this node
+			rtcnKey.setNodeID(newNodeId);
+
+			// add new node to the map
+			m_map.put(rtcnKey, rtcN);
+
+			// add to the nodeid map
+			m_map.add(newNodeId, rtcN);
+
+			// add to the nodeid/ip map
+			m_map.add(newNodeId, ip,  rtcN);
+
+			// remove old nodeid from the categories it belonged to
+			// and the new nodeid
+			Iterator catIter = rtcN.getCategories().listIterator();
+			while(catIter.hasNext())
+			{
+				String catlabel = (String)catIter.next();
+
+				RTCCategory rtcCat = (RTCCategory)m_categories.get(catlabel);
+				rtcCat.deleteNode(oldNodeId);
+				rtcCat.addNode(newNodeId);
+			}
+			
+
+		}
+	}
+

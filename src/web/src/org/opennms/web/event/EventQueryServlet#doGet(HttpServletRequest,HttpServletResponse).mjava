@@ -1,0 +1,107 @@
+    /**
+     * Extracts the key parameters from the parameter set, translates them into
+     * filter-based parameters, and then passes the modified parameter set to 
+     * the {@link EventFilterServlet EventFilterServlet}.
+     */
+    public void doGet( HttpServletRequest request, HttpServletResponse response ) throws ServletException, IOException {
+        ArrayList filterArray = new ArrayList();
+                
+        //convenient syntax for LogMessageSubstringFilter
+        String msgSubstring = request.getParameter("msgsub");
+        if(msgSubstring != null && msgSubstring.length() > 0) {
+            filterArray.add(new LogMessageSubstringFilter(msgSubstring));
+        }
+
+        //convenient syntax for LogMessageMatchesAnyFilter
+        String msgMatchAny = request.getParameter("msgmatchany");
+        if(msgMatchAny != null && msgMatchAny.length() > 0) {
+            filterArray.add(new LogMessageMatchesAnyFilter(msgMatchAny));
+        }                
+        
+        //convenient syntax for NodeNameContainingFilter
+        String nodeNameLike = request.getParameter("nodenamelike");
+        if(nodeNameLike != null && nodeNameLike.length() > 0) {
+            filterArray.add(new NodeNameLikeFilter(nodeNameLike));
+        }
+
+        //convenient syntax for ServiceFilter
+        String service = request.getParameter("service");
+        if(service != null && !service.equals(EventUtil.ANY_SERVICES_OPTION)) {
+            filterArray.add(new ServiceFilter(Integer.parseInt(service)));
+        }
+                
+        //convenient syntax for IPLikeFilter
+        String ipLikePattern = request.getParameter("iplike");
+        if(ipLikePattern != null && !ipLikePattern.equals("")) {
+            filterArray.add(new IPLikeFilter(ipLikePattern));
+        }
+
+        //convenient syntax for SeverityFilter
+        String severity = request.getParameter("severity");
+        if(severity != null && !severity.equals(EventUtil.ANY_SEVERITIES_OPTION)) {
+            filterArray.add(new SeverityFilter(Integer.parseInt(severity)));
+        }
+
+        //convenient syntax for AfterDateFilter as relative to current time
+        String relativeTime = request.getParameter("relativetime");
+        if(relativeTime != null && !relativeTime.equals(EventUtil.ANY_RELATIVE_TIMES_OPTION)) {
+            try {
+                filterArray.add(EventUtil.getRelativeTimeFilter(Integer.parseInt(relativeTime)));
+            }
+            catch( IllegalArgumentException e ) {
+                //ignore the relative time if it is an illegal value
+                this.log( "Illegal relativetime value", e );
+            }
+        }
+
+        String useBeforeTime = request.getParameter("usebeforetime");
+        if(useBeforeTime != null && useBeforeTime.equals("1")) {
+            try {
+                filterArray.add(this.getBeforeDateFilter(request));
+            }
+            catch( IllegalArgumentException e ) {
+                //ignore the before time if it is an illegal value
+                this.log( "Illegal before time value", e );
+            }
+            catch( MissingParameterException e ) {
+                throw new ServletException(e);
+            }
+        }
+
+        String useAfterTime = request.getParameter("useaftertime");
+        if(useAfterTime != null && useAfterTime.equals("1")) {
+            try {
+                filterArray.add(this.getAfterDateFilter(request));
+            }
+            catch( IllegalArgumentException e ) {
+                //ignore the after time if it is an illegal value
+                this.log( "Illegal after time value", e );
+            }
+            catch( MissingParameterException e ) {
+                throw new ServletException(e);
+            }
+        }
+
+
+        String queryString = "";
+
+        if(filterArray.size() > 0) {
+            String[] filterStrings = new String[filterArray.size()];
+            
+            for(int i=0; i < filterStrings.length; i++) {
+                Filter filter = (Filter)filterArray.get(i);
+                filterStrings[i] = EventUtil.getFilterString(filter);
+            }
+            
+            HashMap paramAdditions = new HashMap();
+            paramAdditions.put("filter", filterStrings);
+            
+            queryString = Util.makeQueryString(request, paramAdditions, IGNORE_LIST);
+        }
+        else {
+            queryString = Util.makeQueryString(request, IGNORE_LIST);            
+        }
+
+        response.sendRedirect(this.redirectUrl + "?" + queryString);             
+    }
+

@@ -1,0 +1,149 @@
+	/**
+	 * <p>Record the 'nodeLostService' event in the outages table - create
+	 * a new outage entry if the service is not already down</p>
+	 */
+	private void handleNodeLostService(long eventID, long nodeID, String ipAddr, long serviceID, String eventTime)
+	{
+		Category log = ThreadCategory.getInstance(OutageWriter.class);
+
+		if(eventID == -1 || nodeID == -1 || ipAddr == null || serviceID == -1)
+		{
+			log.warn(EventConstants.NODE_REGAINED_SERVICE_EVENT_UEI + " ignored - info incomplete - eventid/nodeid/ip/svc: " + eventID + "/" + nodeID + "/" + ipAddr + "/" + serviceID);
+			return;
+		}
+
+		int numOpenRecs = -1;
+
+		// check that there is no 'open' entry already
+		Connection dbConn = null;
+		try
+		{
+			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+
+
+	 		// Prepare SQL statement used to see if there is already an
+			// 'open' record for the node/ip/svc combination
+			PreparedStatement openStmt = dbConn.prepareStatement(OutageConstants.DB_OPEN_RECORD);
+			openStmt.setLong  (1, nodeID);
+			openStmt.setString(2, ipAddr);
+			openStmt.setLong  (3, serviceID);
+			
+			ResultSet rs = openStmt.executeQuery();
+			if(rs.next())
+			{
+				numOpenRecs = rs.getInt(1);
+			}
+
+			// close result set
+			rs.close();
+
+			// close statement
+			openStmt.close();
+
+			if (numOpenRecs > 0)
+			{
+				log.warn("\'" + EventConstants.NODE_LOST_SERVICE_EVENT_UEI + "\' for " + nodeID + "/" + ipAddr + "/" + serviceID + " ignored - table already  has an open record ");
+
+			}
+			else
+			{
+	 			// Prepare SQL statement to get the next outage id from the db sequence
+				PreparedStatement getNextOutageIdStmt  = dbConn.prepareStatement(OutageManagerConfigFactory.getInstance().getGetNextOutageID());
+
+				long outageID = -1;
+
+				// Execute the statement to get the next outage id from the sequence
+				//
+				ResultSet seqRS = getNextOutageIdStmt.executeQuery();
+				if (seqRS.next())
+				{
+					outageID = seqRS.getLong(1);
+				}
+				seqRS.close();
+
+				// Set the database commit mode
+				try
+				{
+					dbConn.setAutoCommit(false);
+				}
+				catch (SQLException sqle)
+				{
+					log.error("Unable to change database AutoCommit to FALSE", sqle);
+					return;
+				}
+			
+				// get timestamp
+				java.sql.Timestamp eventTimeTS = null;
+				try
+				{
+					java.util.Date date = EventConstants.parseToDate(eventTime);
+					eventTimeTS = new java.sql.Timestamp(date.getTime());
+				}
+				catch(ParseException pe)
+				{
+					log.warn("Failed to convert time " + eventTime + " to java.sql.Timestamp, Setting current time instead", pe);
+
+					eventTimeTS = new java.sql.Timestamp((new java.util.Date()).getTime());
+				}
+
+				// Prepare statement to insert a new outage table entry
+				PreparedStatement newOutageWriter = dbConn.prepareStatement(OutageConstants.DB_INS_NEW_OUTAGE);
+				newOutageWriter.setLong  (1, outageID);
+				newOutageWriter.setLong  (2, eventID);
+				newOutageWriter.setLong  (3, nodeID);
+				newOutageWriter.setString(4, ipAddr);
+				newOutageWriter.setLong  (5, serviceID);
+				newOutageWriter.setTimestamp(6, eventTimeTS);
+
+				// execute
+				newOutageWriter.executeUpdate();
+
+				// close statement
+				newOutageWriter.close();
+
+				// commit work
+				try
+				{
+					dbConn.commit();
+
+					if (log.isDebugEnabled())
+						log.debug("nodeLostService : " + nodeID + "/" + ipAddr + "/" + serviceID + " recorded in DB");
+				}
+				catch(SQLException se)
+				{
+					log.warn("Rolling back transaction, nodeLostService could not be recorded  for nodeid/ipAddr/service: " + nodeID + "/" + ipAddr + "/" + serviceID, se);
+
+
+					try 
+					{
+						dbConn.rollback();
+					}
+					catch (SQLException sqle)
+					{
+						log.warn("SQL exception during rollback, reason", sqle);
+					}
+
+				}
+
+			}
+		}
+		catch (SQLException sqle)
+		{
+			log.warn("SQL exception while handling \'nodeLostService\'", sqle);
+		}
+		finally
+		{
+			// close database connection
+			try
+			{
+				if(dbConn != null)
+					dbConn.close();
+			}
+			catch(SQLException e)
+			{
+				log.warn("Exception closing JDBC connection", e);
+			}
+		}
+
+	}
+

@@ -1,0 +1,157 @@
+	/**
+	 * Add a node/ip/service to the specified category 
+	 *
+	 * @param nodeid	the nodeid to be added
+	 * @param ip		the interface to be added
+	 * @param service	the service to be added
+	 * @param cat		the category to which this node is to be added to
+	 * @param knownIPs	the hashtable of IP->list of RTCNodes (used only at startup)
+	 * @param outagesGetStmt the prepared statement to read outages
+	 */
+	private void addNodeIpSvcToCategory(long nodeid, String ip, String svcname,
+						RTCCategory cat,
+						Hashtable knownIPs,
+						PreparedStatement outagesGetStmt)
+	{
+		Category log = ThreadCategory.getInstance(DataManager.class);
+
+		//
+		// check if the node is already part of the tree, if yes,
+		// simply add the current category information 
+		//
+		RTCNodeKey key = new RTCNodeKey(nodeid, ip, svcname);
+		RTCNode rtcN = (RTCNode)m_map.get(key);
+		if (rtcN != null)
+		{
+			// add the category info to the node
+			rtcN.addCategory(cat.getLabel());
+
+			// Add node to category
+			cat.addNode(rtcN);
+
+			if(log.isDebugEnabled())
+				log.debug("rtcN : " + rtcN.getNodeID() + "/"
+					  + rtcN.getIP() + "/" + rtcN.getSvcName()
+					  + " added to cat: " 
+					  +  cat.getLabel());
+
+			return;
+		}
+
+		// create the node
+		rtcN = new RTCNode(nodeid, ip, svcname);
+
+		// add the category info to the node
+		rtcN.addCategory(cat.getLabel());
+
+		// read outages
+		//
+		// the window for which outages are to be read - the current
+		// time minus the rollingWindow
+		//
+		long window = (new java.util.Date()).getTime() - RTCManager.getRollingWindow();
+		Timestamp windowTS = new Timestamp(window);
+
+		//
+		// Read closed outages in the above window and outages that are
+		// still open
+		//
+		ResultSet  outRS=null;
+		try
+		{
+			//
+			// get outages 
+			//
+			outagesGetStmt.setLong(1, nodeid);
+			outagesGetStmt.setString(2, ip);
+			outagesGetStmt.setLong(3, getServiceID(svcname));
+			outagesGetStmt.setTimestamp(4, windowTS);
+			outagesGetStmt.setTimestamp(5, windowTS);
+			outRS = outagesGetStmt.executeQuery();
+			while(outRS.next())
+			{
+				int outColIndex=1;
+				Timestamp lostTimeTS = outRS.getTimestamp(outColIndex++);
+				Timestamp regainedTimeTS = outRS.getTimestamp(outColIndex++);
+
+				long lostTime = lostTimeTS.getTime();
+				long regainedTime = -1;
+				if (regainedTimeTS != null)
+					regainedTime = regainedTimeTS.getTime();
+
+				if(log.isDebugEnabled())
+				{
+					log.debug("lost time for nodeid/ip/svc: " + nodeid + "/"
+						  + ip + "/" + svcname + ": " + 
+						  lostTimeTS + "/" + lostTime);
+
+					log.debug("regained time for nodeid/ip/svc: " + nodeid + "/"
+						  + ip + "/" + svcname + ": " + 
+						  regainedTimeTS + "/" + regainedTime);
+				}
+
+				rtcN.addSvcTime(lostTime, regainedTime);
+			}
+		}
+		catch (SQLException sqle2)		
+		{
+			if(log.isDebugEnabled())
+				log.debug("Error getting outages information for nodeid: " + nodeid + "\tip:" + ip, sqle2);
+
+		}
+		catch (Exception e2)		
+		{
+			if(log.isDebugEnabled())
+				log.debug("Unknown error while reading outages for nodeid: " + nodeid + "\tip: " + ip, e2);
+
+		}
+		finally
+		{
+			// finally close the result set
+			try
+			{
+				if (outRS != null)
+					outRS.close();
+			}
+			catch(Exception e)
+			{
+				if(log.isDebugEnabled())
+					log.debug("Exception while closing the outages result set ", e);
+			}
+		}
+
+		// Add node to the map
+		m_map.put(key, rtcN);
+
+		// node key map
+		m_map.add(nodeid, rtcN);
+
+		// node and ip key map
+		m_map.add(nodeid, ip,  rtcN);
+
+		// Add node to category
+		cat.addNode(rtcN);
+
+		// Add node to the knownIPs
+		if(knownIPs != null)
+		{
+			List rtcS = (List)knownIPs.get(ip);
+			if (rtcS == null)
+			{
+				rtcS = new ArrayList();
+				rtcS.add(rtcN);
+			}
+			else
+			{
+				if(!rtcS.contains(rtcN))
+					rtcS.add(rtcN);
+			}
+		}
+
+		if(log.isDebugEnabled())
+			log.debug("rtcN : " + rtcN.getNodeID() + "/"
+				  + rtcN.getIP() + "/" + rtcN.getSvcName()
+				  + " added to cat: " + cat.getLabel() );
+
+	}
+

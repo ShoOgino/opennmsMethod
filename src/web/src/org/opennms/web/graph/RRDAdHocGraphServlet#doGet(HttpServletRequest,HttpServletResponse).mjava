@@ -1,0 +1,67 @@
+    /**
+     * Checks the parameters passed to this servlet, and if all are okay, executes
+     * the RRDTool command in another process and pipes its PNG output to the
+     * <code>ServletOutputStream</code> back to the requesting web browser.
+     */
+    public void doGet( HttpServletRequest request, HttpServletResponse response ) throws ServletException, IOException {
+        String rrdDir = request.getParameter( "rrddir" );
+        String start  = request.getParameter( "start" );
+        String end    = request.getParameter( "end" );
+
+        if( rrdDir == null || start == null || end == null ) {
+            response.setContentType( "image/png" );
+            Util.streamToStream( this.getServletContext().getResourceAsStream( "/images/rrd/missingparams.png"), response.getOutputStream() );
+            return;
+        }
+        
+        if( !GraphUtil.isValidRRDName(rrdDir) ) {
+            this.log("Illegal RRD directory: " + rrdDir);
+            throw new IllegalArgumentException("Illegal RRD directory: " + rrdDir);
+        }
+    
+        String command = createAdHocCommand( request, rrdDir, start, end );
+
+        if(command == null) {
+            response.setContentType( "image/png" );
+            Util.streamToStream( this.getServletContext().getResourceAsStream( "/images/rrd/missingparams.png"), response.getOutputStream() );
+            return;
+        }
+
+        this.log( command );
+        String[] commandArray = Util.createCommandArray( command, '@' );
+        Process process = Runtime.getRuntime().exec( commandArray, null, workDir );
+
+        ServletOutputStream out = response.getOutputStream();
+        ByteArrayOutputStream tempOut = new ByteArrayOutputStream();
+        BufferedInputStream in = new BufferedInputStream( process.getInputStream() );
+
+        Util.streamToStream( in, tempOut );
+
+        in.close();
+        tempOut.close();
+
+        BufferedReader err = new BufferedReader( new InputStreamReader( process.getErrorStream() ));
+        String line = err.readLine();
+        StringBuffer buffer = new StringBuffer();
+
+        while( line != null ) {
+            buffer.append( line );
+            line = err.readLine();
+        }
+
+        if( buffer.length() > 0 ) {
+            this.log( "Read from stderr: " + buffer.toString() );
+            response.setContentType( "image/png" );
+            Util.streamToStream( this.getServletContext().getResourceAsStream( "/images/rrd/error.png"), out );
+        }
+        else {
+            byte[] byteArray = tempOut.toByteArray();
+            ByteArrayInputStream tempIn = new ByteArrayInputStream( byteArray );
+            response.setContentType( this.mimeType );
+
+            Util.streamToStream( tempIn, out );
+        }
+
+        out.close();
+    }
+

@@ -1,0 +1,247 @@
+	/**
+	 * This is where all the work of the class is done.  
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		//
+		// perform rescan of the node
+		//
+		DbNodeEntry dbNodeEntry = null;
+		
+		// Get DbNodeEntry object which represents this node and
+		// load it from the database
+		try
+		{
+			dbNodeEntry = DbNodeEntry.get(m_scheduledNode.getNodeId());
+		}
+		catch (SQLException sqlE)
+		{
+			log.error("RescanProcessor: unable to load node info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
+			log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+			return;
+		}
+		
+		// If this is a forced rescan then retrieve all the interfaces
+		// associated with this node and perform collections against them.  
+		// Otherwise, this is a regularly scheduled rescan, only the 
+		// node's managed interfaces are to be retrieved and collected.
+		// 
+		DbIpInterfaceEntry[] dbInterfaces = null;
+		
+		if (m_forceRescan)
+		{
+			// Retrieve list of interfaces associated with this nodeID
+			// from the database
+			log.debug("retrieving all interfaces for node: " + m_scheduledNode.getNodeId());
+			try
+			{
+				dbInterfaces = dbNodeEntry.getInterfaces();
+			}
+			catch (NullPointerException npE)
+			{
+				log.error("RescanProcessor: Null pointer when retrieving interfaces for node " + m_scheduledNode.getNodeId(), npE);
+				log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+				return;
+			}
+			catch (SQLException sqlE)
+			{
+				log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
+				log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+				return;
+			}
+		}
+		else
+		{
+			// Retrieve list of managed interfaces associated with this nodeID
+			// from the database
+			log.debug("retrieving managed interfaces for node: " + m_scheduledNode.getNodeId());
+			try
+			{
+				dbInterfaces = dbNodeEntry.getManagedInterfaces();
+			}
+			catch (NullPointerException npE)
+			{
+				log.error("RescanProcessor: Null pointer when retrieving managed interfaces for node " + m_scheduledNode.getNodeId(), npE);
+				log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+				return;
+			}
+			catch (SQLException sqlE)
+			{
+				log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
+				log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+				return;
+			}
+		}
+			
+		// Run collector for each retrieved interface and add result
+		// to a collector map.
+		Map collectorMap = new HashMap();
+		
+		IfSnmpCollector snmpc = null;
+		boolean doSnmpCollection = true;
+		Map snmpTargets = null;
+		for (int i=0; i<dbInterfaces.length; i++)
+		{
+			InetAddress ifaddr = dbInterfaces[i].getIfAddress();
+				
+			// collect the information from the interface.  
+			// NOTE: skip '127.*.*.*' and '0.0.0.0' addresses.
+			if(ifaddr.getHostAddress().startsWith("127") || 
+				ifaddr.getHostAddress().equals("0.0.0.0"))
+			{
+				continue;
+			}
+
+			// Any targets/interfaces found via SNMP have already
+			// been probed so skip them.
+			if (snmpTargets != null)
+			{
+				log.debug("checking snmp target map for interface " + ifaddr.getHostAddress());
+				if (snmpTargets.get(ifaddr) != null)
+				{
+					if (log.isDebugEnabled())
+						log.debug("skipping collection for " + ifaddr.getHostAddress() + " found via SNMP.");
+					continue;
+				}
+				else
+					log.debug("snmp target map does not contain interface " + ifaddr.getHostAddress());
+			}
+			
+			if (log.isDebugEnabled())
+				log.debug("running collection for " + ifaddr.getHostAddress());
+			
+			IfCollector collector = new IfCollector(ifaddr, doSnmpCollection);
+			collector.run();
+			
+			// Only need to collect SNMP data from one of the
+			// node's interfaces. 
+			//
+			if (doSnmpCollection)
+			{
+				snmpc = collector.getSnmpCollector();
+				if (snmpc != null && !snmpc.failed())
+				{
+					// Got a successful SNMP collection from the node
+					doSnmpCollection = false;
+					if (collector.hasAdditionalTargets())
+						snmpTargets = collector.getAdditionalTargets();
+					
+					if (log.isDebugEnabled())
+						log.debug("SNMP data collected via " + ifaddr.getHostAddress());
+				}
+			}
+
+			if (log.isDebugEnabled())
+				log.debug("collection completed for " + ifaddr.getHostAddress());
+			collectorMap.put(ifaddr.getHostAddress(), collector);
+		}
+
+		// Update the database
+		//
+		Date now = null;
+		Connection dbc = null;
+		boolean updateCompleted = false;
+		try
+		{
+			// Synchronize on the Capsd sync lock so we can check if 
+			// the interface is already in the database and perform 
+			// the necessary inserts in one atomic operation
+			//	
+			// The SuspectEventProcessor class is also synchronizing on this
+			// lock prior to performing database inserts or updates.
+			synchronized(Capsd.getDbSyncLock())
+			{
+				// Get database connection
+				//
+				dbc = DatabaseConnectionFactory.getInstance().getConnection();
+				
+				// There is a slight possibility that the node being rescanned has
+				// been deleted (due to reparenting) by another thread between the
+				// time this rescan was started and the database sync lock was
+				// grabbed.  Verify that the current nodeid is still valid (ie, not 
+				// deleted) before continuing.
+				//
+				if (!isNodeDeleted(dbc, m_scheduledNode.getNodeId()))
+				{
+					// Get old primary SNMP interface (if one exists)
+					//
+					InetAddress oldPrimarySnmpIf = SuspectEventProcessor.getPrimarySnmpInterfaceFromDb(dbc, dbNodeEntry);
+						
+					// Update interface information
+					//
+					now = new Date();  
+					updateInterfaces(dbc, now, dbNodeEntry, collectorMap);
+					
+					// Now that all interfaces have been added to the database we
+					// can update the 'primarySnmpInterface' field of the ipInterface
+					// table.  Necessary because the IP address must already be in 
+					// the database to evaluate against a filter rule.
+					//
+					List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
+					InetAddress newPrimarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
+					SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newPrimarySnmpIf, oldPrimarySnmpIf);
+					
+					// Now that we've identified the new primary SNMP interface
+					// we can determine if it is necessary to generate certain
+					// SNMP data collection related events
+					//
+					generateSnmpDataCollectionEvents(dbNodeEntry, oldPrimarySnmpIf, newPrimarySnmpIf);
+					
+					// Update the node table entry
+					//
+					DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newPrimarySnmpIf, dbInterfaces, collectorMap);
+					
+					updateCompleted = true;
+				}
+			}
+
+		} // end try
+		catch(Throwable t)
+		{
+			log.error("Error updating records", t);
+		}
+		finally
+		{
+			// Finished with the database connection, close it.
+			try
+			{
+				if (dbc != null)
+					dbc.close();
+			}
+			catch(SQLException e)
+			{
+				log.error("Error closing connection", e);
+			}
+		}
+
+		// Send events associcatd with the rescan
+		//
+		if (updateCompleted)
+		{
+			// Send all events created during rescan process to eventd
+			//
+			Iterator iter = m_eventList.iterator();
+			while (iter.hasNext())
+			{
+				try
+				{
+					EventIpcManagerFactory.getInstance().getManager().sendNow((Event)iter.next());
+
+				}
+				catch(Throwable t)
+				{
+					log.warn("run: unexpected throwable exception caught during send to middleware", t);
+				}
+			}
+		}
+			
+		// Update the schedule information for the rescanned node
+		// 
+		m_scheduledNode.setLastScanned(now);
+		m_scheduledNode.setScheduled(false);
+			
+		log.debug("RescanProcessor for node w/ nodeid " + m_scheduledNode.getNodeId() + " completed.");
+	} // end run
+

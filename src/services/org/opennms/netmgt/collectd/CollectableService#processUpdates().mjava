@@ -1,0 +1,209 @@
+	/**
+	 * Process any outstanding updates.  
+	 *
+	 * @return true if update indicates that collection should be aborted
+	 *         (for example due to deletion flag being set), false otherwise.
+	 */
+	private boolean processUpdates()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		// All update processing takes place within synchronized block
+		// to ensure that no updates are missed.  
+		//
+		synchronized(this)
+		{
+			if (!m_updates.hasUpdates())
+				return !ABORT_COLLECTION;
+				
+			// Update: deletion flag
+			//
+			if (m_updates.isDeletionFlagSet())
+			{
+				// Deletion flag is set, simply return without polling
+				// or rescheduling this collector.
+				//
+				if(log.isDebugEnabled())
+					log.debug("Collector for  " + m_address.getHostAddress() + 
+						" is marked for deletion...skipping collection, will not reschedule.");
+				
+				return ABORT_COLLECTION;
+			}
+			
+			// Update: reinitialization flag
+			//
+			if (m_updates.isReinitializationFlagSet())
+			{
+				// Reinitialization flag is set, call initialize() to
+				// reinit the collector for this interface
+				//
+				if(log.isDebugEnabled())
+					log.debug("ReinitializationFlag set for " + m_address.getHostAddress());
+					
+				try
+				{
+					m_collector.release(this);
+					m_collector.initialize(this, this.getPropertyMap());
+					if (log.isDebugEnabled())
+						log.debug("Completed reinitializing SNMP collector for " + m_address.getHostAddress());
+				}
+				catch(RuntimeException rE)
+				{
+					log.warn("Unable to initialize " + m_address.getHostAddress() + 
+						" for " + m_service.getName() + " collection, reason: " + rE.getMessage());
+				}
+				catch(Throwable t)
+				{
+					log.error("Uncaught exception, failed to intialize interface " + m_address.getHostAddress() + 
+							" for " + m_service.getName() + " data collection", t);
+				}
+			}
+				
+			// Update: reparenting flag
+			//
+			if (m_updates.isReparentingFlagSet())
+			{
+				if(log.isDebugEnabled())
+					log.debug("ReparentingFlag set for " + m_address.getHostAddress());
+					
+				// The interface has been reparented under a different node (with
+				// a different nodeId).  
+				//
+				// If the new directory doesn't already exist simply need to rename the old 
+				// directory:
+				//		/opt/OpenNMS/share/rrd/snmp/<oldNodeId>
+				// to the new directory:
+				//		/opt/OpenNMS/share/rrd/snmp/<newNodeId>
+				//
+				// Otherwise must iterate over each of the files/dirs in the <oldNodeId>
+				// directory and move/rename them under the <newNodeId> directory.
+				
+				// Get path to RRD repository
+				//
+				String rrdPath = DataCollectionConfigFactory.getInstance().getRrdRepository();
+		
+				if(rrdPath == null)
+				{
+					log.warn("Configuration error, failed to retrieve path to RRD repository. Unable to process reparenting updated.");
+					return !ABORT_COLLECTION;
+				}
+		
+				// Strip the File.separator char off of the end of the path
+				if (rrdPath.endsWith(File.separator))
+				{
+					rrdPath = rrdPath.substring(0, (rrdPath.length() - File.separator.length()));
+				}
+			
+				// Does the <newNodeId> directory already exist?
+				File newNodeDir = new File(rrdPath + File.separator + m_updates.getReparentNewNodeId());
+				if (!newNodeDir.isDirectory())
+				{
+					// New directory does not exist yet so simply rename the old directory to
+					// the new directory.
+					//
+					
+					// <oldNodeId> directory
+					File oldNodeDir = new File(rrdPath + File.separator + m_updates.getReparentOldNodeId());
+					
+					try
+					{
+						// Rename <oldNodeId> dir to <newNodeId> dir.
+						if (log.isDebugEnabled())
+							log.debug("Attempting to rename " + oldNodeDir + " to " + newNodeDir);
+						oldNodeDir.renameTo(newNodeDir); 
+						if (log.isDebugEnabled())
+							log.debug("Rename successful!!");
+					}
+					catch (SecurityException se)
+					{
+						log.error("Insufficient authority to rename RRD directory.", se);
+					}
+					catch (Throwable t)
+					{
+						log.error("Unexpected exception while attempting to rename RRD directory.", t);
+					}
+				}
+				else
+				{
+					// New node directory already exists so we must move/rename each of the
+					// old node directory contents under the new node directory.
+					//
+					
+					// Get list of files to be renamed/moved
+					File oldNodeDir = new File(rrdPath + File.separator + m_updates.getReparentOldNodeId());
+					String[] filesToMove = oldNodeDir.list();
+					
+					if (filesToMove != null)
+					{	
+						// Iterate over the file list and rename/move each one
+						for (int i=0; i<filesToMove.length; i++)
+						{
+							File srcFile = new File(oldNodeDir.toString() + File.separator + filesToMove[i]);
+							File destFile = new File(newNodeDir.toString() + File.separator + filesToMove[i]);
+							try
+							{
+								if (log.isDebugEnabled())
+									log.debug("Attempting to move " + srcFile + " to " + destFile);
+								srcFile.renameTo(destFile);
+							}
+							catch (SecurityException se)
+							{
+								log.error("Insufficient authority to move RRD files.", se);
+								break;
+							}
+							catch (Throwable t)
+							{
+								log.warn("Unexpected exception while attempting to move " + srcFile + " to " + destFile, t);
+							}
+						}
+					}
+				}
+					
+				// Convert new nodeId to integer value
+				int newNodeId = -1;
+				try
+				{
+					newNodeId = Integer.parseInt(m_updates.getReparentNewNodeId());
+				}
+				catch (NumberFormatException nfE)
+				{
+					log.warn("Unable to convert new nodeId value to an int while processing reparenting update: " + m_updates.getReparentNewNodeId());
+				}
+				
+				// Set this collector's nodeId to the value of the interface's
+				// new parent nodeid.
+				m_nodeId = newNodeId;
+				
+				// We must now reinitialize the collector for this interface,
+				// in order to update the NodeInfo object to reflect changes
+				// to the interface's parent node among other things.
+				//
+				try
+				{
+					if (log.isDebugEnabled())
+						log.debug("Reinitializing SNMP collector for " + m_address.getHostAddress());
+					m_collector.release(this);
+					m_collector.initialize(this, this.getPropertyMap());
+					if (log.isDebugEnabled())
+						log.debug("Completed reinitializing SNMP collector for " + m_address.getHostAddress());
+				}
+				catch(RuntimeException rE)
+				{
+					log.warn("Unable to initialize " + m_address.getHostAddress() + 
+						" for " + m_service.getName() + " collection, reason: " + rE.getMessage());
+				}
+				catch(Throwable t)
+				{
+					log.error("Uncaught exception, failed to initialize interface " + m_address.getHostAddress() + 
+							" for " + m_service.getName() + " data collection", t);
+				}
+			}
+	
+			// Updates have been applied. Reset CollectorUpdates object.
+			//.
+			m_updates.reset();
+		} // end synchronized
+		
+		return !ABORT_COLLECTION;
+	}
+

@@ -1,0 +1,62 @@
+	/** 
+	 * This method is responsible for handling serviceDeleted events.
+	 * 
+	 * @param event	The event to process.
+	 *
+	 */
+	private void serviceDeletedHandler(Event event)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		// Currently only support SNMP data thresholding.
+		//
+		if (!event.getService().equals("SNMP"))
+			return;
+			
+		int nodeId = (int)event.getNodeid();
+		String ipAddr = event.getInterface();
+		String svcName = event.getService();
+				
+		// Iterate over the collectable services list and mark any entries
+		// which match the nodeId/ipAddr of the deleted service 
+		// for deletion.
+		synchronized(m_thresholdableServices)
+		{
+			ThresholdableService tSvc = null;
+			ListIterator liter = m_thresholdableServices.listIterator();
+			while (liter.hasNext())
+			{
+				tSvc = (ThresholdableService)liter.next();
+				
+				// Only interested in entries with matching nodeId, IP address
+				// and service
+				InetAddress addr = (InetAddress)tSvc.getAddress();
+				if ( !(tSvc.getNodeId() == nodeId && 
+						addr.getHostName().equals(ipAddr)) &&
+						tSvc.getServiceName().equals(svcName) )
+					continue;
+				
+				synchronized(tSvc)
+				{
+					// Retrieve the ThresholderUpdates object associated with
+					// this ThresholdableService if one exists.  
+					ThresholderUpdates updates = tSvc.getThresholderUpdates();
+						
+					// Now set the update's deletion flag so the next
+					// time it is selected for execution by the scheduler
+					// the thresholding will be skipped and the service will not
+					// be rescheduled.
+					updates.markForDeletion();
+				}
+				
+				// Now safe to remove the collectable service from 
+				// the collectable services list
+				liter.remove();
+			}
+		}
+			
+		if (log.isDebugEnabled())
+			log.debug("serviceDeletedHandler: processing of serviceDeleted event for " + 
+				nodeId + "/" + ipAddr + "/" + svcName + " completed.");
+	}
+

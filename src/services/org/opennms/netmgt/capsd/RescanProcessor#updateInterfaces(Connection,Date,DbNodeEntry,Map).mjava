@@ -1,0 +1,150 @@
+	/**
+	 * This method is responsible for updating all of the interface's associated
+	 * with a node.
+	 * 
+	 * @param dbc 		Database connection.
+	 * @param now		Date/time to be associated with the update.
+	 * @param node		Node entry for the node being rescanned
+	 * @param collectorMap	Map of IfCollector objects associated with the node.
+	 * 
+	 * @throws SQLException if there is a problem updating the ipInterface table.
+	 */
+	private void updateInterfaces(Connection  dbc, 
+				      Date        now,
+				      DbNodeEntry node,
+				      Map         collectorMap)
+		throws SQLException
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		// Reset modification flags.  These flags are set by
+		// the updateInterface() method when changes have been
+		// detected which warrant further action (such as 
+		// generating an event).
+		m_ifIndexOnNodeChangedFlag = false;
+		m_snmpIfTableChangedFlag = false;
+		
+		// List of update interfaces
+		// This list is maintained so that for nodes with multiple
+		// interfaces which support SNMP, interfaces are not updated
+		// more than once.  
+		List updatedIfList = new ArrayList();
+		
+		// Determine if any of the interface collector objects have
+		// an SNMP collector associated with them.  If so, use the first
+		// interface with SNMP data collected to update all SNMP-found
+		// interfaces.
+		//
+		Iterator iter = collectorMap.values().iterator();
+		IfCollector collectorWithSnmp = null;
+		while (iter.hasNext())
+		{
+			IfCollector tmp = (IfCollector)iter.next();
+			if (tmp.getSnmpCollector() != null)
+			{
+				collectorWithSnmp = tmp;
+				break;
+			}
+		}
+		
+
+		IfSnmpCollector snmpCollector = null;
+		if (collectorWithSnmp != null)
+		{
+			snmpCollector = collectorWithSnmp.getSnmpCollector();
+			
+			updateInterface(dbc, 
+					now,
+					node,
+					collectorWithSnmp.getTarget(),
+					collectorWithSnmp.getTarget(),
+					collectorWithSnmp.getSupportedProtocols(),
+					snmpCollector);
+			updatedIfList.add(collectorWithSnmp.getTarget());
+			
+			// Update subtargets
+			if (collectorWithSnmp.hasAdditionalTargets())
+			{
+				Map subTargets = collectorWithSnmp.getAdditionalTargets();
+				Iterator xiter = subTargets.keySet().iterator();
+				while (xiter.hasNext())
+				{
+					InetAddress subIf = (InetAddress)xiter.next();
+					updateInterface(dbc,
+							now,
+							node,
+							collectorWithSnmp.getTarget(),
+							subIf,
+							(List)subTargets.get(subIf),
+							snmpCollector);
+					updatedIfList.add(subIf);
+				}
+			}
+			
+			// Add any new non-IP interfaces
+			//
+			if (collectorWithSnmp.hasNonIpInterfaces())
+			{
+				iter = ((List)collectorWithSnmp.getNonIpInterfaces()).iterator();
+				while(iter.hasNext())
+				{
+					SnmpInt32 ifIndex = (SnmpInt32)iter.next();
+						
+					updateNonIpInterface(dbc, now, node, ifIndex.getValue(), snmpCollector);
+				}
+			}
+		}
+		
+		// Majority of interfaces should have been updated by this 
+		// point (provided the node supports SNMP).  Only non-SNMP
+		// interfaces and those associated with the node via
+		// SMB (NetBIOS name) should remain.  Loop through collector
+		// map and update any remaining interfaces.  Use the
+		// updatedIfList object to filter out any interfaces which
+		// have already been updated
+		
+		// Iterate over interfaces from collection map
+		iter = collectorMap.values().iterator();
+		while (iter.hasNext())
+		{
+			IfCollector ifc = (IfCollector)iter.next();
+			
+			// Update target
+			InetAddress ifaddr = ifc.getTarget();
+			if (!updatedIfList.contains(ifaddr))
+			{
+				updateInterface(dbc,
+						now,
+						node,
+						ifc.getTarget(),
+						ifaddr,
+						ifc.getSupportedProtocols(),
+						snmpCollector);
+				updatedIfList.add(ifaddr);
+			}
+			
+			// Update subtargets
+			if (ifc.hasAdditionalTargets())
+			{
+				Map subTargets = ifc.getAdditionalTargets();
+				Set keys = subTargets.keySet();
+				Iterator xiter = keys.iterator();
+				while (xiter.hasNext())
+				{
+					InetAddress subIf = (InetAddress)xiter.next();
+					if (!updatedIfList.contains(subIf))
+					{
+						updateInterface(dbc,
+								now,
+								node,
+								ifc.getTarget(),
+								subIf,
+								(List)subTargets.get(subIf),
+								snmpCollector);
+						updatedIfList.add(subIf);
+					}
+				}
+			}
+		} // end while(more interfaces)
+	}
+

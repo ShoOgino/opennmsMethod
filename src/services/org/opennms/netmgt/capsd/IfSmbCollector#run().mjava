@@ -1,0 +1,155 @@
+	/**
+	 * The main execution method used to collect the SMB information
+	 * for the collector. 
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		try
+		{
+			m_addr = NbtAddress.getByName(m_target.getHostAddress());
+
+			// If the retrieved SMB name is equal to the IP address
+			// of the host, the it is safe to assume that the interface
+			// does not support SMB
+			//
+			if(m_addr.getHostName().equals(m_target.getHostAddress()))
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: failed to retrieve SMB name for " + m_target.getHostAddress());
+				m_addr = null;
+			}
+		}
+		catch(UnknownHostException e)
+		{
+			if (log.isDebugEnabled())
+				log.debug("IfSmbCollector: UnknownHostException: failed to retrieve SMB name, reason:" + 
+					e.getMessage());
+			m_addr = null;
+		}
+
+		if (containsCtrlChars(m_addr.getHostName()))
+		{
+			log.warn("IfSmbCollector: Retrieved SMB name for address " + 
+				m_target.getHostAddress() + " contains control chars: '" + 
+				m_addr.getHostName() + "', discarding.");
+			m_addr = null;
+		}
+
+		if (m_addr != null)
+		{
+			if (log.isDebugEnabled())
+				log.debug("IfSmbCollector: SMB name of " + m_target.getHostAddress() + 
+					" is: " + m_addr.getHostName());
+			try
+			{
+				// Attempt to resolve the Media Access Control Address
+				//
+				byte[] mac = m_addr.getMacAddress();
+				m_mac = toMacString(mac);
+				if(m_mac.equals(SAMBA_MAC))
+				{
+					m_isSamba = true;
+					m_mac = null;
+				}
+			}
+			catch(UnknownHostException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: failed to get MAC for " + 
+							m_target.getHostAddress() + 
+							" due to address failure", e);
+			}
+
+			// Domain name
+			//
+			try
+			{
+				// next collect all the NetBIOS names from the target system
+				//
+				m_allAddrs = NbtAddress.getAllByAddress(m_addr);
+				m_domain = SmbUtils.getAuthenticationDomainName(m_allAddrs, m_addr.getHostName());
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: domain name: '" + m_domain + "'");
+			}
+			catch(UnknownHostException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: failed to get all the addresses for the interface " + m_target.getHostAddress(), e);
+			}
+
+			// get the SMB authentication object
+			//
+			SmbAuth authentication = null;
+			if(m_domain != null)
+				authentication = CapsdConfigFactory.getInstance().getSmbAuth(m_domain);
+
+			if(authentication == null)
+				authentication = CapsdConfigFactory.getInstance().getSmbAuth(m_addr.getHostName());
+
+			if (log.isDebugEnabled())
+				log.debug("IfSmbCollector: SMB authenticator: " + authentication);
+
+			/* ---------------------------------------------------------------------
+			/* Commenting the share enumeration code out for now...saw a scenario
+			/* where a thread blocked indefinitely waiting for the jCIFS code to 
+			/* return.  Will be doing additional testing to try and figure out
+			/* what the problem is but for now will be commenting this code out.
+			/* THe only thing we lose is potentially the OS of the remote box
+			/*
+			
+			// Try to enumerate all the shares on the 
+			// remote target.
+			//
+			try
+			{
+				String smbUrl = SmbUtils.getSmbURL(authentication, m_addr.getHostName());
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: smbUrl = " + smbUrl);
+				SmbFile sfile = new SmbFile(smbUrl);
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: got SmbFile object, retrieving share list...");
+				m_shares = sfile.list();
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: shares list retrieved...");
+				
+				// Get the OS name now
+				//
+				// Note: getOSVersion() method is not part of the standard jCIFS
+				// code.  It was added specifically so we could gain access to
+				// the OS version information already determined by jCIFS but
+				// not made public.
+				//
+				String os = sfile.getOSVersion();
+
+				m_osName = SmbUtils.getOsLabel(os, m_allAddrs, m_isSamba, m_hasExchange);
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: operating system = " + os);
+			}
+			catch(MalformedURLException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: failed to get SMB resource and OS name for host " + m_target.getHostAddress(), e);
+			}
+			catch(UnknownHostException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: failed to get SMB resource and OS name for host " + m_target.getHostAddress(), e);
+			}
+			catch(SmbAuthException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: unable to list SMB shares, authentication failed, reason: " + e.getMessage());
+			}
+			catch(SmbException e)
+			{
+				if (log.isDebugEnabled())
+					log.debug("IfSmbCollector: unable to list SMB shares, reason: " + e.getMessage());
+			}
+			---------------------------------------------------------------------*/
+			
+		} // end if(addr != null)
+
+	} // end run
+

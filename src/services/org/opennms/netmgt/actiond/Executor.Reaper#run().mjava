@@ -1,0 +1,86 @@
+		/**
+		 * The reaper execution enviroment. This method
+		 * scans the process array and removes expired and
+		 * completed commands from the array on a periodic
+		 * basis. In that respect it is a garbage collection
+		 * thread for processes.
+		 *
+		 */
+		public void run()
+		{
+			// Wait for a maximum of 15 seconds between checks!
+			//
+			long waitPeriod = m_maxWait/5;
+			if(waitPeriod > 15000)
+				waitPeriod = 15000;
+
+			Category log = ThreadCategory.getInstance(Executor.class);
+
+			// Begin the checking process.
+			//
+			// Make sure to leave the 'this' keyword associated with the
+			// getClass() call or jikes will complain. The 'this' keyword
+			// removes all ambiguity in the call.
+			//
+			for(;;)
+			{
+				// run and check the queue once about
+				// 1/5 of the maximum run time.
+				//
+				synchronized(m_processes)
+				{
+					Iterator i = m_processes.iterator();
+					while(i.hasNext())
+					{
+						DatedProc dp = (DatedProc)i.next();
+						try
+						{
+							int rc = dp.getProcess().exitValue();
+
+							if(log.isDebugEnabled())
+								log.debug("Process " + dp + " completed, rc = " + rc);
+
+							i.remove();
+							continue;
+						}
+						catch(IllegalThreadStateException ex) { } // still running
+
+						if(dp.getRunTime() > m_maxWait)
+						{
+							if(log.isInfoEnabled())
+								log.info("Process " + dp + " did not complete in the alloted time, terminating.");
+
+							dp.getProcess().destroy();
+							i.remove();
+						}
+					}
+				}
+
+				synchronized(this)
+				{
+					// the 'this' keyword should not be removed
+					// or else jikes will complain about an ambiguous
+					// call.
+					this.notifyAll();
+
+					// sleep for 1/5 of wait time or
+					// 15 seconds, which ever is smaller.
+					//
+					try
+					{
+						// the 'this' keyword should not be removed
+						// or else jikes will complain about an ambiguous
+						// call.
+						this.wait(waitPeriod);
+					}
+					catch(InterruptedException ex)
+					{
+						// this is used as a shutdown mechinism
+						break;
+					}
+				}
+
+			} // end for(;;)
+
+		} // end run
+

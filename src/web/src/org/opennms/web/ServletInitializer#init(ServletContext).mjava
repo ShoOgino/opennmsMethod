@@ -1,0 +1,82 @@
+    /**       
+     * Initialize servlet and JSP configuration on the first invocation
+     * of this method.  All other invocations are ignored.  This method 
+     * is synchronized to ensure only the first invocation performs the 
+     * initialization.
+     *
+     * <p>Call this method in the <code>init</code> method of
+     * your servlet or JSP.  It will read the servlet initialization 
+     * parameters from the <code>ServletConfig</code> and
+     * <code>ServletContext</code> and OpenNMS configuration files. </p>
+     *
+     * <p>If this method finds the property <code>opennms.db.poolman</code>
+     * in the <code>ServletContext</code>, it will create an instance of
+     * the classname specified there to use as the 
+     * <code>DbConnectionManager</code>.</p>
+     *
+     * @param context the <code>ServletContext</code> instance in which
+     * your servlet is running
+     */
+    public synchronized static void init( ServletContext context ) throws ServletException {
+        if( context == null ) {
+            throw new IllegalArgumentException( "Cannot take null parameters." );
+        }
+
+        //all ThreadCategory instances in the WebUI should use this as their category prefix
+        ThreadCategory.setPrefix( "OpenNMS.WEB" );
+        
+        if( factory == null ) {
+            try {
+                String homeDir = context.getInitParameter( "opennms.home" );
+    
+                if( homeDir == null ) {
+                    throw new ServletException( "The opennms.home context parameter must be set." );
+                }
+
+                //read the OpenNMS properties
+                Properties properties = new Properties( System.getProperties() );
+                
+                Enumeration initParamNames = context.getInitParameterNames();
+                while( initParamNames.hasMoreElements() ) {
+                    String name = (String)initParamNames.nextElement();
+                    properties.put( name, context.getInitParameter(name) );
+                }
+                
+                Vault.setProperties( properties );
+                Vault.setHomeDir( homeDir );
+
+                //initialize Log4J for use inside the webapp                
+                PropertyConfigurator.resetConfiguration();
+                PropertyConfigurator.configure( homeDir + Log4JLogger.propFilename );
+
+                //get the database parameters from the bluebird properties
+                String dbUrl    = properties.getProperty( "opennms.db.url" );
+                String dbDriver = properties.getProperty( "opennms.db.driver" ); 
+                String username = properties.getProperty( "opennms.db.user" ); 
+                String password = properties.getProperty( "opennms.db.password" );
+    
+                //set the database connection pool manager (if one is set in the context)
+                String dbMgrClass = context.getInitParameter( "opennms.db.poolman" );
+    
+                if( dbMgrClass != null ) {
+                    Class clazz = Class.forName( dbMgrClass );
+                    factory = (DbConnectionFactory)clazz.newInstance();
+                    factory.init( dbUrl, dbDriver, username, password ); 
+                    Vault.setDbConnectionFactory( factory );
+                }
+            }
+            catch( ClassNotFoundException e ) {
+                throw new ServletException( "Could not find the opennms.db.poolman class", e );    
+            }
+            catch( InstantiationException e ) {
+                throw new ServletException( "Could not instantiate the opennms.db.poolman class", e );    
+            }
+            catch( IllegalAccessException e ) {
+                throw new ServletException( "Could not instantiate the opennms.db.poolman class", e );    
+            }
+            catch( SQLException e ) {
+                throw new ServletException( "Could not initialize a database connection pool", e );    
+            }            
+        }
+    }
+

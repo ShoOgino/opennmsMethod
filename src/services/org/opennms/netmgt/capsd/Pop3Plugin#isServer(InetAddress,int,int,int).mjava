@@ -1,0 +1,102 @@
+	/**
+	 * <P>Test to see if the passed host is running Microsoft Exchange
+	 * server.  If the remote host is running POP3, IMAP or MAPI and 
+	 * we are able to retreive a banner from any of the ports these
+	 * services listen on wich include the text "Microsoft Exchange"
+	 * then this method will return true. Otherwise a false value is 
+	 * returned to the caller.</P>
+	 *
+	 * @param host	The remote host to test.
+	 * @param port	The remote port to test.  
+	 *
+	 * @return True if server is running MS Exchange, false otherwise
+	 */
+	private boolean isServer(InetAddress host, int port, int retries, int timeout)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		boolean isAServer = false;
+		for (int attempts=0; attempts <= retries && !isAServer; attempts++)
+		{
+			Socket  portal    = null;
+			try
+			{
+				// create a connected socket
+				//
+				portal = new Socket(host, port);
+				portal.setSoTimeout(timeout); // 3 second blocking time!
+
+				// get a line, by line reader
+				//
+				BufferedReader lineRdr = new BufferedReader(new InputStreamReader(portal.getInputStream()));
+			
+				// Tokenize the Banner Line, and check the first 
+				// line for a valid return.
+				//
+				// Server response should start with: "+OK"
+				//
+				StringTokenizer t = new StringTokenizer(lineRdr.readLine());
+				if (t.nextToken().equals("+OK"))
+				{
+					// POP3 server should recoginize the QUIT command
+					//
+					String cmd = "QUIT\r\n";
+					portal.getOutputStream().write(cmd.getBytes());
+					
+					//
+					// Token the response to the QUIT command
+					//
+					// Server response should start with: "+OK"
+					//
+					t = new StringTokenizer(lineRdr.readLine());
+					if (t.nextToken().equals("+OK"))
+						isAServer = true;
+				}
+			}
+			catch(ConnectException cE)
+			{
+				// Connection refused!!  No need to perform retries.
+				//
+				cE.fillInStackTrace();
+				log.debug("Pop3Plugin: Host " + host.getHostAddress() + " refused connection to pop3 port " + port, cE);
+				isAServer = false;
+				break;
+			}
+			catch(NoRouteToHostException e)
+			{
+				// No Route to host!!!
+				//
+				e.fillInStackTrace();
+				log.info("Pop3Plugin: No route to host " + host.getHostAddress() + " was available", e);
+				isAServer = false;
+				throw new UndeclaredThrowableException(e); 
+			}
+			catch(InterruptedIOException e)
+			{
+				// expected exception
+				isAServer = false;
+			}
+			catch(IOException e)
+			{
+				isAServer = false;
+				log.info("Pop3Plugin: An unexpected I/O exception occured contacting host " + host.getHostAddress(), e);
+			}
+			catch(Throwable t)
+			{
+				isAServer = false;
+				log.error("Pop3Plugin: An undeclared throwable exception was caught contacting host " + host.getAddress(), t);
+			}
+			finally
+			{
+				try
+				{
+					if(portal != null)
+						portal.close();
+				}
+				catch(IOException e) { }
+			}
+		}
+
+		return isAServer;
+	}
+

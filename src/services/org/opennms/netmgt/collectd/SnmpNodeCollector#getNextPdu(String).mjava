@@ -1,0 +1,150 @@
+	/**
+	 * <P>This method constructs the next SnmpPduPacket (pdu) for sending
+	 * to the remote node.  The version of SNMP supported
+	 * will determine whether a GET or GETBULK PDU is built.</P>
+	 * 
+	 * <P>For SNMPv1, GET commands are built. Each constructed PDU contains 
+	 * varbinds for all the objects to be collected.</P>
+	 *
+	 * <P>For SNMPv2, GETBULK commands are built. Each constructed PDU contains
+	 * varbinds for all the objects to be collected.</P>
+	 *
+	 * @param ifAddress 	Interface address of the remote agent
+	 * 
+	 * @return An SnmpPduPacket appropriate for the SNMP version supported.
+	 *
+	 * @see org.opennms.protocols.snmp.SnmpNull		SnmpNull
+	 * @see org.opennms.protocols.snmp.SnmpPduPacket 	SnmpPduPacket
+	 */
+	public SnmpPduPacket getNextPdu(String ifAddress)
+	{
+		// Log4j category
+		//
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		SnmpPduPacket pdu = null;
+		int nonRepeaters = 0;  // Applicable to SNMPv2 only
+
+		// SNMPv2 Support
+		if (m_version == SnmpSMI.SNMPV2) 
+		{
+			pdu = new SnmpPduBulk();
+		}
+		// SNMPv1 Support
+		else 
+		{
+			pdu = new SnmpPduRequest(SnmpPduPacket.GET);
+		}
+		
+		pdu.setRequestId(pdu.nextSequence());
+		
+		// Generate new SnmpVarBind object.  Add each oid from the
+		// object list until max var count is reached or there are no
+		// more objects to collect.
+		Object[] oidArray = m_objList.toArray();
+		for (int ii=m_oidListIndex; 
+			ii < m_objList.size() && (ii-m_oidListIndex) < m_maxVarsPerPdu;
+			ii++)
+		{
+			MibObject mibObject = ((MibObject)oidArray[ii]);
+			
+			SnmpObjectId oid = null;
+			String instanceStr = mibObject.getInstance();
+			
+			//
+			// instance must be one of the following:
+			//      1) null.  In this case the object's oid value is used as-is.
+			//	2) a sequence of period-separated decimal values indicating the
+			// 	instance to be retrieved.  This value will be appended to the 
+			// 	objects oid.  In the case of SNMPv2 the final decimal value will
+			//	be decremented by one due to the fact that SNMP GetNext is used.
+			//	3) an integer value indicating the instance of the MIB object to be
+			// 	retrieved.  This value will be appended to the object's oid.
+			//	In the case of SNMPv2 the final decimal value will
+			//	be decremented by one due to the fact that SNMP GetNext is used.
+			//
+			if (instanceStr == null)
+			{
+				log.warn("No instance specified for MIB object " + mibObject.getOid());
+				oid = new SnmpObjectId(mibObject.getOid());
+			}
+			else if (m_version == SnmpSMI.SNMPV1)
+			{
+				oid = new SnmpObjectId(mibObject.getOid() + "." + instanceStr);
+			}
+			else if (m_version == SnmpSMI.SNMPV2)
+			{
+				String instancePrefix = null;
+				String lastDecimalValue = null;
+				
+				// Sequence of period-separated decimal values?
+				//
+				if (instanceStr.indexOf(".") != -1)
+				{
+					// Extract last decimal value so we can decrement it by one
+					int lastPeriod = instanceStr.lastIndexOf('.');
+					instancePrefix = instanceStr.substring(0, lastPeriod);
+					lastDecimalValue = instanceStr.substring(lastPeriod+1);
+				}
+				// Single integer value?
+				else 
+				{
+					lastDecimalValue = instanceStr;
+				}
+				
+				// convert the lastDecimalValue string to an integer
+				int lastValue = -1;
+				try 
+				{
+					lastValue = Integer.parseInt(lastDecimalValue);
+				}
+				catch (NumberFormatException nfe)
+				{
+					// If the value cannot be converted to an integer just
+					// use a string of "0".
+					log.warn("Failed to convert last value " + lastDecimalValue + " from instance " + instanceStr + " to an integer...will use a value of 0");
+					lastValue = 0;  
+				}
+					
+				// For SNMPV2 we are using GetBulk requests which in effect
+				// performs a GetNext as opposed to a Get.  Therefore we need
+				// to decrement the final decimal value of the instance string
+				// by one so that the GetNext will retrieve the appropriate
+				// entry.  If instance is '0' we leave off the instance id entirely
+				//
+				if (lastValue == 0)
+					oid = new SnmpObjectId(mibObject.getOid());
+				else
+				{
+					Integer instance = new Integer(lastValue-1);
+					
+					if (instancePrefix == null)
+						oid = new SnmpObjectId(mibObject.getOid() + "." + instance.toString());
+					else
+						oid = new SnmpObjectId(mibObject.getOid() + "." + instancePrefix + "." + instance.toString());
+				}
+				
+				// increment non-repeaters count
+				nonRepeaters ++;
+			} 
+			
+			// Add the variable binding to the pdu
+			if (log.isDebugEnabled()) 
+				log.debug("getNextPdu: adding object id to pdu: " + oid.toString());
+
+			pdu.addVarBind(new SnmpVarBind(oid));
+
+		}	
+
+		// if SNMPv2, assign the non repeater and max repetitions count
+		if (m_version == SnmpSMI.SNMPV2)
+		{
+			((SnmpPduBulk)pdu).setNonRepeaters(nonRepeaters);
+			((SnmpPduBulk)pdu).setMaxRepititions(0);
+		}
+		
+		if (log.isDebugEnabled())
+			log.debug("getNextPdu: finished building next pdu, num vars in pdu=" + pdu.getLength());
+		return pdu;
+	}
+

@@ -1,0 +1,94 @@
+	/**
+	 * Starts the server instance. If the server is running
+	 * then an exception is thrown. Also, since the opening
+	 * of sockets and other resources are delayed until this
+	 * method is invoked, standard exceptions are rethrown as an
+	 * {@link java.lang.reflect.UndeclaredThrowableException
+	 * undeclared throwable}.
+	 *
+	 * @throws java.lang.IllegalStateException Thrown if the server is
+	 * 	already running.
+	 *
+	 * @throws java.lang.reflect.UndeclaredThrowableException Thrown if a 
+	 * 	non-runtime exception is genereated during startup.
+	 *
+	 */
+	public synchronized void start()
+	{
+		ThreadCategory.setPrefix(LOG4J_CATEGORY);
+		Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("start: DHCP client daemon starting...");
+
+		m_status = STARTING;
+		
+		// Only allow start to be called once.
+		//
+		if(m_worker != null && m_worker.isAlive())
+			throw new IllegalStateException("The server is already running");
+
+		// Unless the worker has died, then stop
+		// and continue.
+		//
+		if(m_worker != null)
+			stop();
+
+		// the client list
+		//
+		m_clients = Collections.synchronizedList(new LinkedList());
+		
+		// load the dhcpd configuration
+		DhcpdConfigFactory dFactory = null;
+		try
+		{
+			DhcpdConfigFactory.reload();
+			dFactory = DhcpdConfigFactory.getInstance();
+		}
+		catch(MarshalException ex)
+		{
+			log.error("Failed to load dhcpd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+		catch(ValidationException ex)
+		{
+			log.error("Failed to load dhcpd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+		catch(IOException ex)
+		{
+			log.error("Failed to load dhcpd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+
+		// open the server
+		//
+		try
+		{
+			if (log.isDebugEnabled())
+				log.debug("start: listening on TCP port " + dFactory.getPort() + " for incoming client requests.");
+			m_server  = new ServerSocket(dFactory.getPort());
+		}
+		catch(IOException ex)
+		{
+			throw new UndeclaredThrowableException(ex);
+		}
+
+		// open the receiver socket
+		//
+		try
+		{
+			if (log.isDebugEnabled())
+				log.debug("start: starting unicast receiver thread..");
+			m_listener = new Receiver(m_clients);
+			m_listener.start();
+		}
+		catch(IOException ex)
+		{
+			try { m_server.close(); } catch(IOException ex1) { }
+			throw new UndeclaredThrowableException(ex);
+		}
+
+		m_worker = new Thread(this, getName());
+		m_worker.start();
+	}
+

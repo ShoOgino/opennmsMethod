@@ -1,0 +1,133 @@
+	/**
+	 * <p>This method is called if there are no longer any "Active" services
+	 * associated with a particular interface...they've all be flagged as
+	 * "Deleted".  This method will flag the interface as deleted by
+	 * setting the 'isManaged' field of the ipinterface table to 'D' for
+	 * "Deleted".</p>
+	 *
+	 * @param dbConn		the database connection
+	 * @param nodeID		NodeID associated with the interface
+	 * @param ipAddr		IP Address associated with the interface
+	 * 
+	 * @throws SQLException	If there is a problem modifying the database.
+	 */
+	private void cleanupInterface(Connection dbConn, long nodeID, String ipAddr)
+		throws SQLException
+	{
+		Category log = ThreadCategory.getInstance(OutageWriter.class);
+
+		if (log.isDebugEnabled())
+			log.debug("cleanupInterface: nodeID/ipAddr - " + nodeID + "/" + ipAddr);
+
+		// Delete the interface entry from the 'ipInterface' table
+
+		// Prepare SQL statement used to flag an entry from the ifServices table
+		// as deleted based on a node/interface/service tuple
+		PreparedStatement deleteInterfaceStmt = dbConn.prepareStatement(OutageConstants.DB_DELETE_INTERFACE);
+		deleteInterfaceStmt.setLong(1, nodeID);
+		deleteInterfaceStmt.setString(2, ipAddr);
+
+		if (log.isDebugEnabled())
+			log.debug("cleanupInterface: deleting interface entry from 'ipinterface' table");
+
+		deleteInterfaceStmt.executeUpdate();
+
+		// close the statement
+		deleteInterfaceStmt.close();
+
+		if (log.isDebugEnabled())
+			log.debug("cleanupInterface: interface entry deleted");
+		
+		// Does the 'ipInterface' table contain any other MANAGED interfaces for
+		// this node.  If not, then we can delete any UNMANAGED interfaces and
+		// then delete the node.
+
+		// Prepare SQL statement used to determine if there are any remaining
+	 	// entries in the 'ipInterface' table for a specific nodeID
+	 	// following the deletion of an interface entry.
+		PreparedStatement getInterfaceListStmt = dbConn.prepareStatement(OutageConstants.DB_GET_INTERFACE_LIST);
+		getInterfaceListStmt.setLong(1, nodeID);
+
+		ResultSet rs = getInterfaceListStmt.executeQuery();
+		
+		// loop through the result set and determine if there are any remaining
+		// managed interfaces for the node in question.
+		boolean foundManagedInterface = false;
+		boolean deleteNode = false;
+		
+		int ifCount = 0;  // Keep track of number of remaining interfaces
+		while (rs.next())
+		{
+			ifCount++;
+			String isManagedStr = rs.getString(1);
+			if (log.isDebugEnabled())
+				log.debug("cleanupInterface: interface entry " + ifCount + " - isManaged: " + isManagedStr);
+
+			if (isManagedStr.equals("M"))
+			{
+				foundManagedInterface = true;
+				break;
+			}
+		}
+
+		// close result set and statement
+		rs.close();
+		getInterfaceListStmt.close();
+		
+		if (log.isDebugEnabled())
+			log.debug("cleanupInterface: foundManagedInterface? " + foundManagedInterface);
+
+		if (!foundManagedInterface)
+		{
+			deleteNode = true;
+
+			if (log.isDebugEnabled())
+				log.debug("cleanupInterface: No more managed interfaces found for node: " + nodeID);
+
+			// If any unmanaged interface entries remain, delete them all
+			if (ifCount > 0)
+			{
+				// Delete all 'ipinterface' table entries for this node
+				// ???? DO WE NEED TO GENERATE A DELETION EVENT FOR THESE UNMANAGED INTERFACES????
+				// Prepare statement used to flag all interface entries from the
+	 			// 'ipInterface' table as deleted for a specific node
+				PreparedStatement deleteAllInterfacesStmt = dbConn.prepareStatement(OutageConstants.DB_DELETE_ALL_INTERFACES);
+				deleteAllInterfacesStmt.setLong(1, nodeID);
+			
+				if (log.isDebugEnabled())
+					log.debug("cleanupInterface: deleting all remaining interfaces for nodeID: " + nodeID);			
+
+				int count = deleteAllInterfacesStmt.executeUpdate();
+
+				// close statement
+				deleteAllInterfacesStmt.close();
+
+				if (log.isDebugEnabled())
+					log.debug("cleanupInterface: all remaining " + count + " interfaces deleted");
+				
+				// Must delete any remaining entries in the 'snmpInterface' table as well.
+
+				// Prepare SQL statement used to delete all entries for a node
+				// from the snmpInterface table
+				PreparedStatement deleteSnmpInterfaceStmt = dbConn.prepareStatement(OutageConstants.DB_DELETE_SNMP_INTERFACE);
+				deleteSnmpInterfaceStmt.setLong(1, nodeID);
+			
+				if (log.isDebugEnabled())
+					log.debug("cleanupInterface: deleting all remaining SNMP interfaces for nodeID: " + nodeID);			
+				count = deleteSnmpInterfaceStmt.executeUpdate();
+
+				// close statement
+				deleteSnmpInterfaceStmt.close();
+
+
+				if (log.isDebugEnabled())
+					log.debug("cleanupInterface: all remaining " + count + " SNMP interfaces deleted");
+			}
+			 
+		}
+		
+		// If necessary delete the node entry from the 'node' table
+		if (deleteNode)
+			cleanupNode(dbConn, nodeID);
+	}
+

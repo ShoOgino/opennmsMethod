@@ -1,0 +1,57 @@
+	/**
+	 * Construts a new monitor.
+	 */
+	IcmpMonitor()
+		throws IOException
+	{
+		synchronized(IcmpMonitor.class)
+		{
+			if(m_worker == null)
+			{
+				// Create a receiver queue
+				//
+				final FifoQueueImpl q = new FifoQueueImpl();
+
+				// Open a socket
+				//
+				m_icmpSock = new IcmpSocket();
+
+				// Start the receiver
+				//
+				m_receiver = new ReplyReceiver(m_icmpSock, q, FILTER_ID);
+				m_receiver.start();
+
+				// Start the processor
+				//
+				m_worker = new Thread(new Runnable() {
+					public void run()
+					{
+						for(;;)
+						{
+							Reply pong = null;
+							try
+							{
+								pong = (Reply)q.remove();
+							}
+							catch(InterruptedException ex)
+							{
+								break;
+							}
+							catch(Exception ex)
+							{
+								ThreadCategory.getInstance(this.getClass()).error("Error processing response queue", ex);
+							}
+
+							Long key = new Long(pong.getPacket().getTID());
+							Ping ping = (Ping)m_waiting.get(key);
+							if(ping != null && ping.isTarget(pong.getAddress()))
+								ping.signal();
+						}
+					}
+				}, "IcmpMonitor-Receiver" );
+				m_worker.setDaemon(true);
+				m_worker.start();
+			}
+		}
+	}
+

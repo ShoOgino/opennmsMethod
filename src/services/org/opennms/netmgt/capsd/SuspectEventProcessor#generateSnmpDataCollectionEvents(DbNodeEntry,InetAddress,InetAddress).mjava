@@ -1,0 +1,67 @@
+	/**
+	 * Determines if any SNMP data collection related events need to 
+	 * be generated based upon the results of the current rescan.  If
+	 * necessary will generate one of the following events:
+	 *     'reinitializePrimarySnmpInterface'
+	 *     'primarySnmpInterfaceChanged'
+	 * 
+	 * @param nodeEntry    DbNodeEntry object of the node being rescanned.
+	 * @param oldPrimary   Old primary SNMP interface
+	 * @param newPrimary   New primary SNMP interface
+	 */
+	private void generateSnmpDataCollectionEvents(DbNodeEntry nodeEntry, InetAddress oldPrimary, InetAddress newPrimary)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		// Sanity check -- should not happen
+		if (oldPrimary == null && newPrimary == null)
+		{
+			log.warn("generateSnmpDataCollectionEvents: both old and new primary SNMP interface vars are null!");
+		}
+		 
+		// Sanity check -- should not happen
+		else if (oldPrimary != null && newPrimary == null)
+		{
+			log.warn("generateSnmpDataCollectionEvents: old primary (" + oldPrimary.getHostAddress() + ") is not null but new primary is null!");
+		}
+		
+		// Just added the primary SNMP interface to the node, the nodeGainedService
+		// event already generated is sufficient to start SNMP data collection...no
+		// additional events are required.
+		else if (oldPrimary == null && newPrimary != null)
+		{
+			if (log.isDebugEnabled())
+				log.debug("generateSnmpDataCollectionEvents: identified " + newPrimary.getHostAddress() + " as the primary SNMP interface for node " + nodeEntry.getNodeId());
+		}
+			
+		// A PrimarySnmpInterfaceChanged event is generated if the scan
+		// found a different primary SNMP interface than what is stored
+		// in the database.  
+		//
+		else if (!oldPrimary.equals(newPrimary) )
+		{
+			if (log.isDebugEnabled())
+			{
+				log.debug("generateSnmpDataCollectionEvents: primary SNMP interface has changed.  Was: " + 
+					oldPrimary.getHostAddress() + " Is: " + 
+					newPrimary.getHostAddress());
+			}
+			
+			createAndSendPrimarySnmpInterfaceChangedEvent(nodeEntry.getNodeId(), newPrimary, oldPrimary);
+		}
+		
+		// The primary SNMP interface did not change but the Capsd scan just added
+		// an interface to the node so we need to update the interface
+		// map which is maintained in memory for the purpose of doing
+		// SNMP data collection.  Therefore we generate a 
+		// reinitializePrimarySnmpInterface event so that this map
+		// can be refreshed based on the most up to date information
+		// in the database.
+		else
+		{
+			if (log.isDebugEnabled())
+				log.debug("generateSnmpDataCollectionEvents: Generating reinitializeSnmpInterface event for interface " + newPrimary.getHostAddress());
+			createAndSendReinitializePrimarySnmpInterfaceEvent(nodeEntry.getNodeId(), newPrimary);
+		}
+	}
+

@@ -1,0 +1,154 @@
+	/**
+	 * 
+	 */
+	private Event createEvent(Integer nodeId,
+				InetAddress 	primary,
+				Map		ifDataMap,
+				double		dsValue,
+				Threshold	threshold,
+				String 		uei,
+				java.util.Date  date)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		if (nodeId == null || primary == null || threshold == null)
+			throw new IllegalArgumentException("nodeid, primary, and threshold cannot be null.");
+			
+		if (log.isDebugEnabled()) 
+		{
+			log.debug("createEvent: nodeId=" + nodeId + " primaryAddr=" + primary + 
+				" ds=" + threshold.getDsName() + " uei=" + uei);
+				
+			if (ifDataMap != null)
+			{
+				log.debug("createEvent: specific interface data:" + 
+					" ifAddr=" + (String)ifDataMap.get("ipaddr") +
+					" macAddr=" + (String)ifDataMap.get("snmpphysaddr") +
+					" ifName=" + (String)ifDataMap.get("snmpifname") +
+					" ifDescr=" + (String)ifDataMap.get("snmpifdescr") +
+					" ifIndex=" + (String)ifDataMap.get("snmpifindex") +
+					" ifLabel=" + (String)ifDataMap.get("iflabel"));
+			}
+		}
+			
+		// create the event to be sent
+		Event newEvent = new Event();
+		newEvent.setUei(uei);
+		newEvent.setNodeid(nodeId.longValue());
+		newEvent.setService("collectd:snmp");
+		
+		// set the source of the event to the datasource name
+		newEvent.setSource("OpenNMS.Threshd." + threshold.getDsName());
+		
+		// Set event interface
+		//
+		if (ifDataMap == null || ifDataMap.get("ipaddr") == null)
+		{
+			// Node level datasource 
+			//
+			if (primary != null)
+				newEvent.setInterface(primary.getHostAddress());
+		}
+		else
+		{
+			// Interface level datasource
+			// 
+			// NOTE:  Non-IP interfaces will have an 
+			// 	  address of "0.0.0.0".
+			//
+			String ifAddr = (String)ifDataMap.get("ipaddr");
+			newEvent.setInterface(ifAddr);
+		}
+		
+		// Set event host
+		//
+		try
+		{
+			newEvent.setHost(InetAddress.getLocalHost().getHostName());
+		}
+		catch(UnknownHostException uhE)
+		{
+			newEvent.setHost("unresolved.host");
+			log.warn("Failed to resolve local hostname", uhE);
+		}
+		
+		// Set event time
+		newEvent.setTime(EventConstants.formatToString(date));
+		
+		// Add appropriate parms
+		//
+		Parms eventParms = new Parms();
+		Parm eventParm = null;
+		Value parmValue = null;
+		
+		// Add datasource name
+		eventParm = new Parm();
+		eventParm.setParmName("ds");
+		parmValue = new Value();
+		parmValue.setContent(threshold.getDsName());
+		eventParm.setValue(parmValue);
+		eventParms.addParm(eventParm);
+		
+		// Add last known value of the datasource
+		// fetched from its RRD file
+		//
+		eventParm  = new Parm();
+		eventParm.setParmName("value");
+		parmValue = new Value();
+		parmValue.setContent(Double.toString(dsValue));
+		eventParm.setValue(parmValue);
+		eventParms.addParm(eventParm);
+		
+		// Add configured threshold value
+		eventParm = new Parm();
+		eventParm.setParmName("threshold");
+		parmValue = new Value();
+		parmValue.setContent(Double.toString(threshold.getValue()));
+		eventParm.setValue(parmValue);
+		eventParms.addParm(eventParm);
+		
+		// Add configured trigger value
+		eventParm = new Parm();
+		eventParm.setParmName("trigger");
+		parmValue = new Value();
+		parmValue.setContent(Integer.toString(threshold.getTrigger()));
+		eventParm.setValue(parmValue);
+		eventParms.addParm(eventParm);
+
+		// Add configured rearm value
+		eventParm = new Parm();
+		eventParm.setParmName("rearm");
+		parmValue = new Value();
+		parmValue.setContent(Double.toString(threshold.getRearm()));
+		eventParm.setValue(parmValue);
+		eventParms.addParm(eventParm);
+		
+		// Add interface parms if available
+		if (ifDataMap != null && ifDataMap.get("iflabel") != null)
+		{
+			// Add ifLabel
+			eventParm = new Parm();
+			eventParm.setParmName("ifLabel");
+			parmValue = new Value();
+			parmValue.setContent((String)ifDataMap.get("iflabel"));
+			eventParm.setValue(parmValue);
+			eventParms.addParm(eventParm);
+		}
+		
+		if (ifDataMap != null && ifDataMap.get("snmpifindex") != null)
+		{
+			// Add ifIndex
+			eventParm = new Parm();
+			eventParm.setParmName("ifIndex");
+			parmValue = new Value();
+			parmValue.setContent((String)ifDataMap.get("snmpifindex"));
+			eventParm.setValue(parmValue);
+			eventParms.addParm(eventParm);
+		}
+		
+		// Add Parms to the event
+		newEvent.setParms(eventParms);
+		
+		return newEvent;
+	}
+

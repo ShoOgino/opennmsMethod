@@ -1,0 +1,129 @@
+	/**
+	 * The main worker of the fiber. This method is executed by the 
+	 * encapsualted thread to read commands from the execution queue
+	 * and to execute those commands. If the thread is interrupted or
+	 * the status changes to <code>STOP_PENDING</code> then the method
+	 * will return as quickly as possible.
+	 *
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(Executor.class);
+
+		synchronized(this)
+		{
+			m_status = RUNNING;
+		}
+
+		for(;;)
+		{
+			synchronized(this)
+			{
+				// if stopped or stop pending then break out
+				//
+				if(m_status == STOP_PENDING || m_status == STOPPED)
+					break;
+
+				// if paused or pause pending then block
+				//
+				while(m_status == PAUSE_PENDING ||
+				      m_status == PAUSED)
+				{
+					m_status = PAUSED;
+					try
+					{
+						wait();
+					}
+					catch(InterruptedException ex)
+					{
+						// exit
+						break;
+					}
+				}
+
+				// if resume pending then change to running
+				//
+				if(m_status == RESUME_PENDING)
+					m_status = RUNNING;
+			}
+
+			// check to see if we can execute more
+			// processes. Block until we can.
+			//
+			if(m_maxProcCount == m_processes.size())
+			{
+				if (log.isDebugEnabled())
+					log.debug("Number of processes at " + m_maxProcCount + " - being wait for a process to finish or be reaped!");
+
+				synchronized(m_reaperRun)
+				{
+					m_reaperRun.notifyAll();
+					try
+					{
+						m_reaperRun.wait();
+					}
+					catch(InterruptedException ex)
+					{
+						// exit command
+						break;
+					}
+				}
+				continue; // check status and count again.
+			}
+
+			// Extract the next command
+			//
+			String cmd = null;
+			try
+			{
+				cmd = (String) m_execQ.remove(1000);
+				if(cmd == null)   // status check time
+					continue; // goto top of loop
+			}
+			catch(InterruptedException ex)
+			{
+				break;
+			}
+			catch(FifoQueueException ex)
+			{
+				log.warn("The input execution queue has errors, exiting...", ex);
+				break;
+			}
+
+
+			// start a new process
+			//
+			if (log.isDebugEnabled())
+				log.debug("Parsing cmd args: " + cmd);
+				
+			String[] execArgs = getExecArguments(cmd);
+			if(execArgs != null && execArgs.length > 0)
+			{
+				try
+				{
+					if (log.isDebugEnabled())
+						log.debug("Getting ready to execute \'" + cmd + "\'");
+
+					Process px = Runtime.getRuntime().exec(execArgs);
+					m_processes.add(new DatedProc(cmd, px));
+				}
+				catch(IOException ex)
+				{
+					log.warn("Failed to execute command: " + cmd, ex);
+				}
+				catch(SecurityException ex)
+				{
+					log.warn("Application not authorized to exec commands!", ex);
+					break;
+				}
+			}
+
+		} // end infinite loop
+
+		synchronized(this)
+		{
+			m_status = STOPPED;
+		}
+
+	} // end run
+

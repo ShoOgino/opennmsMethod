@@ -1,0 +1,147 @@
+	/**
+	 * This is where all the work of the class is done.  
+	 */
+	public void run()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		CapsdConfigFactory cFactory = CapsdConfigFactory.getInstance();
+
+		// Convert interface InetAddress object
+		//
+		InetAddress ifaddr = null;
+		try
+		{
+			ifaddr = InetAddress.getByName(m_suspectIf);
+		}
+		catch(UnknownHostException e)
+		{
+			log.warn("SuspectEventProcessor: Failed to convert interface address " + m_suspectIf + " to InetAddress", e);
+			return;
+		}
+			 
+		// collect the information
+		//
+		if(log.isDebugEnabled())
+			log.debug("SuspectEventProcessor: running collection for " + ifaddr.getHostAddress());
+
+		IfCollector collector = new IfCollector(ifaddr, true);
+		collector.run();
+		Date now = new Date();
+
+		// Track changes to primary SNMP interface
+		InetAddress oldSnmpPrimaryIf = null;
+		InetAddress newSnmpPrimaryIf = null;
+		
+		// Update the database
+		//
+		boolean updateCompleted = false;
+		boolean useExistingNode = false;
+		DbNodeEntry entryNode = null;
+		try
+		{
+			// Synchronize on the Capsd sync lock so we can check if 
+			// the interface is already in the database and perform 
+			// the necessary inserts in one atomic operation
+			//	
+			// The RescanProcessor class is also synchronizing on this
+			// lock prior to performing database inserts or updates.
+			Connection dbc = null;
+			synchronized(Capsd.getDbSyncLock())
+			{
+				// Get database connection
+				//
+				try
+				{
+					dbc =  DatabaseConnectionFactory.getInstance().getConnection();
+
+					// Only add the node/interface to the database if
+					// it isn't already in the database
+					if (!cFactory.isInterfaceInDB(dbc, ifaddr))
+					{
+						// Using the interface collector object determine
+						// if this interface belongs under a node already
+						// in the database.
+						//
+						entryNode = getExistingNodeEntry(dbc, collector);
+						
+						if (entryNode == null)
+						{
+							// Create a node entry for the new interface
+							//
+							entryNode = createNode(dbc,
+										ifaddr,
+										collector);
+						}
+						else
+						{
+							// Will use existing node entry
+							//
+							useExistingNode = true;
+						}
+							
+						// Get old primary SNMP interface (if one exists)
+						//
+						oldSnmpPrimaryIf = getPrimarySnmpInterfaceFromDb(dbc, entryNode);
+							
+						// Add interfaces
+						//
+						addInterfaces(dbc, entryNode, useExistingNode, ifaddr, collector);
+							
+						// Now that all interfaces have been added to the database we
+						// can update the 'primarySnmpInterface' field of the ipInterface
+						// table.  Necessary because the IP address must already be in 
+						// the database to evaluate against a filter rule.
+						//
+						List snmpAddresses = buildSnmpAddressList(collector);
+						newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
+						setPrimarySnmpInterface(dbc, entryNode, newSnmpPrimaryIf, oldSnmpPrimaryIf);
+		
+						// Update 
+						updateCompleted = true;
+					}
+				}
+				finally
+				{
+					if(dbc != null)
+					{
+						try
+						{
+							dbc.close();
+						}
+						catch(SQLException e)
+						{
+							if(log.isInfoEnabled())
+								log.info("run: an sql exception occured closing the database connection", e);
+						}
+					}
+					dbc = null;
+				}
+			}
+
+		} // end try
+		catch(Throwable t)
+		{
+			log.error("Error writing records", t);
+		}
+				
+		// Send events
+		//
+		if (updateCompleted)
+		{
+			if (!useExistingNode)
+				createAndSendNodeAddedEvent(entryNode);		
+						
+			sendInterfaceEvents(entryNode, useExistingNode, ifaddr, collector);
+			
+			if (useExistingNode) 
+			{
+				generateSnmpDataCollectionEvents(entryNode, oldSnmpPrimaryIf, newSnmpPrimaryIf);
+			}
+				
+		}
+
+		if (log.isDebugEnabled())
+			log.debug("SuspectEventProcessor for " + m_suspectIf + " completed.");
+	} // end run
+

@@ -1,0 +1,188 @@
+	/**
+	 * <P>This method is used to process received SNMP PDU packets from
+	 * the remote agent. The method is part of the SnmpHandler interface
+	 * and will be invoked when a PDU is successfully decoded. The method
+	 * is passed the receiving session, the PDU command, and the actual
+	 * PDU packet.</P>
+	 *
+	 * <P>When all the data has been received from the session the signaler
+	 * object, initialized in the constructor, is signaled. In addition,
+	 * the receiving instance will call notifyAll() on itself at the same
+	 * time.</P>
+	 *
+	 * @param session	The SNMP Session that received the PDU
+	 * @param command	The command contained in the received pdu
+	 * @param pdu		The actual received PDU.
+	 *
+	 */
+	public void snmpReceivedPdu(SnmpSession session, int command, SnmpPduPacket pdu)
+	{ 
+		boolean doNotify = true;
+		boolean storeResponseData = true;
+		
+		// Log4j category
+		//
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		if (log.isDebugEnabled())
+			log.debug("snmpReceivedPdu: got an SNMP pdu, num vars=" + pdu.getLength());
+		
+		try
+		{
+			if(command == SnmpPduPacket.RESPONSE)
+			{
+				//
+				// Check for SNMP error stored in request pdu
+				//
+				m_errorStatus = ((SnmpPduRequest)pdu).getErrorStatus();
+				if (m_errorStatus != SnmpPduPacket.ErrNoError)
+				{
+					m_error = true;
+ 
+					m_errorIndex = ((SnmpPduRequest)pdu).getErrorIndex();
+					if(log.isEnabledFor(Priority.WARN))
+						log.warn("snmpReceivedPDU: Error during node SNMP collection for interface " + session.getPeer().getPeer().toString() + ", SNMP error text: " + m_errorText[m_errorStatus]);
+ 
+					// If valid m_errorIndex variable is set:
+					//   - print warning indicating the failing object
+					//     if SNMP version is SNMPv1:
+					//       - remove the failing object from the MIB object list
+					//       - rebuild the SNMP request PDU (absent the failing object)
+					//       - resend the request
+					//
+					if (m_errorIndex > 0 && (m_errorIndex + m_oidListIndex) <= m_objList.size())
+					{
+						MibObject tempObj = (MibObject)m_objList.get((m_errorIndex-1)+m_oidListIndex);
+						if(log.isEnabledFor(Priority.WARN))
+							log.warn("snmpReceivedPDU: Failing varbind - name: " + tempObj.getAlias() + " oid: " + tempObj.getOid());
+ 
+						if (m_version == SnmpSMI.SNMPV1)
+						{
+							m_error = false; // attempt to recover
+							storeResponseData = false;
+							
+							// Remove the failing MIB object from the object list,
+							//
+							m_objList.remove((m_errorIndex-1) + m_oidListIndex);
+							
+							if (log.isDebugEnabled())
+								log.debug("snmpReceivedPDU: Removing failing varbind and resending request...");
+ 
+							// Rebuild the request PDU and resend
+							//
+							SnmpPduPacket nxtpdu = getNextPdu(m_primaryIf);
+							doNotify = false;
+							session.send(nxtpdu, this);
+						}
+					}
+				}
+
+				//
+				// SNMPv2 Responses
+				//
+				else if (m_version == SnmpSMI.SNMPV2) 
+				{
+					if (log.isDebugEnabled())
+						log.debug("snmpReceivedPdu: node SNMP response arrived.  Handling GETBULK response.");
+					
+					int numVarBinds = pdu.getLength();
+					for (int y = 0; y < numVarBinds; y++) 
+					{
+						SnmpVarBind vb = pdu.getVarBindAt(y);
+						
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPDU: current oid name,value pair: " + vb.getName() + " : " + vb.getValue());
+						
+						// Check varbind for SNMPv2 error
+						if (vb.getValue() instanceof org.opennms.protocols.snmp.SnmpV2Error)
+						{
+							if (log.isDebugEnabled())
+								log.debug("SnmpNodeCollector.snmpReceivedPdu: SNMPv2 error for oid: " + vb.getName() + " error: " + vb.getValue());
+						}
+					}
+				}
+				else  
+				{
+					//
+					// SNMPv1 Response
+					//
+					// Each SNMPv1 response contains all of the data collected for
+					// one of the remote node's interfaces.  Create a new SnmpNodeCollectorEntry
+					// from the response PDU's variable binding list.
+					//
+					if (log.isDebugEnabled())
+						log.debug("snmpReceivedPDU: node SNMP response arrived. Handling GET response.");
+				}
+				
+				// Regardless of SNMPv1 or SNMPv2 response store all responses in an
+				// SNMPCollectorEntry object
+				//
+				if (!m_error && storeResponseData)
+				{
+					if (m_collectorEntry == null)
+					{
+						m_collectorEntry = new SNMPCollectorEntry(pdu.toVarBindArray(), m_objList, null);
+					}
+					else
+					{
+						m_collectorEntry.update(pdu.toVarBindArray(), null);
+					}
+					
+					// Have all objects been collected?
+					m_oidListIndex = m_oidListIndex + pdu.getLength();
+					if (m_oidListIndex < m_objList.size())
+					{
+						// Buld next request PDU and send it to the agent
+						//
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPDU: more to collect...sending next request, oidListIndex=" + m_oidListIndex + " totalObjects=" + m_objList.size());
+						SnmpPduPacket nxtpdu = getNextPdu(m_primaryIf);
+						doNotify = false;
+						session.send(nxtpdu, this);
+						doNotify = false;
+					}
+					else
+					{
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPDU: collection completed!!");
+					}
+				}
+			}
+			else // It was an invalid PDU
+			{
+				if (log.isDebugEnabled())
+					log.debug("snmpReceivedPdu: Invalid PDU!");
+
+				m_error = true;
+			}
+	    
+			//	
+			// Signal anyone waiting
+			//
+			if (doNotify) 	
+			{
+				if(m_signal != null)
+				{
+					synchronized(m_signal)
+					{
+						m_signal.signalAll();
+					}
+				}
+		
+				//
+				// notify anyone waiting on this
+				// particular object
+				//
+				synchronized(this)
+				{
+					this.notifyAll();
+				}
+			}
+		} 
+		catch (Throwable t)
+		{
+			if(log.isEnabledFor(Priority.WARN))
+				log.warn("snmpReceivedPdu: unexpected exception...", t);
+		}
+	}
+

@@ -1,0 +1,83 @@
+    /**
+     * Parses the output from a <code>rrdtool info</code> command
+     * to create the <code>RRDInfo</code> data structure.
+     *
+     * @return An <code>RRDInfo</code> object that encapsulates the data
+     * given in the <code>infoString</code> parameter.  If the <code>infoString</code>
+     * parameter does not contain a parseable info string, this method will return null.
+     */
+    public static RRDInfo createRRDInfo( int nodeId, String infoString ) {
+        if( infoString == null ) {
+            throw new IllegalArgumentException( "Cannot take null parameters." );
+        }
+
+        Properties props = new Properties();
+
+        //load the infoString as a properties list
+        try {
+            props.load( new ByteArrayInputStream( infoString.getBytes() ));
+        }
+        catch( IOException e ) {
+            //since we are using a string buffer, this exception should never
+            //be thrown, but just in case convert it to a runtime exception
+            throw new IllegalStateException( "Could not load the rrd info string into a properties list" );
+        }
+
+        //start filling in some values
+        RRDInfo info = new RRDInfo();
+        info.rawValues = props;
+        info.filename = String.valueOf(nodeId) + java.io.File.separator + props.getProperty( "filename" );
+        info.rrdVersion = props.getProperty( "rrd_version" );
+
+        //if it doesn't have the filename or the rrdversion, this wasn't an rrdtool info string
+        if( info.filename == null || info.rrdVersion == null ) {
+            return null;
+        }
+
+        //since we're pretty sure we're really looking at an rrdtool info string,
+        //these values should now be safe to populate too
+        info.step = Integer.parseInt( props.getProperty( "step" ) );
+        long lastUpdateLong = Long.parseLong( props.getProperty( "last_update" ) );
+        info.lastUpdate = new Date( lastUpdateLong*1000 );
+
+        //find the unique names of the data sources
+        ArrayList dsNames = new ArrayList();
+        StringTokenizer tokenizer = new StringTokenizer( infoString, System.getProperty( "line.separator" ));
+
+        while( tokenizer.hasMoreTokens() ) {
+            String line = tokenizer.nextToken();
+            
+            if( line.startsWith( "ds" ) ) {
+                String dsname = line.substring( line.indexOf("[")+1, line.indexOf("]") );
+                if( !dsNames.contains( dsname ) ) {
+                    dsNames.add( dsname );
+                }
+            }
+        }
+
+        //populate the data sources list and map
+        DataSource[] dslist = new DataSource[dsNames.size()];
+        HashMap dsmap = new HashMap();        
+        for( int i=0; i < dslist.length; i++ ) {
+            String ds = (String)dsNames.get(i);
+
+            dslist[i] = new DataSource();
+            dslist[i].name = ds;
+            dslist[i].type = props.getProperty( "ds[" + ds + "].type" );
+            dslist[i].minimalHeartbeat = parseDouble( props.getProperty( "ds[" + ds + "].minimal_heartbeat" ));
+            dslist[i].min = parseDouble( props.getProperty( "ds[" + ds + "].min" ));
+            dslist[i].max = parseDouble( props.getProperty( "ds[" + ds + "].max" ));
+            dslist[i].lastDataSource = props.getProperty( "ds[" + ds + "].last_ds" );
+            dslist[i].value = parseDouble( props.getProperty( "ds[" + ds + "].value" ));
+            dslist[i].unknownSeconds = parseDouble( props.getProperty( "ds[" + ds + "].unknown_sec" ));
+
+            dsmap.put( ds, dslist[i] );
+        }
+        
+        //fill the datasources into the rrdinfo object
+        info.dataSources = dslist;
+        info.dataSourcesMap = dsmap;
+
+        return( info );
+    }
+

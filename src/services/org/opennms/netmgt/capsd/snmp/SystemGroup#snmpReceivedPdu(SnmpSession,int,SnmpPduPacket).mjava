@@ -1,0 +1,71 @@
+	/**
+	 * <P>This method is used to process received SNMP PDU packets from
+	 * the remote agent. The method is part of the SnmpHandler interface
+	 * and will be invoked when a PDU is successfully decoded. The method
+	 * is passed the receiving session, the PDU command, and the actual
+	 * PDU packet.</P>
+	 *
+	 * <P>When all the data has been received from the session the signaler
+	 * object, initialized in the constructor, is signaled. In addition,
+	 * the receiving instance will call notifyAll() on itself at the same
+	 * time.</P>
+	 *
+	 * @param session	The SNMP Session that received the PDU
+	 * @param command	The command contained in the received pdu
+	 * @param pdu		The actual received PDU.
+	 *
+	 */
+	public void snmpReceivedPdu(SnmpSession session, int command, SnmpPduPacket pdu)
+	{
+		if(command == SnmpPduPacket.RESPONSE)
+		{
+			//
+			// Check for SNMPv1 error stored in request pdu
+			//
+			int errStatus = ((SnmpPduRequest)pdu).getErrorStatus();
+			if (errStatus != SnmpPduPacket.ErrNoError)
+			{
+				int errIndex = ((SnmpPduRequest)pdu).getErrorIndex();
+				//
+				// If first varbind had error (sysDescription) then we will assume
+				// that nothing was collected for system group.  If the error occurred
+				// later in the varbind list lets proceed since this information is
+				// useful (older SNMP agents won't have sysServices implemented for example).
+				//
+				if (errIndex == 1)
+					m_error = true;
+			}
+
+			if (!m_error)
+			{
+				SnmpVarBind[] vars = pdu.toVarBindArray();
+				update(vars);
+			}
+			
+		}
+		else // It was an invalid PDU
+		{
+			m_error = true;
+		}
+		
+		//
+		// Signal anyone waiting
+		//
+		if(m_signal != null)
+		{
+			synchronized(m_signal)
+			{
+				m_signal.signalAll();
+			}
+		}
+		
+		//
+		// notify anyone waiting on this
+		// particular object
+		//
+		synchronized(this)
+		{
+			this.notifyAll();
+		}
+	}
+

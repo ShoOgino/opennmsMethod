@@ -1,0 +1,126 @@
+	/** 
+	 * 
+	 */
+	private void interfaceDeletedHandler(Event event)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		int nodeId = (int)event.getNodeid();
+		
+		PollableNode pNode = Poller.getInstance().getNode(nodeId);
+		if (pNode == null)  // Sanity check
+		{
+			log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete interface " + event.getInterface());
+			return;
+		}
+		
+		// acquire lock to 'PollableNode'
+		//
+		boolean ownLock = false;
+		try
+		{
+			// Attempt to obtain node lock...wait as long as it takes.
+			// 
+			if (log.isDebugEnabled())
+				log.debug("interfaceDeletedHandler: deleting nodeid/interface: " + nodeId + 
+							"/" + event.getInterface());
+	
+			ownLock = pNode.getNodeLock(WAIT_FOREVER);
+			if (ownLock)
+			{
+				if (log.isDebugEnabled())
+					log.debug("interfaceDeletedHandler: obtained node lock for nodeid: " + nodeId);
+				
+				// Retrieve the PollableInterface object corresponding to 
+				// the interface address specified in the event
+				PollableInterface pIf = pNode.getInterface(event.getInterface());
+				if (pIf == null)
+				{
+					if (log.isDebugEnabled())
+						log.debug("interfaceDeletedHandler: interface " + event.getInterface() + 
+								" not in interface map for " + nodeId);
+					return;
+				}
+				
+				// Iterate over the interface's services and mark
+				// them for deletion.
+				//
+				// NOTE:  This is probably overkill because by the time
+				//        the Outage Mgr generates the interfaceDeleted
+				// 	  event all of the interface's underlying 
+				// 	  services have already been deleted...but just
+				//	  to be safe...
+				Iterator svc_iter = pIf.getServices().iterator();
+				while (svc_iter.hasNext())
+				{
+					PollableService pSvc = (PollableService)svc_iter.next();
+					pSvc.markAsDeleted();
+					
+					// Now remove the service from the pollable services list
+					m_pollableServices.remove(pSvc);
+				}
+				
+				// Delete all entries from the interface's internal service map
+				pIf.deleteAllServices();
+				
+				// Delete the interface from the node
+				pNode.removeInterface(pIf);
+				
+				// Recalculate node status
+				pNode.recalculateStatus();
+				
+				// Debug dump pollable node content
+				//
+				if (log.isDebugEnabled())
+				{
+					log.debug("Interface deletion completed, dumping node info for nodeid " + pNode.getNodeId() + ", status=" + Pollable.statusType[pNode.getStatus()] );
+					Iterator k = pNode.getInterfaces().iterator();
+					while(k.hasNext())
+					{
+						PollableInterface tmpIf = (PollableInterface)k.next();
+						log.debug("		interface=" + tmpIf.getAddress().getHostAddress() + " status=" + Pollable.statusType[tmpIf.getStatus()]);
+						
+						Iterator s = tmpIf.getServices().iterator();
+						while(s.hasNext())
+						{
+							PollableService tmpSvc = (PollableService)s.next();
+							log.debug("			service=" + tmpSvc.getServiceName() + " status=" + Pollable.statusType[tmpSvc.getStatus()]);
+						}
+					}
+				}
+			}
+			else
+			{
+				// failed to acquire lock
+				log.error("interfaceDeletedHandler: failed to obtain lock on nodeId " + nodeId);
+			}
+		}
+		catch (InterruptedException iE)
+		{
+			// failed to acquire lock,
+			log.error("interfaceDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
+		}
+		catch (Throwable t)
+		{
+			log.error("exception caught processing interfaceDeleted event for " + 
+					nodeId + "/" + event.getInterface(), t);
+		}
+		finally
+		{
+			if (ownLock)
+			{
+				if (log.isDebugEnabled())
+					log.debug("interfaceDeletedHandler: releasing node lock for nodeid: " + nodeId);
+				
+				try
+				{
+					pNode.releaseNodeLock();
+				}
+				catch (InterruptedException iE)
+				{
+					log.error("interfaceDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
+				}
+			}
+		}
+	}
+

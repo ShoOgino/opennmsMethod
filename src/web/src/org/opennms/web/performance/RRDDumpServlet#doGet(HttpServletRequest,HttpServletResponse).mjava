@@ -1,0 +1,46 @@
+    /**
+     * Checks the parameters passed to this servlet, and if all are okay, executes
+     * the RRDTool command in another process and pipes its XML output to the 
+     * <code>ServletOutputStream</code> back to the requesting web browser.
+     */
+    public void doGet( HttpServletRequest request, HttpServletResponse response ) throws ServletException, IOException {
+        String rrd = request.getParameter( "rrd" );
+
+        if( rrd == null ) {
+            throw new MissingParameterException( "rrd" );
+        }
+
+        //build the command
+        String command = this.commandPrefix + " " + rrd;
+        this.log( command );
+        
+        //parse the command into an array and fork a process for it
+        String[] commandArray = Util.createCommandArray( command, '@' );
+        Process process = Runtime.getRuntime().exec( commandArray, null, new File(this.workDir) );
+        
+        PrintWriter out = response.getWriter();
+        BufferedReader err = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+
+        if( err.ready() ) {
+            //get the error message
+            StringWriter tempErr = new StringWriter();            
+            Util.streamToStream(err, tempErr);
+            String errorMessage = tempErr.toString();
+            
+            //log the error message
+            this.log("Read from stderr: " + errorMessage);
+            
+            //send the error message to the client
+            response.setContentType( "text/plain" );
+            Util.streamToStream( new StringReader(errorMessage), out ); 
+        }
+        else {
+            //get the XML output and send it to the client
+            BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            response.setContentType( "text/xml" );                
+            Util.streamToStream( in, out );  
+        }
+
+        out.close();
+    }
+

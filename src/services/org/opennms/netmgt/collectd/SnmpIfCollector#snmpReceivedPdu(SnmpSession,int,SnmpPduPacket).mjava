@@ -1,0 +1,327 @@
+	/**
+	 * <P>This method is used to process received SNMP PDU packets from
+	 * the remote agent. The method is part of the SnmpHandler interface
+	 * and will be invoked when a PDU is successfully decoded. The method
+	 * is passed the receiving session, the PDU command, and the actual
+	 * PDU packet.</P>
+	 *
+	 * <P>For SNMPv2, all the data will be stored within a temporary 
+	 * array.  Once all data has been acquired, it will be organized 
+	 * by interface.  For any MIB OID whose index is zero, their data
+	 * will be associated with the primary interface's index.</P>
+	 *
+	 * <P>For SNMPv1, a map will be created after each response.  Once again,
+	 * if the MIB OID has a zero at the end, it will be linked with the
+	 * primary interface.</P>
+	 *
+	 * <P>When all the data has been received from the session the signaler
+	 * object, initialized in the constructor, is signaled. In addition,
+	 * the receiving instance will call notifyAll() on itself at the same
+	 * time.</P>
+	 *
+	 * @param session	The SNMP Session that received the PDU
+	 * @param command	The command contained in the received pdu
+	 * @param pdu		The actual received PDU.
+	 *
+	 */
+	public void snmpReceivedPdu(SnmpSession session, int command, SnmpPduPacket pdu)
+	{ 
+		boolean doNotify = true;
+
+		// Log4j category
+		//
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		if (log.isDebugEnabled())
+			log.debug("snmpReceivedPdu: got an SNMP pdu, num vars=" + pdu.getLength());
+			
+		if(command == SnmpPduPacket.RESPONSE)
+		{
+			try
+			{
+				//
+				// Check for SNMP error stored in request pdu
+				//
+				m_errorStatus = ((SnmpPduRequest)pdu).getErrorStatus();
+				if (m_errorStatus != SnmpPduPacket.ErrNoError)
+				{
+					m_error = true;
+					
+					m_errorIndex = ((SnmpPduRequest)pdu).getErrorIndex();
+					if(log.isEnabledFor(Priority.WARN))
+						log.warn("snmpReceivedPDU: Error during interface SNMP collection for interface " + 
+								session.getPeer().getPeer().toString() + ", SNMP error text: " + 
+								m_errorText[m_errorStatus]);
+					
+					// If valid m_errorIndex variable is set:
+					//   - print warning indicating the failing object
+					//     if SNMP version is SNMPv1:
+					//       - remove the failing object from the MIB object list
+					//       - rebuild the SNMP request PDU (absent the failing object)
+					//       - resend the request
+					//
+					if (m_errorIndex > 0 && (m_errorIndex + m_oidListIndex) <= m_objList.size())
+					{
+						MibObject tempObj = (MibObject)m_objList.get((m_errorIndex-1)+m_oidListIndex);
+						if(log.isEnabledFor(Priority.WARN))
+							log.warn("snmpReceivedPDU: Failing varbind - name: " + tempObj.getAlias() + " oid: " + tempObj.getOid());
+						
+						if (m_version == SnmpSMI.SNMPV1)
+						{
+							m_error = false; // attempt to recover
+							
+							// Remove the failing MIB object from the object list,
+							//
+							m_objList.remove((m_errorIndex-1) + m_oidListIndex);
+							
+							if (log.isDebugEnabled())
+								log.debug("snmpReceivedPDU: Removing failing varbind and resending request...");
+	
+							// Rebuild the request PDU and resend
+							//
+							SnmpPduPacket nxtpdu = getNextSnmpV1Pdu(m_primaryIf);
+							doNotify = false;
+							session.send(nxtpdu, this);
+						}
+					}
+				}
+				else if (m_version == SnmpSMI.SNMPV2) 
+				{
+				//
+				// SNMPv2 Responses
+				//
+					if (log.isDebugEnabled())
+						log.debug("snmpReceivedPdu: interface SNMP response arrived.  Handling GETBULK response.");
+					    
+					// Get next MibObject from object list & define the stopping point
+					//
+					MibObject mibobj = (MibObject)m_objList_v2.get(0);
+					SnmpObjectId stop_oid = new SnmpObjectId(stop_oid(mibobj.getOid()));
+					
+					// Iterate over the variable bindings in the response PDU and if
+					// the current varbind is within scope as defined by the stop oid
+					// add it to the temporary array and increment the response count.
+					// 
+					// If it falls within bounds of stopping OID, add to the temporary
+					// array.  Otherwise, remove the MIB variable (so the next one
+					// can be accessed), and reset responses back to zero.
+					boolean done = false;
+					int numVarBinds = pdu.getLength();
+					for (int y = 0; y < numVarBinds && !done; y++) 
+					{
+						SnmpVarBind vb = pdu.getVarBindAt(y);
+						
+						if (stop_oid.compare(vb.getName()) > 0) 
+						{
+							// Check varbind for SNMPv2 error
+							if (vb.getValue() instanceof org.opennms.protocols.snmp.SnmpV2Error)
+							{
+								done = true;
+								if (log.isDebugEnabled())
+									log.debug("SnmpIfCollector.snmpReceivedPdu: SNMPv2 error for oid: " + vb.getName() + " error: " + vb.getValue());
+							}
+							else
+							{
+								if (log.isDebugEnabled())
+									log.debug("snmpReceivedPDU: addint vb to response list, oid name:value pair: " + vb.getName() + " : " + vb.getValue());
+						
+								m_responseVbList.add(vb);
+								m_responses++;
+	
+								// If number of responses exceeds the number of interfaces
+								// then we're done.
+								//  
+								if (m_responses >= m_numInterfaces)
+									done = true;
+								
+								// If the MIB object has an instance identifier which is not
+								// ifIndex or ifAddress then it doesn't need to be collected for
+								// all interfaces
+								if (!mibobj.getInstance().equals(MibObject.INSTANCE_IFINDEX) && 
+									!mibobj.getInstance().equals(MibObject.INSTANCE_IFADDRESS))
+								{
+									done = true;
+								}
+							}
+						}
+						else 
+						{
+							done = true;
+						}
+					}
+					
+					if (done)
+					{
+						Object temp = m_objList_v2.remove(0);
+						m_responses = 0;
+					}
+					
+					// When the v2 object list is empty we've collected all the
+					// data.  Iterate over the interface index array and for each
+					// build a list of SnmpVarBind objects collected from the remote
+					// node.  Each interface's variable bind list is then passed 
+					// to the SNMPCollectorEntry constructor and used to build 
+					// a map of retrieved values indexed by object identifier.
+					if (m_objList_v2.isEmpty()) 
+					{
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPdu(): All data acquired.  Begin formatting maps.");
+
+						for (int a = 0; a < m_indexArray.length; a++)
+						{
+							int varIndex = 0;
+							
+							SnmpVarBind[] vars = new SnmpVarBind[m_objList.size()];
+ 
+							// Add varbinds from the responseVbList which correspond
+							// to this interface's ifIndex
+							//
+							Iterator r = m_responseVbList.iterator();
+							while (r.hasNext())
+							{
+								SnmpVarBind vb = (SnmpVarBind)r.next();
+ 
+								// Extract the "instance" id from the current SnmpVarBind's object id
+								String from_oid = vb.getName().toString();
+								SnmpObjectId id = new SnmpObjectId(from_oid);
+								int[] ids = id.getIdentifiers();
+								int instance_id = ids[ids.length-1];
+								String instance = Integer.toString(instance_id);
+ 
+								// If current index matches instance id of OID in array, add to
+								// variable array for storage.
+								if (instance.equals(m_indexArray[a]))
+								{
+									vars[varIndex++] = vb;
+								}
+							}
+
+							// Generate value/object identifier map
+							SNMPCollectorEntry ent = new SNMPCollectorEntry(vars, m_objList, m_indexArray[a]);
+							m_entries.add(ent);
+						}
+					}
+					else 
+					{
+						SnmpPduPacket nxtpdu = getNextSnmpV2Pdu(m_primaryIf);
+						doNotify = false;
+					
+						if (log.isDebugEnabled())
+							log.debug("SnmpCollector.snmpReceivedPdu(): Sending next GETBULK packet.");
+					
+						session.send(nxtpdu, this);
+					}
+				}
+				else  
+				{
+				//
+				// SNMPv1 Response
+				//
+					// Add the collected data to an SNMPCollectorEntry object.
+					// Each SNMPCollectorEntry will contain all of the data collected
+					// for a single interface.  However, depending upon the total
+					// number of objects to be collected for each interface, it 
+					// may require more than one send/receive sequence to collect
+					// everything.
+					//
+					if (log.isDebugEnabled())
+						log.debug("snmpReceivedPDU: interface SNMP response arrived. Handling GET response.");
+					
+					// Store retrieved responses in an SNMPCollectorEntry object
+					//
+					// If collector entry is null it indicates that this is the first
+					// response PDU for a new interface so create a new collector
+					// entry to hold the retrieved data.
+					//
+					// Otherwise this is additional data for the
+					// current interface, simply update the current collector entry.
+					//
+					if (m_collectorEntry == null)
+					{
+						m_collectorEntry = new SNMPCollectorEntry(pdu.toVarBindArray(), m_objList, m_indexArray[m_responses]);
+					}
+					else
+					{
+						m_collectorEntry.update(pdu.toVarBindArray(), m_indexArray[m_responses]);
+					}
+			
+					// Increment index
+					m_oidListIndex = m_oidListIndex + pdu.getLength();
+					    
+					// Have we collected all objects for the current
+					// interface?
+					if (m_oidListIndex < m_objList.size())
+					{
+						// No, so build next request PDU for current interface and send it to the agent
+						//
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPDU: more to collect...sending next request, m_oidListIndex=" + m_oidListIndex + " totalObjects=" + m_objList.size());
+						SnmpPduPacket nxtpdu = getNextSnmpV1Pdu(m_primaryIf);
+						doNotify = false;
+						session.send(nxtpdu, this);
+						doNotify = false;
+					}
+					else
+					{
+						// Yes, so add the collector entry to the list, increment response
+						// count and see if all interfaces have been collected.
+						//
+						if (log.isDebugEnabled())
+							log.debug("snmpReceivedPDU: completed collection for interface with ifIndex=" + m_indexArray[m_responses]);
+						m_entries.add(m_collectorEntry);
+						m_responses++; // increment response count
+						m_collectorEntry = null;  // reset collector entry
+						m_oidListIndex = 0; // reset oid index
+						
+						// Do we have additional interfaces to collect for?
+						if (m_responses != m_indexArray.length) 
+						{
+							if (log.isDebugEnabled())
+								log.debug("snmpReceivedPDU: ResponseCount: " + m_responses + ", InterfaceCount: " + m_numInterfaces + " Generating next GET PDU");
+
+							SnmpPduPacket nxtpdu = getNextSnmpV1Pdu(m_primaryIf);
+							doNotify = false;
+							session.send(nxtpdu, this);
+						}
+					}
+				}
+				
+			} 
+			catch (Throwable t)
+			{
+				if(log.isEnabledFor(Priority.WARN))
+					log.warn("snmpReceivedPdu: Unexpected exception while processing SNMP response packet.", t);
+			}
+		}
+		else // It was an invalid PDU
+		{
+			if (log.isDebugEnabled())
+				log.debug("snmpReceivedPdu: Invalid PDU!");
+
+			m_error = true;
+		}
+    
+		//	
+		// Signal anyone waiting
+		//
+		if (doNotify) 	
+		{
+			if(m_signal != null)
+			{
+				synchronized(m_signal)
+				{
+					m_signal.signalAll();
+				}
+			}
+	
+			//
+			// notify anyone waiting on this
+			// particular object
+			//
+			synchronized(this)
+			{
+				this.notifyAll();
+			}
+		}
+	}
+

@@ -1,0 +1,122 @@
+	/**
+	 * <P>Reset any of the timer tasks if they need to be reset
+	 * (indicated by their being set to null on timer task
+	 * completion). If the events counter has exceeded maxEventsBeforeResend,
+	 * send data out and reset timers
+	 */
+	public synchronized void checkTimerTasksOnEventReceipt()
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		if (log.isDebugEnabled())
+			log.debug("checkTimerTasksOnEventReceipt: Checking if timer tasks need to be reset or data needs to be sent out");
+
+		// cancel user timer
+		boolean ret = m_userTask.cancel();
+		if (log.isDebugEnabled())
+			log.debug("checkTimerTasksOnEventReceipt: " + USERTIMER + " cancelled: " + ret);
+
+		// Check the counter to see if timers need to be started afresh
+		if (m_counter == -1)
+		{
+			m_counter = 0;
+
+			//
+			// set timers
+			//
+
+			// set the low threshold timer task
+			if (m_lowTtask == null)
+			{
+				try
+				{
+
+					m_timer.schedule((m_lowTtask = new RTCTimerTask(LOWT_TASK)),
+							  m_lowThresholdInterval);
+					if (log.isDebugEnabled())
+						log.debug("checkTimerTasksOnEventReceipt: " + LOWT_TASK + " scheduled");
+				}
+				catch(IllegalStateException isE)
+				{
+					log.error("checkTimerTasksOnEventReceipt: Illegal State adding new RTCTimerTask", isE);
+				}
+			}
+
+			// set the high threshold timer task only if currently null
+			if (m_highTtask == null)
+			{
+				try
+				{
+					m_timer.schedule((m_highTtask = new RTCTimerTask(HIGHT_TASK)),
+							  m_highThresholdInterval);
+					if (log.isDebugEnabled())
+						log.debug("checkTimerTasksOnEventReceipt: " + HIGHT_TASK + " scheduled");
+				}
+				catch(IllegalStateException isE)
+				{
+					log.error("checkTimerTasksOnEventReceipt: Illegal State adding new RTCTimerTask", isE);
+				}
+			}
+		}
+
+		if (MAX_EVENTS_BEFORE_RESEND > 0 && m_counter >= MAX_EVENTS_BEFORE_RESEND)
+		{
+			if(log.isDebugEnabled())
+				log.debug("checkTimerTasksOnEventReceipt: max events before resend limit reached, resetting timers");
+
+			// send the category information out and reset all timers
+			if(m_lowTtask != null)
+			{
+				ret = m_lowTtask.cancel();
+				if (log.isDebugEnabled())
+					log.debug("checkTimerTasksOnEventReceipt: " + LOWT_TASK + " cancelled: " + ret);
+
+				m_lowTtask = null;
+			}
+
+			if(m_highTtask != null)
+			{
+				ret = m_highTtask.cancel();
+				if (log.isDebugEnabled())
+					log.debug("checkTimerTasksOnEventReceipt: " + HIGHT_TASK + " cancelled: " + ret);
+				m_highTtask = null;
+			}
+
+			if(log.isDebugEnabled())
+				log.debug("checkTimerTasksOnEventReceipt: max events before resend limit reached, sending data to listeners");
+
+			m_dataSender.notifyToSend();
+
+			if(log.isDebugEnabled())
+				log.debug("checkTimerTasksOnEventReceipt: max events before resend limit reached, datasender notified to send data");
+
+			m_counter = -1;
+		}
+		else if (m_counter != 0)
+		{
+			// reset the low threshold timer since getting here means
+			// we got an event before the low threshold timer
+			// went off
+			if (m_lowTtask != null)
+			{
+				ret = m_lowTtask.cancel();
+				if (log.isDebugEnabled())
+					log.debug("checkTimerTasksOnEventReceipt: " + LOWT_TASK + " cancelled: " + ret);
+				m_lowTtask = null;
+			}
+		
+			try
+			{
+				m_timer.schedule((m_lowTtask = new RTCTimerTask(LOWT_TASK)), 
+						  m_lowThresholdInterval);
+				if (log.isDebugEnabled())
+					log.debug("checkTimerTasksOnEventReceipt: " + LOWT_TASK + " scheduled");
+			}
+			catch(IllegalStateException isE)
+			{
+				log.error("checkTimerTasksOnEventReceipt: Illegal State adding new RTCTimerTask", isE);
+			}
+		}
+
+	}
+

@@ -1,0 +1,140 @@
+	/**
+	 * <p>This method actually tests the remote host to determine if it is 
+	 * running a functional DHCP server.</p>
+	 * 
+	 * <p>Formats a DHCP discover message and encodes it in a client request
+	 * message which is sent to the DHCP daemon over the established
+	 * TCP socket connection.  If a matching DHCP response packet is 
+	 * not received from the DHCP daemon within the specified timeout
+	 * the client request message will be re-sent up to the specified
+	 * number of retries.</p>
+	 * 
+	 * <p>If a response is received from the DHCP daemon it is validated
+	 * to ensure that:</p>
+	 * <ul>
+	 *	<li>
+	 *    		The DHCP response packet was sent from the remote host
+	 *    		to which the original request packet was directed.
+	 *	</li>
+	 *	<li>
+	 *    		The XID of the DHCP offer response packet matches the
+	 *    		XID of the original DHCP discover packet.
+	 *	</li>
+	 * </ul>
+	 *
+	 * <p>If the response validates 'true' is returned.    Otherwise
+	 * the request is resent until max retry count is exceeded.</p>
+	 *
+	 * <p>Before returning, a client disconnect message (remote host 
+	 * field set to zero) is sent to the DHCP daemon.</p>
+	 * 
+	 * @return True if the specified host responded with a valid DHCP offer
+	 * 	datagram within the context of the specified timeout and retry values.
+	 */
+	static boolean isServer(InetAddress host, long timeout, int retries) 
+		throws IOException
+	{
+		Category log = ThreadCategory.getInstance(Poller.class);
+		
+		if (log.isDebugEnabled())
+			log.debug("isServer: checking for DHCP on " + host.getHostAddress() + " timeout=" + timeout + " retries=" + retries);
+		boolean isDhcpServer = false;
+
+		if (s_hwAddress == null)
+		{
+			String hwAddressStr = DhcpdConfigFactory.getInstance().getMacAddress();
+			if (log.isDebugEnabled())
+				log.debug("isServer: setting hardware/MAC address to " + hwAddressStr);
+			setHwAddress(hwAddressStr);
+		}
+			 		
+		Poller p = new Poller(timeout < 500L ? timeout : 500L);
+		try
+		{
+			// allocate an array to hold the retry count
+			//
+			Message ping = getPollingRequest(host);
+
+			while(retries >= 0 && !isDhcpServer)
+			{
+				if (log.isDebugEnabled())
+					log.debug("isServer: sending DISCOVER request to DHCP server for host " + 
+						host.getHostAddress() + 
+						" with Xid: " + 
+							ping.getMessage().getXid());
+				
+				p.m_outs.writeObject(ping);
+				long start = System.currentTimeMillis();
+				long end;
+
+				do
+				{
+					Message resp = null;
+					try
+					{
+						resp = (Message)p.m_ins.readObject();
+					}
+					catch(InterruptedIOException ex) 
+					{ 
+						resp = null;
+					} 
+					
+					// DEBUG only
+					if (resp != null && log.isDebugEnabled())
+					{
+						if (log.isDebugEnabled())
+							log.debug("isServer: got a DHCP poll response from host " + 
+								resp.getAddress().getHostAddress() + 
+								" with Xid: " + 
+								resp.getMessage().getXid());
+					}
+					
+					if(resp != null 
+					   && host.equals(resp.getAddress())
+					   && ping.getMessage().getXid() == resp.getMessage().getXid())
+					{
+						if (log.isDebugEnabled())
+							log.debug("isServer: got a DHCP poll response for this poller, validating OFFER message...");
+						// Inspect response message to see if it is a valid DHCP OFFER message
+	    					byte [] type = resp.getMessage().getOption(MESSAGE_TYPE);
+						if(type[0] == DHCPMessage.OFFER)
+						{
+							if (log.isDebugEnabled())
+								log.debug("isServer: got a valid DHCP offer!");
+				
+							isDhcpServer = true;
+							break;
+						}
+					}
+					
+					end = System.currentTimeMillis();
+
+				} while((end - start) < timeout);
+
+				if (!isDhcpServer)
+				{
+					if (log.isDebugEnabled())
+						log.debug("Timed out waiting for DHCP response, remaining retries: " + retries);
+				}
+
+				--retries;
+			}
+
+			p.m_outs.writeObject(getDisconnectRequest());
+		}
+		catch(IOException ex)
+		{
+			log.error("IO Exception caught.", ex);
+			p.close();
+			throw ex;
+		}
+		catch(Throwable t)
+		{
+			log.error("Unexpected Exception caught.", t);
+			p.close();
+			throw new UndeclaredThrowableException(t);
+		}
+
+		return isDhcpServer;
+	}
+

@@ -1,0 +1,78 @@
+	/**
+	 * Constructs a new instance of a CollectableService object.
+	 *
+	 * @param dbNodeId	The database identifier key for the interfaces' node
+	 * @param address	InetAddress of the interface to collect from
+	 * @param svcName	Service name
+	 * @param pkg		The package containing parms for this collectable service.
+	 *
+	 */
+	CollectableService(	int dbNodeId,
+				InetAddress address,
+				String svcName,
+				org.opennms.netmgt.config.collectd.Package pkg)
+	{
+		m_nodeId 	= dbNodeId;
+		m_address	= address; // IPv4NetworkInterface address
+		m_package 	= pkg;
+		m_status	= ServiceCollector.COLLECTION_SUCCEEDED;
+		
+		m_scheduler	= Collectd.getInstance().getScheduler();
+		m_collector	= Collectd.getInstance().getServiceCollector(svcName);
+		m_updates 	= new CollectorUpdates();
+		
+		m_lastScheduledCollectionTime = 0L;
+		m_lastCollectionTime	  = 0L;
+		
+		// find the service matching the name
+		//m
+		Service svc = null;
+		Enumeration esvc = m_package.enumerateService();
+		while(esvc.hasMoreElements())
+		{
+			Service s = (Service)esvc.nextElement();
+			if(s.getName().equalsIgnoreCase(svcName))
+			{
+				svc = s;
+				break;
+			}
+		}
+		if(svc == null)
+			throw new RuntimeException("Service name not part of package!");
+		
+		// save reference to the service
+		m_service    = svc;
+		
+		// add property list for this service/package combination if
+		// it doesn't already exist in the service property map
+		//
+		m_svcPropKey = m_package.getName() + "." + m_service.getName();
+		synchronized(SVC_PROP_MAP)
+		{
+			if(! SVC_PROP_MAP.containsKey(m_svcPropKey))
+			{
+				Map m = Collections.synchronizedMap(new TreeMap());
+				Enumeration ep = m_service.enumerateParameter();
+				while(ep.hasMoreElements())
+				{
+					Parameter p = (Parameter)ep.nextElement();
+					m.put(p.getKey(), p.getValue());
+				}
+
+				SVC_PROP_MAP.put(m_svcPropKey, m);
+			}
+		}
+
+		m_proxy = new EventProxy() {
+			public void send(Event e)
+			{
+				EventIpcManagerFactory.getInstance().getManager().sendNow(e);
+			}
+			public void send(Log log)
+			{
+				EventIpcManagerFactory.getInstance().getManager().sendNow(log);
+			}
+		};
+				
+	}
+

@@ -1,0 +1,102 @@
+	/**
+	 * Add a new entry to the map and the categories on a 'serviceGained' event
+	 *
+	 * @param  nodeid	the node id
+	 * @param  ip		the IP address
+	 * @param  svcName	the service name
+	 *
+	 */
+	public synchronized void nodeGainedService(long nodeid, String ip, String svcName)
+	{
+		Category log = ThreadCategory.getInstance(DataManager.class);
+
+		//
+		// check the 'status' flag for the service 
+		//
+		char svcStatus =  getServiceStatus(nodeid, ip, svcName);
+
+		//
+		// Include only service status 'A'
+		//
+		if (svcStatus != 'A')
+		{
+			if (log.isInfoEnabled())
+				log.info("nodeGainedSvc: " + nodeid + "/" + ip + "/" + svcName + " IGNORED because status is not active: " + svcStatus);
+
+			return;
+		}
+
+		if (log.isDebugEnabled())
+			log.debug("nodeGainedSvc: " + nodeid + "/" + ip + "/" + svcName + "/" + svcStatus);
+
+		// create the key for this node
+		RTCNodeKey key = new RTCNodeKey(nodeid, ip, svcName);
+
+		// create the node
+		RTCNode rtcN = new RTCNode(nodeid, ip, svcName);
+
+		// add to the data holder
+		m_map.put(key,  rtcN);
+		m_map.add(nodeid, rtcN);
+		m_map.add(nodeid, ip, rtcN);
+
+		// filter to check if this satisfies category rules
+		Filter filter =  new Filter();
+
+		// now go through the categories and add to appropriate
+		// ones
+		Iterator iter = m_categories.values().iterator();
+		while(iter.hasNext())
+		{
+			RTCCategory cat = (RTCCategory)iter.next();
+
+			// unless the service found is in the category's services list,
+			// do not bother about this service
+			if (!cat.containsService(svcName))
+			{
+				continue;
+			}
+
+			// Validate the IP for this category
+			boolean nodeValidated = false;
+
+			// Check if this IP has already been validated for this category
+			nodeValidated = m_map.isIpValidated(nodeid, ip, cat.getLabel());
+			if (!nodeValidated)
+			{
+				// get the rule for this category and see if this node satisfies the rule
+				String filterRule = cat.getEffectiveRule();
+
+				try
+				{
+					nodeValidated = filter.isValid(ip, filterRule);
+				}
+				catch(Exception e)
+				{
+					//  Log  error and ignore this category?
+					log.warn("Unable to validate/add new node " + rtcN.toString() + " to category \'" 
+						+ cat.getLabel() + "\' exception", e);
+					continue;
+				}
+			}
+
+			// if node did validate against this category
+			// add that info
+			if (nodeValidated)
+			{
+				// add to category
+				cat.addNode(rtcN);
+
+				// add the category info to the node
+				rtcN.addCategory(cat.getLabel());
+
+				if(log.isDebugEnabled())
+				{
+					log.debug("rtcN : " + rtcN.getNodeID() + "/" + rtcN.getIP() + "/" + rtcN.getSvcName() 
+						  + " added to cat: " + cat.getLabel());
+				}
+			}
+
+		}
+	}
+

@@ -1,0 +1,106 @@
+	/**
+	 * Determines the last known status of a ipaddr/service pair based on outage information
+	 * from the 'outages' table and if the last known status is UNAVAILABLE returns a 
+	 * date object representing when the service was lost.  If last known status is 
+	 * AVAILABLE null is returned.
+	 *
+	 * @param dbConn	Database connection
+	 * @param nodeId	Node identifier
+	 * @param ipAddr	IP address
+	 * @param svcName	service name
+	 * 
+	 * @return Date object representing the time the service was lost if the service is 
+	 * UNAVAILABLE or null if the service is AVAILABLE.
+	 */
+	public static final Date getServiceLostDate(Connection dbConn, int nodeId, String ipAddr, String svcName)
+	{
+		Category log = ThreadCategory.getInstance(Poller.class);
+		log.debug("getting last known status for address: " + ipAddr + " service: " + svcName);
+		
+		Date svcLostDate = null;
+		// Convert service name to service identifier
+		//
+		Integer temp = (Integer)m_serviceIds.get(svcName);
+		int serviceId = -1;
+		if (temp != null)
+			serviceId = temp.intValue();
+		else
+		{
+			log.warn("Failed to retrieve service identifier for interface " + ipAddr + " and service '" + svcName + "'");
+			return svcLostDate;
+		}
+		
+		ResultSet outagesResult = null;
+		Timestamp regainedDate = null;
+		Timestamp lostDate = null;
+			
+		try
+		{
+			//get the outage information for this service on this ip address
+			PreparedStatement outagesQuery = dbConn.prepareStatement(SQL_RETRIEVE_SERVICE_STATUS);
+			
+			//add the values for the main query
+			outagesQuery.setInt(1, nodeId);
+			outagesQuery.setString(2, ipAddr);
+			outagesQuery.setInt(3, serviceId);
+			
+			//add the values for the subquery
+			outagesQuery.setInt(4, nodeId);
+			outagesQuery.setString(5, ipAddr);
+			outagesQuery.setInt(6, serviceId);
+			
+			outagesResult = outagesQuery.executeQuery();
+			
+			//if there was a result then the service has been down before,
+			if (outagesResult.next())
+			{
+				regainedDate = outagesResult.getTimestamp(1);
+				lostDate  = outagesResult.getTimestamp(2);
+				log.debug("getServiceLastKnownStatus: lostDate: " + lostDate);
+			}
+			//the service has never been down, need to use current date for both
+			else
+			{
+				Date currentDate = new Date(System.currentTimeMillis());
+				regainedDate = new Timestamp(currentDate.getTime());
+				lostDate = lostDate = new Timestamp(currentDate.getTime());
+			}
+		} 
+		catch (SQLException sqlE)
+		{
+			log.error("SQL exception while retrieving last known service status for " + ipAddr + "/" + svcName);
+		}
+		finally
+		{
+			if (outagesResult != null)
+			{
+				try
+				{
+					outagesResult.close();
+				}
+				catch (SQLException slqE)
+				{
+					// Do nothing
+				}
+			}
+		}
+		
+		// Now use retrieved outage times to determine current status
+		// of the service.  If there was an error and we were unable
+		// to retrieve the outage times the default of AVAILABLE will
+		// be returned.
+		//
+		if (lostDate != null)
+		{
+			// If the service was never regained then simply 
+			// assign the svc lost date.
+			if (regainedDate == null)
+			{				
+				svcLostDate = new Date(lostDate.getTime());
+				log.debug("getServiceLastKnownStatus: svcLostDate: " + svcLostDate);
+			}
+		}
+		
+		return svcLostDate;
+	}
+

@@ -1,0 +1,179 @@
+	/**
+	 * This method is responsible for updating the node table using the most
+	 * recent data collected from the node's managed interfaces.
+	 *
+	 * @param dbc			Database connection
+	 * @param now			Date object representing the time of the rescan.
+	 * @param dbNodeEntry		DbNodeEntry object representing existing values in the database
+	 * @param currPrimarySnmpIf 	Primary SNMP interface address based on latest collection
+	 * @param dbIpInterfaces	Array of DbIpInterfaceEntry objects representing all the
+	 * 				interfaces retrieved from the database for this node.
+	 * @param collectorMap		Map of IfCollector objects...one per managed interface.
+	 * 
+	 * @return DbNodeEntry object representing the updated values from the node table in the
+	 * 			database.
+	 * 
+	 * @throws SQLException if there is a problem updating the node table.
+	 */
+	private DbNodeEntry updateNode(Connection dbc,
+					Date      now,
+					DbNodeEntry dbNodeEntry,
+					InetAddress currPrimarySnmpIf,
+					DbIpInterfaceEntry[] dbIpInterfaces,
+					Map collectorMap)
+		throws SQLException
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+	
+		if (log.isDebugEnabled())
+			log.debug("updateNode: updating node id " + dbNodeEntry.getNodeId());
+		
+		// Clone the existing dbNodeEntry so we have all the original
+		// values of the 'node' table fields in case we need to generate
+		// 'node***Changed' events following the update.
+		//
+		DbNodeEntry originalDbNodeEntry = DbNodeEntry.clone(dbNodeEntry);
+		
+		// Get primary SNMP interface associated with existing node (from the DB)
+		//
+		DbIpInterfaceEntry dbPrimarySnmpIf = DbNodeEntry.getPrimarySnmpInterface(dbIpInterfaces);
+		
+		// Create node which represents the most recently retrieved 
+		// information in the collector for this node
+		//
+		DbNodeEntry currNodeEntry = DbNodeEntry.create();
+		currNodeEntry.setNodeType(DbNodeEntry.NODE_TYPE_ACTIVE);
+		
+		// Set node label and SMB info based on latest collection
+		//
+		setNodeLabelAndSmbInfo(collectorMap, dbNodeEntry, currNodeEntry, currPrimarySnmpIf);
+		
+		// Set SNMP info
+		//
+		if (currPrimarySnmpIf != null)
+		{
+			// We prefer to use the collector for the primary SNMP interface
+			// to update SNMP data in the node table.  However a collector
+			// for the primary SNMP interface may not exist in the map if
+			// a node has only recently had SNMP support enabled or if the
+			// new primary SNMP interface was only recently added to the
+			// node.  At any rate if it exists use it, if not use the
+			// first collector which supports SNMP.
+			IfCollector primaryIfc = (IfCollector)collectorMap.get(currPrimarySnmpIf.getHostAddress());
+			if (primaryIfc == null)
+			{
+				Collection collectors = collectorMap.values();
+				Iterator iter = collectors.iterator();
+				while (iter.hasNext())
+				{
+					primaryIfc = (IfCollector)iter.next();
+					if (primaryIfc.getSnmpCollector() != null)
+						break;
+				}
+			}
+			
+			// Sanity check...should always have a primary interface
+			// collector at this point
+			if (primaryIfc == null)
+			{
+				log.error("updateNode: failed to determine primary interface collector for node " + dbNodeEntry.getNodeId());
+				throw new RuntimeException("Update node failed for node " + dbNodeEntry.getNodeId() + ", unable to determine primary interface collector.");
+			}
+			
+			IfSnmpCollector snmpc = primaryIfc.getSnmpCollector();
+			
+			if (snmpc != null && snmpc.hasSystemGroup())
+			{
+				SystemGroup sysgrp = snmpc.getSystemGroup();
+
+				// sysObjectId
+				currNodeEntry.setSystemOID(sysgrp.get(SystemGroup.SYS_OBJECTID).toString());
+				
+				// sysName
+				String str = SystemGroup.getPrintableString((SnmpOctetString)sysgrp.get(SystemGroup.SYS_NAME));
+				if(str != null && str.length() > 0)
+					currNodeEntry.setSystemName(str);
+	
+				// sysDescription
+				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_DESCR));
+				if (str!= null && str.length() > 0)
+					currNodeEntry.setSystemDescription(str);
+
+				// sysLocation
+				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_LOCATION));
+				if(str != null && str.length() > 0)
+					currNodeEntry.setSystemLocation(str);
+
+				// sysContact
+				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_CONTACT));
+				if(str != null && str.length() > 0)
+					currNodeEntry.setSystemContact(str);
+			}
+		}
+		
+		// Update any fields which have changed
+		if (log.isDebugEnabled())
+		{
+			log.debug("updateNode: -------dumping old node-------: " + dbNodeEntry);
+			log.debug("updateNode: -------dumping new node-------: "  + currNodeEntry);
+		}
+		dbNodeEntry.updateParentId(currNodeEntry.getParentId());
+		dbNodeEntry.updateNodeType(currNodeEntry.getNodeType());
+		dbNodeEntry.updateSystemOID(currNodeEntry.getSystemOID());
+		dbNodeEntry.updateSystemName(currNodeEntry.getSystemName());
+		dbNodeEntry.updateSystemDescription(currNodeEntry.getSystemDescription());
+		dbNodeEntry.updateSystemLocation(currNodeEntry.getSystemLocation());
+		dbNodeEntry.updateSystemContact(currNodeEntry.getSystemContact());
+		dbNodeEntry.updateNetBIOSName(currNodeEntry.getNetBIOSName());
+		dbNodeEntry.updateDomainName(currNodeEntry.getDomainName());
+		dbNodeEntry.updateOS(currNodeEntry.getOS());
+		dbNodeEntry.setLastPoll(now);
+		
+		// Only update node label/source if original node entry is 
+		// not set to user-defined.
+		if (dbNodeEntry.getLabelSource() != dbNodeEntry.LABEL_SOURCE_USER)
+		{
+			dbNodeEntry.updateLabel(currNodeEntry.getLabel());
+			dbNodeEntry.updateLabelSource(currNodeEntry.getLabelSource());
+		}
+		
+		// Set event flags
+		boolean nodeLabelChangedFlag = false;
+		boolean nodeInfoChangedFlag = false;
+		
+		if (dbNodeEntry.hasLabelChanged() || 
+			dbNodeEntry.hasLabelSourceChanged())
+		{
+			nodeLabelChangedFlag = true;
+		}
+		
+		if (dbNodeEntry.hasSystemOIDChanged() ||
+			dbNodeEntry.hasSystemNameChanged() ||
+			dbNodeEntry.hasSystemDescriptionChanged() ||
+			dbNodeEntry.hasSystemLocationChanged() ||
+			dbNodeEntry.hasSystemContactChanged() ||
+			dbNodeEntry.hasNetBIOSNameChanged() ||
+			dbNodeEntry.hasDomainNameChanged() ||
+			dbNodeEntry.hasOSChanged())
+		{
+			nodeInfoChangedFlag = true;
+		}
+		
+		// Call store to update the database
+		dbNodeEntry.store(dbc);
+		
+		// Create nodeLabelChanged event if necessary
+		if (nodeLabelChangedFlag)
+		{
+			createNodeLabelChangedEvent(dbNodeEntry, originalDbNodeEntry);
+		}
+		
+		// Create nodeInfoChangedEvent if necessary
+		if (nodeInfoChangedFlag)
+		{
+			createNodeInfoChangedEvent(dbNodeEntry, originalDbNodeEntry);
+		}
+		
+		return dbNodeEntry;
+	}
+

@@ -1,0 +1,60 @@
+		/**
+		 * <p>This method does the actual polling of the encapsulated
+		 * address using the timeout and retry values. The polling
+		 * will continue until either all the retries are exhausted
+		 * or the pinger is signaled that the address responded.</p>
+		 *
+		 * <p><strong>NOTICE: The instance lock must be heald prior
+		 * to calling this method.</strong> This method uses the 
+		 * {@link java.lang.Object#wait wait} method and lock ownership
+		 * is required to invoke the <code>wait</code> method.</p>
+		 *
+		 * @param addr	The address and information for polling.
+		 *
+		 * @throws java.io.IOException Thrown if an error occurs sending
+		 * 	the ICMP information.
+		 * @throws java.lang.InterruptedException Thrown if the thread
+		 * 	is interrupted.
+		 */
+		private /* synchronized */ boolean poll(IPPollAddress addr)
+			throws IOException, InterruptedException
+		{
+			Category log = ThreadCategory.getInstance(getClass());
+
+			for(int tries = 0; !m_signaled && tries <= addr.getRetries(); tries++)
+			{
+
+				// build a packet
+				//
+				Packet pingPkt = new Packet(m_fiberId);
+				pingPkt.setIdentity(m_icmpId);
+				pingPkt.computeChecksum();
+
+				// convert it to 
+				byte[] buf = pingPkt.toBytes();
+				DatagramPacket sendPkt = new DatagramPacket(buf, buf.length, addr.getAddress(), 0);
+				buf = null;
+				pingPkt = null;
+
+				// Aquire a right to send
+				//
+				boolean x = m_semaphore.acquire();
+
+				long expire = System.currentTimeMillis() + addr.getTimeout();
+				while(m_status != STOP_PENDING && !m_signaled)
+				{
+					long wtime = expire - System.currentTimeMillis();
+					if(wtime <= 0)
+						break;
+
+					if(log.isDebugEnabled())
+						log.debug("poll: try#: " + tries + " - sending ping to address " + addr.getAddress().getHostAddress());
+
+					m_socket.send(sendPkt);
+					this.wait(wtime);
+				}
+			}
+
+			return m_signaled;
+		}
+

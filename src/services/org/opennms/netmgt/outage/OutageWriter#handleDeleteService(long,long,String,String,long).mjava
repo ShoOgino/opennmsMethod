@@ -1,0 +1,446 @@
+	/**
+	 * <p>Delete the service - mark the corresponding 'ifServices' table entry
+	 * as deleted. If this is the last active service on its interface, mark
+	 * interface as deleted, cascade to the node level - mark node as deleted
+	 * if interface just deleted was the last managed interface on the node.</p>
+	 *
+	 * <p>If service deleted is 'SNMP', clear out snmp info in the 'ipinterface'
+	 * and 'node' tables, clear entries in the 'snmpInterface' table, 
+	 * and generate a 'forceRescan' on the node</p>
+	 *
+	 * <p>Generate serviceDeleted, interfaceDeleted, nodeDeleted, forceRescan events
+	 * as appropriate</p>
+	 */
+	private void handleDeleteService(long eventID, long nodeID, String ipAddr, String serviceName, long serviceID)
+	{
+		Category log = ThreadCategory.getInstance(OutageWriter.class);
+
+		if(eventID == -1 || nodeID == -1 || ipAddr == null || serviceName == null)
+		{
+			log.warn(EventConstants.DELETE_SERVICE_EVENT_UEI + " ignored - info incomplete - eventID/nodeid/ip/svc: " + eventID + "/" + nodeID + "/" + ipAddr + "/" + serviceName);
+			return;
+		}
+		
+		// Form now events generated will have this date - will need to be
+		// the date set if the ifservices table ever gets a service deletion time field
+		java.util.Date svcDeleteDate = new java.util.Date();
+
+		boolean generateServiceDeletedEvent = false;
+		boolean generateInterfaceDeletedEvent = false;
+		boolean generateForceNodeRescanEvent= false;
+
+	 	// List of 'IfSvcSnmpEntry's
+		List ifSvcSnmpEntries = null;
+
+		boolean bRollback = false;
+		
+		Connection dbConn = null;
+		try
+		{
+			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+
+			// Set the database commit mode
+			try
+			{
+				dbConn.setAutoCommit(false);
+			}
+			catch (SQLException sqle)
+			{
+				log.error("Unable to change database AutoCommit to FALSE", sqle);
+				return;
+			}
+		
+			m_generateNodeDeletedEvent = false;
+
+			if (log.isDebugEnabled())
+				log.debug("handleDeleteService: nodeID/ip/svcName/svcID - " + nodeID + "/" + ipAddr + "/" + serviceName + "/" + serviceID);
+
+			if (log.isDebugEnabled())
+				log.debug("handleDeleteService: Closing any outstanding outage for " + nodeID + "/" + ipAddr + "/" + serviceID);
+
+			// Close any outstanding outages, if present, for this combination
+
+			// Prepare SQL statement used to update the 'regained time' in an open entry
+			PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGE_FOR_SERVICE);
+
+			outageUpdater.setLong  (1, eventID); 
+			outageUpdater.setTimestamp(2, new java.sql.Timestamp(System.currentTimeMillis()));
+			outageUpdater.setLong  (3, nodeID);
+			outageUpdater.setString(4, ipAddr);
+			outageUpdater.setLong  (5, serviceID);
+			int count = outageUpdater.executeUpdate();
+
+			// close statement
+			outageUpdater.close();
+
+
+			if (log.isDebugEnabled())
+				log.debug("handleDeleteService: " + count + " outstanding outage(s) closed for " + nodeID + "/" + ipAddr + "/" + serviceID);
+
+			// If service is SNMP, make sure appropriate adjustments or
+			// deletions occur for SNMP
+			if (serviceName.equals(SNMP_SVC))
+			{
+				long snmpv2id = getServiceID(SNMPV2_SVC);
+
+				ifSvcSnmpEntries = new ArrayList();
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: service was SNMP, getting all SNMP/SNMPV2 entries for the node(to account for aliases/secondary)");
+			
+				
+	 			// Prepare SQL statement used to get all currently active
+				// SNMP and SNMPv2 entries for a node from the ifServices table 
+				PreparedStatement getSnmpServiceStmt = dbConn.prepareStatement(OutageConstants.DB_GET_SNMP_SERVICE);
+				getSnmpServiceStmt.setLong  (1, nodeID);
+				getSnmpServiceStmt.setLong  (2, serviceID);
+				getSnmpServiceStmt.setLong  (3, snmpv2id);
+
+				ResultSet svcRS = getSnmpServiceStmt.executeQuery();
+				while(svcRS.next())
+				{
+					String ip = svcRS.getString(1);
+					long sid = svcRS.getLong(2);
+
+					// create new IfSvcSnmpEntry
+					IfSvcSnmpEntry entry = null;
+					if (sid == serviceID)
+					{
+						entry = new IfSvcSnmpEntry(nodeID, ip, SNMP_SVC);
+
+						if (log.isDebugEnabled())
+							log.debug("handleDeleteService: IfSvcSnmpEntry for: " + nodeID + "/" + ip + "/" + SNMP_SVC);
+					}
+					else if (sid == snmpv2id)
+					{
+						entry = new IfSvcSnmpEntry(nodeID, ip, SNMPV2_SVC);
+
+						if (log.isDebugEnabled())
+							log.debug("handleDeleteService: IfSvcSnmpEntry for: " + nodeID + "/" + ip + "/" + SNMPV2_SVC);
+					}
+
+					ifSvcSnmpEntries.add(entry);
+
+				}
+				
+				// close result set and statement
+				svcRS.close();
+				getSnmpServiceStmt.close();
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: service was SNMP, deleting all SNMP/SNMPV2 entries for the node(to account for aliases/secondary)");
+
+				// Remove the all SNMP service entries if present
+
+	 			// Prepare SQL statement used to flag all SNMP and SNMPv2 entries
+				// for a node as deleted in the ifServices table 
+				PreparedStatement deleteSnmpServiceStmt = dbConn.prepareStatement(OutageConstants.DB_DELETE_SNMP_SERVICE);
+				deleteSnmpServiceStmt.setLong  (1, nodeID);
+				deleteSnmpServiceStmt.setLong  (2, serviceID);
+				deleteSnmpServiceStmt.setLong  (3, snmpv2id);
+
+				count = deleteSnmpServiceStmt.executeUpdate();
+
+				// close statement
+				deleteSnmpServiceStmt.close();
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: " + count + " SNMP/SNMPv2 entries deleted for node " + nodeID);
+			
+				// make appropriate changes in the node, ipinterface table and
+				// generate a forceRescan if necessary
+				makeSNMPChanges(dbConn, nodeID, ipAddr);
+			
+				// Since a deleteService was received for SNMP, this has to be the
+				// primary SNMP interface, generate a forceRescan for the node
+				// mark all the ipinterface entries appropriately
+				generateForceNodeRescanEvent = true;
+
+				// Delete all entries in the 'snmpInterface' table for this node
+
+				// Prepare SQL statement used to delete all entries for a node
+				// from the snmpInterface table
+				PreparedStatement deleteSnmpInterfaceStmt = dbConn.prepareStatement(OutageConstants.DB_DELETE_SNMP_INTERFACE);
+				deleteSnmpInterfaceStmt.setLong(1, nodeID);
+			
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: deleting interface entries from 'snmpinterface' table");			
+
+				count = deleteSnmpInterfaceStmt.executeUpdate();
+			
+				// close statement
+				deleteSnmpInterfaceStmt.close();
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: snmp interface entries deleted: " + count);
+
+				/* ---------------------- Begin RRD file deletion ------------------------
+			     * No longer deleting RRD files...will keep them around and handle any issues
+				 * with presentation in the user interface.
+				 
+				// get RRD directory
+				String rrdRepository = null;
+				try
+				{
+					DataCollectionConfigFactory.reload();
+					rrdRepository = DataCollectionConfigFactory.getInstance().getRrdRepository();
+				}
+				catch (Exception e)
+				{
+					log.warn("Unable to get rrd repository", e);
+				}
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: rrdRepository: " + rrdRepository);
+
+				if (rrdRepository != null)
+				{
+					// Append <nodeId> to RRD repository directory to gain 
+					// access to the node's RRD files.
+					String nodeRRDPath = rrdRepository + File.separator + String.valueOf(nodeID);
+					try
+					{
+						File fd = new File(nodeRRDPath);
+
+						File[] rrdFiles = fd.listFiles();
+						if (rrdFiles != null)
+						{
+							// Delete all the node's RRD files
+							for (int i=0; i < rrdFiles.length; i++)
+							{
+								File tmp = rrdFiles[i];
+								String tmpName = tmp.getName();
+								if (log.isDebugEnabled())
+									log.debug("handleDeleteService: rrdFileName: " + tmpName);
+
+								if (tmpName != null && tmpName.endsWith(".rrd"))
+								{
+									boolean pass = tmp.delete();
+
+									if (log.isDebugEnabled())
+										log.debug("handleDeleteService: rrdFileName: " + tmpName + " removed?: " + pass);
+								}
+							}
+						}
+
+					}
+					catch (Exception ioe)
+					{
+						log.warn("Unable to delete rrd files for nodeid/interface: " + nodeID + "/" + ipAddr, ioe);
+					}
+				}
+				else
+				{
+					log.info("No RRD file deleted as RRD repository not found");
+				} 
+				--------------------------- End RRD File Deletion --------------------*/
+			}
+			else
+			{
+				// Remove the service entry
+
+	 			// Prepare SQL statement used to flag an entry from the ifServices
+				// table as deleted based on a node/interface/service tuple
+				PreparedStatement deleteServiceStmt   = dbConn.prepareStatement(OutageConstants.DB_DELETE_SERVICE);
+				deleteServiceStmt.setLong  (1, nodeID);
+				deleteServiceStmt.setString(2, ipAddr);
+				deleteServiceStmt.setLong  (3, serviceID);
+				
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: deleting service entry");			
+				deleteServiceStmt.executeUpdate();
+
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: service entry deleted");
+			
+				// close statement
+				deleteServiceStmt.close();
+			}
+			
+			generateServiceDeletedEvent = true;
+			
+			// Are there any remaining service entries for this nodeID/ipAddr pair?
+			// If not then we can delete the interface as well.
+
+			// Prepare SQL statement used to determine if there are any remaining
+	 		//  entries in the 'ifservices' table for a specific nodeID/ipAddr pair
+	 		//  following the deletion of a service entry.
+			PreparedStatement getServiceListCount = dbConn.prepareStatement(OutageConstants.DB_GET_SERVICE_COUNT);
+			getServiceListCount.setLong(1, nodeID);
+			getServiceListCount.setString(2, ipAddr);
+						
+			ResultSet rs = getServiceListCount.executeQuery();
+			
+			// Retrieve row count from query
+			int rowCount = -1;
+			while (rs.next())
+			{
+				rowCount = rs.getInt(1);
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: remaining entries in ifservice table: " + rowCount);
+			}
+			rs.close();
+			
+			// Check rowCount...
+			if (rowCount == 0)
+			{
+				// No service entries remain for this nodeID/ipAddr pair, 
+				// so delete the interface
+				if (log.isDebugEnabled())
+					log.debug("handleDeleteService: looks like we just removed the last service entry for nodeID/ipAddr: " + nodeID + "/" + ipAddr);
+
+				cleanupInterface(dbConn, nodeID, ipAddr);
+				generateInterfaceDeletedEvent = true;
+			}
+	
+			//
+			// commit the work
+			//
+			if (log.isDebugEnabled())
+				log.debug("Commiting work to the database");						
+			dbConn.commit();
+
+			if (log.isDebugEnabled())
+				log.debug("Commited changes for deleteService (node/ip/service): " + nodeID + "/" + ipAddr + "/" + serviceID);
+
+		}
+		catch(SQLException se)
+		{
+			log.warn("Database service deletion failed for " + nodeID + "/" + ipAddr + "/" + serviceID, se);
+			bRollback = true;
+		}
+		catch(RuntimeException rtE)
+		{
+			String name = rtE.getClass().getName();
+			name = name.substring(name.lastIndexOf('.')+1);
+			log.warn("A RuntimeException of type (" + name + ") was generated during service removal.");
+			log.debug(rtE.getLocalizedMessage(), rtE);
+			bRollback = true;
+		}
+
+		//
+		// rollback if necessary
+		//
+		if(bRollback)
+		{
+			if (log.isDebugEnabled())
+				log.debug("rolling back transaction");
+
+			try
+			{
+				dbConn.rollback();
+			}
+			catch (SQLException sqle)
+			{
+				log.warn("SQL exception during rollback, reason", sqle);
+			}
+
+			if (log.isDebugEnabled())
+				log.debug("rolled back changes for (node/ip/service): " + nodeID + "/" + ipAddr + "/" + serviceID);
+
+			return;
+		}
+
+
+		// close database connection
+		try
+		{
+			if(dbConn != null)
+				dbConn.close();
+		}
+		catch(SQLException e)
+		{
+			log.warn("Exception closing JDBC connection", e);
+		}
+		
+		// 
+		// generate events to notify of modifications made to the database
+		//
+		Events events = new Events();
+
+		if (generateServiceDeletedEvent)
+		{
+			// Generate events notifying of service deletion for all SNMP/SNMPv2 entries for the node
+			if (serviceName.equals(SNMP_SVC) && ifSvcSnmpEntries != null)
+			{
+				Iterator iter = ifSvcSnmpEntries.iterator();
+				while(iter.hasNext())
+				{
+					IfSvcSnmpEntry entry = (IfSvcSnmpEntry)iter.next();
+
+					events.addEvent(createEvent(EventConstants.SERVICE_DELETED_EVENT_UEI, 
+							svcDeleteDate,
+							entry.getNodeID(),
+							entry.getIP(), 
+							entry.getService()));
+				}
+
+				ifSvcSnmpEntries.clear();
+				ifSvcSnmpEntries = null;
+			}
+			else
+			{
+				// Generate event notifying of service deletion
+				events.addEvent(createEvent(EventConstants.SERVICE_DELETED_EVENT_UEI, 
+						svcDeleteDate,
+						nodeID,
+						ipAddr, 
+						serviceName));
+			}
+		}
+	  
+		if (generateInterfaceDeletedEvent)
+		{
+			// Generate event notifying of interface deletion
+			events.addEvent(createEvent(EventConstants.INTERFACE_DELETED_EVENT_UEI, 
+					svcDeleteDate,
+					nodeID,
+					ipAddr, 
+					null));
+		}
+				
+		if (m_generateNodeDeletedEvent)
+		{
+			// Generate event notifying of node deletion
+			events.addEvent(createEvent(EventConstants.NODE_DELETED_EVENT_UEI, 
+					svcDeleteDate,
+					nodeID,
+					null, 
+					null));
+		}
+
+		if (!m_generateNodeDeletedEvent && generateForceNodeRescanEvent)
+		{
+			// Generate event forcing node rescan
+			events.addEvent(createEvent(EventConstants.FORCE_RESCAN_EVENT_UEI,
+					svcDeleteDate,
+					nodeID,
+					null, 
+					null));
+		}
+
+		if (events.getEventCount() <= 0)
+		{
+			// nothing to send
+			return;
+		}
+
+		// Serialize and send the events
+		//
+		Log eventLog = new Log();
+		eventLog.setEvents(events);
+
+		try
+		{
+			// Send to Eventd 
+			EventIpcManagerFactory.getInstance().getManager().sendNow(eventLog);
+
+			if (log.isDebugEnabled())
+				log.debug("Sent deletion events to eventd");
+		}
+		catch(Throwable t)
+		{
+			log.error("Failed to send new event(s) to eventd", t);
+		}
+	}
+

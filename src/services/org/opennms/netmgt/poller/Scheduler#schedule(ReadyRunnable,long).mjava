@@ -1,0 +1,68 @@
+	/**
+	 * This method is used to schedule a ready runnable in the
+	 * system. The interval is used as the key for determining
+	 * which queue to add the runnable.
+	 *
+	 * @param runnable	The element to run when interval expires.
+	 * @param interval	The interval queue (measured in milliseconds)
+                        to add the runnable to.
+	 *
+	 * @throws java.lang.RuntimeException Thrown if an error occurs
+	 * 	adding the element to the queue.
+	 */
+	synchronized void schedule(ReadyRunnable runnable, long interval)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+		if(log.isDebugEnabled())
+		{
+			if (runnable instanceof PollableService)
+			{
+				PollableService svc = (PollableService)runnable;
+				log.debug("schedule: adding ready runnable for " +
+						svc.getInterface().getAddress().getHostAddress() + "/" +
+						svc.getServiceName() + "/" +
+						svc.getPackageName() + " at interval " + interval);
+			}
+			else
+			{
+				log.debug("schedule: Adding ready runnable at interval " + interval);
+			}
+		}
+
+		Long key = new Long(interval);
+		if(!m_queues.containsKey(key))
+		{
+			if(log.isDebugEnabled())
+				log.debug("schedule: interval queue did not exist, a new one has been created");
+			m_queues.put(key, new PeekableFifoQueue());
+		}
+
+		try
+		{
+			((FifoQueue)m_queues.get(key)).add(runnable);
+			if(m_scheduled++ == 0)
+			{
+				if(log.isDebugEnabled())
+					log.debug("schedule: queue element added, calling notify all since none were scheduled");
+				notifyAll();
+			}
+			else if(log.isDebugEnabled())
+			{
+				log.debug("schedule: queue element added, notification not performed");
+			}
+		}
+		catch(InterruptedException ie)
+		{
+			if(log.isInfoEnabled())
+				log.info("schedule: failed to add new ready runnable instance to scheduler", ie);
+			Thread.currentThread().interrupt();
+		}
+		catch(FifoQueueException ex)
+		{
+			if(log.isInfoEnabled())
+				log.info("schedule: failed to add new ready runnable instance to scheduler", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+	}
+

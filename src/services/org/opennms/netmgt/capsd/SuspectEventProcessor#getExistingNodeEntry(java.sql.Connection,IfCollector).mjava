@@ -1,0 +1,165 @@
+	/**
+	 * This method is responsible for determining if a node already exists in the
+	 * database for the current interface.  If the IfCollector object contains a 
+	 * valid SNMP collection, an attempt will be made to look up in the database
+	 * each interface contained in the SNMP collection's ifTable.  If an interface
+	 * is found to already exist in the database a DbNodeEntry object will be
+	 * created from it and returned.  If the IfCollector object does not contain
+	 * a valid SNMP collection or if none of the interfaces exist in the database
+	 * null is returned.
+	 *
+	 * @param dbc		Connection to the database.
+	 * @param collector	Interface collector object
+	 * 
+	 * @return dbNodeEntry	Returns null if a node does not already exist in the database,
+	 *      		otherwise returns the DbNodeEntry object for the node under which
+	 * 			the current interface/IP address should be added.
+	 *
+	 * @throws SQLException	Thrown if an error occurs retrieving the parent nodeid from 
+	 * 			the database.
+	 */
+	private DbNodeEntry getExistingNodeEntry(java.sql.Connection dbc, IfCollector collector ) throws SQLException
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		if (log.isDebugEnabled())
+			log.debug("getExistingNodeEntry: checking for current target: " + collector.getTarget());
+			
+		// Do we have any additional interface information collected via SNMP?
+		// If not simply return, there is nothing to check
+		if(!collector.hasSnmpCollection() || collector.getSnmpCollector().failed())
+			return null;
+			
+		// Next verify that ifTable and ipAddrTable entries were collected
+		IfSnmpCollector snmpc = collector.getSnmpCollector();
+		IfTable ifTable = null;
+		IpAddrTable ipAddrTable = null;
+		
+		if(snmpc.hasIfTable())
+			ifTable = snmpc.getIfTable();
+		
+		if (snmpc.hasIpAddrTable())
+			ipAddrTable = snmpc.getIpAddrTable();
+		
+		if (ifTable == null || ipAddrTable == null)
+			return null;
+		
+		// SQL statement prefix
+		StringBuffer sqlBuffer = new StringBuffer(SQL_RETRIEVE_INTERFACE_NODEID_PREFIX);
+		boolean firstAddress = true;
+		
+		// Loop through the interface table entries and see if any already exist
+		// in the database.
+		Iterator iter = ifTable.getEntries().iterator();
+
+		while(iter.hasNext())
+		{
+			IfTableEntry ifEntry = (IfTableEntry)iter.next();
+				
+			Object[] my_oids = ifEntry.keySet().toArray();
+			
+			if (ifEntry.containsKey("ifIndex") != true) {
+			    log.debug("getExistingNodeEntry:  Breaking from loop");
+			    break;
+			}
+			
+			//
+			// Get ifIndex
+			//
+			int ifIndex = -1;
+			SnmpInt32 snmpIfIndex = (SnmpInt32)ifEntry.get(IfTableEntry.IF_INDEX);
+			if(snmpIfIndex != null)
+				ifIndex = snmpIfIndex.getValue();
+
+			//
+			// Get ALL IP Addresses for this ifIndex
+			//
+			List ipAddrs = IpAddrTable.getIpAddresses(ipAddrTable.getEntries(), ifIndex);
+			if (log.isDebugEnabled())
+				log.debug("getExistingNodeEntry: number of interfaces retrieved for ifIndex " + ifIndex + " is: " + ipAddrs.size());
+			// 
+			// Get ifType for this interface
+			//
+			int ifType = -1;
+			SnmpInt32 snmpIfType = (SnmpInt32)ifEntry.get(IfTableEntry.IF_TYPE);
+			if(snmpIfType != null)
+			   ifType = snmpIfType.getValue();
+			   
+			// Iterate over IP address list and add each to the sql buffer
+			//
+			Iterator aiter = ipAddrs.iterator();
+			while (aiter.hasNext())
+			{
+				InetAddress ipAddress = (InetAddress)aiter.next();
+				
+				// 
+			// Skip interface if no IP address or if IP address is "0.0.0.0"
+			// or if this interface is of type loopback
+				if (ipAddress == null || 
+					ipAddress.getHostAddress().equals("0.0.0.0") ||
+					ifType == 24 || 
+					ipAddress.getHostAddress().startsWith("127."))
+				continue;
+				
+			if (firstAddress)
+			{
+					sqlBuffer.append("ipaddr='").append(ipAddress.getHostAddress()).append("'");
+				firstAddress = false;
+			}
+			else
+					sqlBuffer.append(" OR ipaddr='").append(ipAddress.getHostAddress()).append("'");
+			}
+		} // end while
+		
+		// Make sure we added at least one address to the SQL query
+		//
+		if (firstAddress)
+			return null;
+			
+		// Prepare the db statement in advance
+		//
+		if (log.isDebugEnabled())
+			log.debug("getExistingNodeEntry: issuing SQL command: " + sqlBuffer.toString());
+			
+		PreparedStatement stmt = dbc.prepareStatement(sqlBuffer.toString());
+		
+		// Do any of the IP addrs already exist in the database under another node?
+		//
+		int nodeID = -1;		
+		try
+		{
+			ResultSet rs = stmt.executeQuery();
+			if (rs.next())
+			{
+				nodeID = rs.getInt(1);
+				if (log.isDebugEnabled())
+					log.debug("getExistingNodeEntry: target " + collector.getTarget().getHostAddress() + " belongs under nodeId " + nodeID);
+				rs = null;
+			}
+		}
+		catch(SQLException sqlE)
+		{
+			throw sqlE;
+		}
+		finally
+		{
+			try
+			{
+				stmt.close(); // automatically closes the result set as well
+			}
+			catch (Exception e)
+			{
+				// Ignore
+			}
+		}
+			
+		if (nodeID != -1)
+		{
+			if (log.isDebugEnabled())
+				log.debug("getExistingNodeEntry: found one of the addrs under existing node: " + nodeID);
+			return DbNodeEntry.get(nodeID);
+		}
+		else
+			return null;
+	}
+
