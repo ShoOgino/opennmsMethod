@@ -1,0 +1,102 @@
+    public void addCapsdInfo(String name, String port, String user, String protocol, HttpServletResponse response, HttpServletRequest request) throws ServletException, IOException {
+        // Check to see if the name is duplicate of the already specified names
+        // first.
+        Collection tmpCapsd = capsdConfig.getProtocolPluginCollection();
+        Iterator iter = tmpCapsd.iterator();
+        Service pollersvc = null;
+        while (iter.hasNext()) {
+            ProtocolPlugin svc = (ProtocolPlugin) iter.next();
+            if (svc.getProtocol().equals(name)) {
+                // delete from the poller config.
+                Collection tmpPollers = pkg.getServiceCollection();
+                Iterator polleriter = tmpPollers.iterator();
+                boolean removePoller = false;
+                while (polleriter.hasNext()) {
+                    pollersvc = (Service) polleriter.next();
+                    if (pollersvc.getName().equals(name)) {
+                        removePoller = true;
+                        break;
+                    }
+                }
+                if (removePoller) {
+                    Collection tmpPoller = pkg.getServiceCollection();
+                    if (tmpPoller.contains(pollersvc) && pollersvc.getName().equals(name)) {
+                        errorflag = true;
+                        tmpPoller.remove(pollersvc);
+                        response.sendRedirect(Util.calculateUrlBase(request) + "/admin/error.jsp?error=1&name=" + name);
+                        return;
+                    }
+                }
+                break;
+                // throw new ServletException ("ProtocolPlugin name " + name + "
+                // is already defined.. Try assigning another unique name");
+            }
+        }
+        ProtocolPlugin pluginAdd = new ProtocolPlugin();
+        pluginAdd.setProtocol(name);
+        String className = (String) props.get("service." + protocol + ".capsd-class");
+        if (className != null) {
+            pluginAdd.setClassName(className);
+            pluginAdd.setScan("on");
+            pluginAdd.setUserDefined("true");
+            org.opennms.netmgt.config.capsd.Property newprop = new org.opennms.netmgt.config.capsd.Property();
+            String banner = "*";
+            if (props.get("banner") != null)
+                banner = (String) props.get("banner");
+            newprop.setValue(banner);
+            newprop.setKey("banner");
+            pluginAdd.addProperty(newprop);
+
+            newprop = new org.opennms.netmgt.config.capsd.Property();
+            if (port != null && !port.equals("")) {
+                newprop.setValue(port);
+                if (port.indexOf(":") == -1)
+                    newprop.setKey("port");
+                else
+                    newprop.setKey("ports");
+                pluginAdd.addProperty(newprop);
+            } else {
+                if (props.get("service." + protocol + ".port") == null || ((String) props.get("service." + protocol + ".port")).equals("")) {
+                    errorflag = true;
+                    response.sendRedirect(Util.calculateUrlBase(request) + "/admin/error.jsp?error=0&name=" + "service." + protocol + ".port ");
+                    pluginAdd = null;
+                    return;
+                } else {
+                    port = (String) props.get("service." + protocol + ".port");
+                    newprop.setValue(port);
+                    if (port.indexOf(":") == -1)
+                        newprop.setKey("port");
+                    else
+                        newprop.setKey("ports");
+                    pluginAdd.addProperty(newprop);
+                }
+            }
+            newprop = new org.opennms.netmgt.config.capsd.Property();
+            String timeout = "3000";
+            if (props.get("timeout") != null)
+                timeout = (String) props.get("timeout");
+            newprop.setValue(timeout);
+            newprop.setKey("timeout");
+            if (pluginAdd != null)
+                pluginAdd.addProperty(newprop);
+
+            newprop = new org.opennms.netmgt.config.capsd.Property();
+            String retry = "3";
+            if (props.get("retry") != null)
+                retry = (String) props.get("retry");
+            newprop.setValue(retry);
+            newprop.setKey("retry");
+            if (pluginAdd != null) {
+                pluginAdd.addProperty(newprop);
+                capsdProtocols.put(name, pluginAdd);
+                pluginColl = capsdProtocols.values();
+                capsdColl.add(pluginAdd);
+                capsdConfig.addProtocolPlugin(pluginAdd);
+            }
+        } else {
+            errorflag = true;
+            response.sendRedirect(Util.calculateUrlBase(request) + "/admin/error.jsp?error=0&name=" + "service." + protocol + ".capsd-class ");
+            return;
+        }
+    }
+

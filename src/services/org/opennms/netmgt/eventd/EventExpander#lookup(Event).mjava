@@ -1,0 +1,92 @@
+    /**
+     * <p>
+     * This method is used to lookup the event configuration object based upon
+     * information in the passed information. The
+     * {@link EventConfigurationManager EventConfigurationManager}instance is
+     * consulted to find a matching configured event. The lookup algorithm
+     * favors SNMP information if avaialable, and then defaults to the event's
+     * Universal Event Identfier.
+     * </p>
+     * 
+     * @param event
+     *            The event to find a configuration for.
+     * 
+     * @return The matching configuration event, if any.
+     * 
+     * @exception java.lang.NullPointerException
+     *                Thrown if the event parameter that was passed is null.
+     * 
+     */
+    private static org.opennms.netmgt.xml.eventconf.Event lookup(Event event) {
+        if (event == null)
+            throw new NullPointerException("Invalid argument, the event parameter must not be null");
+
+        //
+        // The event configuration that matches the lookup
+        // for the passed event
+        //
+        org.opennms.netmgt.xml.eventconf.Event eConf = null;
+        org.opennms.netmgt.xml.eventconf.Event eSnmpConf = null;
+
+        //
+        // lookup based on the event mask, (defaults to UEI
+        // if there is no mask specified)
+        //
+        eConf = EventConfigurationManager.get(event);
+
+        //
+        // lookup on SNMP information if it exists.
+        // This lookup will return EVENT_TRAP_UEI
+        // if no other one can be found and it's enterprise
+        // specific
+        //
+        if (event.getSnmp() != null) {
+            eSnmpConf = lookup(event.getSnmp());
+        }
+
+        //
+        // now process
+        // 
+        if (eConf == null && eSnmpConf != null) {
+            //
+            // set eConf to eSnmpConf
+            //
+            eConf = eSnmpConf;
+        } else if (eConf == null && eSnmpConf == null) {
+            //
+            // take the configuration of the default event
+            //
+            eConf = EventConfigurationManager.getByUei(DEFAULT_EVENT_UEI);
+        } else if (eConf != null && eSnmpConf != null) {
+            //
+            // If the econf not being null was a result of it not
+            // having an event mask(i.e defaulted to a UEI lookup),
+            // OR
+            // If the event mask lookup went through with a mask
+            // that does not include the SNMP EID,
+            // THEN
+            // Give precedence to the snmp lookup
+            //
+            if ((eConf.getMask() == null))
+                eConf = eSnmpConf;
+            else {
+                boolean snmpEidIsPartOfMask = false;
+                Enumeration en = eConf.getMask().enumerateMaskelement();
+                while (en.hasMoreElements()) {
+                    org.opennms.netmgt.xml.eventconf.Maskelement maskelement = (org.opennms.netmgt.xml.eventconf.Maskelement) en.nextElement();
+
+                    String name = maskelement.getMename();
+                    if (name.equals(org.opennms.netmgt.eventd.datablock.EventKey.TAG_SNMP_EID)) {
+                        snmpEidIsPartOfMask = true;
+                        break;
+                    }
+                }
+
+                if (!snmpEidIsPartOfMask)
+                    eConf = eSnmpConf;
+            }
+        }
+
+        return eConf;
+    }
+
