@@ -29,14 +29,6 @@
 
 	m_out.print("    - transforming data into the new table...\r");
 
-	if (table.equals("events")) {
-	    st.execute("INSERT INTO events (eventid, eventuei, eventtime, " +
-		       "eventsource, eventdpname, eventcreatetime, " +
-		       "eventseverity, eventlog, eventdisplay) values " +
-		       "(0, 'http://uei.opennms.org/dummyevent', now(), " +
-		       "'OpenNMS.Eventd', 'localhost', now(), 1, 'Y', 'Y')");
-	}
-
 	ResultSet rs = st.executeQuery("SELECT count(*) FROM " + oldTable);
 	rs.next();
 	long num_rows = rs.getLong(1);
@@ -151,13 +143,29 @@
 	    try {
 		insert.execute();
 	    } catch (SQLException e) {
+		// XXX should we add something for this:
+		//    2004-09-26 22:24:29 ERROR:  duplicate key violates
+		//    unique constraint "pk_eventid"
 		if (e.toString().indexOf("key referenced from " + table +
-					 " not found in") == -1 &&
-		    e.toString().indexOf("Cannot insert a duplicate key " +
-					 "into unique index") == -1) {
-		    throw e;
+					 " not found in") == -1) {
+		    //e.toString().indexOf("Cannot insert a duplicate key " +
+		    //		 "into unique index") == -1 &&
+		    //		    e.toString().indexOf("duplicate key violates unique " +
+		    //					 "constraint") == -1) {
+		    SQLException ex = new SQLException("Failed inserting " +
+						       "due to " +
+						       e.getMessage() + ".  " +
+						       "Executed command: \"" +
+						       insert.toString() +
+						       "\"",
+						       e.getSQLState(),
+						       e.getErrorCode());
+		    ex.setNextException(e);
+		    throw ex;
 		    // error =	      "can't insert into " + table;
 		}
+
+		m_dbconnection.commit();
 	    }
 
 	    current_row++;
@@ -172,6 +180,16 @@
 
 	m_dbconnection.commit();
 	m_dbconnection.setAutoCommit(true);
+
+
+	if (table.equals("events") && num_rows == 0) {
+	    st.execute("INSERT INTO events (eventid, eventuei, eventtime, " +
+		       "eventsource, eventdpname, eventcreatetime, " +
+		       "eventseverity, eventlog, eventdisplay) values " +
+		       "(0, 'http://uei.opennms.org/dummyevent', now(), " +
+		       "'OpenNMS.Eventd', 'localhost', now(), 1, 'Y', 'Y')");
+	}
+
 
 	m_out.println("    - transforming data into the new table... " +
 			   "DONE           ");
