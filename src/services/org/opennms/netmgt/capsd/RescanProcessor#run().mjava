@@ -179,19 +179,36 @@
 					// table.  Necessary because the IP address must already be in 
 					// the database to evaluate against a filter rule.
 					//
-					List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
-					InetAddress newPrimarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
-					SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newPrimarySnmpIf, oldPrimarySnmpIf);
-					
+					// First create a list of eligible loopback interfaces.
+					//
+					List snmpLBAddresses = buildLBSnmpAddressList(collectorMap, snmpc);
+                                        InetAddress newLBSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpLBAddresses);
+					// Now create a list of all eligible interfaces. Choose loopback
+					// if exists.
+
+                                        List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
+                                        InetAddress newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
+                                        if (newLBSnmpPrimaryIf == null)
+                                        {
+                                                SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, oldPrimarySnmpIf);
+                                        }
+                                        else
+                                        {
+						newSnmpPrimaryIf = newLBSnmpPrimaryIf;
+                                                if(log.isDebugEnabled())
+                                                        log.debug("SuspectEventProcessor: Loopback Address set as primary: " + newLBSnmpPrimaryIf);
+                                                SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newLBSnmpPrimaryIf, oldPrimarySnmpIf);
+                                        }
+
 					// Now that we've identified the new primary SNMP interface
 					// we can determine if it is necessary to generate certain
 					// SNMP data collection related events
 					//
-					generateSnmpDataCollectionEvents(dbNodeEntry, oldPrimarySnmpIf, newPrimarySnmpIf);
+					generateSnmpDataCollectionEvents(dbNodeEntry, oldPrimarySnmpIf, newSnmpPrimaryIf);
 					
 					// Update the node table entry
 					//
-					DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newPrimarySnmpIf, dbInterfaces, collectorMap);
+					DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf, dbInterfaces, collectorMap);
 					
 					updateCompleted = true;
 				}
