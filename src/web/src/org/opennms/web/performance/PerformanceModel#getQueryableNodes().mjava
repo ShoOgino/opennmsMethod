@@ -15,46 +15,49 @@
 
         // Get all of the numeric directory names in the RRD directory; these
         // are the nodeids of the nodes that have performance data
-        File[] nodeDirs = this.rrdDirectory.listFiles(NODE_DIRECTORY_FILTER);
-
+        File[] nodeDirs = this.rrdDirectory.listFiles(RrdFileConstants.NODE_DIRECTORY_FILTER);
+        
         if(nodeDirs != null && nodeDirs.length > 0) {
-            ArrayList nodeList = new ArrayList();
+            List nodeList = new LinkedList();
 
-            //create the main stem of the select statement
-            StringBuffer select = new StringBuffer("SELECT DISTINCT NODEID, NODELABEL FROM NODE WHERE NODETYPE != 'D' AND NODEID IN ('");
-
-            //add all but the last node id with a comma
-            for( int i=0; i < nodeDirs.length - 1; i++ ) {
-                select.append(nodeDirs[i].getName());
-                select.append("','");
+            // Construct a set containing the nodeIds that are queryable
+            BitSet queryableIds = new BitSet(nodeDirs.length);
+            for (int i = 0; i < nodeDirs.length; i++) {
+                String fileName = nodeDirs[i].getName();
+                int nodeId = Integer.parseInt(fileName);
+                queryableIds.set(nodeId);
             }
 
-            //add the last node id without a comma
-            select.append(nodeDirs[nodeDirs.length - 1].getName());
-
-            //close the select
-            select.append("') ORDER BY NODELABEL");
+            //create the main stem of the select statement
+            StringBuffer select = new StringBuffer("SELECT DISTINCT NODEID, NODELABEL FROM NODE WHERE NODETYPE != 'D' ORDER BY NODELABEL");
 
             Connection conn = Vault.getDbConnection();
 
+            Statement stmt = null;
+            ResultSet rs = null;
             try {
-                Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery(select.toString());
+                stmt = conn.createStatement();
+                rs = stmt.executeQuery(select.toString());
 
 
                 while( rs.next() ) {
-                    QueryableNode node = new QueryableNode();
-
-                    node.nodeId = rs.getInt("nodeid");
-                    node.nodeLabel = rs.getString("nodeLabel");
-
-                    nodeList.add(node);
+                    
+                    int nodeId = rs.getInt("nodeid");
+                    
+                    if (queryableIds.get(nodeId)) {
+                        QueryableNode node = new QueryableNode();
+                        
+                        node.nodeId = nodeId;
+                        node.nodeLabel = rs.getString("nodeLabel");
+                        
+                        nodeList.add(node);
+                    }
                 }
 
-                rs.close();
-                stmt.close();
             }
             finally {
+                if (rs != null) rs.close();
+                if (stmt != null) stmt.close();
                 Vault.releaseDbConnection(conn);
             }
 

@@ -15,46 +15,49 @@
 
         // Get all of the numeric directory names in the RRD directory; these
         // are the nodeids of the nodes that have performance data
-        File[] intDirs = this.rrdDirectory.listFiles(INTERFACE_DIRECTORY_FILTER);
+        File[] intDirs = this.rrdDirectory.listFiles(RrdFileConstants.INTERFACE_DIRECTORY_FILTER);
 
         if(intDirs != null && intDirs.length > 0) {
-            ArrayList nodeList = new ArrayList();
-
-            //create the main stem of the select statement
-            StringBuffer select = new StringBuffer("SELECT DISTINCT ipinterface.nodeid, node.nodeLabel FROM node, ipinterface WHERE node.nodetype != 'D' AND ipinterface.nodeid=node.nodeid AND ipinterface.ipaddr IN ('");
-
-            //add all but the last node id with a comma
-            for( int i=0; i < intDirs.length - 1; i++ ) {
-                select.append(intDirs[i].getName());
-                select.append("','");
+            List nodeList = new LinkedList();
+            
+            // create a set to test ipAddrs against.
+            Set queryableIpAddrs = new HashSet(intDirs.length);
+            for (int i = 0; i < intDirs.length; i++) {
+                String ipAddr = intDirs[i].getName();
+                queryableIpAddrs.add(ipAddr);
             }
 
-            //add the last node id without a comma
-            select.append(intDirs[intDirs.length - 1].getName());
-
-            //close the select
-            select.append("') ORDER BY node.nodeLabel");
+            //create the main stem of the select statement
+            StringBuffer select = new StringBuffer("SELECT DISTINCT ipinterface.ipAddr, ipinterface.nodeid, node.nodeLabel FROM node, ipinterface WHERE node.nodetype != 'D' AND ipinterface.nodeid=node.nodeid AND ipinterface.ismanaged != 'D' ORDER BY node.nodeLabel");
 
             Connection conn = Vault.getDbConnection();
 
+            Statement stmt = null;
+            ResultSet rs = null;
             try {
-                Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery(select.toString());
+                stmt = conn.createStatement();
+                rs = stmt.executeQuery(select.toString());
 
 
                 while( rs.next() ) {
-                    QueryableNode node = new QueryableNode();
-
-                    node.nodeId = rs.getInt("nodeid");
-                    node.nodeLabel = rs.getString("nodeLabel");
-
-                    nodeList.add(node);
+                    String ipAddr = rs.getString("ipAddr");
+                    
+                    if (queryableIpAddrs.contains(ipAddr)) {
+                        QueryableNode node = new QueryableNode();
+                        
+                        node.nodeId = rs.getInt("nodeid");
+                        node.nodeLabel = rs.getString("nodeLabel");
+                        
+                        nodeList.add(node);
+                    }
                 }
 
                 rs.close();
                 stmt.close();
             }
             finally {
+                if (rs != null) rs.close();
+                if (stmt != null) stmt.close();
                 Vault.releaseDbConnection(conn);
             }
 
