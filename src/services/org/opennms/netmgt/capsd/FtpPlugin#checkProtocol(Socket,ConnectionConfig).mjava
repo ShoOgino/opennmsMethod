@@ -1,0 +1,85 @@
+    /**
+     * @param socket
+     * @param config
+     * @param log
+     * @param isAServer
+     * @return @throws
+     *         IOException
+     */
+    protected boolean checkProtocol(Socket socket, ConnectionConfig config) throws IOException {
+
+        boolean isAServer = false;
+
+        Category log = ThreadCategory.getInstance(getClass());
+
+        try {
+
+            BufferedReader lineRdr = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+            // Read responses from the server. The initial line should just
+            // be a banner, but go ahead and check for multiline response
+            // in the form of:
+            //
+            // 	221-You have transferred 0 bytes in 0 files.
+            //	221-Total traffic for this session was 102 bytes in 0 transfers.
+            //	221 Thank you for using the FTP service on nethost0.
+            //
+            String result = null;
+            do {
+                result = lineRdr.readLine();
+
+            } while (result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+
+            if (result == null || result.length() == 0) {
+                log.info("Received truncated response from ftp server " + config.getInetAddress().getHostAddress());
+                return isAServer;
+            }
+
+            // Tokenize the last line result
+            //
+            StringTokenizer t = new StringTokenizer(result);
+            int rc = Integer.parseInt(t.nextToken());
+            if (rc > 99 && rc < 600) {
+                //
+                // FTP should recoginize the QUIT command
+                //
+                String cmd = "QUIT\r\n";
+                socket.getOutputStream().write(cmd.getBytes());
+
+                // Response from QUIT command may be a multi-line response.
+                // We are expecting to get a response with an integer return
+                // code in the first token. We can't ge sure that the first
+                // response will give us what we want. Consider the following
+                // reponse for example:
+                //
+                // 	221-You have transferred 0 bytes in 0 files.
+                //	221-Total traffic for this session was 102 bytes in 0 transfers.
+                //	221 Thank you for using the FTP service on nethost0.
+                //
+                // In this case the final line of the response contains the return
+                // code we are looking for.
+                do {
+                    result = lineRdr.readLine();
+
+                } while (result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+
+                if (result == null || result.length() == 0) {
+                    log.info("Received truncated response from ftp server " + config.getInetAddress().getHostAddress());
+                    return isAServer;
+                }
+
+                t = new StringTokenizer(result);
+                rc = Integer.parseInt(t.nextToken());
+                if (rc > 99 && rc < 600) isAServer = true;
+
+            }
+
+        } catch (NumberFormatException e) {
+            log.info("FtpPlugin: received invalid result code from server " + config.getInetAddress().getHostAddress(), e);
+            isAServer = false;
+
+        }
+
+        return isAServer;
+    }
+

@@ -1,194 +1,155 @@
-	/**
-	 * <P>Test to see if the passed host-port pair is the 
-	 * endpoint for an SMTP server. If there is an SMTP server
-	 * at that destination then a value of true is returned
-	 * from the method. Otherwise a false value is returned 
-	 * to the caller.</P>
-	 *
-	 * @param host	The remote host to connect to.
-	 * @param port 	The remote port on the host.
-	 *
-	 * @return True if server supports SMTP on the specified 
-	 *	port, false otherwise
-	 */
-	private boolean isServer(InetAddress host, int port, int retries, int timeout)
-	{
-		// get a log to send errors
-		//
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * <P>
+     * Test to see if the passed host-port pair is the endpoint for an SMTP server. If there is
+     * an SMTP server at that destination then a value of true is returned from the method.
+     * Otherwise a false value is returned to the caller.
+     * </P>
+     * 
+     * @param host
+     *            The remote host to connect to.
+     * @param port
+     *            The remote port on the host.
+     * 
+     * @return True if server supports SMTP on the specified port, false otherwise
+     */
+    private boolean isServer(InetAddress host, int port, int retries, int timeout) {
+        // get a log to send errors
+        //
+        Category log = ThreadCategory.getInstance(getClass());
 
-		boolean isAServer = false;
-		for (int attempts=0; attempts <= retries && !isAServer; attempts++)
-		{
-                        SocketChannel sChannel = null;
-			try
-			{
-                                sChannel = SocketChannelUtil.getConnectedSocketChannel(host, port, timeout);
-                                if (sChannel == null)
-                                {
-                                        log.debug("SmtpPlugin: did not connect to host within timeout: " + timeout +" attempt: " + attempts);
-                                        continue;
-                                }
-                                log.debug("SmtpPlugin: connected to host: " + host + " on port: " + port);
+        boolean isAServer = false;
+        for (int attempts = 0; attempts <= retries && !isAServer; attempts++) {
+            Socket socket = null;
+            try {
+                socket = new Socket();
+                socket.connect(new InetSocketAddress(host, port), timeout);
+                socket.setSoTimeout(timeout);
+                log.debug("SmtpPlugin: connected to host: " + host + " on port: " + port);
 
-                                // Allocate a line reader
-                                //
-                                BufferedReader lineRdr = new BufferedReader(new InputStreamReader(sChannel.socket().getInputStream()));
+                // Allocate a line reader
+                //
+                BufferedReader lineRdr = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-			
-				// Read responses from the server. The initial line should just
-				// be a banner, but go ahead and check for multiline response.
-				//
-				String result = null;
-				do
-				{
-					result = lineRdr.readLine();
-				
-				} while(result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+                // Read responses from the server. The initial line should just
+                // be a banner, but go ahead and check for multiline response.
+                //
+                String result = null;
+                do {
+                    result = lineRdr.readLine();
 
-				if(result == null || result.length() == 0)
-				{
-					log.info("Received truncated response from SMTP server " + host.getHostAddress());
-					continue;
-				}
+                } while (result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
 
-				// Tokenize the last line result
-				//
-				StringTokenizer t = new StringTokenizer(result);
-				int rc = Integer.parseInt(t.nextToken());
-				if(rc == 220)
-				{
-					//
-					// Send the HELO command
-					//
-					String cmd = "HELO " + LOCALHOST_NAME + "\r\n";
-                                        sChannel.socket().getOutputStream().write(cmd.getBytes());
-					
-					// Response from HELO command may be a multi-line response (but
-					// most likely will be single-line)..
-					// We are expecting to get a response with an integer return
-					// code in the first token.  We can't ge sure that the first
-					// response will give us what we want.  Consider the following
-					// reponse for example:
-					//
-					// 	250-First line
-					//	250-Second line
-					//	250 Requested mail action okay, completed
-					//
-					// In this case the final line of the response contains the return 
-					// code we are looking for.
-					do
-					{
-						result = lineRdr.readLine();
+                if (result == null || result.length() == 0) {
+                    log.info("Received truncated response from SMTP server " + host.getHostAddress());
+                    continue;
+                }
 
-					} while(result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+                // Tokenize the last line result
+                //
+                StringTokenizer t = new StringTokenizer(result);
+                int rc = Integer.parseInt(t.nextToken());
+                if (rc == 220) {
+                    //
+                    // Send the HELO command
+                    //
+                    String cmd = "HELO " + LOCALHOST_NAME + "\r\n";
+                    socket.getOutputStream().write(cmd.getBytes());
 
-					if(result == null || result.length() == 0)
-					{
-						log.info("Received truncated response from SMTP server " + host.getHostAddress());
-						continue;
-					}
+                    // Response from HELO command may be a multi-line response (but
+                    // most likely will be single-line)..
+                    // We are expecting to get a response with an integer return
+                    // code in the first token. We can't ge sure that the first
+                    // response will give us what we want. Consider the following
+                    // reponse for example:
+                    //
+                    // 	250-First line
+                    //	250-Second line
+                    //	250 Requested mail action okay, completed
+                    //
+                    // In this case the final line of the response contains the return
+                    // code we are looking for.
+                    do {
+                        result = lineRdr.readLine();
 
-					t  = new StringTokenizer(result);
-					rc = Integer.parseInt(t.nextToken());
-					if(rc == 250)
-					{
-						//
-						// Send the QUIT command
-						//
-						cmd = "QUIT\r\n";
-                                        	sChannel.socket().getOutputStream().write(cmd.getBytes());
-					
-						// Response from QUIT command may be a multi-line response.
-						// We are expecting to get a response with an integer return
-						// code in the first token.  We can't ge sure that the first
-						// response will give us what we want.  Consider the following
-						// reponse for example:
-						//
-						// 	221-First line
-						//	221-Second line
-						//	221 <domain> Service closing transmission channel.
-						//
-						// In this case the final line of the response contains the return 
-						// code we are looking for.
-						do
-						{
-							result = lineRdr.readLine();
+                    } while (result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
 
-						} while(result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
-	
-						if(result == null || result.length() == 0)
-						{
-							log.info("Received truncated response from SMTP server " + host.getHostAddress());
-							continue;
-						}
-	
-						t  = new StringTokenizer(result);
-						rc = Integer.parseInt(t.nextToken());
-						
-						if (rc == 221)
-							isAServer = true;
-					}
-				}
-			}
-			catch(NumberFormatException e)
-			{
-				log.info("SmtpPlugin: received invalid result code from server " + host.getHostAddress(), e);
-				isAServer = false;
-			}
-			catch(ConnectException cE)
-			{
-				// Connection refused!!  Continue to retry.
-				//
-				log.debug("SmtpPlugin: connection refused to " + host.getHostAddress() + ":" + port);
-				isAServer = false;
-			}
-			catch(NoRouteToHostException e)
-			{
-				// No route to host!!  No need to perform retries.
-				e.fillInStackTrace();
-				log.info("SmtpPlugin: Unable to test host " + host.getHostAddress() + ", no route available", e);
-				isAServer = false;
-				throw new UndeclaredThrowableException(e);
-			}
-			catch(InterruptedIOException e)
-			{
-				// no logging necessary, this is "expected" behavior
-				//
-				isAServer = false;
-			}
-			catch(IOException e)
-			{
-				log.info("SmtpPlugin: Error communicating with host " + host.getHostAddress(), e);
-				isAServer = false;
-			}
-			catch(Throwable t)
-			{
-				log.warn("SmtpPlugin: Undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
-				isAServer = false;
-			}
-			finally
-			{
-				try
-				{
-					log.debug("SmtpPlugin: Closing SMTP socket channel "+sChannel+(sChannel != null ? " with socket: "+sChannel.socket():"" ));
-                                        if(sChannel != null)
-                                        {
-                                                if (sChannel.socket() != null)
-                                                        sChannel.socket().close();
-                                                sChannel.close();
-                            					log.debug("SmtpPlugin: Closed SMTP socket channel "+sChannel+(sChannel != null ? " with socket: "+sChannel.socket():"" ));
-                                                sChannel = null;
-                                        }
-				}
-				catch(IOException e) { }
-			}
-		}
+                    if (result == null || result.length() == 0) {
+                        log.info("Received truncated response from SMTP server " + host.getHostAddress());
+                        continue;
+                    }
 
-		//
-		// return the success/failure of this
-		// attempt to contact an SMTP server.
-		//
-		return isAServer;
-	}
+                    t = new StringTokenizer(result);
+                    rc = Integer.parseInt(t.nextToken());
+                    if (rc == 250) {
+                        //
+                        // Send the QUIT command
+                        //
+                        cmd = "QUIT\r\n";
+                        socket.getOutputStream().write(cmd.getBytes());
+
+                        // Response from QUIT command may be a multi-line response.
+                        // We are expecting to get a response with an integer return
+                        // code in the first token. We can't ge sure that the first
+                        // response will give us what we want. Consider the following
+                        // reponse for example:
+                        //
+                        // 	221-First line
+                        //	221-Second line
+                        //	221 <domain> Service closing transmission channel.
+                        //
+                        // In this case the final line of the response contains the return
+                        // code we are looking for.
+                        do {
+                            result = lineRdr.readLine();
+
+                        } while (result != null && result.length() > 0 && MULTILINE_RESULT.match(result));
+
+                        if (result == null || result.length() == 0) {
+                            log.info("Received truncated response from SMTP server " + host.getHostAddress());
+                            continue;
+                        }
+
+                        t = new StringTokenizer(result);
+                        rc = Integer.parseInt(t.nextToken());
+
+                        if (rc == 221) isAServer = true;
+                    }
+                }
+            } catch (NumberFormatException e) {
+                log.info("SmtpPlugin: received invalid result code from server " + host.getHostAddress(), e);
+                isAServer = false;
+            } catch (ConnectException cE) {
+                // Connection refused!! Continue to retry.
+                //
+                log.debug("SmtpPlugin: connection refused to " + host.getHostAddress() + ":" + port);
+                isAServer = false;
+            } catch (NoRouteToHostException e) {
+                // No route to host!! No need to perform retries.
+                e.fillInStackTrace();
+                log.info("SmtpPlugin: Unable to test host " + host.getHostAddress() + ", no route available", e);
+                isAServer = false;
+                throw new UndeclaredThrowableException(e);
+            } catch (InterruptedIOException e) {
+                log.debug("SmtpPlugin: did not connect to host within timeout: " + timeout + " attempt: " + attempts);
+                isAServer = false;
+            } catch (IOException e) {
+                log.info("SmtpPlugin: Error communicating with host " + host.getHostAddress(), e);
+                isAServer = false;
+            } catch (Throwable t) {
+                log.warn("SmtpPlugin: Undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
+                isAServer = false;
+            } finally {
+                try {
+                    if (socket != null) socket.close();
+                } catch (IOException e) {
+                }
+            }
+        }
+
+        //
+        // return the success/failure of this
+        // attempt to contact an SMTP server.
+        //
+        return isAServer;
+    }
 

@@ -1,0 +1,75 @@
+    /**
+     * <P>
+     * Test to see if the passed host-port pair is the endpoint for an Citrix server. If there
+     * is an Citrix server at that destination then a value of true is returned from the
+     * method. Otherwise a false value is returned to the caller.
+     * </P>
+     * 
+     * @param config
+     *            TODO
+     * 
+     * @return True if server supports Citrix on the specified port, false otherwise
+     */
+    final protected boolean checkConnection(ConnectionConfig config) {
+        // get a log to send errors
+        //
+        Category log = ThreadCategory.getInstance(getClass());
+
+        //don't let the user set the timeout to 0, an infinite loop will occur
+        // if the server is down
+        int timeout = (config.getTimeout() == 0 ? 10 : config.getTimeout());
+
+        boolean isAServer = false;
+        for (int attempts = 0; attempts <= config.getRetry() && !isAServer; attempts++) {
+
+            if (!preconnectCheck(config)) {
+                // No chance of supporting this protocol just bail
+                break;
+            }
+
+            Socket socket = null;
+            try {
+
+                // create a connected socket
+                //
+                socket = new Socket();
+                socket.connect(config.getSocketAddress(), timeout);
+                socket.setSoTimeout(timeout);
+                log.debug(getPluginName() + ": connected to host: " + config.getInetAddress() + " on port: " + config.getPort());
+
+                socket = wrapSocket(socket, config);
+
+                isAServer = checkProtocol(socket, config);
+
+            } catch (ConnectException cE) {
+                // Connection refused!! Continue to retry.
+                //
+                log.debug(getPluginName() + ": connection refused to " + config.getInetAddress().getHostAddress() + ":" + config.getPort());
+                isAServer = false;
+            } catch (NoRouteToHostException e) {
+                // No route to host!! No need to perform retries.
+                e.fillInStackTrace();
+                log.info(getPluginName() + ": Unable to test host " + config.getInetAddress().getHostAddress() + ", no route available", e);
+                isAServer = false;
+                throw new UndeclaredThrowableException(e);
+            } catch (InterruptedIOException e) {
+                log.debug(getPluginName() + ": did not connect to host within timeout: " + timeout + " attempt: " + attempts);
+                isAServer = false;
+            } catch (IOException e) {
+                log.info(getPluginName() + ": Error communicating with host " + config.getInetAddress().getHostAddress(), e);
+                isAServer = false;
+            } catch (Throwable t) {
+                log.warn(getPluginName() + ": Undeclared throwable exception caught contacting host " + config.getInetAddress().getHostAddress(), t);
+                isAServer = false;
+            } finally {
+                if (socket != null) closeSocket(socket, config);
+            }
+        }
+
+        //
+        // return the success/failure of this
+        // attempt to contact an ftp server.
+        //
+        return isAServer;
+    }
+

@@ -1,97 +1,76 @@
-	/**
-	 * <P>Test to see if the passed host-port pair is the 
-	 * endpoint for an LDAP server. If there is an LDAP server
-	 * at that destination then a value of true is returned
-	 * from the method. Otherwise a false value is returned 
-	 * to the caller.</P>
-	 *
-	 * @param host	The remote host to connect to.
-	 * @param port	The remote port to connect to.
-	 *
-	 * @return True if server supports HTTP on the specified 
-	 *	port, false otherwise
-	 */
-	private boolean isServer(InetAddress host, int port, int retries, int timeout)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * <P>
+     * Test to see if the passed host-port pair is the endpoint for an LDAP server. If there is
+     * an LDAP server at that destination then a value of true is returned from the method.
+     * Otherwise a false value is returned to the caller.
+     * </P>
+     * 
+     * @param host
+     *            The remote host to connect to.
+     * @param port
+     *            The remote port to connect to.
+     * 
+     * @return True if server supports HTTP on the specified port, false otherwise
+     */
+    private boolean isServer(InetAddress host, int port, int retries, int timeout) {
+        Category log = ThreadCategory.getInstance(getClass());
 
-		boolean isAServer = false;
-		
-		//first just try a connection to the box via socket. Just in case there is
-		//a no way to route to the address, don't iterate through the retries, as a
-		//NoRouteToHost exception will only be thrown after about 5 minutes, thus tying
-		//up the thread
-                SocketChannel sChannel = null;
+        boolean isAServer = false;
 
-		try
-		{
-                        sChannel = SocketChannelUtil.getConnectedSocketChannel(host, port, timeout);
-                        if (sChannel == null)
-                        {
-                                // Connection failed, retry until attempts exceeded
-                                log.debug("LDAPPlugin: failed to connect within specified timeout");
-                                return false;
-                        }
+        //first just try a connection to the box via socket. Just in case there is
+        //a no way to route to the address, don't iterate through the retries, as a
+        //NoRouteToHost exception will only be thrown after about 5 minutes, thus tying
+        //up the thread
+        Socket socket = null;
 
-                        log.debug("LDAPPlugin.isServer: connect successful");
+        // TODO Avoid doing this by making TimeoutLDAPSocket use timed connect instead.
+        try {
 
-			//now go ahead and attempt to determin if LDAP is on this host
-			for (int attempts=0; attempts <= retries && !isAServer; attempts++)
-			{
-				log.debug("LDAPPlugin.isServer: attempt " + attempts + " to connect host " + host.getHostAddress());
-				
-				try {
-					LDAPConnection lc = new LDAPConnection(new TimeoutLDAPSocket(timeout));
-					lc.connect(host.getHostAddress(),port);
-					isAServer = true;
-				} catch (LDAPException e)
-				{
-					isAServer = false;
-				}
-			}
-		}
-		catch(ConnectException e)
-		{
-			// Connection refused!!  No need to perform retries.
-			//
-			log.debug(getClass().getName()+": connection refused to " + host.getHostAddress() + ":" + port);
-		}
-		catch(NoRouteToHostException e)
-		{
-			// No route to host!! No need to perform retries.
-			e.fillInStackTrace();
-			log.warn(getClass().getName()+": No route to host " + host.getHostAddress(), e);
-			throw new UndeclaredThrowableException(e);
-		}
-		catch(InterruptedIOException e)
-		{
-			// ignore totally, we expect to get this
-			//
-		}
-                catch(InterruptedException e)
-                {
-                        log.warn(getClass().getName()+": thread interrupted while testing host " + host.getHostAddress(), e);
+            socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), timeout);
+            socket.setSoTimeout(timeout);
+
+            log.debug("LDAPPlugin.isServer: connect successful");
+
+            //now go ahead and attempt to determin if LDAP is on this host
+            for (int attempts = 0; attempts <= retries && !isAServer; attempts++) {
+                log.debug("LDAPPlugin.isServer: attempt " + attempts + " to connect host " + host.getHostAddress());
+                LDAPConnection lc = null;
+                try {
+                    lc = new LDAPConnection(new TimeoutLDAPSocket(timeout));
+                    lc.connect(host.getHostAddress(), port);
+                    isAServer = true;
+                } catch (LDAPException e) {
+                    isAServer = false;
+                } finally {
+                    try {
+                        if (lc != null) lc.disconnect();
+                    } catch (LDAPException e) {
+                    }
                 }
-		catch(Throwable t)
-		{
-			log.warn(getClass().getName()+": An undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
-		}
-                finally
-                {
-                        try
-                        {
-                                // close the socket channel
-                                if (sChannel != null)
-                                {
-                                        if (sChannel.socket() != null)
-                                                sChannel.socket().close();
-                                        sChannel.close();
-                                        sChannel = null;
-                                }
-                        }
-                        catch(IOException e) { }
-                }
+            }
+        } catch (ConnectException e) {
+            // Connection refused!! No need to perform retries.
+            //
+            log.debug(getClass().getName() + ": connection refused to " + host.getHostAddress() + ":" + port);
+        } catch (NoRouteToHostException e) {
+            // No route to host!! No need to perform retries.
+            e.fillInStackTrace();
+            log.warn(getClass().getName() + ": No route to host " + host.getHostAddress(), e);
+            throw new UndeclaredThrowableException(e);
+        } catch (InterruptedIOException e) {
+            // Connection failed, retry until attempts exceeded
+            log.debug("LDAPPlugin: failed to connect within specified timeout");
+        } catch (Throwable t) {
+            log.warn(getClass().getName() + ": An undeclared throwable exception caught contacting host " + host.getHostAddress(), t);
+        } finally {
+            try {
+                // close the socket channel
+                if (socket != null) socket.close();
+            } catch (IOException e) {
+            }
+        }
 
-		return isAServer;
-	}
+        return isAServer;
+    }
 
