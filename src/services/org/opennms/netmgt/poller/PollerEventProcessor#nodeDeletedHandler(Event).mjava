@@ -6,7 +6,7 @@
         Category log = ThreadCategory.getInstance(getClass());
 
         int nodeId = (int) event.getNodeid();
-        String sourceUei = event.getUei();
+        final String sourceUei = event.getUei();
 
         // Extract node label and transaction No. from the event parms
         long txNo = -1L;
@@ -41,7 +41,7 @@
             }
         }
 
-        PollableNode pNode = getPoller().getNode(nodeId);
+        final PollableNode pNode = getPoller().findNode(nodeId);
         if (pNode == null) // Sanity check
         {
             log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete node.");
@@ -52,90 +52,26 @@
             return;
         }
 
-        // acquire lock to 'PollableNode'
-        //
-        boolean ownLock = false;
-        try {
-            // Attempt to obtain node lock...wait as long as it takes.
-            // 
-            if (log.isDebugEnabled())
-                log.debug("nodeDeletedHandler: deleting nodeId: " + nodeId);
-
-            ownLock = pNode.getNodeLock(WAIT_FOREVER);
-            if (ownLock) {
-                if (log.isDebugEnabled())
-                    log.debug("nodeDeletedHandler: obtained node lock for nodeid: " + nodeId);
-
-                // Remove the node from the Poller's node map
-                getPoller().removeNode(nodeId);
-
-                // Iterate over the node's interfaces and delete
-                // all services on each interface.
-                Iterator iter = pNode.getInterfaces().iterator();
-                while (iter.hasNext()) {
-                    PollableInterface pIf = (PollableInterface) iter.next();
-
-                    // Iterate over the interface's services and mark
-                    // them for deletion.
-                    Iterator svc_iter = pIf.getServices().iterator();
-                    while (svc_iter.hasNext()) {
-                        PollableService pSvc = (PollableService) svc_iter.next();
-                        pSvc.markAsDeleted();
-
-                        // Now remove the service from the pollable services
-                        // list
-                        getPollableServices().remove(pSvc);
-                    }
-
-                    // Delete all entries from the interface's internal service
-                    // map
-                    pIf.deleteAllServices();
-                }
-
-                // Delete all entries from the node's internal interface map
-                pNode.deleteAllInterfaces();
-
-                // Mark the node as deleted to prevent any further node
-                // outage processing on this node
-                pNode.markAsDeleted();
-
-                if (log.isDebugEnabled())
-                    log.debug("nodeDeletedHandler: deletion of nodeid " + pNode.getNodeId() + " completed.");
-            } else {
-                // failed to acquire lock
-                log.error("nodeDeletedHandler: failed to obtain lock on nodeId " + nodeId);
+        
+        final long transNum = txNo;
+        NodeLocker locker = new NodeLocker(pNode, "nodeDeletedHandler") {
+            protected void process() {
+                deleteNode(pNode);
+            }
+            protected void handleLockFailed() {
                 if (isXmlRPCEnabled()) {
                     int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                    XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, "Internal error.", status, "OpenNMS.Poller");
+                    XmlrpcUtil.createAndSendXmlrpcNotificationEvent(transNum, sourceUei, "Internal error.", status, "OpenNMS.Poller");
                 }
             }
-        } catch (InterruptedException iE) {
-            // failed to acquire lock
-            log.error("nodeDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
-            if (isXmlRPCEnabled()) {
-                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, iE.getMessage(), status, "OpenNMS.Poller");
-            }
-        } catch (Throwable t) {
-            log.error("exception caught processing nodeDeleted event for " + nodeId, t);
-            if (isXmlRPCEnabled()) {
-                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, "Caught unknown exception.", status, "OpenNMS.Poller");
-            }
-        } finally {
-            if (ownLock) {
-                if (log.isDebugEnabled())
-                    log.debug("nodeDeletedHandler: releasing node lock for nodeid: " + nodeId);
-                try {
-                    pNode.releaseNodeLock();
-                } catch (InterruptedException iE) {
-                    log.error("nodeDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
-                    if (isXmlRPCEnabled()) {
-                        int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, iE.getMessage(), status, "OpenNMS.Poller");
-                    }
+            protected void handleException(Throwable t) {
+                if (isXmlRPCEnabled()) {
+                    int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                    XmlrpcUtil.createAndSendXmlrpcNotificationEvent(transNum, sourceUei, t.getMessage(), status, "OpenNMS.Poller");
                 }
+                
             }
-        }
+        };
+        locker.lockAndProcess();
     }
 
