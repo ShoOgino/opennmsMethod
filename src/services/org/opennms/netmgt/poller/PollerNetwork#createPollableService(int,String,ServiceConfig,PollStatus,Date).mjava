@@ -1,0 +1,97 @@
+    public PollerService createPollableService(int nodeId, String ipAddr, ServiceConfig svcConfig, PollStatus lastKnownStatus, Date svcLostDate) throws InterruptedException, UnknownHostException {
+        Category log = ThreadCategory.getInstance();
+        PollerService pSvc;
+        PollerNode pNode = null;
+        boolean ownLock = false;
+        try {
+            PollerInterface pInterface = null;
+            boolean nodeCreated = false;
+            boolean interfaceCreated = false;
+
+            // Does the node already exist in the poller's
+            // pollable node map?
+            //
+            pNode = findNode(nodeId);
+            if (pNode == null) {
+                // Nope...so we need to create it
+                pNode = new PollerNode(nodeId, m_poller);
+                nodeCreated = true;
+            } 
+            
+            // Obtain node lock
+            //
+            ownLock = pNode.getNodeLock(NodeLocker.WAIT_FOREVER);
+            
+
+            // Does the interface exist in the pollable
+            // node?
+            //
+            pInterface = pNode.findInterface(ipAddr);
+            if (pInterface == null) {
+                // Create the PollableInterface
+                pInterface = new PollerInterface(pNode, InetAddress.getByName(ipAddr));
+                interfaceCreated = true;
+            }
+
+            // Create a new PollableService representing
+            // this node, interface,
+            // service and package pairing
+            //
+            pSvc = new PollerService(pInterface, svcConfig, lastKnownStatus, svcLostDate);
+
+            // Add the service to the PollableInterface
+            // object
+            //
+            // WARNING: The PollableInterface stores
+            // services in a map
+            // keyed by service name, therefore, only the
+            // LAST
+            // PollableService aded to the interface for a
+            // particular service will be represented in the
+            // map. THIS IS BY DESIGN.
+            //
+            // NOTE: addService() calls recalculateStatus()
+            // on the interface
+            log.debug("createPollableService: adding pollable service to service list of interface: " + ipAddr);
+            pInterface.addService(pSvc);
+
+            if (interfaceCreated) {
+                // Add the interface to the node
+                //
+                // NOTE: addInterface() calls
+                // recalculateStatus() on the node
+                if (log.isDebugEnabled())
+                    log.debug("createPollableService: adding new pollable interface " + ipAddr + " to pollable node " + nodeId);
+                pNode.addInterface(pInterface);
+            } else {
+                // Recalculate node status
+                //
+                pNode.recalculateStatus();
+            }
+
+            if (nodeCreated) {
+                // Add the node to the node map
+                //
+                if (log.isDebugEnabled())
+                    log.debug("createPollableService: adding new pollable node: " + nodeId);
+                addNode(pNode);
+            }
+
+            // Add new service to the pollable services
+            // list.
+            //
+            m_pollableServices.add(pSvc);
+
+        } finally {
+            if (ownLock) {
+                try {
+                    pNode.releaseNodeLock();
+                } catch (InterruptedException iE) {
+                    log.error("createPollableService: Failed to release node lock on nodeid " + pNode.getNodeId() + ", thread interrupted.");
+                }
+            }
+
+        }
+        return pSvc;
+    }
+

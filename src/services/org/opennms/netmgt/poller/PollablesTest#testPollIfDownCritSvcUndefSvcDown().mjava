@@ -1,0 +1,49 @@
+    public void testPollIfDownCritSvcUndefSvcDown() throws Exception {
+        m_pollContext.setCriticalServiceName(null);
+        m_pollContext.setNodeProcessingEnabled(true);
+        m_pollContext.setPollingAllIfCritServiceUndefined(true);
+
+        int nodeId = 1;
+        String ipAddr = "192.168.1.1";
+        MockInterface mockIface = m_mockNetwork.getInterface(nodeId, ipAddr);
+        MockService mSvc = m_mockNetwork.getService(nodeId, ipAddr, "SMTP");
+        MockService mCritSvc = m_mockNetwork.getService(nodeId, ipAddr, "ICMP");
+        PollableInterface iface = m_network.getInterface(nodeId, InetAddress.getByName(ipAddr));
+        PollableService pSvc = iface.getService("SMTP");
+        PollableService pCritSvc = iface.getService("ICMP");
+        
+        mockIface.bringDown();
+
+        iface.updateStatus(PollStatus.STATUS_DOWN);
+        pCritSvc.updateStatus(PollStatus.STATUS_DOWN);
+        pSvc.updateStatus(PollStatus.STATUS_DOWN);
+        
+        m_network.recalculateStatus();
+        m_network.resetStatusChanged();
+
+        assertDown(pSvc);
+        assertDown(pCritSvc);
+        assertDown(iface);
+        
+        mSvc.bringUp();
+        
+        pSvc.doPoll();
+        
+        assertUp(pSvc);
+        assertDown(pCritSvc);
+        assertUp(iface);
+        assertEquals(true, pSvc.isStatusChanged());
+        assertEquals(false, pCritSvc.isStatusChanged());
+        assertEquals(true, iface.isStatusChanged());
+
+        assertEquals(1, mSvc.getPollCount());
+        mSvc.resetPollCount();
+        
+        assertEquals(1, mCritSvc.getPollCount());
+        mCritSvc.resetPollCount();
+        
+        // this is not the critical service so I expect nothing to be polled
+        assertPollCountsZero(m_mockNetwork);
+
+    }
+
