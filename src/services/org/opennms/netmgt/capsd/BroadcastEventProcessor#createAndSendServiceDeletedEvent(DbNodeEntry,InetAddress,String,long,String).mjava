@@ -1,0 +1,84 @@
+        /**
+         * This method is responsible for generating a serviceDeleted event and sending
+         * it to eventd..
+         *
+         * @param nodeEntry     The node that the service got deleted on.
+         * @param ifaddr        the interface the service got deleted on.
+         * @param service       the service deleted.
+         * @param txNo          the transaction no.
+         * @param callerUei     the uei of the caller event.
+         */
+        private void createAndSendServiceDeletedEvent( DbNodeEntry nodeEntry, InetAddress ifaddr, 
+                                                       String service, long txNo, String callerUei)
+        {
+		Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("createAndSendServiceDeletedEvent:  nodeId/interface/service  " 
+                        + nodeEntry.getNodeId() + "/" + ifaddr.getHostAddress() + "/" + service);
+        
+                Event newEvent = new Event();
+                newEvent.setUei(EventConstants.SERVICE_DELETED_EVENT_UEI);
+                newEvent.setSource("OpenNMS.Capsd");
+                newEvent.setNodeid(nodeEntry.getNodeId());
+                newEvent.setHost(Capsd.getLocalHostAddress());
+                newEvent.setInterface(ifaddr.getHostAddress());
+                newEvent.setService(service);
+                newEvent.setTime(EventConstants.formatToString(new java.util.Date()));
+
+                // Add appropriate parms
+                Parms eventParms = new Parms();
+                Parm eventParm = null;
+                Value parmValue = null;
+
+                // Add IP host name
+                eventParm = new Parm();
+                eventParm.setParmName(EventConstants.PARM_IP_HOSTNAME);
+                parmValue = new Value();
+                parmValue.setContent(ifaddr.getHostName());
+                eventParm.setValue(parmValue);
+                eventParms.addParm(eventParm);
+                
+                // Add Node Label
+                eventParm = new Parm();
+                eventParm.setParmName(EventConstants.PARM_NODE_LABEL);
+                parmValue = new Value();
+                parmValue.setContent(nodeEntry.getLabel());
+                eventParm.setValue(parmValue);
+                eventParms.addParm(eventParm);
+
+                // Add Node Label source
+                eventParm = new Parm();
+                eventParm.setParmName(EventConstants.PARM_NODE_LABEL_SOURCE);
+                parmValue = new Value();
+                char labelSource[] = new char[] {nodeEntry.getLabelSource()};
+                parmValue.setContent(new String(labelSource));
+                eventParm.setValue(parmValue);
+                eventParms.addParm(eventParm);
+
+                // Add Parms to the event
+                newEvent.setParms(eventParms);
+                
+                // Send event to Eventd
+                try
+                {
+                        EventIpcManagerFactory.getInstance().getManager().sendNow(newEvent);
+
+                        if (log.isDebugEnabled())
+                                log.debug("createdAndSendServiceDeletedEvent: successfully sent serviceDeleted event "
+                                        + "for nodeid/interface/service: " 
+                                        + nodeEntry.getNodeId() + "/"
+                                        + ifaddr.getHostAddress() + "/" + service);
+                                        
+                }
+                catch(Throwable t)
+                {
+                        log.warn("run: unexpected throwable exception caught during send to middleware", t);
+                        if (m_xmlrpc)
+                        {
+                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                                createAndSendXmlrpcNotificationEvent(txNo, callerUei, 
+                                                "caught unexpected throwable exception.", status);
+                        }
+                }
+        }                
+
