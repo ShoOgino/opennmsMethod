@@ -1,22 +1,53 @@
-	/**
-	 * Private constructor
-	 *
-	 * @exception java.io.IOException Thrown if the specified config
-	 * 	file cannot be read
-	 * @exception org.exolab.castor.xml.MarshalException Thrown if the 
-	 * 	file does not conform to the schema.
-	 * @exception org.exolab.castor.xml.ValidationException Thrown if 
-	 *	the contents do not match the required schema.
-	 */
-	private DatabaseSchemaConfigFactory(String configFile)
-		throws 	IOException,
-			MarshalException, 
-			ValidationException
-	{
-		InputStream cfgIn = new FileInputStream(configFile);
+    /**
+     * Private constructor
+     * 
+     * @exception java.io.IOException
+     *                Thrown if the specified config file cannot be read
+     * @exception org.exolab.castor.xml.MarshalException
+     *                Thrown if the file does not conform to the schema.
+     * @exception org.exolab.castor.xml.ValidationException
+     *                Thrown if the contents do not match the required schema.
+     */
+    private DatabaseSchemaConfigFactory(String configFile) throws IOException,
+            MarshalException, ValidationException {
+        InputStream cfgIn = new FileInputStream(configFile);
 
-		m_config = (DatabaseSchema) Unmarshaller.unmarshal(DatabaseSchema.class, new InputStreamReader(cfgIn));
-		cfgIn.close();
+        m_config = (DatabaseSchema) Unmarshaller.unmarshal(
+                DatabaseSchema.class, new InputStreamReader(cfgIn));
+        cfgIn.close();
 
-	}
+        Table primary = getPrimaryTable();
+        Set joinableSet = new HashSet();
+        Map primaryJoins = new HashMap();
+        joinableSet.add(primary.getName());
+        int joinableCount = 0;
+        // loop until we stop adding entries to the set
+        while (joinableCount < joinableSet.size()) {
+            joinableCount = joinableSet.size();
+            Set newSet = new HashSet(joinableSet);
+            Enumeration e = getDatabaseSchema().enumerateTable();
+            // for each table not already in the set
+            while (e.hasMoreElements()) {
+                Table t = (Table) e.nextElement();
+                if (!joinableSet.contains(t.getName())
+                        && (t.getVisable() == null || t.getVisable()
+                                .equalsIgnoreCase("true"))) {
+                    Enumeration ejoin = t.enumerateJoin();
+                    // for each join does it join a table in the set?
+                    while (ejoin.hasMoreElements()) {
+                        Join j = (Join) ejoin.nextElement();
+                        if (joinableSet.contains(j.getTable())) {
+                            newSet.add(t.getName());
+                            primaryJoins.put(t.getName(), j);
+                        }
+                    }
+                }
+            }
+            joinableSet = newSet;
+        }
+
+        m_joinable = Collections.synchronizedSet(joinableSet);
+        m_primaryJoins = Collections.synchronizedMap(primaryJoins);
+
+    }
 

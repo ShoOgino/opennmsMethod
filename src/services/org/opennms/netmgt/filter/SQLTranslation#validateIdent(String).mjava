@@ -1,51 +1,33 @@
-	/**
-	 * Validate the identifier.
-	 */
-    	private String validateIdent(String ident)
-	{
-		StringBuffer buffer = null;
-		Enumeration etbl = m_schema.enumerateTable();
-		OUTER: while(etbl.hasMoreElements())
-		{
-			Table t = (Table)etbl.nextElement();
-			Enumeration ecol = t.enumerateColumn();
-			while(ecol.hasMoreElements())
-			{
-				Column col = (Column)ecol.nextElement();
-				if(col.getVisable() == null || col.getVisable().equalsIgnoreCase("true"))
-				{
-					if(col.getName().equalsIgnoreCase(ident))
-					{
-						if(!m_tables.contains(t))
-						{
-							if(m_tables.size() == 0)
-								m_from.append(t.getName());
-							else
-								m_from.append(", ").append(t.getName());
+    /**
+     * Validate the identifier by ensuring it is references in the schema.  Also checks 
+     * for 'virtual columns' be checking the prefix.  If it is this turns into a reference
+     * to the 'serviceName' column of the service table and the appropriate join.
+     */
+    private String validateIdent(String ident) {
+        String expr = null;
+        Table tableForIdent = m_schemaFactory.findTableByVisableColumn(ident);
+        if (tableForIdent != null)
+            expr = addColumnToStatement(tableForIdent, ident);
 
-							m_tables.add(t);
-						}
-						buffer = new StringBuffer(t.getName()).append('.').append(ident);
-						break OUTER;
-					}
-				}
-			}
-		}
+        if (expr == null && ident.startsWith(VIRTUAL_COLUMN_PREFIX)) {
+            String serviceName = ident.substring(VIRTUAL_COLUMN_PREFIX.length());
+            // should check against some form of
+            // service identifier table, but for now I'm
+            // removing this check since it's just used
+            // internally
+            //
+            tableForIdent = m_schemaFactory.findTableByVisableColumn("serviceName");
+            if (tableForIdent != null) 
+                expr = addColumnToStatement(tableForIdent, "serviceName");
+            if (expr != null)
+                expr = expr+" = '"+serviceName+'\'';
+        }
+        
+        if (expr == null) {
+            throw new FilterParseException("The token " + ident
+                    + " is an illegal column value.");
+        }
 
-		if(buffer == null && ident.startsWith(VIRTUAL_COLUMN_PREFIX))
-		{
-			// should check against some form of 
-			// service identifier table, but for now I'm 
-			// removing this check since it's just used
-			// internally
-			//
-			buffer = buildVirtualColumnClause(ident);
-		}
-		else if(buffer == null)
-		{
-			throw new FilterParseException("The token " + ident + " is an illegal column value.");
-		}
-
-		return buffer.toString();
-	}
+        return expr;
+    }
 
