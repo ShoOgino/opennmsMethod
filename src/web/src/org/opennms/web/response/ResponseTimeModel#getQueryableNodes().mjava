@@ -1,0 +1,66 @@
+    /**
+    * Returns a list of data structures representing the nodes that have
+    * SNMP performance data collected.
+    *
+    * <p>First the list of RRD files is collected.  From those filenames, the
+    * IP address is extracted from each.  A list of unique IP addresses is created,
+    * discarding the duplicates.  At the same time, a mapping of unique IP address
+    * to RRD files is created.  Then a database call is made to determine the node
+    * identifier and human-readable label for each node containing the IP addresses.
+    * From that list, an array of data structures, <code>QueryableNode</code>s, are
+    * created.</p>
+    */
+    public QueryableNode[] getQueryableNodes() throws SQLException {
+        QueryableNode[] nodes = new QueryableNode[0];
+
+        // Get all of the numeric directory names in the RRD directory; these
+        // are the nodeids of the nodes that have performance data
+        File[] intDirs = this.rrdDirectory.listFiles(INTERFACE_DIRECTORY_FILTER);
+
+        if(intDirs != null && intDirs.length > 0) {
+            ArrayList nodeList = new ArrayList();
+
+            //create the main stem of the select statement
+            StringBuffer select = new StringBuffer("SELECT DISTINCT ipinterface.nodeid, node.nodeLabel FROM node, ipinterface WHERE node.nodetype != 'D' AND ipinterface.nodeid=node.nodeid AND ipinterface.ipaddr IN ('");
+
+            //add all but the last node id with a comma
+            for( int i=0; i < intDirs.length - 1; i++ ) {
+                select.append(intDirs[i].getName());
+                select.append("','");
+            }
+
+            //add the last node id without a comma
+            select.append(intDirs[intDirs.length - 1].getName());
+
+            //close the select
+            select.append("') ORDER BY node.nodeLabel");
+
+            Connection conn = Vault.getDbConnection();
+
+            try {
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(select.toString());
+
+
+                while( rs.next() ) {
+                    QueryableNode node = new QueryableNode();
+
+                    node.nodeId = rs.getInt("nodeid");
+                    node.nodeLabel = rs.getString("nodeLabel");
+
+                    nodeList.add(node);
+                }
+
+                rs.close();
+                stmt.close();
+            }
+            finally {
+                Vault.releaseDbConnection(conn);
+            }
+
+            nodes = (QueryableNode[])nodeList.toArray(new QueryableNode[nodeList.size()]);
+        }
+
+        return( nodes );
+    }
+
