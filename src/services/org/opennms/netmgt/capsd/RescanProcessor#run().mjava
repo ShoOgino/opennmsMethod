@@ -5,6 +5,8 @@
 	{
 		Category log = ThreadCategory.getInstance(getClass());
 
+		boolean doesSnmp = true;
+
 		//
 		// perform rescan of the node
 		//
@@ -16,7 +18,7 @@
 		{
 			dbNodeEntry = DbNodeEntry.get(m_scheduledNode.getNodeId());
 			if (log.isDebugEnabled())
-				log.debug("RescanProcessor: start rescaning node: " + m_scheduledNode.getNodeId());
+				log.debug("start rescanning node: " + m_scheduledNode.getNodeId());
 		}
 		catch (SQLException sqlE)
 		{
@@ -85,10 +87,11 @@
 		// Run collector for each retrieved interface and add result
 		// to a collector map.
 		Map collectorMap = new HashMap();
+		Map nonSnmpCollectorMap = new HashMap();
 		
 		IfSnmpCollector snmpc = null;
-		boolean doSnmpCollection = true;
-		Map snmpTargets = null;
+		boolean gotSnmpCollection = false;
+		boolean gotSnmpc = false;
 		for (int i=0; i<dbInterfaces.length; i++)
 		{
 			InetAddress ifaddr = dbInterfaces[i].getIfAddress();
@@ -101,68 +104,78 @@
 				continue;
 			}
 
-			// Any targets/interfaces found via SNMP have already
-			// been probed so skip them.
-			if (snmpTargets != null)
-			{
-				log.debug("checking snmp target map for interface " + ifaddr.getHostAddress());
-				if (snmpTargets.get(ifaddr) != null)
-				{
-					if (log.isDebugEnabled())
-						log.debug("skipping collection for " + ifaddr.getHostAddress() + " found via SNMP.");
-					continue;
-				}
-				else
-					log.debug("snmp target map does not contain interface " + ifaddr.getHostAddress());
-			}
-			
 			if (log.isDebugEnabled())
 				log.debug("running collection for " + ifaddr.getHostAddress());
 			
-			IfCollector collector = new IfCollector(ifaddr, doSnmpCollection);
+			IfCollector collector = new IfCollector(ifaddr, true);
 			collector.run();
 			
-			// Only need to collect SNMP data from one of the
-			// node's interfaces. 
-			//
-			if (doSnmpCollection)
+			snmpc = collector.getSnmpCollector();
+			if (snmpc != null && !snmpc.failed())
 			{
-				snmpc = collector.getSnmpCollector();
-				if (snmpc != null && !snmpc.failed())
-				{
-					// Got a successful SNMP collection from the node
-                                        if (areDbInterfacesInSnmpCollection(dbInterfaces, snmpc))
-                                        {
-					        doSnmpCollection = false;
-					        if (collector.hasAdditionalTargets())
-						        snmpTargets = collector.getAdditionalTargets();
-					
-					        if (log.isDebugEnabled())
-						        log.debug("SNMP data collected via " + ifaddr.getHostAddress());
-                                        }
-                                        else
-                                        {
-			                        if (log.isDebugEnabled())
-				                        log.debug("SNMP data collected via " + ifaddr.getHostAddress()
-                                                                + " is not right.");
-                                                // this interface must included in the subtargets of other interfaces,
-                                                // give up the IfCollector for this one.
-                                                continue;
-                                        }
-				}
+				// Note: This code is a temporary fix to a pre-
+				// existing problem. If no snmp collection from a
+				// node matched the interfaces listed in the database
+				// the rescan was aborted. In this revision we treat
+				// it as if the node doesn't support snmp and continue
+				// with the rescan. Ultimately there are possible reparenting
+				// issues that need to be addressed when the database
+				// and snmp collection don't match. These were not
+				// addressed by the previous revision, and remain for
+				// future revisions to address.
+				
+				// Got a successful SNMP collection from the node
+				
+				gotSnmpc = true;
+			
+                               	if (areDbInterfacesInSnmpCollection(dbInterfaces, snmpc))
+                               	{
+					collectorMap.put(ifaddr.getHostAddress(), collector);
+			        	gotSnmpCollection = true;
+        				if (log.isDebugEnabled())
+					{
+			        		log.debug("SNMP data collected via " + ifaddr.getHostAddress());
+						log.debug("Adding " + ifaddr.getHostAddress() + " to collectorMap for node: "
+								+ m_scheduledNode.getNodeId());
+					}
+					break;
+                               	}
+                               	else
+                               	{
+			               	if (log.isDebugEnabled())
+			                	log.debug("SNMP data collected via " + ifaddr.getHostAddress()
+                                                       	+ " does not agree with database.");
+                                       	// give up the IfCollector for this one.
+                               	}
 			}
-
-			collectorMap.put(ifaddr.getHostAddress(), collector);
+			// Build a non-SNMP collectorMap, skipping 127.*.*.* and 0.0.0.0
+			nonSnmpCollectorMap.put(ifaddr.getHostAddress(), collector);
+        		if (log.isDebugEnabled())
+			{
+				log.debug("Adding " + ifaddr.getHostAddress() + " to nonSnmpCollectorMap for node: "
+						+ m_scheduledNode.getNodeId());
+			}
 		}
 
-                if (snmpc == null || snmpc.failed() || doSnmpCollection )
+                if ( !gotSnmpCollection )
                 {
+			//We didn't get a collection that agrees with the db,
+			//so use the nonSnmpCollectorMap and set doesSnmp = false
+			//
+			collectorMap = nonSnmpCollectorMap;
+			doesSnmp = false;
         		if (log.isDebugEnabled())
                         {
-				log.debug("RescanProcessor: Could not collect SNMP data for node: " + m_scheduledNode.getNodeId());
-				log.debug("RescanProcessor: Rescan completed without doing anything.");
+				if( gotSnmpc == false )
+				{
+					log.debug("Could not collect SNMP data for node: " + m_scheduledNode.getNodeId());
+				}
+				else
+				{
+					log.debug("Not using SNMP data for node: " + m_scheduledNode.getNodeId()
+						+ ". Collection does not agree with database.");
+				}
                         }
-                        return;
                 }
                 
 		// Update the database
@@ -192,51 +205,52 @@
 				//
 				if (!isNodeDeleted(dbc, m_scheduledNode.getNodeId()))
 				{
-					// Get old primary SNMP interface (if one exists)
-					//
-					InetAddress oldPrimarySnmpIf = SuspectEventProcessor.getPrimarySnmpInterfaceFromDb(dbc, dbNodeEntry);
-						
+
 					// Update interface information
 					//
 					now = new Date();  
-					updateInterfaces(dbc, now, dbNodeEntry, collectorMap);
-					
-					// Now that all interfaces have been added to the database we
-					// can update the 'primarySnmpInterface' field of the ipInterface
-					// table.  Necessary because the IP address must already be in 
-					// the database to evaluate against a filter rule.
-					//
-					// First create a list of eligible loopback interfaces.
-					//
-					List snmpLBAddresses = buildLBSnmpAddressList(collectorMap, snmpc);
-                                        InetAddress newLBSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpLBAddresses);
-					// Now create a list of all eligible interfaces. Choose loopback
-					// if exists.
+					updateInterfaces(dbc, now, dbNodeEntry, collectorMap, doesSnmp);
+					if(doesSnmp)
+					{
+						// Get old primary SNMP interface (if one exists)
+						//
+						InetAddress oldPrimarySnmpIf = SuspectEventProcessor.getPrimarySnmpInterfaceFromDb(dbc, dbNodeEntry);
+						// Now that all interfaces have been added to the database we
+						// can update the 'primarySnmpInterface' field of the ipInterface
+						// table.  Necessary because the IP address must already be in 
+						// the database to evaluate against a filter rule.
+						//
+						// First create a list of eligible loopback interfaces.
+						//
+						List snmpLBAddresses = buildLBSnmpAddressList(collectorMap, snmpc);
+                                        	InetAddress newLBSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpLBAddresses);
+						// Now create a list of all eligible interfaces. Choose loopback
+						// if exists.
 
-                                        List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
-                                        InetAddress newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
-                                        if (newLBSnmpPrimaryIf == null)
-                                        {
-                                                SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, oldPrimarySnmpIf);
-                                        }
-                                        else
-                                        {
-						newSnmpPrimaryIf = newLBSnmpPrimaryIf;
-                                                if(log.isDebugEnabled())
-                                                        log.debug("SuspectEventProcessor: Loopback Address set as primary: " + newLBSnmpPrimaryIf);
-                                                SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newLBSnmpPrimaryIf, oldPrimarySnmpIf);
-                                        }
+                                        	List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
+                                        	InetAddress newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpAddresses);
+                                        	if (newLBSnmpPrimaryIf == null)
+                                        	{
+                                                	SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, oldPrimarySnmpIf);
+                                        	}
+                                        	else
+                                        	{
+							newSnmpPrimaryIf = newLBSnmpPrimaryIf;
+                                                	if(log.isDebugEnabled())
+                                                        	log.debug("SuspectEventProcessor: Loopback Address set as primary: " + newLBSnmpPrimaryIf);
+                                                	SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newLBSnmpPrimaryIf, oldPrimarySnmpIf);
+                                        	}
 
-					// Now that we've identified the new primary SNMP interface
-					// we can determine if it is necessary to generate certain
-					// SNMP data collection related events
-					//
-					generateSnmpDataCollectionEvents(dbNodeEntry, oldPrimarySnmpIf, newSnmpPrimaryIf);
+						// Now that we've identified the new primary SNMP interface
+						// we can determine if it is necessary to generate certain
+						// SNMP data collection related events
+						//
+						generateSnmpDataCollectionEvents(dbNodeEntry, oldPrimarySnmpIf, newSnmpPrimaryIf);
 					
-					// Update the node table entry
-					//
-					DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf, dbInterfaces, collectorMap);
-					
+						// Update the node table entry
+						//
+						DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf, dbInterfaces, collectorMap);
+					}
 					updateCompleted = true;
 				}
 			}
@@ -286,6 +300,6 @@
 		m_scheduledNode.setLastScanned(now);
 		m_scheduledNode.setScheduled(false);
 			
-		log.debug("RescanProcessor for node w/ nodeid " + m_scheduledNode.getNodeId() + " completed.");
+		log.debug("Rescan for node w/ nodeid " + m_scheduledNode.getNodeId() + " completed.");
 	} // end run
 

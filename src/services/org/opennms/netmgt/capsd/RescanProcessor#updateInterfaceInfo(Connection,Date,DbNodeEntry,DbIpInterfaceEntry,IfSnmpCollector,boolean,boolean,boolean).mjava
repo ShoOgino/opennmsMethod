@@ -9,6 +9,7 @@
 	 * @param snmpc		SNMP collector or null if SNMP not supported.
 	 * @param isNewIpEntry  if dbIpIfEntry is a new entry.
 	 * @param isReparented 	if dbIpIfentry is reparented.
+	 * @param doesSnmp	if node supports SNMP.
 	 * 
 	 * @throws SQLException if there is a problem updating the ipinterface table.
 	 */
@@ -18,7 +19,8 @@
                                            DbIpInterfaceEntry dbIpIfEntry,
                                            IfSnmpCollector snmpc,
                                            boolean isNewIpEntry,
-				           boolean isReparented )
+				           boolean isReparented,
+					   boolean doesSnmp)
                 throws SQLException
         {
 		Category log = ThreadCategory.getInstance(getClass());
@@ -26,8 +28,11 @@
 		CapsdConfigFactory cFactory = CapsdConfigFactory.getInstance();
 		PollerConfigFactory pollerCfgFactory = PollerConfigFactory.getInstance();
                 
+		DbIpInterfaceEntry currIpIfEntry;
+
                 InetAddress ifaddr = dbIpIfEntry.getIfAddress();
-		int ifIndex = snmpc.getIfIndex(ifaddr);
+
+		int ifIndex = -1;
                 
 		// Clone the existing database entry so we have access to the values
 		// of the database fields associated with the interface in the event
@@ -37,7 +42,17 @@
 		// Create IP interface entry representing latest information
 		// retrieved for the interface via the collector
 		//
-		DbIpInterfaceEntry currIpIfEntry = DbIpInterfaceEntry.create(node.getNodeId(), ifaddr, ifIndex);
+
+		if(doesSnmp)
+		{
+			ifIndex = snmpc.getIfIndex(ifaddr);
+			currIpIfEntry = DbIpInterfaceEntry.create(node.getNodeId(), ifaddr, ifIndex);
+		}
+		else
+		{
+			currIpIfEntry = DbIpInterfaceEntry.create(node.getNodeId(), ifaddr);
+		}
+
 			
 		// Hostname
 		currIpIfEntry.setHostname(ifaddr.getHostName());
@@ -69,6 +84,10 @@
 				currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_MANAGED);
 			else
 				currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_NOT_POLLED);
+
+			if (log.isDebugEnabled())
+				log.debug("updateInterfaceInfo: interface " + ifaddr.getHostAddress()
+						+ " to be polled = " + ipToBePolled);
 		}
 		
 		// If SNMP data collection is available set SNMP Primary state 
@@ -76,7 +95,7 @@
 		// interfaces will be skipped).
 		//
 		int ifType = -1;
-		if (snmpc != null && !snmpc.failed())
+		if (doesSnmp && snmpc != null && !snmpc.failed())
 		{	
 			if(ifIndex != -1)
 			{

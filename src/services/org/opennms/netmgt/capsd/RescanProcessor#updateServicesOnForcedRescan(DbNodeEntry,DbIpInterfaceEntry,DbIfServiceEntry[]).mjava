@@ -1,0 +1,220 @@
+	/**
+	 * This method is responsible for updating the status of services
+	 * for an interface during a forced rescan
+	 *
+	 * @param node			Node entry for the node being rescanned
+	 * @param dbIpIfEntry 		interface entry of the updating interface
+	 * @param dbSupportedServices	services on the updating interface
+	 * 
+	 * @throws SQLException if there is a problem updating the snmpInterface table.
+	 */
+        private void updateServicesOnForcedRescan (DbNodeEntry node, 
+                                        DbIpInterfaceEntry dbIpIfEntry,
+					DbIfServiceEntry[] dbSupportedServices)
+                throws SQLException
+        {
+		// Now process previously existing protocols to update polling status.
+		// Additional checks on forced rescan for existing services go here.
+		// Specifically, has service been forced managed/unmanaged or has polling
+		// status changed?
+	
+		Category log = ThreadCategory.getInstance(getClass());
+		PollerConfigFactory pollerCfgFactory = PollerConfigFactory.getInstance();
+		CapsdConfigFactory cFactory = CapsdConfigFactory.getInstance();
+		InetAddress ifaddr = dbIpIfEntry.getIfAddress();
+		org.opennms.netmgt.config.poller.Package ipPkg = null;
+
+		boolean ipToBePolled = false;
+		ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+		if (ipPkg != null)
+			ipToBePolled = true;
+
+		if (log.isDebugEnabled())
+			log.debug("updateServicesOnForcedRescan: Checking status of existing services on host " + ifaddr);
+
+		// Get service names from database
+
+		java.sql.Connection ctest = null;
+		ResultSet rs = null;
+		try
+		{
+			ctest = DatabaseConnectionFactory.getInstance().getConnection();
+			PreparedStatement loadStmt= ctest.prepareStatement(SQL_RETRIEVE_SERVICE_IDS);
+
+			// go ahead and load the service table
+
+			rs = loadStmt.executeQuery();
+			while(rs.next())
+			{
+				Integer id = new Integer(rs.getInt(1));
+				String name = rs.getString(2);
+				m_serviceNames.put(id, name);
+			}
+		} // end try
+		catch(Throwable t)
+		{
+			log.error("Error reading services table", t);
+		}
+		finally
+		{
+			// Finished with the database connection, close it.
+			try
+			{
+				if (ctest != null)
+					ctest.close();
+			}
+			catch(SQLException e)
+			{
+				log.error("Error closing connection", e);
+			}
+		}
+
+		for (int i=0; i<dbSupportedServices.length; i++)
+		{
+			Integer id = new Integer(dbSupportedServices[i].getServiceId());
+			String sn = (m_serviceNames.get(id)).toString();
+	
+			DbIfServiceEntry ifSvcEntry = DbIfServiceEntry.get(node.getNodeId(), ifaddr, dbSupportedServices[i].getServiceId());
+			if (log.isDebugEnabled())
+				log.debug("updateServicesOnForcedRescan: old status for nodeId " + node.getNodeId() + ", ifaddr " + ifaddr + ", serviceId " + dbSupportedServices[i].getServiceId() + " = " + ifSvcEntry.getStatus());
+	
+			// now fill in the entry
+			
+			boolean svcChangeToActive = false;
+			boolean svcChangeToNotPolled = false;
+			boolean svcChangeToForced = false;
+			if(!cFactory.isAddressUnmanaged(ifaddr))
+			{
+				boolean svcToBePolled = false;
+				if(ipToBePolled)
+				{
+					if (ipPkg == null)
+						ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+					if (ipPkg != null)
+					{
+						if (log.isDebugEnabled())
+						{
+							log.debug("updateServicesOnForcedRescan: Is service to be polled for package = "
+									+ ipPkg.getName() + ", service = " + sn);
+						}
+						svcToBePolled = pollerCfgFactory.isPolled(sn, ipPkg);
+						if (!svcToBePolled)
+						{
+							if (log.isDebugEnabled())
+							{
+								log.debug("updateServicesOnForcedRescan: Is service to be polled for ifaddr = "
+									+ ifaddr.getHostAddress() + ", service = " + sn);
+							}
+							svcToBePolled = pollerCfgFactory.isPolled(ifaddr.getHostAddress(), sn);
+						}
+						if (!svcToBePolled)
+							log.debug("updateServicesOnForcedRescan: Service not to be polled");
+					}
+	
+					else
+					{
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: No poller package found");
+					}
+				}
+				else
+				{
+					if (log.isDebugEnabled())
+						log.debug("updateServicesOnForcedRescan: Service not polled because interface is not polled");
+				}
+	
+				if (ifSvcEntry.getStatus() == DbIfServiceEntry.STATUS_FORCED)
+				{
+					if (svcToBePolled)
+					{
+						// Do nothing
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = FORCED. No action taken.");
+					}
+					else
+					{
+						// change the status to "N"
+						ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_NOT_POLLED);
+						svcChangeToNotPolled = true;
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = FORCED. Changed to NOT_POLLED");
+					}
+				}
+
+				else if (ifSvcEntry.getStatus() == DbIfServiceEntry.STATUS_SUSPEND)
+				{
+					if (svcToBePolled)
+					{
+						// change the status to "F"
+						ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_FORCED);
+						svcChangeToForced = true;
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = SUSPEND. Changed to FORCED");
+					}
+					else {
+						// change the status to "N"
+						ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_NOT_POLLED);
+						svcChangeToNotPolled = true;
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = SUSPEND. Changed to NOT_POLLED");
+					}
+				}
+
+				else if (ifSvcEntry.getStatus() == DbIfServiceEntry.STATUS_RESUME)
+				{
+					if (svcToBePolled)
+					{
+						// change the status to "A"
+						ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_ACTIVE);
+						svcChangeToActive = true;
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = RESUME. Changed to ACTIVE");
+					}
+					else
+					{
+						// change the status to "N"
+						ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_NOT_POLLED);
+						svcChangeToNotPolled = true;
+						if (log.isDebugEnabled())
+							log.debug("updateServicesOnForcedRescan: status = RESUME. Changed to NOT_POLLED");
+					}
+				}
+
+				else if (svcToBePolled && ifSvcEntry.getStatus() != DbIfServiceEntry.STATUS_ACTIVE)
+				{
+					// set the status to "A"
+					ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_ACTIVE);
+					svcChangeToActive = true;
+					if (log.isDebugEnabled())
+						log.debug("updateServicesOnForcedRescan: New status = ACTIVE");
+				}
+
+				else if (!svcToBePolled && ifSvcEntry.getStatus() == DbIfServiceEntry.STATUS_ACTIVE)
+				{
+					// set the status to "N"
+					ifSvcEntry.updateStatus(DbIfServiceEntry.STATUS_NOT_POLLED);
+					svcChangeToNotPolled = true;
+					if (log.isDebugEnabled())
+						log.debug("updateServicesOnForcedRescan: New status = NOT_POLLED");
+				}
+
+				else
+				{
+					if (log.isDebugEnabled())
+						log.debug("updateServicesOnForcedRescan: Status Unchanged");
+				}
+			}
+
+			if(svcChangeToActive)
+			{
+				ifSvcEntry.store();
+				createResumePollingServiceEvent(node, dbIpIfEntry, sn);
+			}
+			else if(svcChangeToNotPolled || svcChangeToForced)
+			{
+				ifSvcEntry.store();
+				createSuspendPollingServiceEvent(node, dbIpIfEntry, sn);
+			}
+		}
+	}
+
