@@ -15,69 +15,69 @@
 		Connection dbConn = null;
 		try
 		{
-			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+                        dbConn = DatabaseConnectionFactory.getInstance().getConnection();
 
-			// Set the database commit mode
-			try
-			{
-				dbConn.setAutoCommit(false);
-			}
-			catch (SQLException sqle)
-			{
-				log.error("Unable to change database AutoCommit to FALSE", sqle);
-				return;
-			}
+                        if (openOutageExists(dbConn, nodeID, ipAddr))
+                        {
+                                // Set the database commit mode
+                                try
+                                {
+                                        dbConn.setAutoCommit(false);
+                                }
+                                catch (SQLException sqle)
+                                {
+                                        log.error("Unable to change database AutoCommit to FALSE", sqle);
+                                        return;
+                                }
 
-			// get timestamp
-			java.sql.Timestamp eventTimeTS = null;
-			try
-			{
-				java.util.Date date = EventConstants.parseToDate(eventTime);
-				eventTimeTS = new java.sql.Timestamp(date.getTime());
-			}
-			catch(ParseException pe)
-			{
-				log.warn("Failed to convert time " + eventTime + " to java.sql.Timestamp, Setting current time instead", pe);
+                                // Prepare SQL statement used to update the 'regained time' for
+                                // all open outage entries for the nodeid/ipaddr
+                                PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGES_FOR_INTERFACE);
+                                outageUpdater.setLong  (1, eventID);
+                                outageUpdater.setTimestamp(2, convertEventTimeIntoTimestamp(eventTime));
+                                outageUpdater.setLong  (3, nodeID);
+                                outageUpdater.setString(4, ipAddr);
+                                int count = outageUpdater.executeUpdate();
 
-				eventTimeTS = new java.sql.Timestamp((new java.util.Date()).getTime());
-			}
+                                // close statement
+                                outageUpdater.close();
 
-	 		// Prepare SQL statement used to update the 'regained time' for
-			// all open outage entries for the nodeid/ipaddr
-			PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGES_FOR_INTERFACE);
-			outageUpdater.setLong  (1, eventID); 
-			outageUpdater.setTimestamp(2, eventTimeTS); 
-			outageUpdater.setLong  (3, nodeID);
-			outageUpdater.setString(4, ipAddr);
-			int count = outageUpdater.executeUpdate();
+                                // commit work
+                                try
+                                {
+                                        dbConn.commit();
 
-			// close statement
-			outageUpdater.close();
+                                        if (log.isDebugEnabled())
+                                                log.debug("handleInterfaceUp: interfaceUp closed " +  count + " outages for nodeid/ip " + nodeID + "/" + ipAddr + " in DB");
+                                }
+                                catch(SQLException se)
+                                {
+                                        log.warn("Rolling back transaction, interfaceUp could not be recorded for nodeId/ipaddr: " + nodeID + "/" + ipAddr, se);
 
-			// commit work
-			try
-			{
-				dbConn.commit();
+                                        try
+                                        {
+                                        dbConn.rollback();
+                                        }
+                                        catch (SQLException sqle)
+                                        {
+                                        log.warn("SQL exception during rollback, reason: ", sqle);
+                                        }
+                                }
+                        }
+                        else
+                        {
+                                // Outage table does not have an open record.
+                                log.warn("\'" + EventConstants.INTERFACE_UP_EVENT_UEI + "\' for " + nodeID + "/" + ipAddr + " ignored, adding to event cache.");
 
-				if (log.isDebugEnabled())
-					log.debug("interfaceUp closed " +  count + " outages for nodeid/ip " + nodeID + "/" + ipAddr + " in DB");
-			}
-			catch(SQLException se)
-			{
-				log.warn("Rolling back transaction, interfaceUp could not be recorded for nodeId/ipaddr: " + nodeID + "/" + ipAddr, se);
-
-				try 
-				{
-					dbConn.rollback();
-				}
-				catch (SQLException sqle)
-				{
-					log.warn("SQL exception during rollback, reason: ", sqle);
-				}
-
-			}
-		
-		}
+                                // Store the event in the event cache
+                                OutageEventCache.getInstance().add(new OutageEventEntry(eventID,
+                                                                                nodeID,
+                                                                                ipAddr,
+                                                                                -1,
+                                                                                eventTime,
+                                                                                OutageEventEntry.EVENT_TYPE_INTERFACE_UP));
+                        }
+                }
 		catch(SQLException se)
 		{
 			log.warn("SQL exception while handling \'interfaceUp\'", se);

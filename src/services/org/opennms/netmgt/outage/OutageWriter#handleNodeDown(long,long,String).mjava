@@ -42,79 +42,111 @@
 	 		// Prepare SQL statement to get the next outage id from the db sequence
 			PreparedStatement getNextOutageIdStmt  = dbConn.prepareStatement(OutageManagerConfigFactory.getInstance().getGetNextOutageID());
 
-			// Get all active services for the nodeid
-			activeSvcsStmt.setLong  (1, nodeID);
-			ResultSet activeSvcsRS = activeSvcsStmt.executeQuery();
-			while(activeSvcsRS.next())
-			{
-				String ipAddr = activeSvcsRS.getString(1);
-				long serviceID = activeSvcsRS.getLong(2);
+                        // Check the OutageCache to see if an event exists.
 
-				int numOpenRecs = -1;
+                        OutageEventEntry regainedEvent = OutageEventCache.getInstance().findCacheMatch(eventID,
+                                                                                        nodeID,
+                                                                                        null,
+                                                                                        -1,
+                                                                                        eventTime,
+                                                                                        OutageEventEntry.EVENT_TYPE_NODE_DOWN);
 
-				// Check if this service is already down
-				openStmt.setLong  (1, nodeID);
-				openStmt.setString(2, ipAddr);
-				openStmt.setLong  (3, serviceID);
-				
-				ResultSet openOutageRS = openStmt.executeQuery();
-				if(openOutageRS.next())
-				{
-					numOpenRecs = openOutageRS.getInt(1);
-				}
-				// close result set
-				openOutageRS.close();
+                        if (regainedEvent == null || openOutageExists(dbConn, nodeID))
+                        {
+                                // No matching regained service event in the cache
 
-				if (numOpenRecs > 0)
-				{
-					if (log.isDebugEnabled())
-						log.debug(nodeID + "/" + ipAddr + "/" + serviceID + " already down");
-				}
-				else
-				{
-					long outageID = -1;
+                                // Prepare statement to insert a new outage table entry
+                                newOutageWriter = dbConn.prepareStatement(OutageConstants.DB_INS_NEW_OUTAGE);
 
-					// Execute the statement to get the next outage id from the sequence
-					//
-					ResultSet seqRS = getNextOutageIdStmt.executeQuery();
-					if (seqRS.next())
-					{
-						outageID = seqRS.getLong(1);
-					}
-					seqRS.close();
+                                if (log.isDebugEnabled())
+                                        log.debug("handleNodeDown: creating new outage entries...");
 
-					// get timestamp
-					java.sql.Timestamp eventTimeTS = null;
-					try
-					{
-						java.util.Date date = EventConstants.parseToDate(eventTime);
-						eventTimeTS = new java.sql.Timestamp(date.getTime());
-					}
-					catch(ParseException pe)
-					{
-						log.warn("Failed to convert time " + eventTime + " to java.sql.Timestamp, Setting current time instead", pe);
+                                // Get all active services for the nodeid
+                                activeSvcsStmt.setLong  (1, nodeID);
+                                ResultSet activeSvcsRS = activeSvcsStmt.executeQuery();
+                                while(activeSvcsRS.next())
+                                {
+                                        String ipAddr = activeSvcsRS.getString(1);
+                                        long serviceID = activeSvcsRS.getLong(2);
 
-						eventTimeTS = new java.sql.Timestamp((new java.util.Date()).getTime());
-					}
+                                        if (openOutageExists(dbConn, nodeID, ipAddr, serviceID))
+                                        {
+                                                if (log.isDebugEnabled())
+                                                        log.debug("handleNodeDown: " + nodeID + "/" + ipAddr + "/" + serviceID + " already down");
+                                        }
+                                        else
+                                        {
+                                                long outageID = -1;
 
-					// set parms
-					newOutageWriter.setLong  (1, outageID);
-					newOutageWriter.setLong  (2, eventID);
-					newOutageWriter.setLong  (3, nodeID);
-					newOutageWriter.setString(4, ipAddr);
-					newOutageWriter.setLong  (5, serviceID);
-					newOutageWriter.setTimestamp(6, eventTimeTS);
+                                                ResultSet seqRS = getNextOutageIdStmt.executeQuery();
+                                                if (seqRS.next())
+                                                {
+                                                        outageID = seqRS.getLong(1);
+                                                }
+                                                seqRS.close();
 
-					// execute update
-					newOutageWriter.executeUpdate();
+                                                // set parms
+                                                newOutageWriter.setLong  (1, outageID);
+                                                newOutageWriter.setLong  (2, eventID);
+                                                newOutageWriter.setLong  (3, nodeID);
+                                                newOutageWriter.setString(4, ipAddr);
+                                                newOutageWriter.setLong  (5, serviceID);
+                                                newOutageWriter.setTimestamp(6, convertEventTimeIntoTimestamp(eventTime));
 
-					if (log.isDebugEnabled())
-						log.debug("Recording outage for " + nodeID + "/" + ipAddr + "/" + serviceID);
-				}
+                                                // execute update
+                                                newOutageWriter.executeUpdate();
 
-			}
-			// close result set
-			activeSvcsRS.close();
+                                                if (log.isDebugEnabled())
+                                                        log.debug("handleNodeDown: Recording outage for " + nodeID + "/" + ipAddr + "/" + serviceID);
+                                        }
+
+                                }
+                                // close result set
+                                activeSvcsRS.close();
+                        } else if (regainedEvent != null)
+                        {
+                                // Matching regained service event in the cache.
+
+                                // Prepare statement to insert a closed outage table entry
+                                if (log.isDebugEnabled())
+                                        log.debug("handleNodeDown: creating closed outage entries...");
+
+                                newOutageWriter = dbConn.prepareStatement(OutageConstants.DB_INS_CACHE_HIT);
+
+                                // Get all active services for the nodeid
+                                activeSvcsStmt.setLong  (1, nodeID);
+                                ResultSet activeSvcsRS = activeSvcsStmt.executeQuery();
+                                while(activeSvcsRS.next())
+                                {
+                                        String ipAddr = activeSvcsRS.getString(1);
+                                        long serviceID = activeSvcsRS.getLong(2);
+
+                                        // Execute the statement to get the next outage id from the sequence
+                                        //
+                                        long outageID = -1;
+                                        ResultSet seqRS = getNextOutageIdStmt.executeQuery();
+                                        if (seqRS.next())
+                                        {
+                                                outageID = seqRS.getLong(1);
+                                        }
+                                        seqRS.close();
+
+                                        newOutageWriter.setLong  (1, outageID);
+                                        newOutageWriter.setLong  (2, eventID);
+                                        newOutageWriter.setLong  (3, nodeID);
+                                        newOutageWriter.setString(4, ipAddr);
+                                        newOutageWriter.setLong  (5, serviceID);
+                                        newOutageWriter.setTimestamp(6, convertEventTimeIntoTimestamp(eventTime));
+                                        newOutageWriter.setLong  (7, regainedEvent.getEventId());
+                                        newOutageWriter.setTimestamp(8, convertEventTimeIntoTimestamp(regainedEvent.getEventTime()));
+
+                                        // execute insert
+                                        newOutageWriter.executeUpdate();
+
+                                        if (log.isDebugEnabled())
+                                                log.debug("handleNodeDown: Recording closed outage for " + nodeID + "/" + ipAddr + "/" + serviceID);
+                                }
+                        }
 
 			// commit work
 			try

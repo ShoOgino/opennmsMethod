@@ -15,69 +15,69 @@
 		Connection dbConn = null;
 		try
 		{
-			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+                        dbConn = DatabaseConnectionFactory.getInstance().getConnection();
 
-			// Set the database commit mode
-			try
-			{
-				dbConn.setAutoCommit(false);
-			}
-			catch (SQLException sqle)
-			{
-				log.error("Unable to change database AutoCommit to FALSE", sqle);
-				return;
-			}
+                        if (openOutageExists(dbConn, nodeID, ipAddr, serviceID))
+                        {
+                                // Set the database commit mode
+                                try
+                                {
+                                        dbConn.setAutoCommit(false);
+                                }
+                                catch (SQLException sqle)
+                                {
+                                        log.error("Unable to change database AutoCommit to FALSE", sqle);
+                                        return;
+                                }
 
-			// get timestamp
-			java.sql.Timestamp eventTimeTS = null;
-			try
-			{
-				java.util.Date date = EventConstants.parseToDate(eventTime);
-				eventTimeTS = new java.sql.Timestamp(date.getTime());
-			}
-			catch(ParseException pe)
-			{
-				log.warn("Failed to convert time " + eventTime + " to java.sql.Timestamp, Setting current time instead", pe);
+                                // Prepare SQL statement used to update the 'regained time' in an open entry
+                                PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGE_FOR_SERVICE);
+                                outageUpdater.setLong  (1, eventID);
+                                outageUpdater.setTimestamp(2, convertEventTimeIntoTimestamp(eventTime));
+                                outageUpdater.setLong  (3, nodeID);
+                                outageUpdater.setString(4, ipAddr);
+                                outageUpdater.setLong  (5, serviceID);
+                                outageUpdater.executeUpdate();
 
-				eventTimeTS = new java.sql.Timestamp((new java.util.Date()).getTime());
-			}
+                                // close statement
+                                outageUpdater.close();
 
-	 		// Prepare SQL statement used to update the 'regained time' in an open entry
-			PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGE_FOR_SERVICE);
-			outageUpdater.setLong  (1, eventID); 
-			outageUpdater.setTimestamp(2, eventTimeTS); 
-			outageUpdater.setLong  (3, nodeID);
-			outageUpdater.setString(4, ipAddr);
-			outageUpdater.setLong  (5, serviceID);
-			outageUpdater.executeUpdate();
+                                // commit work
+                                try
+                                {
+                                        dbConn.commit();
 
-			// close statement
-			outageUpdater.close();
+                                        if (log.isDebugEnabled())
+                                                log.debug("nodeRegainedService: closed outage for nodeid/ip/service " + nodeID + "/" + ipAddr + "/" + serviceID + " in DB");
+                                }
+                                catch(SQLException se)
+                                {
+                                        log.warn("Rolling back transaction, nodeRegainedService could not be recorded  for nodeId/ipAddr/service: " + nodeID + "/" + ipAddr + "/" + serviceID, se);
 
-			// commit work
-			try
-			{
-				dbConn.commit();
+                                        try
+                                        {
+                                                dbConn.rollback();
+                                        }
+                                        catch (SQLException sqle)
+                                        {
+                                                log.warn("SQL exception during rollback, reason", sqle);
+                                        }
+                                }
+                        }
+                        else
+                        {
+                                // Outage table does not have an open record.
+                                log.warn("\'" + EventConstants.NODE_REGAINED_SERVICE_EVENT_UEI + "\' for " + nodeID + "/" + ipAddr + "/" + serviceID + " does not have open record, adding to cache.");
 
-				if (log.isDebugEnabled())
-					log.debug("nodeRegainedService closed outage for nodeid/ip/service " + nodeID + "/" + ipAddr + "/" + serviceID + " in DB");
-			}
-			catch(SQLException se)
-			{
-				log.warn("Rolling back transaction, nodeRegainedService could not be recorded  for nodeId/ipAddr/service: " + nodeID + "/" + ipAddr + "/" + serviceID, se);
-
-				try 
-				{
-					dbConn.rollback();
-				}
-				catch (SQLException sqle)
-				{
-					log.warn("SQL exception during rollback, reason", sqle);
-				}
-
-			}
-		
-		}
+                                // Store the event in the event cache
+                                OutageEventCache.getInstance().add(new OutageEventEntry(eventID,
+                                                                                nodeID,
+                                                                                ipAddr,
+                                                                                serviceID,
+                                                                                eventTime,
+                                                                                OutageEventEntry.EVENT_TYPE_REGAINED_SERVICE));
+                        }
+                }
 		catch(SQLException se)
 		{
 			log.warn("SQL exception while handling \'nodeRegainedService\'", se);
