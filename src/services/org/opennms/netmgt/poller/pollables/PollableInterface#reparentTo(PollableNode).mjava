@@ -4,19 +4,18 @@
         if (oldNode.equals(newNode)) return;
         
         // always lock the nodes in nodeId order so deadlock is not possible
-        Object firstLock = (oldNode.getNodeId() <= newNode.getNodeId() ? oldNode.getTreeLock() : newNode.getTreeLock());
-        Object secondLock = (oldNode.getNodeId() <= newNode.getNodeId() ? newNode.getTreeLock() : oldNode.getTreeLock());
+        final PollableNode firstNode = (oldNode.getNodeId() <= newNode.getNodeId() ? oldNode : newNode);
+        final PollableNode secondNode = (oldNode.getNodeId() <= newNode.getNodeId() ? newNode : oldNode);
         
-        synchronized(firstLock) {
-            synchronized(secondLock) {
-                
+        final Runnable reparent = new Runnable() {
+            public void run() {
                 oldNode.resetStatusChanged();
                 newNode.resetStatusChanged();
                 
                 
                 getContext().reparentOutages(getIpAddr(), getNodeId(), newNode.getNodeId());
-                oldNode.removeMember(this);
-                newNode.addMember(this);
+                oldNode.removeMember(PollableInterface.this);
+                newNode.addMember(PollableInterface.this);
                 setNode(newNode);
                 
                 if (getCause() == null || getCause().equals(oldNode.getCause())) {
@@ -45,6 +44,15 @@
                 newNode.processStatusChange(date);
 
             }
-        }
+        };
+        
+        Runnable lockSecondNodeAndRun = new Runnable() {
+            public void run() {
+                secondNode.withTreeLock(reparent);
+            }
+        };
+        
+        firstNode.withTreeLock(lockSecondNodeAndRun);
+        
     }
 
