@@ -1,0 +1,202 @@
+	/**
+	 * This method is responsible for updating the snmpInterface table entry
+	 * for a specific interface.
+	 *
+	 * @param dbc		Database Connection
+	 * @param node		Node entry for the node being rescanned
+	 * @param dbIpIfEntry 	interface entry of the updating interface
+	 * @param snmpc		SNMP collector or null if SNMP not supported.
+	 * 
+	 * @throws SQLException if there is a problem updating the snmpInterface table.
+	 */
+        private void updateSnmpInfo(    Connection dbc, 
+                                        DbNodeEntry node, 
+                                        DbIpInterfaceEntry dbIpIfEntry, 
+                                        IfSnmpCollector snmpc)
+                throws SQLException
+        {
+                
+		Category log = ThreadCategory.getInstance(getClass());
+
+                InetAddress ifaddr = dbIpIfEntry.getIfAddress();
+		
+                //
+		// If SNMP info is available update the snmpInterface table entry with
+		// anything that has changed.
+		//		
+		if (snmpc != null && !snmpc.failed() && dbIpIfEntry.getIfIndex() != -1)
+		{
+			if (log.isDebugEnabled())
+				log.debug("updateSnmpInfo: updating snmp interface for nodeId/ifIndex=" +
+					+ node.getNodeId() + "/" + dbIpIfEntry.getIfIndex());
+			
+			// Create and load SNMP Interface entry from the database
+			//
+			boolean newSnmpIfTableEntry = false;
+			DbSnmpInterfaceEntry dbSnmpIfEntry = DbSnmpInterfaceEntry.get(dbc, node.getNodeId(), dbIpIfEntry.getIfIndex());
+			if (dbSnmpIfEntry == null)
+			{
+				// SNMP Interface not found with this nodeId, create new interface
+				if (log.isDebugEnabled())
+					log.debug("updateSnmpInfo: SNMP interface index " + dbIpIfEntry.getIfIndex() 
+                                                + " not in database, creating new interface object.");
+				dbSnmpIfEntry = DbSnmpInterfaceEntry.create(node.getNodeId(), dbIpIfEntry.getIfIndex());
+				newSnmpIfTableEntry = true;
+			}
+		
+			// Create SNMP interface entry representing latest information
+			// retrieved for the interface via the collector
+			//
+			DbSnmpInterfaceEntry currSnmpIfEntry = DbSnmpInterfaceEntry.create(node.getNodeId(), dbIpIfEntry.getIfIndex());
+			
+			// Find the ifTable entry for this interface
+			IfTable ift = snmpc.getIfTable();
+			Iterator ifiter = ift.getEntries().iterator();
+			IfTableEntry ifte = null;
+			while(ifiter.hasNext())
+			{
+				ifte = (IfTableEntry)ifiter.next();
+				
+				// index
+				//
+				SnmpInt32 sint = (SnmpInt32)ifte.get(IfTableEntry.IF_INDEX);
+				if(sint != null)
+				{
+					if (dbIpIfEntry.getIfIndex() == sint.getValue())
+						break;
+				}
+			}
+			
+			// Make sure we have a valid IfTableEntry object
+			if (ifte != null)
+			{
+				// IP address and netmask
+				//
+				// WARNING:  IfSnmpCollector.getIfAddressAndMask() ONLY returns
+				// the FIRST IP address and mask for a given interface as specified
+				// in the ipAddrTable.
+				//
+				InetAddress[] aaddrs = snmpc.getIfAddressAndMask(dbIpIfEntry.getIfIndex());
+
+				// Address array should NEVER be null but just in case..
+				//
+				if(aaddrs == null)
+				{
+					log.warn("updateSnmpInfo: unable to retrieve address and netmask for nodeId/ifIndex: " +
+						node.getNodeId() + "/" + dbIpIfEntry.getIfIndex());
+
+					aaddrs = new InetAddress[2];
+
+					// Set interface address to current interface
+					aaddrs[0] = ifaddr;
+
+					// Set netmask to NULL
+					aaddrs[1] = null;
+				}
+
+				// IP address
+				//
+				currSnmpIfEntry.setIfAddress(aaddrs[0]);
+				
+				// netmask
+				//
+				if (aaddrs[1] != null)
+				{
+					if (log.isDebugEnabled()) 
+						log.debug("updateSnmpInfo: interface " + aaddrs[0].getHostAddress() 
+                                                        + " has netmask: " + aaddrs[1].getHostAddress());
+					currSnmpIfEntry.setNetmask(aaddrs[1]);
+				}
+				
+				// type
+				//
+				SnmpInt32 sint = (SnmpInt32)ifte.get(IfTableEntry.IF_TYPE);
+				currSnmpIfEntry.setType(sint.getValue());
+					
+				// description
+				String str = SystemGroup.getPrintableString((SnmpOctetString)ifte.get(IfTableEntry.IF_DESCR));
+				if (log.isDebugEnabled())
+					log.debug("updateSnmpInfo: " + ifaddr + " has ifDescription: " + str);
+				if(str != null && str.length() > 0)
+					currSnmpIfEntry.setDescription(str);
+					
+				// physical address
+				StringBuffer sbuf = new StringBuffer();
+				SnmpOctetString ostr = (SnmpOctetString)ifte.get(IfTableEntry.IF_PHYS_ADDR);
+                                if ( ostr != null && ostr.getLength() > 0)
+                                {
+					byte[] bytes = ostr.getString();
+					for(int i = 0; i < bytes.length; i++)
+					{
+						sbuf.append(Integer.toHexString(((int)bytes[i] >> 4) & 0xf));
+						sbuf.append(Integer.toHexString((int)bytes[i] & 0xf));
+					}
+				}
+				
+				String physAddr = sbuf.toString().trim();
+			
+				if (log.isDebugEnabled())
+					log.debug("updateSnmpInfo: " + ifaddr + " has phys address: -" + physAddr + "-");
+				
+				if (physAddr.length() == 12)
+				{
+					currSnmpIfEntry.setPhysicalAddress(physAddr);
+				}
+			
+				// speed
+				SnmpUInt32 uint = (SnmpUInt32)ifte.get(IfTableEntry.IF_SPEED);
+				currSnmpIfEntry.setSpeed((int)uint.getValue());
+
+				// admin status
+				sint = (SnmpInt32)ifte.get(IfTableEntry.IF_ADMIN_STATUS);
+				currSnmpIfEntry.setAdminStatus(sint.getValue());
+						
+				// oper status
+				sint = (SnmpInt32)ifte.get(IfTableEntry.IF_OPER_STATUS);
+				currSnmpIfEntry.setOperationalStatus(sint.getValue());
+				
+				// name (from interface extensions table)
+				SnmpOctetString snmpIfName = snmpc.getIfName(dbIpIfEntry.getIfIndex());
+				if (snmpIfName != null)
+				{
+					String ifName = SystemGroup.getPrintableString(snmpIfName);
+					if (ifName!= null  && ifName.length() > 0)
+						currSnmpIfEntry.setName(ifName);
+				}
+					
+			} // end if valid ifTable entry
+			
+			// Update any fields which have changed
+			//dbSnmpIfEntry.updateIfIndex(currSnmpIfEntry.getIfIndex());
+			dbSnmpIfEntry.updateIfAddress(currSnmpIfEntry.getIfAddress());
+			dbSnmpIfEntry.updateNetmask(currSnmpIfEntry.getNetmask());
+			dbSnmpIfEntry.updatePhysicalAddress(currSnmpIfEntry.getPhysicalAddress());
+			dbSnmpIfEntry.updateDescription(currSnmpIfEntry.getDescription());
+			dbSnmpIfEntry.updateName(currSnmpIfEntry.getName());
+			dbSnmpIfEntry.updateType(currSnmpIfEntry.getType());
+			dbSnmpIfEntry.updateSpeed(currSnmpIfEntry.getSpeed());
+			dbSnmpIfEntry.updateAdminStatus(currSnmpIfEntry.getAdminStatus());
+			dbSnmpIfEntry.updateOperationalStatus(currSnmpIfEntry.getOperationalStatus());
+			
+			// If this is a new interface or if any of the following 
+			// key fields have changed set the m_snmpIfTableChangedFlag 
+			// variable to TRUE.  This will potentially trigger an event 
+			// which will cause the poller to reinitialize the primary 
+			// SNMP interface for the node.
+			if (!m_snmpIfTableChangedFlag &&
+				newSnmpIfTableEntry || 
+				//dbSnmpIfEntry.hasIfIndexChanged() ||
+				dbSnmpIfEntry.hasIfAddressChanged() ||
+				dbSnmpIfEntry.hasTypeChanged() ||
+				dbSnmpIfEntry.hasNameChanged() ||
+				dbSnmpIfEntry.hasDescriptionChanged() ||
+				dbSnmpIfEntry.hasPhysicalAddressChanged())
+			{
+				m_snmpIfTableChangedFlag = true;
+			}
+			
+			// Update the database
+			dbSnmpIfEntry.store(dbc);
+		} // end if snmp info available
+	}
+

@@ -1,0 +1,124 @@
+	/**
+	 * This method is responsible for updating the ifservices table entry
+	 * for a specific interface.
+	 *
+	 * @param dbc		Database Connection.
+	 * @param node		Node entry for the node being rescanned.
+	 * @param dbIpIfEntry 	interface entry of the updating interface.
+	 * @param isNewIpEntry  if the dbIpIfEntry is a new entry.
+	 * @param protocols	Protocols supported by the interface.
+	 * 
+	 * @throws SQLException if there is a problem updating the ifservices table.
+	 */
+        private void updateServiceInfo(  Connection dbc, 
+                                        DbNodeEntry node, 
+                                        DbIpInterfaceEntry dbIpIfEntry,
+                                        boolean isNewIpEntry,
+				        List	 protocols )
+                throws SQLException
+        {
+		Category log = ThreadCategory.getInstance(getClass());
+
+		CapsdConfigFactory cFactory = CapsdConfigFactory.getInstance();
+		PollerConfigFactory pollerCfgFactory = PollerConfigFactory.getInstance();
+		org.opennms.netmgt.config.poller.Package ipPkg = null;
+                
+                InetAddress ifaddr = dbIpIfEntry.getIfAddress();
+                
+		// Retrieve from the database the interface's service list
+		DbIfServiceEntry[] dbSupportedServices = dbIpIfEntry.getServices(dbc);
+			
+		// add newly supported protocols
+		//		
+		// NOTE!!!!!: (reference internal bug# 201)
+		// If the ip is 'managed', the service can still be 'not polled'
+		// based on the poller configuration - at this point the ip is already
+		// in the database, so package filter evaluation should go through OK
+		//
+		Iterator iproto = protocols.iterator();
+		while(iproto.hasNext())
+		{
+			IfCollector.SupportedProtocol p = (IfCollector.SupportedProtocol)iproto.next();
+			Number sid = (Number)cFactory.getServiceIdentifier(p.getProtocolName());
+
+			// Only adding newly supported services so check against the service 
+			// list retrieved from the database
+			boolean found = false;
+			for (int i=0; i<dbSupportedServices.length && !found; i++)
+			{
+				if (dbSupportedServices[i].getServiceId() == sid.intValue())
+					found = true;
+			}
+                        
+			if (!found)
+			{
+				DbIfServiceEntry ifSvcEntry = DbIfServiceEntry.create(node.getNodeId(), ifaddr, sid.intValue());
+
+				// now fill in the entry
+				//
+				if(cFactory.isAddressUnmanaged(ifaddr))
+					ifSvcEntry.setStatus(DbIfServiceEntry.STATUS_UNMANAGED);
+				else 
+				{
+					boolean svcToBePolled = false;
+					if (ipPkg != null)
+					{
+			                        ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+						svcToBePolled = pollerCfgFactory.isPolled(p.getProtocolName(), ipPkg);
+						if (!svcToBePolled)
+							svcToBePolled = pollerCfgFactory.isPolled(ifaddr.getHostAddress(), 
+                                                                                                  p.getProtocolName());
+					}
+
+					if (svcToBePolled)
+						ifSvcEntry.setStatus(DbIfServiceEntry.STATUS_ACTIVE);
+					else
+						ifSvcEntry.setStatus(DbIfServiceEntry.STATUS_NOT_POLLED);
+				}
+				
+				// Set qualifier if available.  Currently the qualifier field
+				// is used to store the port at which the protocol was found.
+				//
+				if (p.getQualifiers() != null && p.getQualifiers().get("port") != null)
+				{
+					try
+					{
+						Integer port = (Integer)p.getQualifiers().get("port");
+						if (log.isDebugEnabled())
+							log.debug("updateIfServices: got a port qualifier: " + port
+                                                                + " for service: " + p.getProtocolName());
+						ifSvcEntry.setQualifier(port.toString());
+					}
+					catch (ClassCastException ccE)
+					{
+						// Do nothing
+					}
+				}
+					
+				ifSvcEntry.setSource(DbIfServiceEntry.SOURCE_PLUGIN);
+				ifSvcEntry.setNotify(DbIfServiceEntry.NOTIFY_ON);
+				
+				int index = dbIpIfEntry.getIfIndex();
+				if (index > 0)
+					ifSvcEntry.setIfIndex(index);
+		
+				ifSvcEntry.store();
+				
+				if (log.isDebugEnabled())
+					log.debug("updateIfServices: update service: " + p.getProtocolName()
+                                                + " for interface:" + ifaddr.getHostAddress()
+                                                + " on node:" + node.getNodeId());
+                                                
+				// Generate nodeGainedService event
+				createNodeGainedServiceEvent(node, dbIpIfEntry, p.getProtocolName());
+				
+				// If this interface already existed in the database and SNMP
+				// service has been gained then create interfaceSupportsSNMP event
+				if (!isNewIpEntry && p.getProtocolName().equalsIgnoreCase("SNMP"))
+				{
+					createInterfaceSupportsSNMPEvent(dbIpIfEntry);
+				}
+			}
+		} // end while(more protocols)
+        }
+

@@ -1,0 +1,180 @@
+	/**
+	 * This method is responsible for updating the ipinterface table entry
+	 * for a specific interface.
+	 *
+	 * @param dbc		Database Connection.
+	 * @param now		Date/time to be associated with the update.
+	 * @param node		Node entry for the node being rescanned.
+	 * @param dbIpIfEntry 	interface entry of the updating interface.
+	 * @param snmpc		SNMP collector or null if SNMP not supported.
+	 * @param isNewIpEntry  if dbIpIfEntry is a new entry.
+	 * @param isReparented 	if dbIpIfentry is reparented.
+	 * 
+	 * @throws SQLException if there is a problem updating the ipinterface table.
+	 */
+        private void updateInterfaceInfo(  Connection dbc, 
+                                           Date now,
+                                           DbNodeEntry node, 
+                                           DbIpInterfaceEntry dbIpIfEntry,
+                                           IfSnmpCollector snmpc,
+                                           boolean isNewIpEntry,
+				           boolean isReparented )
+                throws SQLException
+        {
+		Category log = ThreadCategory.getInstance(getClass());
+
+		CapsdConfigFactory cFactory = CapsdConfigFactory.getInstance();
+		PollerConfigFactory pollerCfgFactory = PollerConfigFactory.getInstance();
+                
+                InetAddress ifaddr = dbIpIfEntry.getIfAddress();
+		int ifIndex = snmpc.getIfIndex(ifaddr);
+                
+		// Clone the existing database entry so we have access to the values
+		// of the database fields associated with the interface in the event
+		// that something has changed.
+		DbIpInterfaceEntry originalIpIfEntry = DbIpInterfaceEntry.clone(dbIpIfEntry);
+		
+		// Create IP interface entry representing latest information
+		// retrieved for the interface via the collector
+		//
+		DbIpInterfaceEntry currIpIfEntry = DbIpInterfaceEntry.create(node.getNodeId(), ifaddr, ifIndex);
+			
+		// Hostname
+		currIpIfEntry.setHostname(ifaddr.getHostName());
+			
+		// Managed state
+		// NOTE: (reference internal bug# 201)
+		// If the ip is 'managed', it might still be 'not polled' based
+		// on the poller configuration.
+		//
+		// Try to avoid re-evaluating the ip against filters for
+		// each service, try to get the first package here and use
+		// that for service evaluation
+		//
+		// At this point the ip is already/ in the database, so package filter
+		// evaluation should go through OK
+		//
+		org.opennms.netmgt.config.poller.Package ipPkg = null;
+
+		if(cFactory.isAddressUnmanaged(ifaddr))
+			currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_UNMANAGED);
+		else
+		{
+			boolean ipToBePolled = false;
+			ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+			if (ipPkg != null)
+				ipToBePolled = true;
+
+			if (ipToBePolled)
+				currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_MANAGED);
+			else
+				currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_NOT_POLLED);
+		}
+		
+		// If SNMP data collection is available set SNMP Primary state 
+		// as well as ifIndex and ifStatus.  Also retrieve ifType (loopback
+		// interfaces will be skipped).
+		//
+		int ifType = -1;
+		if (snmpc != null && !snmpc.failed())
+		{	
+			if(ifIndex != -1)
+			{
+				int status = snmpc.getAdminStatus(ifIndex);
+				currIpIfEntry.setStatus(status);
+				ifType = snmpc.getIfType(ifIndex);
+				
+				// For new interfaces simply set 'isSnmpPrimary' field to secondary for now.  
+				// Following the interface updates the primary SNMP interface will be determined
+				// and the value of the 'isSnmpPrimary' field set to 'P' (primary) for that
+				// interface.
+				if (isNewIpEntry)
+					currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_SECONDARY);
+				else
+					currIpIfEntry.setPrimaryState(originalIpIfEntry.getPrimaryState());
+			}
+			else
+			{
+				// No ifIndex found so set primary state to NOT_ELIGIBLE
+				currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
+			}
+		}
+		
+		// Update any fields which have changed
+		dbIpIfEntry.setLastPoll(now);
+		dbIpIfEntry.updateHostname(currIpIfEntry.getHostname());
+		dbIpIfEntry.updateManagedState(currIpIfEntry.getManagedState());
+		dbIpIfEntry.updateStatus(currIpIfEntry.getStatus());
+		dbIpIfEntry.updatePrimaryState(currIpIfEntry.getPrimaryState());
+		dbIpIfEntry.updateIfIndex(currIpIfEntry.getIfIndex());
+			
+		// Set event flags
+		// NOTE:  Must set these flags prior to call to DbIpInterfaceEntry.store()
+		// method which will cause the change map to be cleared.
+		boolean ifIndexChangedFlag = false;
+		boolean ipHostnameChangedFlag = false;
+		
+		if (dbIpIfEntry.hasIfIndexChanged())
+			ifIndexChangedFlag = true;
+		
+		if (dbIpIfEntry.hasHostnameChanged())
+			ipHostnameChangedFlag = true;
+		
+		// Update the database
+		dbIpIfEntry.store(dbc);
+
+		// If the interface was not already in the database under 
+		// the node being rescanned or some other node send a
+		// nodeGainedInterface event.
+		if (isNewIpEntry && !isReparented)
+		{
+			createNodeGainedInterfaceEvent(dbIpIfEntry);
+		}
+		// If an interface has been reparented send associated events
+		else if (isReparented)
+		{
+			
+			// InterfaceIndexChanged event
+			//
+			if (log.isDebugEnabled())
+				log.debug("updateInterfaceInfo: ifIndex changed: " + ifIndexChangedFlag);
+			if (ifIndexChangedFlag)
+			{
+				createInterfaceIndexChangedEvent(dbIpIfEntry, originalIpIfEntry);
+				m_ifIndexOnNodeChangedFlag = true;
+			}
+		
+			// IPHostNameChanged event
+			//
+			if (log.isDebugEnabled())
+				log.debug("updateInterfaceInfo: hostname changed: " + ipHostnameChangedFlag);
+			if (ipHostnameChangedFlag)
+			{
+				createIpHostNameChangedEvent(dbIpIfEntry, originalIpIfEntry);
+			}
+		}
+		// If the interface is not new check to see if the interface's
+		// ifIndex or ipHostname have changed.
+		else
+		{
+			// InterfaceIndexChanged event
+			//
+			if (log.isDebugEnabled())
+				log.debug("updateInterfaceInfo: ifIndex changed: " + ifIndexChangedFlag);
+			if (ifIndexChangedFlag)
+			{
+				createInterfaceIndexChangedEvent(dbIpIfEntry, originalIpIfEntry);
+				m_ifIndexOnNodeChangedFlag = true;
+			}
+		
+			// IPHostNameChanged event
+			//
+			if (log.isDebugEnabled())
+				log.debug("updateInterfaceInfo: hostname changed: " + ipHostnameChangedFlag);
+			if (ipHostnameChangedFlag)
+			{
+				createIpHostNameChangedEvent(dbIpIfEntry, originalIpIfEntry);
+			}
+		}
+        }
+
