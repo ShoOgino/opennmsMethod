@@ -1,21 +1,37 @@
     NotificationTask[] makeGroupTasks(long startTime, Map params, int noticeId, String targetName, String[] command, List targetSiblings, long interval) throws IOException, MarshalException, ValidationException {
-        long curSendTime = 0;
+        Category log = ThreadCategory.getInstance(getClass());
         Group group = m_notifd.getGroupManager().getGroup(targetName);
-        String[] users = group.getUser();
-        List taskList = new ArrayList(users.length);
-        if (users != null && users.length > 0) {
-            for (int j = 0; j < users.length; j++) {
-                NotificationTask newTask = makeUserTask(startTime + curSendTime, params, noticeId, users[j], command, targetSiblings);
 
-                if (newTask != null) {
-                    taskList.add(newTask);
-                    curSendTime += interval; 
-                }
-            }
-            return (NotificationTask[])taskList.toArray(new NotificationTask[taskList.size()]);
-        } else {
-            ThreadCategory.getInstance(getClass()).debug("Not sending notice, no users specified for group " + group.getName());
+        Calendar startCal = Calendar.getInstance();
+        startCal.setTimeInMillis(startTime);
+        long next = m_notifd.getGroupManager().groupNextOnDuty(group.getName(), startCal);
+        
+        // it the group is not on duty
+        if (next < 0) {
+            log.debug("The group " + group.getName() + " is not scheduled to come back on duty. No notification will be sent to this group.");
             return null;
         }
+
+        log.debug("The group " + group.getName() + " is on duty in " + next + " millisec.");
+        String[] users = group.getUser();
+        
+        // There are no users in the group
+        if (users == null || users.length == 0) {
+            log.debug("Not sending notice, no users specified for group " + group.getName());
+            return null;
+        }
+
+        List taskList = new ArrayList(users.length);
+        long curSendTime = 0;
+        
+        for (int j = 0; j < users.length; j++) {
+            NotificationTask newTask = makeUserTask(next + startTime + curSendTime, params, noticeId, users[j], command, targetSiblings);
+
+            if (newTask != null) {
+                taskList.add(newTask);
+                curSendTime += interval; 
+            }
+        }
+        return (NotificationTask[])taskList.toArray(new NotificationTask[taskList.size()]);
     }
 
