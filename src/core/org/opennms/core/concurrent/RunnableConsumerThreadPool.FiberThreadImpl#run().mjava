@@ -1,0 +1,83 @@
+		/**
+		 * <p>The run method preforms the actual work for 
+		 * the fiber. It loops infinitely until the shutdown
+		 * flag is set, during which time it processes queue
+		 * elements. Each element in the queue should be a 
+		 * instance of {@link java.lang.Runnable Runnable}. After
+		 * each instance is recieved its <code>run</code> method
+		 * is invoked.</p>
+		 *
+		 * <p>After the object's <code>run</code> method completes
+		 * it is passed to any interested callers via the listener
+		 * list in the encapsulated class.</p>
+		 *
+		 */
+		public void run()
+		{
+			ThreadCategory.setPrefix(m_log4jPrefix);
+			m_status = RUNNING;
+			while(!m_shutdown)
+			{
+				Object obj = null;
+				try
+				{
+					obj = m_delegateQ.remove(500);
+					if(obj == null)
+						continue;
+				}
+				catch(InterruptedException ie)
+				{
+					m_status = STOP_PENDING;
+					break;	// exit, log?
+				}
+				catch(FifoQueueException fqE)
+				{
+					m_status = STOP_PENDING;
+					break; // exit, log?
+				}
+
+				try
+				{
+					if(obj != null)
+					{
+						((Runnable)obj).run();
+						
+						// if successful then
+						// invoke callback to
+						// process message
+						//
+						Object[] list = null;
+						synchronized(m_completedListeners)
+						{
+							list = m_completedListeners.toArray();
+						}
+						for(int i = 0; list != null && i < list.length; i++)
+						{
+							((RunnableCompletionListener)list[i]).onRunnableCompletion((Runnable)obj);
+						}
+					}
+				}
+				catch(Throwable t)
+				{
+					Category log = ThreadCategory.getInstance(this.getClass());
+					if(log.isDebugEnabled())
+						log.debug("run: an unexpected error occured during fiber run, calling error liseners", t);
+
+					// call a listener to handle errors?
+					// or should it be logged
+					//
+					Object[] list = null;
+					synchronized(m_errorListeners)
+					{
+						list = m_errorListeners.toArray();
+					}
+					for(int i = 0; list != null && i < list.length; i++)
+					{
+						((RunnableErrorListener)list[i]).onRunnableError(obj, t);
+					}
+				}
+			}
+
+			m_status = STOPPED;
+		}
+
