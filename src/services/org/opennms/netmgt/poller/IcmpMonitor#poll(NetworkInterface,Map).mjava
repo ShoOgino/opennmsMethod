@@ -26,10 +26,14 @@
 
 		// get parameters
 		//
-		int retry = getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
-		int timeout = getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
-
-
+		int retry = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
+		int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+		String rrdPath = ParameterMap.getKeyedString(parameters, "rrd-repository", null);
+		if (rrdPath == null)
+		{
+			log.info("poll: RRD repository not specified in parameters, latency data will not be stored.");
+		}
+		
 		// Find an appropritate thread id
 		//
 		Long tidKey = null;
@@ -85,9 +89,22 @@
 		m_waiting.remove(tidKey);
 
 		if(reply.isSignaled())
+		{
 			serviceStatus = ServiceMonitor.SERVICE_AVAILABLE;
-
-
+			
+			// Determine round-trip-time for the ping packet
+			Packet replyPkt = reply.getPacket();
+			if (replyPkt != null)
+			{
+				long rtt = replyPkt.getReceivedTime() - replyPkt.getSentTime();
+				log.debug("Ping round trip time for " + ipv4Addr + ": " + rtt + "ms");
+				
+				// Store round-trip-time in RRD database
+				if (rtt >= 0 && rrdPath != null)
+					this.updateRRD(m_rrdInterface, rrdPath, ipv4Addr, DS_NAME, rtt);
+			}
+		}
+		
 		return serviceStatus;
 	}
 

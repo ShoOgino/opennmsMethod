@@ -26,17 +26,21 @@
 
 		Category log = ThreadCategory.getInstance(getClass());
 
-		int retry   = getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
-		int timeout = getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
-		int[] ports = getKeyedIntegerList(parameters, "ports", DEFAULT_PORTS);
-		String url  = getKeyedString(parameters, "url", DEFAULT_URL);
-
-		int response = getKeyedInteger(parameters, "response", -1);
-		String responseText = getKeyedString(parameters, "response text", null);
+		int retry   = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
+		int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+		int[] ports = ParameterMap.getKeyedIntegerArray(parameters, "ports", DEFAULT_PORTS);
+		String url  = ParameterMap.getKeyedString(parameters, "url", DEFAULT_URL);
+		String rrdPath = ParameterMap.getKeyedString(parameters, "rrd-repository", null);
+		if (rrdPath == null)
+		{
+			log.info("poll: RRD repository not specified in parameters, latency data will not be stored.");
+		}
+		int response = ParameterMap.getKeyedInteger(parameters, "response", -1);
+		String responseText = ParameterMap.getKeyedString(parameters, "response text", null);
 
 		// Set to true if "response" property has a valid return code specified.
 		//  By default response will be deemed valid if the return code 
-		//  falls in the range:   100 < rc < 500
+		//  falls in the range:   99 < rc < 500
 		//  This is based on the following information from RFC 1945 (HTTP 1.0)
 		// 		HTTP 1.0 GET return codes:
 		//		 	1xx: Informational - Not used, future use
@@ -60,6 +64,7 @@
 		//
 		int serviceStatus = ServiceMonitor.SERVICE_UNAVAILABLE;
 		int currentPort = -1;
+		long responseTime = -1;
 		for (int portIndex=0; portIndex < ports.length && serviceStatus != ServiceMonitor.SERVICE_AVAILABLE; portIndex++)
 		{
 			currentPort = ports[portIndex];
@@ -86,6 +91,7 @@
 					//
 					// Issue HTTP 'GET' command and check the return code in the response
 					//
+					long sentTime = System.currentTimeMillis();
 					portal.getOutputStream().write(cmd.getBytes());
 
 					//
@@ -94,11 +100,15 @@
 					//
 					BufferedReader lineRdr = new BufferedReader(new InputStreamReader(portal.getInputStream()));
 					String line = lineRdr.readLine();
+					responseTime = System.currentTimeMillis() - sentTime;
 					if (line == null)
 						continue;
 
 					if(log.isDebugEnabled())
-						log.debug("HttpPlugin.poll: Response = " + line);
+					{
+						log.debug("poll: response= " + line);
+						log.debug("poll: responseTime= " + responseTime + "ms");
+					}
 
 					if(line.startsWith("HTTP/"))
 					{
@@ -204,7 +214,6 @@
 				}
 
 			} // end for (attempts)
-
 		} // end for (ports)
 		
 		// Add the 'qualifier' parm to the parameter map.  This parm will
@@ -229,9 +238,13 @@
 			// Add to parameter map
 			parameters.put("qualifier", testedPorts);
 		}
-		else
+		else if (serviceStatus == ServiceMonitor.SERVICE_AVAILABLE)
 		{
 			parameters.put("qualifier", Integer.toString(currentPort));
+			
+			// Store response time in RRD
+			if (responseTime >= 0 && rrdPath != null)
+				this.updateRRD(m_rrdInterface, rrdPath, ipv4Addr, DS_NAME, responseTime);
 		}	
 		
 		//

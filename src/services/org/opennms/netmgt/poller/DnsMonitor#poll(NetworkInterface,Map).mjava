@@ -30,13 +30,18 @@
 
 		// get the parameters
 		//
-		int retry = getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
-		int port  = getKeyedInteger(parameters, "port", DEFAULT_PORT);
-		int timeout = getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+		int retry = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
+		int port  = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
+		int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+		String rrdPath = ParameterMap.getKeyedString(parameters, "rrd-repository", null);
+		if (rrdPath == null)
+		{
+			log.info("poll: RRD repository not specified in parameters, latency data will not be stored.");
+		}
 
 		// Host to lookup?
 		//
-		String lookup = getKeyedString(parameters, "lookup", null);
+		String lookup = ParameterMap.getKeyedString(parameters, "lookup", null);
 		if(lookup == null || lookup.length() == 0)
 		{
 			// Get hostname of local machine for future DNS lookups
@@ -61,6 +66,7 @@
 
 		int serviceStatus = ServiceMonitor.SERVICE_UNAVAILABLE;
 		DatagramSocket socket = null;
+		long responseTime = -1;
 		try 
 		{
 			socket = new DatagramSocket();
@@ -70,8 +76,29 @@
 			{
 				try 
 				{
-					sendRequest(request, socket, ipv4Addr, port);
-					getResponse(request, socket);
+					// Send DNS request
+					//
+					byte[] data = request.buildRequest();
+					DatagramPacket outgoing = new DatagramPacket(data, 
+										   data.length, 
+										   ipv4Addr, 
+										   port);
+					long sentTime = System.currentTimeMillis();
+					socket.send(outgoing);
+					
+					// Get DNS Response
+					//
+					byte[] buffer = new byte[512];
+					DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
+					socket.receive(incoming);
+					responseTime = System.currentTimeMillis() - sentTime;
+					
+					// Validate DNS Response
+					// IOException thrown if packet does not decode as expected.
+					request.verifyResponse(incoming.getData(), incoming.getLength());
+					
+					if (log.isDebugEnabled())
+						log.debug("poll: valid DNS request received, responseTime= " + responseTime + "ms");
 					serviceStatus = ServiceMonitor.SERVICE_AVAILABLE;
 				} 
 				catch (InterruptedIOException ex) 
@@ -101,6 +128,16 @@
 				socket.close();
 		}
 	
+		// Store response time if available
+		//
+		if (serviceStatus == ServiceMonitor.SERVICE_AVAILABLE)
+		{
+			// Store response time in RRD
+			if (responseTime >= 0 && rrdPath != null)
+				this.updateRRD(m_rrdInterface, rrdPath, ipv4Addr, DS_NAME, responseTime);
+		}
+		
+		// 
 		//
 		// return the status of the service
 		//
