@@ -1,0 +1,87 @@
+	public void doPost( HttpServletRequest request, HttpServletResponse response ) throws ServletException, IOException 
+	{
+		HttpSession userSession = request.getSession(false);
+		java.util.List allInterfaces = null;
+		
+		if (userSession != null)
+		{
+		  	allInterfaces = (java.util.List)userSession.getAttribute("listAllinterfaces.snmpmanage.jsp");
+		}
+		
+		//the list of all interfaces marked as managed
+		java.util.List interfaceList = getList(request.getParameterValues("collTypeCheck"));
+		
+		//the node being modified
+        	String nodeIdString = request.getParameter("node");
+		int currNodeId = Integer.parseInt(nodeIdString);
+
+		
+		// date to set on events sent out
+		String curDate = EventConstants.formatToString(new java.util.Date());
+
+		String primeInt = null;
+
+		for (int k = 0; k < allInterfaces.size(); k++)
+		{
+			SnmpManagedInterface testInterface = (SnmpManagedInterface)allInterfaces.get(k);
+			if (testInterface.getNodeid() == currNodeId && testInterface.getStatus().equals("P"))
+				primeInt = testInterface.getAddress();
+		} 
+	
+		
+		try 
+		{
+			Connection connection = Vault.getDbConnection();
+			try 
+			{
+				connection.setAutoCommit(false);
+				PreparedStatement stmt = connection.prepareStatement(UPDATE_INTERFACE);
+                        
+				for (int j = 0; j < allInterfaces.size(); j++)
+                        	{
+					SnmpManagedInterface curInterface = (SnmpManagedInterface)allInterfaces.get(j);
+					String intKey = curInterface.getNodeid()+"+"+curInterface.getIfIndex();
+                                
+				
+					//determine what is managed and unmanged
+					if (interfaceList.contains(intKey) && curInterface.getStatus().equals("N"))
+					{
+                                           	stmt.setString(1, "C");
+                                                stmt.setInt(2, curInterface.getNodeid());
+                                                stmt.setInt(3, curInterface.getIfIndex());
+                                                this.log("DEBUG: executing SNMP Collection Type update to C for nodeid: " + curInterface.getNodeid() + " ifIndex: " + curInterface.getIfIndex());
+                                                stmt.executeUpdate();
+					}
+					else if (!interfaceList.contains(intKey) && curInterface.getNodeid() == currNodeId && curInterface.getStatus().equals("C"))
+					{
+                                                stmt.setString(1, "N");
+                                                stmt.setInt(2, curInterface.getNodeid());
+                                                stmt.setInt(3, curInterface.getIfIndex());
+                                                this.log("DEBUG: executing SNMP Collection Type update to N for nodeid: " + curInterface.getNodeid() + " ifIndex: " + curInterface.getIfIndex());
+                                                stmt.executeUpdate();
+                                        }
+
+                                }
+			        
+				connection.commit();
+			}
+			finally
+			{	//close off the db connection
+				connection.setAutoCommit(true);
+				Vault.releaseDbConnection(connection);
+			}
+		}
+		catch (SQLException e)
+		{
+			throw new ServletException(e);
+		}
+		
+		//send the event to restart SNMP Collection
+		if (primeInt != null)
+		sendSNMPRestartEvent(currNodeId, primeInt);
+		
+		//forward the request for proper display
+		RequestDispatcher dispatcher = this.getServletContext().getRequestDispatcher("/admin/index.jsp");
+		dispatcher.forward( request, response );
+	}
+
