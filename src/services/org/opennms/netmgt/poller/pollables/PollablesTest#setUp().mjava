@@ -4,11 +4,6 @@
     protected void setUp() throws Exception {
         super.setUp();
         
-        m_pollContext = new MockPollContext();
-        m_pollContext.setCriticalServiceName("ICMP");
-        m_pollContext.setNodeProcessingEnabled(true);
-        m_pollContext.setPollingAllIfCritServiceUndefined(true);
-        m_pollContext.setServiceUnresponsiveEnabled(true);
 
         
         m_mockNetwork = new MockNetwork();
@@ -34,7 +29,6 @@
         m_db = new MockDatabase();
         m_db.populate(m_mockNetwork);
         
-        m_pollContext.setDatabase(m_db);
         
         m_anticipator = new EventAnticipator();
         m_outageAnticipator = new OutageAnticipator(m_db);
@@ -45,9 +39,29 @@
         m_eventMgr.setEventAnticipator(m_anticipator);
         m_eventMgr.addEventListener(m_outageAnticipator);
         
+        m_pollContext = new MockPollContext();
+        m_pollContext.setDatabase(m_db);
+        m_pollContext.setCriticalServiceName("ICMP");
+        m_pollContext.setNodeProcessingEnabled(true);
+        m_pollContext.setPollingAllIfCritServiceUndefined(true);
+        m_pollContext.setServiceUnresponsiveEnabled(true);
         m_pollContext.setEventMgr(m_eventMgr);
         m_pollContext.setMockNetwork(m_mockNetwork);
-
+        
+        m_pollerConfig = new MockPollerConfig();
+        m_pollerConfig.setNodeOutageProcessingEnabled(true);
+        m_pollerConfig.setCriticalService("ICMP");
+        m_pollerConfig.addPackage("TestPackage");
+        m_pollerConfig.addDowntime(100L, 0L, 500L, false);
+        m_pollerConfig.addDowntime(200L, 500L, 1500L, false);
+        m_pollerConfig.addDowntime(500L, 1500L, -1L, true);
+        m_pollerConfig.setDefaultPollInterval(1000L);
+        m_pollerConfig.populatePackage(m_mockNetwork);
+        m_pollerConfig.addPackage("TestPkg2");
+        m_pollerConfig.addDowntime(1000L, 0L, -1L, false);
+        m_pollerConfig.setDefaultPollInterval(2000L);
+        m_pollerConfig.addService(m_mockNetwork.getService(2, "192.168.1.3", "HTTP"));
+        
         m_network = new PollableNetwork(m_pollContext);
         m_network.createService(1, InetAddress.getByName("192.168.1.1"), "ICMP");
         m_network.createService(1, InetAddress.getByName("192.168.1.1"), "SMTP");
@@ -60,17 +74,45 @@
         m_network.createService(3, InetAddress.getByName("192.168.1.5"), "SMTP");
         m_network.createService(3, InetAddress.getByName("192.168.1.5"), "HTTP");
         
+        m_timer = new MockTimer();
+        m_scheduler = new MockScheduler(m_timer);
+        PollableVisitor setConfigs = new PollableVisitorAdaptor() {
+            public void visitService(PollableService svc) {
+                Package pkg = findPackageForService(svc);
+                PollableServiceConfig pollConfig = new PollableServiceConfig(svc, m_pollerConfig, m_pollerConfig, pkg, m_timer);
+                Schedule schedule = new Schedule(svc, pollConfig, m_scheduler);
+                svc.setPollConfig(pollConfig);
+                svc.setSchedule(schedule);
+                //schedule.schedule();
+            }
+            private Package findPackageForService(PollableService svc) {
+                Enumeration en = m_pollerConfig.enumeratePackage();
+                Package lastPkg = null;
+                while (en.hasMoreElements()) {
+                    Package pkg = (Package)en.nextElement();
+                    if (pollableServiceInPackage(svc, pkg))
+                        lastPkg = pkg;
+                }
+                return lastPkg;
+                
+            }
+            private boolean pollableServiceInPackage(PollableService svc, Package pkg) {
+                return (m_pollerConfig.serviceInPackageAndEnabled(svc.getSvcName(), pkg)
+                        && m_pollerConfig.interfaceInPackage(svc.getIpAddr(), pkg));
+            }
+
+        };
+        m_network.visit(setConfigs);
+        
         PollableVisitor upper = new PollableVisitorAdaptor() {
             public void visitElement(PollableElement e) {
                 e.updateStatus(PollStatus.STATUS_UP);  
             }
-            public void visitService(PollableService svc) {
-                MockPollConfig pollConfig = new MockPollConfig(m_mockNetwork, svc.getSvcName());
-                svc.setPollConfig(pollConfig);
-            }
         };
         m_network.visit(upper);
         m_network.resetStatusChanged();
+        
+        // set members to make the tests easier
         
         mNode1 = m_mockNetwork.getNode(1);
         mDot1 = mNode1.getInterface("192.168.1.1");

@@ -1,0 +1,101 @@
+    public void testScheduleAdjust() {
+        // change SMTP so it is only polled every 10 secs rather than 1 sec
+        m_pollerConfig.setPollInterval(m_pollerConfig.getPackage("TestPackage"), "SMTP", 10000L);
+        
+        pDot1Icmp.getSchedule().schedule();
+        pDot1Smtp.getSchedule().schedule();
+        
+        // get the immediate polls out of the way
+        m_scheduler.next();
+        m_scheduler.next();
+        
+        assertTime(0);
+        assertPoll(mDot1Icmp);
+        assertPoll(mDot1Smtp);
+        assertUp(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertUnchanged(pDot1Smtp);
+        assertUnchanged(pDot1Icmp);
+        
+        // not we should come to the poll for icmp
+        m_scheduler.next();
+        
+        // icmp should be polled but not smtp and they both should be up
+        assertTime(1000);
+        assertPoll(mDot1Icmp);
+        assertNoPoll(mDot1Smtp);
+        assertUp(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertUnchanged(pDot1Smtp);
+        assertUnchanged(pDot1Icmp);
+        
+        // now bring down both services
+        mDot1.bringDown();
+        
+        // we come to the next icmp poll still not time to poll smtp
+        m_scheduler.next();
+        
+        // no need to poll smtp because icmp reports itself down
+        assertTime(2000);
+        assertPoll(mDot1Icmp);
+        assertNoPoll(mDot1Smtp);
+        assertUp(pDot1Smtp);  // TODO:  i wonder if this matters... its really down (the outage does get created)
+        assertDown(pDot1Icmp);
+        assertUnchanged(pDot1Smtp);
+        assertChanged(pDot1Icmp);
+        
+        // now we bring icmp back up but not smtp.  it is still not time for a scheduled smtp poll
+        mDot1Icmp.bringUp();
+        
+        // we come to the next icmp poll in only 100ms according to the downtime model
+        m_scheduler.next();
+        
+        // since icmp came up we do an unscheduled poll of smtp and find its down
+        assertTime(2100);
+        assertPoll(mDot1Icmp);
+        assertPoll(mDot1Smtp);
+        assertDown(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertChanged(pDot1Smtp);
+        assertChanged(pDot1Icmp);
+        
+        // since smtp is now down, the schedule for smtp should be adjusted according
+        // to the downtime model so we expect the next poll for it in only 100ms
+        m_scheduler.next();
+        
+        // this time we should poll only smtp and find it still down
+        assertTime(2200);
+        assertNoPoll(mDot1Icmp);
+        assertPoll(mDot1Smtp);
+        assertDown(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertUnchanged(pDot1Smtp);
+        assertUnchanged(pDot1Icmp);
+        
+        mDot1Smtp.bringUp();
+        
+        // another downtime model poll of smtp
+        m_scheduler.next();
+
+        assertTime(2300);
+        assertNoPoll(mDot1Icmp);
+        assertPoll(mDot1Smtp);
+        assertUp(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertChanged(pDot1Smtp);
+        assertUnchanged(pDot1Icmp);
+        
+        // now the next one should be the next scheduled icmp poll
+        m_scheduler.next();
+        
+        assertTime(3100);
+        assertPoll(mDot1Icmp);
+        assertNoPoll(mDot1Smtp);
+        assertUp(pDot1Smtp);
+        assertUp(pDot1Icmp);
+        assertUnchanged(pDot1Smtp);
+        assertUnchanged(pDot1Icmp);
+        
+        
+    }
+
