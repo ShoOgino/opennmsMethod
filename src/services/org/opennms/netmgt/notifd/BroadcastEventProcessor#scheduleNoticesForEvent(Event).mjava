@@ -25,6 +25,8 @@
                     return;
                 }
 
+                long nodeid = event.getNodeid();
+                String ipaddr = event.getInterface();
                 if (notifications != null) {
                     for (int i = 0; i < notifications.length; i++) {
 
@@ -54,10 +56,10 @@
                         try {
                             path = m_notifd.getDestinationPathManager().getPath(notification.getDestinationPath());
                             if (path == null) {
-                                log.warn("Unknown destination path " + notification.getDestinationPath() + ". Please check the <destinationPath> tag for the notification " + notification.getName() + " in the notification.xml file.");
-                                
-                                //changing posted by Wiktor Wodecki
-                                //return;
+                                log.warn("Unknown destination path " + notification.getDestinationPath() + ". Please check the <destinationPath> tag for the notification " + notification.getName() + " in the notifications.xml file.");
+
+                                // changing posted by Wiktor Wodecki
+                                // return;
                                 continue;
                             }
                         } catch (Exception e) {
@@ -89,6 +91,28 @@
                         }
 
                         long startTime = System.currentTimeMillis() + TimeConverter.convertToMillis(initialDelay);
+                        // Find the first outage which applies at this time
+
+                        String scheduledOutageName = scheduledOutage(nodeid, ipaddr);
+                        if (scheduledOutageName != null) {
+                            // This event occured during a scheduled outage.
+                            // Must decide what to do
+                            if (autoAckExistsForEvent(event.getUei())) {
+                                // Defer starttime till the given outage ends -
+                                // if the auto ack catches the other event
+                                // before then,
+                                // then the page will not be sent
+                                Calendar endOfOutage = m_notifd.getPollOutagesConfigManager().getEndOfOutage(scheduledOutageName);
+                                startTime = endOfOutage.getTime().getTime();
+                            } else {
+                                // No auto-ack exists - there's no point
+                                // delaying the page, so just drop it (but leave
+                                // the database entry)
+                                continue; // with the next notification (for
+                                            // loop)
+                            }
+                        }
+
                         List targetSiblings = new ArrayList();
 
                         try {
@@ -101,7 +125,7 @@
 
                     }
                 } else {
-                    log.debug("Event doesn't match a notice: " + event.getUei() + " : " + event.getNodeid() + " : " + event.getInterface() + " : " + event.getService());
+                    log.debug("Event doesn't match a notice: " + event.getUei() + " : " + nodeid + " : " + ipaddr + " : " + event.getService());
                 }
             }
         } else {

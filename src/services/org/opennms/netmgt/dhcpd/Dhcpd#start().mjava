@@ -16,6 +16,7 @@
     public synchronized void start() {
         ThreadCategory.setPrefix(LOG4J_CATEGORY);
         Category log = ThreadCategory.getInstance(getClass());
+        boolean relayMode = false;
         if (log.isDebugEnabled())
             log.debug("start: DHCP client daemon starting...");
 
@@ -62,19 +63,47 @@
             throw new UndeclaredThrowableException(ex);
         }
 
-        // open the receiver socket
-        //
-        try {
-            if (log.isDebugEnabled())
-                log.debug("start: starting unicast receiver thread..");
-            m_listener = new Receiver(m_clients);
-            m_listener.start();
-        } catch (IOException ex) {
-            try {
-                m_server.close();
-            } catch (IOException ex1) {
+        // see if we have a valid relay address
+        String myIpStr = DhcpdConfigFactory.getInstance().getMyIpAddress();
+        if (log.isDebugEnabled())
+            log.debug("Checking string \"" + myIpStr + "\" to see if we have an IP address");
+        if (myIpStr != null &&  !myIpStr.equals("") && !myIpStr.equalsIgnoreCase("broadcast")) {
+            if(IpValidator.isIpValid(myIpStr)) {
+                relayMode = true;
             }
-            throw new UndeclaredThrowableException(ex);
+        }
+        if (log.isDebugEnabled())
+            log.debug("Setting relay mode " + relayMode);
+        // open the receiver socket(s)
+        //
+        if(!relayMode || (dFactory.getExtendedMode() != null && dFactory.getExtendedMode().equalsIgnoreCase("true"))) {
+            try {
+                if (log.isDebugEnabled())
+                    log.debug("start: starting receiver thread for port 68");
+                m_listener = new Receiver(m_clients);
+                m_listener.start();
+            } catch (IOException ex) {
+                try {
+                    m_server.close();
+                } catch (IOException ex1) {
+                }
+                throw new UndeclaredThrowableException(ex);
+            }
+        }
+
+        if(relayMode) {
+            try {
+                if (log.isDebugEnabled())
+                    log.debug("start: starting receiver thread for port 67");
+                m_listener2 = new Receiver2(m_clients);
+                m_listener2.start();
+            } catch (IOException ex) {
+                try {
+                    m_server.close();
+                } catch (IOException ex1) {
+                }
+                throw new UndeclaredThrowableException(ex);
+            }
         }
 
         m_worker = new Thread(this, getName());
