@@ -1,0 +1,53 @@
+    /**
+     * FIXME: finish the doc here
+     * 
+     * @param event
+     */
+    private void handleUpdateServer(Event event) throws InsufficientInformationException, FailedOperationException {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // If there is no interface or NMS server found then it cannot be processed
+        EventUtils.checkInterface(event);
+        EventUtils.checkHost(event);
+        EventUtils.requireParm(event, EventConstants.PARM_ACTION);
+        EventUtils.requireParm(event, EventConstants.PARM_NODE_LABEL);
+        if (isXmlRpcEnabled()) {
+            EventUtils.requireParm(event, EventConstants.PARM_TRANSACTION_NO);
+        }
+
+        String action = EventUtils.getParm(event, EventConstants.PARM_ACTION);
+        String nodeLabel = EventUtils.getParm(event, EventConstants.PARM_NODE_LABEL);
+        long txNo = EventUtils.getLongParm(event, EventConstants.PARM_TRANSACTION_NO, -1L);
+
+        if (log.isDebugEnabled())
+                log.debug("updateServerHandler:  processing updateServer event for: " + event.getInterface() + " on OpenNMS server: "
+                        + getLocalServer());
+
+        Connection dbConn = null;
+        List eventsToSend = null;
+        try {
+            dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+            dbConn.setAutoCommit(false);
+
+            eventsToSend = doUpdateServer(dbConn, nodeLabel, event.getInterface(), action, getLocalServer(), txNo);
+
+        } catch (SQLException sqlE) {
+            log.error("SQLException during updateServer on database.", sqlE);
+            throw new FailedOperationException("SQLException during updateServer on database.", sqlE);
+        } finally {
+            if (dbConn != null) try {
+                if (eventsToSend != null) {
+                    dbConn.commit();
+                    for (Iterator it = eventsToSend.iterator(); it.hasNext();) {
+                        EventUtils.sendEvent((Event) it.next(), event.getUei(), txNo, isXmlRpcEnabled());
+                    }
+                } else {
+                    dbConn.rollback();
+                }
+                dbConn.close();
+            } catch (SQLException ex) {
+            }
+        }
+
+    }
+

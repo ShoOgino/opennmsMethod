@@ -1,0 +1,48 @@
+    /**
+     * Mark as deleted the specified service, if this is the only service on an interface or
+     * node and deletePropagation is enabled, the interface or node is marked as deleted as
+     * well.
+     * 
+     * @param dbConn
+     *            the connection to the database
+     * @param source
+     *            the source for any events to send
+     * @param nodeid
+     *            the nodeid that the service resides on
+     * @param ipAddr
+     *            the interface that the service resides on
+     * @param service
+     *            the name of the service
+     * @param txNo
+     *            a transaction id to associate with this deletion
+     * 
+     * @return the list of events that need to be sent in response to the service being deleted
+     * @throws SQLException
+     *             if any exception occurs communicating with the database
+     */
+    private List doDeleteService(Connection dbConn, String source, long nodeid, String ipAddr, String service, long txNo) throws SQLException {
+
+        List eventsToSend = new LinkedList();
+
+        if (isPropagationEnabled()) {
+            // if this is the last service for the interface or the last service
+            // for the node then send delete events for the interface or node instead
+            int otherSvcsOnIfCnt = countOtherServicesOnInterface(dbConn, nodeid, ipAddr, service);
+            if (otherSvcsOnIfCnt == 0 && countServicesOnOtherInterfaces(dbConn, nodeid, ipAddr) == 0) {
+                // no services on this interface or any other interface on this node so delete
+                // node
+                eventsToSend.add(doDeleteNode(dbConn, source, nodeid, txNo));
+            } else if (otherSvcsOnIfCnt == 0) {
+                // no services on this interface so delete interface
+                eventsToSend.add(doDeleteInterface(dbConn, source, nodeid, ipAddr, txNo));
+            } else {
+                // otherwise just mark the service as deleted and send a serviceDeleted event
+                eventsToSend.addAll(markServiceDeleted(dbConn, source, nodeid, ipAddr, service, txNo));
+            }
+        } else {
+            // otherwise just mark the service as deleted and send a serviceDeleted event
+            eventsToSend.addAll(markServiceDeleted(dbConn, source, nodeid, ipAddr, service, txNo));
+        }
+        return eventsToSend;
+    }
+
