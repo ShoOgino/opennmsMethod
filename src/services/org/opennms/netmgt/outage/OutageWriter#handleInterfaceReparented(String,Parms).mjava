@@ -66,17 +66,13 @@
             return;
         }
 
+        BasicInterface iface = new BasicInterface(oldNodeId, ipAddr);
         Connection dbConn = null;
         try {
             dbConn = getConnection();
 
             // Set the database commit mode
-            try {
-                dbConn.setAutoCommit(false);
-            } catch (SQLException sqle) {
-                log.error("Unable to change database AutoCommit to FALSE", sqle);
-                return;
-            }
+            dbConn.setAutoCommit(false);
 
             // Issue SQL update to change the 'outages' table entries
             // associated with the old nodeid/interface pairing
@@ -87,39 +83,22 @@
             // used when a 'interfaceReparented' event is received
             PreparedStatement reparentOutagesStmt = dbConn.prepareStatement(OutageConstants.DB_REPARENT_OUTAGES);
             reparentOutagesStmt.setLong(1, newNodeId);
-            reparentOutagesStmt.setLong(2, oldNodeId);
-            reparentOutagesStmt.setString(3, ipAddr);
+            reparentOutagesStmt.setLong(2, iface.getNodeId());
+            reparentOutagesStmt.setString(3, iface.getIpAddr());
             int count = reparentOutagesStmt.executeUpdate();
 
             // commit work
-            try {
-                dbConn.commit();
-
-                if (log.isDebugEnabled())
-                    log.debug("Reparented " + count + " outages - ip: " + ipAddr + " reparented from " + oldNodeId + " to " + newNodeId);
-            } catch (SQLException se) {
-                log.warn("Rolling back transaction, reparent outages failed for newNodeId/ipAddr: " + newNodeId + "/" + ipAddr);
-
-                try {
-                    dbConn.rollback();
-                } catch (SQLException sqle) {
-                    log.warn("SQL exception during rollback, reason", sqle);
-                }
-
-            }
+            String s = "Reparented " + count + " outages - ip: " + iface.getIpAddr() + " reparented from " + iface.getNodeId() + " to " + newNodeId;
+            String f = "reparent outages failed for newNodeId/ipAddr: " + newNodeId + "/" + iface.getIpAddr();
+            DbUtil.commit(log, dbConn, s, f);
 
             // close statement
             reparentOutagesStmt.close();
 
         } catch (SQLException se) {
-            log.warn("SQL exception while handling \'interfaceReparented\'", se);
+            DbUtil.rollback(log, dbConn, "SQL exception while handling \'interfaceReparented\'", se);
         } finally {
-            try {
-                if (dbConn != null)
-                    dbConn.close();
-            } catch (SQLException e) {
-                log.warn("Exception closing JDBC connection", e);
-            }
+            DbUtil.close(log, dbConn);
         }
     }
 

@@ -1,0 +1,48 @@
+    /**
+     * Handle node up events. Record the 'nodeUp' event in the outages table -
+     * close all open outage entries for the nodeid in the outages table.
+     */
+    private void handleNodeUp(long eventID, String eventTime, BasicNode node) {
+        Category log = ThreadCategory.getInstance(OutageWriter.class);
+
+        if (eventID == -1 || !node.isValid()) {
+            log.warn(EventConstants.NODE_UP_EVENT_UEI + " ignored - info incomplete - eventid/nodeid: " + eventID + "/" + node);
+            return;
+        }
+
+        Connection dbConn = null;
+        try {
+            dbConn = getConnection();
+
+            int count = 0;
+
+            if (node.openOutageExists(dbConn)) {
+
+                // Set the database commit mode
+                dbConn.setAutoCommit(false);
+                
+                // Prepare SQL statement used to update the 'regained time' for
+                // all open outage entries for the nodeid
+                PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGES_FOR_NODE);
+                outageUpdater.setLong(1, eventID);
+                outageUpdater.setTimestamp(2, convertEventTimeIntoTimestamp(eventTime));
+                outageUpdater.setLong(3, node.getNodeId());
+                count = outageUpdater.executeUpdate();
+
+                // close statement
+                outageUpdater.close();
+            } else {
+                // Outage table does not have an open record.
+                log.warn("\'" + EventConstants.NODE_UP_EVENT_UEI + "\' for " + node + " no open record.");
+            }
+
+            // commit work
+            DbUtil.commit(log, dbConn, "nodeUp closed " + count + " outages for nodeid " + node + " in DB", "nodeUp could not be recorded  for nodeId: " + node);
+
+        } catch (SQLException se) {
+            DbUtil.rollback(log, dbConn, "SQL exception while handling \'nodeRegainedService\'", se);
+        } finally {
+            DbUtil.close(log, dbConn);
+        }
+    }
+

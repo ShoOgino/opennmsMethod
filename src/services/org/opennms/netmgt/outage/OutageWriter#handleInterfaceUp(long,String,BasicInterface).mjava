@@ -1,0 +1,45 @@
+    /**
+     * Handles interface up events. Record the 'interfaceUp' event in the
+     * outages table - close all open outage entries for the nodeid/ip in the
+     * outages table.
+     */
+    private void handleInterfaceUp(long eventID, String eventTime, BasicInterface iface) {
+        Category log = ThreadCategory.getInstance(OutageWriter.class);
+
+        if (eventID == -1 || !iface.isValid()) {
+            log.warn(EventConstants.INTERFACE_UP_EVENT_UEI + " ignored - info incomplete - eventid/nodeid/ipAddr: " + eventID + "/" + iface);
+            return;
+        }
+
+        Connection dbConn = null;
+        try {
+            dbConn = getConnection();
+
+            if (iface.openOutageExists(dbConn)) {
+                // Set the database commit mode
+                dbConn.setAutoCommit(false);
+                
+                // Prepare SQL statement used to update the 'regained time' for
+                // all open outage entries for the nodeid/ipaddr
+                PreparedStatement outageUpdater = dbConn.prepareStatement(OutageConstants.DB_UPDATE_OUTAGES_FOR_INTERFACE);
+                outageUpdater.setLong(1, eventID);
+                outageUpdater.setTimestamp(2, convertEventTimeIntoTimestamp(eventTime));
+                outageUpdater.setLong(3, iface.getNodeId());
+                outageUpdater.setString(4, iface.getIpAddr());
+                int count = outageUpdater.executeUpdate();
+
+                // close statement
+                outageUpdater.close();
+
+                // commit work
+                DbUtil.commit(log, dbConn, "handleInterfaceUp: interfaceUp closed " + count + " outages for nodeid/ip " + iface + " in DB", "interfaceUp could not be recorded for nodeId/ipaddr: " + iface);
+            } else {
+                log.warn("\'" + EventConstants.INTERFACE_UP_EVENT_UEI + "\' for " + iface + " ignored.");
+            }
+        } catch (SQLException se) {
+            DbUtil.rollback(log, dbConn, "SQL exception while handling \'interfaceUp\'", se);
+        } finally {
+            DbUtil.close(log, dbConn);
+        }
+    }
+
