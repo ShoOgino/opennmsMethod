@@ -1,0 +1,115 @@
+	/**
+	 * <P>Test to see if the passed script-host-argument
+	 * combination is the endpoint for a GP server. If there
+	 * is a GP server at that destination then a value of true
+	 * is returned from the method. Otherwise a false value is
+	 * returned to the caller.  In order to return true the script
+	 * must generate a banner line which contains the text from
+	 * the banner or match argument.</P>
+	 *
+	 * @param host		The host to pass to the script
+	 * @param retry	        The number of retry attempts to make
+	 * @param timeout	The timeout value for each retry
+	 * @param script	The external script or program to call
+	 * @param args		The arguments to pass to the script
+	 * @param regex		The regular expression used to determine banner match
+	 * @param bannerResult
+	 *
+	 * @return True if a connection is established with the script and the banner line
+	 *		returned by the script matches the regular expression regex.
+	 */
+	private boolean isServer(InetAddress host, int retry, int timeout, String script, String args, RE regex, StringBuffer bannerResult)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+
+
+		boolean isAServer = false;
+
+		log.debug("poll: address = " + host.getHostAddress()
+			  + ", script = " + script + ", arguments = " + args
+			  + ", timeout(seconds) = " + timeout + ", retry = " + retry);
+
+
+		for (int attempts=0; attempts <= retry && !isAServer; attempts++)
+		{
+			try
+			{
+				int exitStatus = 100;
+				ExecRunner er = new ExecRunner();
+				er.setMaxRunTimeSecs(timeout);
+				if (args == null)
+					exitStatus = er.exec(script + " " + host.getHostAddress() + " " +timeout);
+				else
+					exitStatus = er.exec(script + " " + host.getHostAddress() + " " +timeout + " " + args);
+				if (exitStatus != 0)
+				{
+					log.debug(script + " failed with exit code " + exitStatus);
+					isAServer = false;
+				}
+				if (er.isMaxRunTimeExceeded())
+				{
+					log.debug(script + " failed. Timeout exceeded");
+					isAServer = false;
+				}
+				else
+				{
+					if ( exitStatus == 0 )
+					{
+						String response = "";
+						String error = "";
+						response = er.getOutString();
+						error = er.getErrString();
+						if (response.equals(""))
+							log.debug(script + " returned no output");
+						if (!error.equals(""))
+							log.debug(script + " error = " + error);
+						if(regex == null || regex.match(response))
+						{
+							if (log.isDebugEnabled())
+								log.debug("isServer: matching response = " + response);
+							isAServer = true;
+							if(bannerResult != null)
+								bannerResult.append(response);
+						}
+						else
+						{
+							isAServer=false;
+							if (log.isDebugEnabled())
+								log.debug("isServer: NON-matching response = " + response);
+						}
+					}
+				}
+			}
+			catch(ArrayIndexOutOfBoundsException e)
+			{
+				isAServer = false;
+				e.fillInStackTrace();
+				log.debug(script + " ArrayIndexOutOfBoundsException");
+			}
+			catch(InterruptedIOException e)
+			{
+				// This is an expected exception
+				//
+				isAServer = false;
+			}
+			catch(IOException e)
+			{
+				isAServer = false;
+				e.fillInStackTrace();
+				log.debug("IOException occurred. Check for proper operation of " + script);
+			}
+			catch(Exception e)
+			{
+				isAServer = false;
+				e.fillInStackTrace();
+				log.debug(script + " Exception occurred");
+			}
+		}
+	
+		//
+		// return the status of the server
+		//
+		log.debug("poll: GP - isAServer = " + isAServer + "  " + host.getHostAddress());
+		return isAServer;
+	}
+
