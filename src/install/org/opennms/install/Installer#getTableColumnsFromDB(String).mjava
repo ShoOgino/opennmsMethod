@@ -48,7 +48,6 @@
 		"SELECT " +
 		"       c.conname, " +
 		"	c.contype, " +
-		"	c.confdeltype, " +
 		"	a.attname, " +
 		"	d.relname, " +
 		"	b.attname " +
@@ -71,14 +70,10 @@
 	    while (rs.next()) {
 		Constraint constraint;
 		if (rs.getString(2).equals("p")) {
-		    constraint = new Constraint(rs.getString(1),
-						rs.getString(4));
+		    constraint = new Constraint(rs.getString(1), rs.getString(3));
 		} else if (rs.getString(2).equals("f")) {
-		    constraint = new Constraint(rs.getString(1),
-						rs.getString(4),
-						rs.getString(5),
-						rs.getString(6),
-						rs.getString(3));
+		    constraint = new Constraint(rs.getString(1), rs.getString(3),
+						rs.getString(4), rs.getString(5));
 		} else {
 		    throw new Exception("Do not support constraint type \"" +
 					rs.getString(2) + "\" in constraint \"" +
@@ -130,38 +125,18 @@
 		c.addConstraint(constraint);
 	    }
 
-	    int fkey, fdel;
-
-	    query = "SELECT oid FROM pg_proc WHERE proname = " +
-		"          'RI_FKey_check_ins'";
-	    rs = st.executeQuery(query);
-	    if (!rs.next()) {
-		throw new Exception("Could not get OID for RI_FKey_check_ins");
-	    }
-	    fkey = rs.getInt(1);
-
-	    query = "SELECT oid FROM pg_proc WHERE proname = " +
-		"          'RI_FKey_cascade_del'";
-	    rs = st.executeQuery(query);
-	    if (!rs.next()) {
-		throw new Exception("Could not get OID for RI_FKey_cascade_del");
-	    }
-	    fdel = rs.getInt(1);
 
 	    query =
 		"SELECT " +
 		"        tgconstrname, " +
 		"        tgargs " + 
-		"        tgfoid " + 
 		"FROM " +
-		"        pg_trigger " +
+		"        pg_trigger t " +
 		"WHERE " +
-		"        tgrelid = (SELECT oid FROM pg_class WHERE relname = '" +
+		"        t.tgrelid = (SELECT oid FROM pg_class WHERE relname = '" +
 		           table.toLowerCase() + "') AND " +
-		"        ( " +
-		"            tgfoid = " + fkey + " OR " +
-		"            tgfoid = " + fdel + " " +
-		"        ) ";
+		"        t.tgfoid = (SELECT oid FROM pg_proc WHERE proname = " +
+		"          'RI_FKey_check_ins')";
 	    rs = st.executeQuery(query);
 
 	    while (rs.next()) {
@@ -170,8 +145,7 @@
 
 		Constraint constraint = 
 		    new Constraint(rs.getString(1), args[4],
-				   args[2], args[5],
-				   (rs.getInt(3) == fkey) ? "a" : "c");
+				   args[2], args[5]);
 
 		Column c = findColumn(r, constraint.getColumn());
 		if (c == null) {
