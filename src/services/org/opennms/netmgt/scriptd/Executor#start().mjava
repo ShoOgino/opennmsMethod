@@ -1,0 +1,73 @@
+	/**
+	 * Starts the fiber. If the fiber has already been run or is currently
+	 * running then an exception is generated. The status of the fiber is
+	 * updated to <code>STARTING</code> and will transition to <code>
+	 * RUNNING</code> when the fiber finishes initializing and begins processing
+	 * the encapsulaed queue.
+	 *
+	 * @throws java.lang.IllegalStateException Thrown if the fiber is stopped
+	 * 	or has never run.
+	 *
+	 */
+	public synchronized void start()
+	{
+		Category log = ThreadCategory.getInstance(Executor.class);
+
+		if(m_worker != null)
+		{
+			throw new IllegalStateException("The fiber has already been run");
+		}
+
+		m_status = STARTING;
+		
+		Engine[] engines = m_config.getEngines();
+
+		for (int i = 0; i < engines.length; i++)
+		{
+			Engine engine = engines[i];
+			
+			log.debug("Registering engine: " + engine.getLanguage());
+			
+			String[] extensions = null;
+
+			String extensionList = engines[i].getExtensions();
+
+			if (extensionList != null)
+			{
+				StringTokenizer st = new StringTokenizer(extensionList);
+
+				extensions = new String[st.countTokens()];
+
+				int j = 0;
+
+				while (st.hasMoreTokens())
+				{
+					extensions[j++] = st.nextToken();
+				}
+			}
+
+			BSFManager.registerScriptingEngine(engines[i].getLanguage(), engines[i].getClassName(), extensions);
+		}
+		
+		m_mgr = new BSFManager();
+		m_mgr.registerBean("log", ThreadCategory.getInstance(Executor.class));
+
+		StartScript[] startScripts = m_config.getStartScripts();
+
+		for (int i = 0; i < startScripts.length; i++)
+		{
+			try
+			{
+				m_mgr.exec(startScripts[i].getLanguage(), "", 0, 0, startScripts[i].getContent());
+			}
+
+			catch (BSFException ex)	
+			{
+				log.error("Start script[" + i + "] failed.", ex);
+			}
+		}
+
+		m_worker = new Thread(this, getName());
+		m_worker.start();
+	}
+
