@@ -1,0 +1,77 @@
+    /**
+     * 
+     * @param host
+     *            The address for the radius server test.
+     * @param authport
+     *            Radius authentcation port
+     * @param acctport
+     *            Radius accounting port - required by jradius
+     *            but not explicitly checked
+     * @param authType
+     *            authentication type - pap or chap
+     * @param user
+     *            user for Radius authentication
+     * @param password
+     *            password for Radius authentication
+     * @param secret
+     *            Radius shared secret
+     * @param timeout
+     *            Timeout in milliseconds
+     * @param retry 
+     *		  Number of times to retry 
+     *
+     * @return True if server, false if not.
+     */
+    private boolean isRadius(InetAddress host, int authport, int acctport, String authType,
+				String user, String password, String secret,
+				int retry, int timeout) {
+
+        boolean isRadiusServer = false;
+        Category log = ThreadCategory.getInstance(getClass());
+
+        RadiusClient rc = null;
+
+        try {
+            rc = new RadiusClient(host.getCanonicalHostName(), authport ,acctport, secret, timeout);
+        } catch(RadiusException rex) {
+            log.error(getClass().getName() + ": Radius Exception: " + rex.getMessage());
+            return isRadiusServer;
+        } catch(InvalidParameterException ivpex) {
+            log.error(getClass().getName() + ": Radius parameter exception: " + ivpex.getMessage());
+            return isRadiusServer;
+        }
+
+        for (int attempts = 0; attempts <= retry; attempts++) {
+            try {
+                ChapUtil chapUtil = new ChapUtil();
+                RadiusPacket accessRequest = new RadiusPacket(RadiusPacket.ACCESS_REQUEST);
+                RadiusAttribute userNameAttribute;
+                userNameAttribute = new RadiusAttribute(RadiusAttributeValues.USER_NAME,user.getBytes());
+                accessRequest.setAttribute(userNameAttribute);
+                if(authType.equalsIgnoreCase("chap")){
+                    byte[] chapChallenge = chapUtil.getNextChapChallenge(16);
+                    accessRequest.setAttribute(new RadiusAttribute(RadiusAttributeValues.CHAP_PASSWORD, chapEncrypt(password, chapChallenge, chapUtil)));
+                    accessRequest.setAttribute(new RadiusAttribute(RadiusAttributeValues.CHAP_CHALLENGE, chapChallenge));
+                }else{
+                    accessRequest.setAttribute(new RadiusAttribute(RadiusAttributeValues.USER_PASSWORD,password.getBytes()));
+                }
+                RadiusPacket accessResponse = rc.authenticate(accessRequest);
+                if ( ( accessResponse.getPacketType() == RadiusPacket.ACCESS_ACCEPT ) |
+                     ( accessResponse.getPacketType() == RadiusPacket.ACCESS_CHALLENGE ) |
+                     ( accessResponse.getPacketType() == RadiusPacket.ACCESS_REJECT )  ){
+		    isRadiusServer = true;
+                    if (log.isDebugEnabled()) {
+                        log.debug(getClass().getName() + ": Discovered Radius service on: " + host.getCanonicalHostName());
+                    }
+                    break;
+                }
+            } catch (InvalidParameterException ivpex){
+                log.error(getClass().getName() + ": Invalid Radius Parameter: " + ivpex);
+            } catch (RadiusException radex){
+                log.error(getClass().getName() + ": Radius Exception : " + radex);
+            }
+	}
+
+        return isRadiusServer;
+    }
+
