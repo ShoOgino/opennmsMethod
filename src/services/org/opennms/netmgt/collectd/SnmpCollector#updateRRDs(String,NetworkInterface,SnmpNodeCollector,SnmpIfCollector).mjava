@@ -59,54 +59,38 @@
 			Iterator iter = nodeInfo.getDsList().iterator();
 			while (iter.hasNext())
 			{
-				RRDDataSource ds = (RRDDataSource)iter.next(); 	
-
-				String cmd = buildRRDUpdateCmd(nodeRepository, ds, nodeEntry);
-
-				if (cmd == null)
+				RRDDataSource ds = (RRDDataSource)iter.next();
+                
+                try {
+                
+                    String dsVal = getRRDValue(ds, nodeEntry);
+				if (dsVal == null)
 				{
 					// Do nothing, no update is necessary
 					if (log.isDebugEnabled())
 						log.debug("updateRRDs: Skipping update, no data retrieved for nodeId: " 
 							+ nodeInfo.getNodeId() + " datasource: " + ds.getName());
 				}
-				else if (cmd.equals(RRD_ERROR))
-				{
-					// Set rrdError flag
-					rrdError = true;
-					log.warn("updateRRDs: call to buildRRDUpdateCmd() failed for node: " + 
-							nodeInfo.getNodeId() + " datasource: " + ds.getName());
-				}
 				else 
 				{
 					// Call createRRD() to create RRD if it doesn't already exist
 					//
 					createRRD(collectionName, ipaddr, nodeRepository, ds);
-					
-					// Issue the RRD update
-					if (log.isDebugEnabled())
-						log.debug("updateRRDs: Issuing RRD update command: " + cmd);
-					String[] results = Interface.launch(cmd);
-					if (log.isDebugEnabled())
-						log.debug("updateRRDs: RRD update command completed.");
-					
-					// Sanity check results array
-					if (results == null)
-					{
-						if(log.isEnabledFor(Priority.ERROR))
-						{
-							log.error("updateRRDs: Unexpected failure calling native method launch() with command string: " + cmd);
-							log.error("updateRRDs: No error text available.");
-						}
-					}
-					    
-					// Check error string at index 0, will be null if 'update' was successful
-					if (results[0] != null)
-					{
-						if(log.isEnabledFor(Priority.ERROR))
-							log.error("updateRRDs: node RRD database 'update' failed for " + ipaddr.getHostAddress() + ", reason: " + results[0]);
-					}		
+					RrdUtils.updateRRD(ipaddr.getHostAddress(), nodeRepository, ds.getName(), dsVal);		
 				} 
+                }
+                catch (RrdException e) {
+                    if (log.isEnabledFor(Priority.ERROR))
+                        log.error("updateRRDs: "+e.getMessage());
+                }
+                catch(IllegalArgumentException e) {
+                    log.warn("getRRDValue: "+e.getMessage());
+                    // Set rrdError flag
+                    rrdError = true;
+                    log.warn("updateRRDs: call to getRRDValue() failed for node: " + 
+                            nodeInfo.getNodeId() + " datasource: " + ds.getName());
+                }
+                
 			} // end while(more datasources)
 		} // end if(nodeCollector != null)
 		
@@ -184,56 +168,45 @@
 					String ifRepository = m_rrdPath + File.separator + 
 							String.valueOf(nodeInfo.getNodeId()) + File.separator + 
 							ifInfo.getLabel();
+                    
+                    
+                    
+                    try {
+                    
+                        String dsVal = getRRDValue(ds, ifEntry);
 					
 					// Build RRD update command
 					//
-					String cmd = buildRRDUpdateCmd(ifRepository, ds, ifEntry);
-					if (cmd == null)
+					if (dsVal == null)
 					{
 						// Do nothing, no update is necessary
 						if (log.isDebugEnabled())
 							log.debug("updateRRDs: Skipping update, no data retrieved for node/ifindex: " + 
 								nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
 					}
-					else if (cmd.equals(RRD_ERROR))
-					{
-						// Set rrdError flag
-						rrdError = true;
-						log.warn("updateRRDs: call to buildRRDUpdateCmd() failed for node/ifindex: " + 
-									nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
-					}
 					else 
 					{
 						// Call createRRD() to create RRD if it doesn't already exist
 						//
 						createRRD(collectionName, ipaddr, ifRepository, ds);
+                        RrdUtils.updateRRD(ipaddr.getHostAddress(), ifRepository, ds.getName(), dsVal);
 							
-						// Issue the RRD update
-						if (log.isDebugEnabled())
-							log.debug("updateRRDs: Issuing RRD update command: " + cmd);
-						
-						String[] results = Interface.launch(cmd);
-						
-						if (log.isDebugEnabled())
-							log.debug("updateRRDs: RRD update command completed.");
-							
-						// Sanity check results array
-						if (results == null)
-						{
-							if(log.isEnabledFor(Priority.ERROR))
-							{
-								log.error("updateRRDs: Unexpected failure calling native method launch() with command string: " + cmd);
-								log.error("updateRRDs: No error text available.");
-							}
-						}
-					    
-						// Check error string at index 0, will be null if 'update' was successful
-						if (results[0] != null)
-						{
-							if(log.isEnabledFor(Priority.ERROR))
-								log.error("updateRRDs: interface RRD database 'update' failed for " + ipaddr.getHostAddress() + ", reason: " + results[0]);
-						}		
-					}
+                    }
+                    }
+                    catch (RrdException e) {
+                        if (log.isEnabledFor(Priority.ERROR)) {
+                            log.error("updateRRDs: "+e.getMessage());
+                        }
+                    }
+                    catch(IllegalArgumentException e) {
+                        log.warn("buildRRDUpdateCmd: "+e.getMessage());
+                        // Set rrdError flag
+                        rrdError = true;
+                        log.warn("updateRRDs: call to buildRRDUpdateCmd() failed for node/ifindex: " + 
+                                    nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
+                    }
+                    
+					
 				} // end while(more datasources)
 			} // end while(more SNMP collector entries)
 		} // end if(ifCollector != null)
