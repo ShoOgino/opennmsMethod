@@ -9,7 +9,7 @@
     public synchronized PollStatus poll(PollableService pSvc) {
         Category log = ThreadCategory.getInstance(getClass());
 
-        m_statusChangedFlag = false;
+        setStatusChanged(false);
 
         PollStatus svcStatus = PollStatus.STATUS_UNKNOWN;
 
@@ -57,43 +57,16 @@
                     // services on this interface
                     //
                     setStatus(PollStatus.STATUS_UP);
-                    m_statusChangedFlag = true;
+                    setStatusChanged(true);
 
-                    Iterator iter = m_services.values().iterator();
-                    while (iter.hasNext()) {
-                        PollableService svc = (PollableService) iter.next();
-
-                        // Skip critical service since already polled
-                        if (svc == criticalSvc)
-                            continue;
-
-                        // Poll the service
-                        PollStatus tmpStatus = svc.poll();
-
-                        // If status of non-critical service changes to UP
-                        // then create PollableServiceProxy object and
-                        // reschedule the proxy service at the
-                        // appropriate interval
-                        //
-                        // PollableServiceProxy is a lightweight object which
-                        // encapsulates the PollableService object and allows us
-                        // to reschedule the service to be polled at the
-                        // appropriate
-                        // interval until the scheduler schedules the
-                        // PollableService
-                        // object and it is updated with an interval based on
-                        // its new status.
-                        if (tmpStatus == PollStatus.STATUS_UP) {
-                            svc.adjustSchedule();
-                        }
-                    }
+                    pollRemainingServicesAdjustingSchedule(criticalSvc);
 
                     // Iterate over pollable services list, poll
                     // any remaining services which match this node/interface
                     // combination, and then reschedule them via the
                     // PollableServiceProxy.
                     synchronized (m_pollableServices) {
-                        iter = m_pollableServices.iterator();
+                        Iterator iter = m_pollableServices.iterator();
                         while (iter.hasNext()) {
                             PollableService tmp = (PollableService) iter.next();
                             InetAddress addr = (InetAddress) tmp.getAddress();
@@ -116,21 +89,13 @@
                 if (svcStatus == PollStatus.STATUS_UP && pSvc.statusChanged()) {
                     // Mark interface as up
                     setStatus(PollStatus.STATUS_UP);
-                    m_statusChangedFlag = true;
+                    setStatusChanged(true);
 
                     // Check flag which controls whether all services
                     // are polled if no critical service is defined
                     if (pollAllServices) {
                         // Poll all remaining services on the interface
-                        Iterator iter = m_services.values().iterator();
-
-                        while (iter.hasNext()) {
-                            PollableService svc = (PollableService) iter.next();
-                            // Skip service that was just polled
-                            if (svc == pSvc)
-                                continue;
-                            svc.poll();
-                        }
+                        pollRemainingServices(pSvc);
                     }
                 }
             }
@@ -145,7 +110,7 @@
                 // the interface mark it as down
                 if (m_services.size() == 1) {
                     setStatus(PollStatus.STATUS_DOWN);
-                    m_statusChangedFlag = true;
+                    setStatusChanged(true);
                 }
                 // else if Critical service defined and supported by interface
                 // (regardless of pkg)
@@ -165,7 +130,7 @@
                         if (log.isDebugEnabled())
                             log.debug("poll: critical svc DOWN, interface is down!");
                         setStatus(PollStatus.STATUS_DOWN);
-                        m_statusChangedFlag = true;
+                        setStatusChanged(true);
                     } else {
                         if (log.isDebugEnabled())
                             log.debug("poll: critical svc UP, interface still up!");
@@ -178,23 +143,11 @@
                     if (pollAllServices) {
                         // Poll all remaining services on the interface
                         // If all services are DOWN then mark the interface DOWN
-                        boolean allSvcDown = true;
-                        Iterator iter = m_services.values().iterator();
-
-                        while (iter.hasNext()) {
-                            PollableService tmpSvc = (PollableService) iter.next();
-                            // Skip service that was already polled
-                            if (tmpSvc == pSvc)
-                                continue;
-                            PollStatus tmpStatus = tmpSvc.poll();
-                            if (tmpStatus == PollStatus.STATUS_UP) {
-                                allSvcDown = false;
-                            }
-                        }
+                        boolean allSvcDown = pollRemainingServicesWithStatus(pSvc);
 
                         if (allSvcDown) {
                             setStatus(PollStatus.STATUS_DOWN);
-                            m_statusChangedFlag = true;
+                            setStatusChanged(true);
                         }
                     }
                 }

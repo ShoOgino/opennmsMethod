@@ -1,59 +1,58 @@
     public void scheduleService(int nodeId, String ipAddr, String svcName) {
         Category log = ThreadCategory.getInstance();
 
-        // Compare interface/service pair against each poller
-        // package
-        // For each match, create new PollableService object and
-        // schedule it for polling.
-        //
+        /*
+         * Find the last package configured for this service and schedule it
+         */
+        Package pkg = null;
         Enumeration epkgs = getPollerConfig().enumeratePackage();
         while (epkgs.hasMoreElements()) {
-            Package pkg = (org.opennms.netmgt.config.poller.Package) epkgs.nextElement();
+            Package spkg = (org.opennms.netmgt.config.poller.Package) epkgs.nextElement();
 
             // Make certain the the current service and ipaddress are in the
             // package and enabled!
             //
-            if (!packageIncludesIfAndSvc(pkg, ipAddr, svcName))
-                continue;
+            if (packageIncludesIfAndSvc(spkg, ipAddr, svcName))
+                pkg = spkg;
+        }
 
+        if (pkg == null) return;
+
+        //
+        // getServiceLostDate() method will return the date
+        // a service was lost if the service was last known to be
+        // unavailable or will return null if the service was last known to
+        // be available...based on outage information on the 'outages'
+        // table.
+        Date svcLostDate = getQueryMgr().getServiceLostDate(nodeId, ipAddr, svcName, getServiceIdByName(svcName));
+        PollStatus lastKnownStatus = (svcLostDate == null ? PollStatus.STATUS_UP : PollStatus.STATUS_DOWN);
+        
+        // Criteria checks have all been padded...update
+        // Node Outage
+        // Hierarchy and create new service for polling
+        //
+        try {
+            ServiceConfig svcConfig = new ServiceConfig(this, pkg, svcName);
+            PollableService pSvc = m_network.createPollableService(nodeId, ipAddr, svcConfig, lastKnownStatus, svcLostDate);
+            
+            // Initialize the service monitor with the pollable service
             //
-            // getServiceLostDate() method will return the date
-            // a service was lost if the service was last known to be
-            // unavailable or will return null if the service was last known to
-            // be available...based on outage information on the 'outages'
-            // table.
-            Date svcLostDate = getQueryMgr().getServiceLostDate(nodeId, ipAddr, svcName, getServiceIdByName(svcName));
-            PollStatus lastKnownStatus = (svcLostDate == null ? PollStatus.STATUS_UP : PollStatus.STATUS_DOWN);
-
-            // Criteria checks have all been padded...update
-            // Node Outage
-            // Hierarchy and create new service for polling
+            ServiceMonitor monitor = getServiceMonitor(svcName);
+            pSvc.initializeMonitor(monitor);
+            
+            // Schedule the service
             //
-            try {
-                PollableService pSvc = m_network.createPollableService(nodeId, ipAddr, svcName, pkg, lastKnownStatus, svcLostDate);
-
-                // Initialize the service monitor with the pollable service
-                //
-                ServiceMonitor monitor = getServiceMonitor(svcName);
-                pSvc.initializeMonitor(monitor);
-
-                // Schedule the service
-                //
-                Schedule schedule = pSvc.getSchedule();
-                schedule.schedulePoll();
-                
-                // schedule = pSvc.createSchedule(new ServiceConfig(pkg, svcName));
-
-            } catch (UnknownHostException ex) {
-                log.error("scheduleService: Failed to schedule interface " + ipAddr + " for service monitor " + svcName + ", illegal address", ex);
-            } catch (InterruptedException ie) {
-                log.error("scheduleService: Failed to schedule interface " + ipAddr + " for service monitor " + svcName + ", thread interrupted", ie);
-            } catch (RuntimeException rE) {
-                log.warn("scheduleService: Unable to schedule " + ipAddr + " for service monitor " + svcName + ", reason: " + rE.getMessage());
-            } catch (Throwable t) {
-                log.error("scheduleService: Uncaught exception, failed to schedule interface " + ipAddr + " for service monitor " + svcName, t);
-            }
-        } // end while more packages exist
-
+            pSvc.schedule();
+            
+        } catch (UnknownHostException ex) {
+            log.error("scheduleService: Failed to schedule interface " + ipAddr + " for service monitor " + svcName + ", illegal address", ex);
+        } catch (InterruptedException ie) {
+            log.error("scheduleService: Failed to schedule interface " + ipAddr + " for service monitor " + svcName + ", thread interrupted", ie);
+        } catch (RuntimeException rE) {
+            log.warn("scheduleService: Unable to schedule " + ipAddr + " for service monitor " + svcName + ", reason: " + rE.getMessage());
+        } catch (Throwable t) {
+            log.error("scheduleService: Uncaught exception, failed to schedule interface " + ipAddr + " for service monitor " + svcName, t);
+        }
+        
     }
 
