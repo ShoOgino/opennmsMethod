@@ -13,7 +13,7 @@
 	m_changed.add(table);
 
 	m_out.println("SCHEMA DOES NOT MATCH");
-	m_out.println("  - differences:");
+	m_out.println("    - differences:");
 
 	// XXX This doesn't check for old column rows that don't exist
 	//     in newColumns.
@@ -23,7 +23,7 @@
 					  newColumn.getName());
 
 	    if (oldColumn == null || !newColumn.equals(oldColumn)) {
-		m_out.println("    - column \"" + newColumn.getName() +
+		m_out.println("      - column \"" + newColumn.getName() +
 				   "\" is different");
 	    }
 
@@ -85,32 +85,48 @@
 		    columnChange.setUpgradeTimestamp(true);
 		}
 	    } else {
-		m_out.println("    * WARNING: column \"" +
+		m_out.println("      * WARNING: column \"" +
 				   oldColumn.getName() + "\" exists in the " +
 				   "database but is not in the new schema.  " +
-				   "NOT REMOVING COLUMN");
+				   "REMOVING COLUMN");
 	    }
 	}
 
-	String oldTable = table + "_old_" + System.currentTimeMillis();
-
-	st.execute("ALTER TABLE " + table + " RENAME TO " + oldTable);
+	String tmpTable = table + "_old_" + System.currentTimeMillis();
 
 	try {
+	    if (tableExists(tmpTable)) {
+		st.execute("DROP TABLE " + tmpTable + m_cascade);
+	    }
+
+	    m_out.print("    - creating temporary table... ");
+	    st.execute("CREATE TABLE " + tmpTable + " AS SELECT " +
+		       join(", ", oldColumnNames) +
+		       " FROM " + table);
+	    m_out.println("done");
+
+	    st.execute("DROP TABLE " + table + m_cascade);
+
+	    m_out.print("    - creating new '" + table + "' table... ");
 	    st.execute("CREATE TABLE " + table + "(" + getTableFromSQL(table) +
 		       ")");
+	    m_out.println("done");
 
-	    transformData(table, oldTable, columnChanges, oldColumnNames);
+	    transformData(table, tmpTable, columnChanges, oldColumnNames);
 
 	    st.execute("GRANT ALL ON " + table + " TO " + m_user);
 
-	    m_out.print("  - optimizing table " + table + "... ");
+	    m_out.print("    - optimizing table " + table + "... ");
 	    st.execute("VACUUM ANALYZE " + table);
 	    m_out.println("DONE");
 	} catch (Exception e) {
 	    try {
-		st.execute("DROP TABLE " + table + m_cascade);
-		st.execute("ALTER TABLE " + oldTable + " RENAME TO " + table);
+		if (tableExists(table)) {
+		    st.execute("DROP TABLE " + table + m_cascade);
+		}
+		st.execute("CREATE TABLE " + table + " AS SELECT " +
+			   join(", ", oldColumnNames) +
+			   " FROM " + tmpTable);
 	    } catch (SQLException se) {
 		throw new Exception("Got SQLException while trying to " +
 				    "revert table changes due to original " +
@@ -118,13 +134,15 @@
 				    "SQLException while reverting table: " +
 				    se, e);
 	    }
+	    m_out.println("FAILED!  Old data restored, however indexes and " +
+			  "constraints on this table were not re-added");
 	    throw e;
 	}
 
-	// We don't care if dropping the old table fails since we've
+	// We don't care if dropping the tmp table fails since we've
 	// completed copying it, so it's outside of the try/catch block above.
-	st.execute("DROP TABLE " + oldTable);
+	st.execute("DROP TABLE " + tmpTable);
 
-	m_out.println("  - completed updating table... ");
+	m_out.println("    - completed updating table... ");
     }
 
