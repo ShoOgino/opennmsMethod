@@ -1,121 +1,100 @@
-	public void init()
-	{
-		ThreadCategory.setPrefix(LOG4J_CATEGORY);
+    public void init() {
+        ThreadCategory.setPrefix(LOG4J_CATEGORY);
 
-		Category log = ThreadCategory.getInstance(getClass());
+        Category log = ThreadCategory.getInstance(getClass());
 
-		// load the rtc configuration
-		RTCConfigFactory rFactory = null;
-		try
-		{
-			RTCConfigFactory.reload();
-			rFactory = RTCConfigFactory.getInstance();
+        // load the rtc configuration
+        RTCConfigFactory rFactory = null;
+        try {
+            RTCConfigFactory.reload();
+            rFactory = RTCConfigFactory.getInstance();
 
-		}
-		catch(IOException ex)
-		{
-			log.error("Failed to load rtc configuration", ex);
-			throw new UndeclaredThrowableException(ex);
-		}
-		catch(MarshalException ex)
-		{
-			log.error("Failed to load rtc configuration", ex);
-			throw new UndeclaredThrowableException(ex);
-		}
-		catch(ValidationException ex)
-		{
-			log.error("Failed to load rtc configuration", ex);
-			throw new UndeclaredThrowableException(ex);
-		}
+        } catch (IOException ex) {
+            log.error("Failed to load rtc configuration", ex);
+            throw new UndeclaredThrowableException(ex);
+        } catch (MarshalException ex) {
+            log.error("Failed to load rtc configuration", ex);
+            throw new UndeclaredThrowableException(ex);
+        } catch (ValidationException ex) {
+            log.error("Failed to load rtc configuration", ex);
+            throw new UndeclaredThrowableException(ex);
+        }
 
-		//
-		// Get the required attributes
-		//
+        //
+        // Get the required attributes
+        //
 
-		// parse the rolling window info
-		m_rollingWindow = rFactory.getRollingWindow();
+        // parse the rolling window info
+        m_rollingWindow = rFactory.getRollingWindow();
 
-		// get maxEventsBeforeResend
-		MAX_EVENTS_BEFORE_RESEND = rFactory.getMaxEventsBeforeResend();
+        // get maxEventsBeforeResend
+        MAX_EVENTS_BEFORE_RESEND = rFactory.getMaxEventsBeforeResend();
 
-		// parse the low threshold interval
-		m_lowThresholdInterval = rFactory.getLowThresholdInterval();
+        // parse the low threshold interval
+        m_lowThresholdInterval = rFactory.getLowThresholdInterval();
 
-		// parse the high threshold interval
-		m_highThresholdInterval = rFactory.getHighThresholdInterval();
+        // parse the high threshold interval
+        m_highThresholdInterval = rFactory.getHighThresholdInterval();
 
-		// parse the user threshold interval
-		String ur = rFactory.getUserRefreshIntervalStr();
-		if (ur != null)
-		{
-			try
-			{
-				m_userRefreshInterval = rFactory.getUserRefreshInterval();
-			}
-			catch(Exception nfE)
-			{
-				log.warn("User refresh time has an incorrect format - using 1 minute instead");
-				m_userRefreshInterval = 60 * 1000;
-			}
-		}
-		else
-		{
-			log.warn("User refresh time not specified - using 1 minute instead");
-			m_userRefreshInterval = 60 * 1000;
-		}
+        // parse the user threshold interval
+        String ur = rFactory.getUserRefreshIntervalStr();
+        if (ur != null) {
+            try {
+                m_userRefreshInterval = rFactory.getUserRefreshInterval();
+            } catch (Exception nfE) {
+                log.warn("User refresh time has an incorrect format - using 1 minute instead");
+                m_userRefreshInterval = 60 * 1000;
+            }
+        } else {
+            log.warn("User refresh time not specified - using 1 minute instead");
+            m_userRefreshInterval = 60 * 1000;
+        }
 
-		// high and low thresholds cannot be the same
-		if (m_highThresholdInterval == m_lowThresholdInterval)
-		{
-			throw new RuntimeException("The values for the high and low threshold intervals CANNOT BE EQUAL");
-		}
+        // high and low thresholds cannot be the same
+        if (m_highThresholdInterval == m_lowThresholdInterval) {
+            throw new RuntimeException("The values for the high and low threshold intervals CANNOT BE EQUAL");
+        }
 
-		// if high threshold is smaller than the low threshold, swap 'em
-		if (m_highThresholdInterval < m_lowThresholdInterval)
-		{
-			log.warn("Swapping high and low threshold intervals..");
-			long tmp = m_highThresholdInterval;
-			m_highThresholdInterval = m_lowThresholdInterval;
-			m_lowThresholdInterval = tmp;
-		}
+        // if high threshold is smaller than the low threshold, swap 'em
+        if (m_highThresholdInterval < m_lowThresholdInterval) {
+            log.warn("Swapping high and low threshold intervals..");
+            long tmp = m_highThresholdInterval;
+            m_highThresholdInterval = m_lowThresholdInterval;
+            m_lowThresholdInterval = tmp;
+        }
 
-		log.info("Rolling Window: " + m_rollingWindow + "(milliseconds)");
-		log.info("Low Threshold Refresh Interval: " + m_lowThresholdInterval + "(milliseconds)");
-		log.info("High Threshold Refresh Interval: " + m_highThresholdInterval + "(milliseconds)");
-		log.info("User Refresh Interval: " + m_userRefreshInterval + "(milliseconds)");
+        log.info("Rolling Window: " + m_rollingWindow + "(milliseconds)");
+        log.info("Low Threshold Refresh Interval: " + m_lowThresholdInterval + "(milliseconds)");
+        log.info("High Threshold Refresh Interval: " + m_highThresholdInterval + "(milliseconds)");
+        log.info("User Refresh Interval: " + m_userRefreshInterval + "(milliseconds)");
 
+        // Intialize the data from the database
+        try {
+            m_dataMgr = new DataManager();
+        } catch (Exception ex) {
+            throw new UndeclaredThrowableException(ex);
+        }
 
-		// Intialize the data from the database
-		try
-		{
-			m_dataMgr = new DataManager();
-		}
-		catch(Exception ex)
-		{
-			throw new UndeclaredThrowableException(ex);
-		}
+        m_updaterPool = new RunnableConsumerThreadPool("RTC Updater Pool", 0.6f, 1.0f, rFactory.getUpdaters());
 
-		m_updaterPool = new RunnableConsumerThreadPool("RTC Updater Pool", 0.6f, 1.0f, rFactory.getUpdaters());
+        if (log.isDebugEnabled())
+            log.debug("Created updater pool");
 
-		if (log.isDebugEnabled())
-			log.debug("Created updater pool");
-                                                                   
-		m_eventReceiver = new BroadcastEventProcessor(m_updaterPool.getRunQueue());
-		if (log.isDebugEnabled())
-			log.debug("Created event receiver");
-                                                                   
-		// create the data sender
-		m_dataSender = new DataSender(getCategories(), rFactory.getSenders());
-		log.debug("Created DataSender");
+        m_eventReceiver = new BroadcastEventProcessor(m_updaterPool.getRunQueue());
+        if (log.isDebugEnabled())
+            log.debug("Created event receiver");
 
-		// create the timer
-		m_timer = new Timer();
+        // create the data sender
+        m_dataSender = new DataSender(getCategories(), rFactory.getSenders());
+        log.debug("Created DataSender");
 
-		m_status = RUNNING;
+        // create the timer
+        m_timer = new Timer();
 
-		if(log.isDebugEnabled())
-		{
-			log.debug("RTC ready to receive events");
-		}
-	}
+        m_status = RUNNING;
+
+        if (log.isDebugEnabled()) {
+            log.debug("RTC ready to receive events");
+        }
+    }
 

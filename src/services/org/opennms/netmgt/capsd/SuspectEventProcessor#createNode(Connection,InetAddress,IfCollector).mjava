@@ -1,128 +1,121 @@
-        /**
-	 * This method is responsble for inserting a new node into the node table.
-	 * 
-	 * @param dbc		Database connection.
-	 * @param ifaddr	Suspect interface
-	 * @param collector	Interface collector containing SMB and SNMP info 
-	 * 			collected from the remote device.
-	 *
-	 * @return	DbNodeEntry object associated with the newly inserted node 
-	 *              table entry.
-	 *
-	 * @throws SQLException if an error occurs inserting the new node.
-	 */
-	private DbNodeEntry createNode(Connection dbc, InetAddress ifaddr, IfCollector collector)
-		throws SQLException
-	{
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * This method is responsble for inserting a new node into the node table.
+     * 
+     * @param dbc
+     *            Database connection.
+     * @param ifaddr
+     *            Suspect interface
+     * @param collector
+     *            Interface collector containing SMB and SNMP info collected
+     *            from the remote device.
+     * 
+     * @return DbNodeEntry object associated with the newly inserted node table
+     *         entry.
+     * 
+     * @throws SQLException
+     *             if an error occurs inserting the new node.
+     */
+    private DbNodeEntry createNode(Connection dbc, InetAddress ifaddr, IfCollector collector) throws SQLException {
+        Category log = ThreadCategory.getInstance(getClass());
 
-		// Determine primary interface for the node.  Primary interface
-		// is needed for determining the node label.
-		//
-		InetAddress primaryIf = determinePrimaryInterface(collector);
-		
-		// Get Snmp and Smb collector objects
-		//
-		IfSnmpCollector snmpc = collector.getSnmpCollector();
-		IfSmbCollector smbc = collector.getSmbCollector();
-							
-		// First create a node entry for the new interface
-		//
-		DbNodeEntry entryNode = DbNodeEntry.create();
+        // Determine primary interface for the node. Primary interface
+        // is needed for determining the node label.
+        //
+        InetAddress primaryIf = determinePrimaryInterface(collector);
 
-		// fill in the node information
-		//
-		Date now = new Date();
-		entryNode.setCreationTime(now);
-		entryNode.setLastPoll(now);
-		entryNode.setNodeType(DbNodeEntry.NODE_TYPE_ACTIVE);
-		entryNode.setLabel(primaryIf.getHostName());
-		if(entryNode.getLabel().equals(primaryIf.getHostAddress()))
-			entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_ADDRESS);
-		else
-			entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_HOSTNAME);
+        // Get Snmp and Smb collector objects
+        //
+        IfSnmpCollector snmpc = collector.getSnmpCollector();
+        IfSmbCollector smbc = collector.getSmbCollector();
 
-		if(snmpc != null)
-		{
-			if(snmpc.hasSystemGroup())
-			{
-				SystemGroup sysgrp = snmpc.getSystemGroup();
+        // First create a node entry for the new interface
+        //
+        DbNodeEntry entryNode = DbNodeEntry.create();
 
-				// sysObjectId
-				SnmpObjectId sysObjectId = (SnmpObjectId)sysgrp.get(SystemGroup.SYS_OBJECTID);
-				if (sysObjectId != null)
-					entryNode.setSystemOID(sysObjectId.toString());
-				else
-					log.warn("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has NO sysObjectId!!!!");
-		
-					
-				
-				// sysName
-				String str = SystemGroup.getPrintableString((SnmpOctetString)sysgrp.get(SystemGroup.SYS_NAME));
-				if (log.isDebugEnabled())
-					log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysName: " + str);
-					
-				if(str != null && str.length() > 0)
-				{
-					entryNode.setSystemName(str);
-					
-					// Hostname takes precedence over sysName so only replace label if
-					// hostname was not available.
-					if(entryNode.getLabelSource() == DbNodeEntry.LABEL_SOURCE_ADDRESS)
-					{
-						entryNode.setLabel(str);
-						entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_SYSNAME);
-					}
-				}
-	
-				// sysDescription
-				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_DESCR));
-				if (log.isDebugEnabled())
-					log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysDescription: " + str);
-				if (str!= null && str.length() > 0)
-					entryNode.setSystemDescription(str);
+        // fill in the node information
+        //
+        Date now = new Date();
+        entryNode.setCreationTime(now);
+        entryNode.setLastPoll(now);
+        entryNode.setNodeType(DbNodeEntry.NODE_TYPE_ACTIVE);
+        entryNode.setLabel(primaryIf.getHostName());
+        if (entryNode.getLabel().equals(primaryIf.getHostAddress()))
+            entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_ADDRESS);
+        else
+            entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_HOSTNAME);
 
-				// sysLocation
-				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_LOCATION));
-				if (log.isDebugEnabled())
-					log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysLocation: " + str);
-				if(str != null && str.length() > 0)
-					entryNode.setSystemLocation(str);
+        if (snmpc != null) {
+            if (snmpc.hasSystemGroup()) {
+                SystemGroup sysgrp = snmpc.getSystemGroup();
 
-				// sysContact
-				str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_CONTACT));
-				if (log.isDebugEnabled())
-					log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysContact: " + str);
-				if(str != null && str.length() > 0)
-					entryNode.setSystemContact(str);
-			}
-		}
+                // sysObjectId
+                SnmpObjectId sysObjectId = (SnmpObjectId) sysgrp.get(SystemGroup.SYS_OBJECTID);
+                if (sysObjectId != null)
+                    entryNode.setSystemOID(sysObjectId.toString());
+                else
+                    log.warn("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has NO sysObjectId!!!!");
 
-		// check for SMB information
-		//
-		if(smbc != null)
-		{
-			// Netbios Name and Domain
-			// Note: only override if the label source is not HOSTNAME
-			if(smbc.getNbtName() != null && entryNode.getLabelSource() != DbNodeEntry.LABEL_SOURCE_HOSTNAME)
-			{
-				entryNode.setLabel(smbc.getNbtName());
-				entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_NETBIOS);
-				entryNode.setNetBIOSName(entryNode.getLabel());
-				if (smbc.getDomainName() != null)
-				{
-					entryNode.setDomainName(smbc.getDomainName());
-				}
-			}
+                // sysName
+                String str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_NAME));
+                if (log.isDebugEnabled())
+                    log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysName: " + str);
 
-			// Operating System
-			if(smbc.getOS() != null)
-			{
-				entryNode.setOS(smbc.getOS());
-			}
-		}
+                if (str != null && str.length() > 0) {
+                    entryNode.setSystemName(str);
 
-		entryNode.store(dbc);
-		return entryNode;
-	}
+                    // Hostname takes precedence over sysName so only replace
+                    // label if
+                    // hostname was not available.
+                    if (entryNode.getLabelSource() == DbNodeEntry.LABEL_SOURCE_ADDRESS) {
+                        entryNode.setLabel(str);
+                        entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_SYSNAME);
+                    }
+                }
+
+                // sysDescription
+                str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_DESCR));
+                if (log.isDebugEnabled())
+                    log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysDescription: " + str);
+                if (str != null && str.length() > 0)
+                    entryNode.setSystemDescription(str);
+
+                // sysLocation
+                str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_LOCATION));
+                if (log.isDebugEnabled())
+                    log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysLocation: " + str);
+                if (str != null && str.length() > 0)
+                    entryNode.setSystemLocation(str);
+
+                // sysContact
+                str = SystemGroup.getPrintableString((SnmpOctetString) sysgrp.get(SystemGroup.SYS_CONTACT));
+                if (log.isDebugEnabled())
+                    log.debug("SuspectEventProcessor: " + ifaddr.getHostAddress() + " has sysContact: " + str);
+                if (str != null && str.length() > 0)
+                    entryNode.setSystemContact(str);
+            }
+        }
+
+        // check for SMB information
+        //
+        if (smbc != null) {
+            // Netbios Name and Domain
+            // Note: only override if the label source is not HOSTNAME
+            if (smbc.getNbtName() != null && entryNode.getLabelSource() != DbNodeEntry.LABEL_SOURCE_HOSTNAME) {
+                entryNode.setLabel(smbc.getNbtName());
+                entryNode.setLabelSource(DbNodeEntry.LABEL_SOURCE_NETBIOS);
+                entryNode.setNetBIOSName(entryNode.getLabel());
+                if (smbc.getDomainName() != null) {
+                    entryNode.setDomainName(smbc.getDomainName());
+                }
+            }
+
+            // Operating System
+            if (smbc.getOS() != null) {
+                entryNode.setOS(smbc.getOS());
+            }
+        }
+
+        entryNode.store(dbc);
+        return entryNode;
+    }
 

@@ -1,143 +1,115 @@
-  /**
-   * Create an SNMP V2 trap, based on the content of the specified event, and forward
-   * the trap to the specified address and port. It is assumed that the specified event
-   * represents an SNMP V1 or V2 trap that was received by OpenNMS (TrapD).
-   *
-   * @param  event  The event upon which the trap content should be based
-   * @param  destAddr  The address to which the trap should be forwarded
-   * @param  destPort  The port to which the trap should be forwarded
-   *
-	 * @exception  Throws SnmpTrapHelperException if the variable binding cannot be
-	 * added to the trap for any reason.
-	 */
-	public void forwardV2Trap(Event event, String destAddr, int destPort) throws SnmpTrapHelperException
-	{
+    /**
+     * Create an SNMP V2 trap, based on the content of the specified event, and
+     * forward the trap to the specified address and port. It is assumed that
+     * the specified event represents an SNMP V1 or V2 trap that was received by
+     * OpenNMS (TrapD).
+     * 
+     * @param event
+     *            The event upon which the trap content should be based
+     * @param destAddr
+     *            The address to which the trap should be forwarded
+     * @param destPort
+     *            The port to which the trap should be forwarded
+     * 
+     * @exception Throws
+     *                SnmpTrapHelperException if the variable binding cannot be
+     *                added to the trap for any reason.
+     */
+    public void forwardV2Trap(Event event, String destAddr, int destPort) throws SnmpTrapHelperException {
 
-    // the event must correspond to an SNMP trap
+        // the event must correspond to an SNMP trap
 
-		Snmp snmpInfo = event.getSnmp();
+        Snmp snmpInfo = event.getSnmp();
 
-		if (snmpInfo == null)
-		{
-			throw new SnmpTrapHelperException("Cannot forward an event with no SNMP info: " + event.getUei());
-		}
+        if (snmpInfo == null) {
+            throw new SnmpTrapHelperException("Cannot forward an event with no SNMP info: " + event.getUei());
+        }
 
-    // check the version of the original trap
-    
-		String version = snmpInfo.getVersion();
+        // check the version of the original trap
 
-		SnmpPduRequest packet = new SnmpPduRequest(SnmpPduPacket.V2TRAP);
+        String version = snmpInfo.getVersion();
 
-		if ("v1".equals(version))
-		{
+        SnmpPduRequest packet = new SnmpPduRequest(SnmpPduPacket.V2TRAP);
 
-			// converting V1 trap to V2 (see RFC2576)
+        if ("v1".equals(version)) {
 
-			addVarBinding(packet, SNMP_SYSUPTIME_OID, EventConstants.TYPE_SNMP_TIMETICKS, Long.toString(snmpInfo.getTimeStamp()));
+            // converting V1 trap to V2 (see RFC2576)
 
-			String oid;
+            addVarBinding(packet, SNMP_SYSUPTIME_OID, EventConstants.TYPE_SNMP_TIMETICKS, Long.toString(snmpInfo.getTimeStamp()));
 
-			if (snmpInfo.getGeneric() == ENTERPRISE_SPECIFIC)
-			{
-				oid = snmpInfo.getId() + ".0." + snmpInfo.getSpecific();
-			}
-			else
-			{
-				oid = SNMP_TRAPS + '.' + (snmpInfo.getGeneric() + 1);
-			}
+            String oid;
 
-			addVarBinding(packet, SNMP_TRAP_OID, EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER, oid);
+            if (snmpInfo.getGeneric() == ENTERPRISE_SPECIFIC) {
+                oid = snmpInfo.getId() + ".0." + snmpInfo.getSpecific();
+            } else {
+                oid = SNMP_TRAPS + '.' + (snmpInfo.getGeneric() + 1);
+            }
 
-			// add the V1 var bindings
+            addVarBinding(packet, SNMP_TRAP_OID, EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER, oid);
 
-			boolean addrPresent = false;
-			boolean communityPresent = false;
-			boolean enterprisePresent = false;
+            // add the V1 var bindings
 
-			Parm[] parms = event.getParms().getParm();
+            boolean addrPresent = false;
+            boolean communityPresent = false;
+            boolean enterprisePresent = false;
 
-			for (int i = 0; i < parms.length; i++)
-			{
-				Parm parm = parms[i];
-				Value value = parm.getValue();
+            Parm[] parms = event.getParms().getParm();
 
-				try
-				{
-					addVarBinding(packet, parm.getParmName(), value.getType(), value.getEncoding(), value.getContent());
-				}
+            for (int i = 0; i < parms.length; i++) {
+                Parm parm = parms[i];
+                Value value = parm.getValue();
 
-				catch (SnmpTrapHelperException e)
-				{
-					throw new SnmpTrapHelperException(e.getMessage() + " in event parm[" + i + "]");
-				}
+                try {
+                    addVarBinding(packet, parm.getParmName(), value.getType(), value.getEncoding(), value.getContent());
+                }
 
-				if (SNMP_TRAP_ADDRESS_OID.equals(parm.getParmName()))
-				{
-					addrPresent = true;
-				}
-				else if (SNMP_TRAP_COMMUNITY_OID.equals(parm.getParmName()))
-				{
-					communityPresent = true;
-				}
-				else if (SNMP_TRAP_ENTERPRISE_OID.equals(parm.getParmName()))
-				{
-					enterprisePresent = true;
-				}
-			}
+                catch (SnmpTrapHelperException e) {
+                    throw new SnmpTrapHelperException(e.getMessage() + " in event parm[" + i + "]");
+                }
 
-			if (!addrPresent)
-			{
-				addVarBinding(packet,
-											SNMP_TRAP_ADDRESS_OID,
-											EventConstants.TYPE_SNMP_IPADDRESS,
-											event.getSnmphost());
-			}
+                if (SNMP_TRAP_ADDRESS_OID.equals(parm.getParmName())) {
+                    addrPresent = true;
+                } else if (SNMP_TRAP_COMMUNITY_OID.equals(parm.getParmName())) {
+                    communityPresent = true;
+                } else if (SNMP_TRAP_ENTERPRISE_OID.equals(parm.getParmName())) {
+                    enterprisePresent = true;
+                }
+            }
 
-			if (!communityPresent)
-			{
-				addVarBinding(packet,
-											SNMP_TRAP_COMMUNITY_OID,
-											EventConstants.TYPE_SNMP_OCTET_STRING,
-											snmpInfo.getCommunity());
-			}
+            if (!addrPresent) {
+                addVarBinding(packet, SNMP_TRAP_ADDRESS_OID, EventConstants.TYPE_SNMP_IPADDRESS, event.getSnmphost());
+            }
 
-			if (!enterprisePresent)
-			{
-				addVarBinding(packet,
-											SNMP_TRAP_ENTERPRISE_OID,
-											EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER,
-											snmpInfo.getId());
-			}
-		}
-		else if ("v2".equals(version))
-		{
+            if (!communityPresent) {
+                addVarBinding(packet, SNMP_TRAP_COMMUNITY_OID, EventConstants.TYPE_SNMP_OCTET_STRING, snmpInfo.getCommunity());
+            }
 
-			Parm[] parms = event.getParms().getParm();
+            if (!enterprisePresent) {
+                addVarBinding(packet, SNMP_TRAP_ENTERPRISE_OID, EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER, snmpInfo.getId());
+            }
+        } else if ("v2".equals(version)) {
 
-			for (int i = 0; i < parms.length; i++)
-			{
-				Parm parm = parms[i];
-				Value value = parm.getValue();
+            Parm[] parms = event.getParms().getParm();
 
-				try
-				{
-					addVarBinding(packet, parm.getParmName(), value.getType(), value.getEncoding(), value.getContent());
-				}
+            for (int i = 0; i < parms.length; i++) {
+                Parm parm = parms[i];
+                Value value = parm.getValue();
 
-				catch (SnmpTrapHelperException e)
-				{
-					throw new SnmpTrapHelperException(e.getMessage() + " in event parm[" + i + "]");
-				}
+                try {
+                    addVarBinding(packet, parm.getParmName(), value.getType(), value.getEncoding(), value.getContent());
+                }
 
-			}
-		}
-		else
-		{
-			throw new SnmpTrapHelperException("Invalid SNMP version: " + version);
-		}
+                catch (SnmpTrapHelperException e) {
+                    throw new SnmpTrapHelperException(e.getMessage() + " in event parm[" + i + "]");
+                }
 
-		// send the trap
+            }
+        } else {
+            throw new SnmpTrapHelperException("Invalid SNMP version: " + version);
+        }
 
-		sendTrap(snmpInfo.getCommunity(), packet, destAddr, destPort);
-	}
+        // send the trap
+
+        sendTrap(snmpInfo.getCommunity(), packet, destAddr, destPort);
+    }
 

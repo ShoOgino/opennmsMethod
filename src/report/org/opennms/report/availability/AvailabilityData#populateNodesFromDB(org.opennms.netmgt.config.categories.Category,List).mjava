@@ -1,171 +1,147 @@
-	/**
-	 * For each category in the categories list, this reads the 
-	 * services and outage tables to get the initial data, creates
-	 * objects that are added to the map and and to the
-	 * appropriate category
-	 *
-	 * @throws SQLException if the database read fails due to an SQL error
-	 * @throws FilterParseException if filtering the data against the category rule fails due to the rule being incorrect
-	 */
-	private void populateNodesFromDB(org.opennms.netmgt.config.categories.Category cat, List monitoredServices)
-			throws SQLException, FilterParseException, Exception
-	{
-		m_nodes 	= new ArrayList();
-		// Create the filter
-		Filter filter =  new Filter();
+    /**
+     * For each category in the categories list, this reads the services and
+     * outage tables to get the initial data, creates objects that are added to
+     * the map and and to the appropriate category
+     * 
+     * @throws SQLException
+     *             if the database read fails due to an SQL error
+     * @throws FilterParseException
+     *             if filtering the data against the category rule fails due to
+     *             the rule being incorrect
+     */
+    private void populateNodesFromDB(org.opennms.netmgt.config.categories.Category cat, List monitoredServices) throws SQLException, FilterParseException, Exception {
+        m_nodes = new ArrayList();
+        // Create the filter
+        Filter filter = new Filter();
 
-		initialiseConnection();
-		// Prepare the statement to get service entries for each IP
-		PreparedStatement servicesGetStmt = m_availConn.prepareStatement(AvailabilityConstants.DB_GET_SVC_ENTRIES);
-	 	// Prepared statement to get node info for an ip
-		PreparedStatement ipInfoGetStmt	=  m_availConn.prepareStatement(AvailabilityConstants.DB_GET_INFO_FOR_IP);
-	 	// Prepared statement to get outages entries
-		PreparedStatement outagesGetStmt = m_availConn.prepareStatement(AvailabilityConstants.DB_GET_OUTAGE_ENTRIES);
+        initialiseConnection();
+        // Prepare the statement to get service entries for each IP
+        PreparedStatement servicesGetStmt = m_availConn.prepareStatement(AvailabilityConstants.DB_GET_SVC_ENTRIES);
+        // Prepared statement to get node info for an ip
+        PreparedStatement ipInfoGetStmt = m_availConn.prepareStatement(AvailabilityConstants.DB_GET_INFO_FOR_IP);
+        // Prepared statement to get outages entries
+        PreparedStatement outagesGetStmt = m_availConn.prepareStatement(AvailabilityConstants.DB_GET_OUTAGE_ENTRIES);
 
-		org.apache.log4j.Category log = ThreadCategory.getInstance(AvailabilityData.class);
+        org.apache.log4j.Category log = ThreadCategory.getInstance(AvailabilityData.class);
 
-		// get the rule for this category, get the list of nodes that satisfy this rule
-		m_catComment = cat.getComment();
-		String filterRule = m_commonRule;
+        // get the rule for this category, get the list of nodes that satisfy
+        // this rule
+        m_catComment = cat.getComment();
+        String filterRule = m_commonRule;
 
-		if(log.isDebugEnabled())
-			log.debug("Category: " + filterRule);
+        if (log.isDebugEnabled())
+            log.debug("Category: " + filterRule);
 
-		String ip = null;
-		ResultSet ipRS=null;
-		try
-		{
-			List nodeIPs = filter.getIPList(filterRule);
+        String ip = null;
+        ResultSet ipRS = null;
+        try {
+            List nodeIPs = filter.getIPList(filterRule);
 
-			if (log.isDebugEnabled())
-				log.debug("Number of IPs satisfying rule: " + nodeIPs.size());
-			
-			// For each of these IP addresses, get the details from the ifServices and services tables
-			Iterator ipIter = nodeIPs.iterator();
-			while(ipIter.hasNext())
-			{
-				ip = (String)ipIter.next();
+            if (log.isDebugEnabled())
+                log.debug("Number of IPs satisfying rule: " + nodeIPs.size());
 
-				// get node info for this ip
-				ipInfoGetStmt.setString(1, ip);
+            // For each of these IP addresses, get the details from the
+            // ifServices and services tables
+            Iterator ipIter = nodeIPs.iterator();
+            while (ipIter.hasNext()) {
+                ip = (String) ipIter.next();
 
-				ipRS = ipInfoGetStmt.executeQuery();
-				while(ipRS.next())
-				{
-					int nodeid = ipRS.getInt(1);
-					String nodeName = ipRS.getString(2);
+                // get node info for this ip
+                ipInfoGetStmt.setString(1, ip);
 
-//					if(log.isDebugEnabled())
-//						log.debug("IP->node info lookup result: " + nodeid);
+                ipRS = ipInfoGetStmt.executeQuery();
+                while (ipRS.next()) {
+                    int nodeid = ipRS.getInt(1);
+                    String nodeName = ipRS.getString(2);
 
-					//
-					// get the services for this IP address
-					//
-					ResultSet  svcRS=null;
-					servicesGetStmt.setLong(1, nodeid);
-					servicesGetStmt.setString(2, ip);
-					servicesGetStmt.setString(3, ip);
-					servicesGetStmt.setLong(4, nodeid);
-					svcRS = servicesGetStmt.executeQuery();
+                    // if(log.isDebugEnabled())
+                    // log.debug("IP->node info lookup result: " + nodeid);
 
-					// create node objects for this nodeID/IP/service
-					while(svcRS.next())
-					{
-						// read data from the resultset
-						int svcid = svcRS.getInt(1);
-						String svcname = svcRS.getString(2);
-						// If the list is empty, we assume all services are monitored.  If it has any, we use it as a filter
-						if(monitoredServices.isEmpty() || monitoredServices.contains(svcname))
-						{
-//							if(log.isDebugEnabled())
-//								log.debug("services result: " + nodeid + "\t" + ip + "\t" +  svcname);
+                    //
+                    // get the services for this IP address
+                    //
+                    ResultSet svcRS = null;
+                    servicesGetStmt.setLong(1, nodeid);
+                    servicesGetStmt.setString(2, ip);
+                    servicesGetStmt.setString(3, ip);
+                    servicesGetStmt.setLong(4, nodeid);
+                    svcRS = servicesGetStmt.executeQuery();
 
-							OutageSvcTimesList outageSvcTimesList = new OutageSvcTimesList();
-							getOutagesNodeIpSvc(nodeid, 
-									    nodeName, 
-									    ip, 
-									    svcid, 
-									    svcname, 
-									    outageSvcTimesList,
-									    outagesGetStmt);
+                    // create node objects for this nodeID/IP/service
+                    while (svcRS.next()) {
+                        // read data from the resultset
+                        int svcid = svcRS.getInt(1);
+                        String svcname = svcRS.getString(2);
+                        // If the list is empty, we assume all services are
+                        // monitored. If it has any, we use it as a filter
+                        if (monitoredServices.isEmpty() || monitoredServices.contains(svcname)) {
+                            // if(log.isDebugEnabled())
+                            // log.debug("services result: " + nodeid + "\t" +
+                            // ip + "\t" + svcname);
 
-/*							IfService ifservice = new IfService(nodeid, 
-											    ip, 
-											    svcid, 
-											    nodeName, 	
-											    svcname);
-							Map svcOutages = (Map)m_services.get(svcname);
-							if(svcOutages == null)
-								svcOutages = new HashMap();
-							svcOutages.put(ifservice, outageSvcTimesList);
-							m_services.put(svcname, svcOutages);
-*/
-						}
-					}	
+                            OutageSvcTimesList outageSvcTimesList = new OutageSvcTimesList();
+                            getOutagesNodeIpSvc(nodeid, nodeName, ip, svcid, svcname, outageSvcTimesList, outagesGetStmt);
 
-					// finally close the result set
-					try
-					{
-						if (svcRS != null)
-							svcRS.close();
-					}
-					catch(Exception e)
-					{
-						if(log.isEnabledFor(Priority.FATAL))
-							log.fatal("Exception while closing the services result set", e);
-						throw e;
-					}
-				}
-			}
-		}
-		catch(SQLException e)
-		{
-			if(log.isEnabledFor(Priority.FATAL))
-				log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
-			throw e;
-		}
-		catch(FilterParseException e)
-		{
-			// if we get here, the error was most likely in
-			// getting the nodelist from the filters
-			if(log.isEnabledFor(Priority.FATAL))
-				log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
+                            /*
+                             * IfService ifservice = new IfService(nodeid, ip,
+                             * svcid, nodeName, svcname); Map svcOutages =
+                             * (Map)m_services.get(svcname); if(svcOutages ==
+                             * null) svcOutages = new HashMap();
+                             * svcOutages.put(ifservice, outageSvcTimesList);
+                             * m_services.put(svcname, svcOutages);
+                             */
+                        }
+                    }
 
-			// throw exception
-			throw e;
-		}
-		catch(Exception e)
-		{
-			if(log.isEnabledFor(Priority.FATAL))
-				log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
- 
-			// throw exception
-			throw new Exception("Unable to get node list for category \'" + cat.getLabel() + "\':\n\t" + e);
-		}
-		finally
-		{
-			try
-			{
-				if(ipRS != null)
-					ipRS.close();
-				if (servicesGetStmt != null)
-                                	servicesGetStmt.close();
+                    // finally close the result set
+                    try {
+                        if (svcRS != null)
+                            svcRS.close();
+                    } catch (Exception e) {
+                        if (log.isEnabledFor(Priority.FATAL))
+                            log.fatal("Exception while closing the services result set", e);
+                        throw e;
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            if (log.isEnabledFor(Priority.FATAL))
+                log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
+            throw e;
+        } catch (FilterParseException e) {
+            // if we get here, the error was most likely in
+            // getting the nodelist from the filters
+            if (log.isEnabledFor(Priority.FATAL))
+                log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
 
-	                        if (ipInfoGetStmt != null)
-        	                        ipInfoGetStmt.close();
+            // throw exception
+            throw e;
+        } catch (Exception e) {
+            if (log.isEnabledFor(Priority.FATAL))
+                log.fatal("Unable to get node list for category \'" + cat.getLabel(), e);
 
-                	        if (outagesGetStmt != null)
-                        	        outagesGetStmt.close();
-				
-				if(m_availConn != null)
-					closeConnection();
-			}
-			catch(Exception e)
-			{
-				if(log.isEnabledFor(Priority.FATAL))
-					log.fatal("Exception while closing the ip get node info result set - ip: " + ip, e);
-				throw e;
-			}
-		}
-	}
+            // throw exception
+            throw new Exception("Unable to get node list for category \'" + cat.getLabel() + "\':\n\t" + e);
+        } finally {
+            try {
+                if (ipRS != null)
+                    ipRS.close();
+                if (servicesGetStmt != null)
+                    servicesGetStmt.close();
+
+                if (ipInfoGetStmt != null)
+                    ipInfoGetStmt.close();
+
+                if (outagesGetStmt != null)
+                    outagesGetStmt.close();
+
+                if (m_availConn != null)
+                    closeConnection();
+            } catch (Exception e) {
+                if (log.isEnabledFor(Priority.FATAL))
+                    log.fatal("Exception while closing the ip get node info result set - ip: " + ip, e);
+                throw e;
+            }
+        }
+    }
 

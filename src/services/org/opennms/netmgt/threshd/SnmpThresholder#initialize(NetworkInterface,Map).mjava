@@ -1,252 +1,217 @@
-	/**
-	 * Responsible for performing all necessary initialization for
-	 * the specified interface in preparation for thresholding.
-	 * 
-	 * @param iface		Network interface to be prepped for thresholding.
-	 * @param parameters 	Key/value pairs associated with the package 
-	 *			to which the interface belongs..
-	 * 
-	 */
-	public void initialize(NetworkInterface iface, Map parameters)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		// Get interface address from NetworkInterface
-		//
-		if (iface.getType() != NetworkInterface.TYPE_IPV4)
-			throw new RuntimeException("Unsupported interface type, only TYPE_IPV4 currently supported");
-		
-		InetAddress ipAddr = (InetAddress)iface.getAddress();
-		
-		// Retrieve the name of the thresholding group associated
-		// with this interface.
-		String groupName = ParameterMap.getKeyedString(parameters, "thresholding-group", "default");
-		
-		// Get the threshold group's RRD repository path
-		// 
-		String repository = null;
-		try
-		{
-			repository = ThresholdingConfigFactory.getInstance().getRrdRepository(groupName);
-		}
-		catch (IllegalArgumentException e)
-		{
-			throw new RuntimeException("Thresholding group '" + groupName + "' does not exist.");
-		}
-		
-		// Add RRD repository as an attribute of the interface for retrieval
-		// by the check() method.
-		//
-		iface.setAttribute(RRD_REPOSITORY_KEY, repository);
-		
-		// Retrieve the collection of Threshold objects associated with
-		// the defined thresholding group and build two maps, one consisting
-		// of node level ThresholdEntity objects and another consisting of 
-		// interface level ThresholdEntity objects both keyed by datasource
-		// name.
-		//
-		// Each ThresholdEntity can wrap one high Threshold and one low
-		// Threshold castor-generated object for a single datasource.
-		// If more than one high or more than one low threshold is defined 
-		// for a single datasource a warning messages is generated.  Only 
-		// the first threshold in such a scenario will be used for thresholding.
-		//
-		Map nodeMap = new HashMap(); 
-		Map baseIfMap = new HashMap(); 
-		try
-		{
-			Iterator iter = ThresholdingConfigFactory.getInstance().getThresholds(groupName).iterator();
-			while (iter.hasNext())
-			{
-				Threshold thresh = (Threshold)iter.next();
-				
-				// See if map entry already exists for this datasource
-				// If not, create a new one.
-				boolean newEntity = false;
-				ThresholdEntity thresholdEntity = null;
-				if (thresh.getDsType().equals("node"))
-				{
-					thresholdEntity = (ThresholdEntity)nodeMap.get(thresh.getDsName());
-				}
-				else if (thresh.getDsType().equals("if"))
-				{
-					thresholdEntity = (ThresholdEntity)baseIfMap.get(thresh.getDsName());
-				}
-				
-				// Found entry?
-				if (thresholdEntity == null)
-				{
-					// Nope, create a new one
-					newEntity = true;
-					thresholdEntity = new ThresholdEntity();
-				}
-				
-				try
-				{
-					// Set high/low threshold
-					if (thresh.getType().equals(ThresholdEntity.HIGH_THRESHOLD))
-						thresholdEntity.setHighThreshold(thresh);
-					else if (thresh.getType().equals(ThresholdEntity.LOW_THRESHOLD))
-						thresholdEntity.setLowThreshold(thresh);
-				}
-				catch (IllegalStateException e)
-				{
-					log.warn("Encountered duplicate " + thresh.getType() + " for datasource " + thresh.getDsName(), e);
-				}
-				
-				// Add new entity to the map
-				if (newEntity)
-				{
-					if (thresh.getDsType().equals("node"))
-						nodeMap.put(thresh.getDsName(), thresholdEntity);
-					else if (thresh.getDsType().equals("if"))
-						baseIfMap.put(thresh.getDsName(), thresholdEntity);
-				}
-			}
-		}
-		catch (IllegalArgumentException e)
-		{
-			throw new RuntimeException("Thresholding group '" + groupName + "' does not exist.");
-		}
-		
-		// Add node and interface thresholding maps as attributes of the interface 
-		// for retrieval by the check() method.
-		//
-		iface.setAttribute(NODE_THRESHOLD_MAP_KEY, nodeMap);
-		iface.setAttribute(BASE_IF_THRESHOLD_MAP_KEY, baseIfMap);
-		
-		// Now create an empty map which will hold interface level 
-		// ThresholdEntity objects for each of the node's interfaces.
-		// This map will be keyed by the interface's iflabel and will
-		// contain as a value a map of ThresholdEntity objects keyed
-		// by datasource name.
-		//
-		iface.setAttribute(ALL_IF_THRESHOLD_MAP_KEY, new HashMap());
-		
-		// Get database connection in order to retrieve the nodeid and
-		// ifIndex from the database for this interface.
-		//
-		java.sql.Connection dbConn = null;
-		try
-		{
-			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
-		}
-		catch (SQLException sqlE)
-		{
-			if(log.isEnabledFor(Priority.ERROR))
-				log.error("initialize: Failed getting connection to the database.", sqlE);
-			throw new UndeclaredThrowableException(sqlE);
-		}
-		
-		int nodeId = -1;
-		int primaryIfIndex  = -1;
-		char isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
-		
-		// All database calls wrapped in try/finally block so we make
-		// certain that the connection will be closed when we are 
-		// finished.
-		//
-		try
-		{
-			// Prepare & execute the SQL statement to get the 'nodeid', 
-			// 'ifIndex' and 'isSnmpPrimary' fields from the ipInterface table.
-			//
-			PreparedStatement stmt = null;
-			try
-			{
-				stmt = dbConn.prepareStatement(SQL_GET_NODEID);
-				stmt.setString(1, ipAddr.getHostAddress());   // interface address
-				ResultSet rs = stmt.executeQuery();
-				if (rs.next())
-				{ 
-					nodeId = rs.getInt(1);
-					if(rs.wasNull())
-						nodeId = -1;
-					primaryIfIndex = rs.getInt(2);
-					if(rs.wasNull())
-						primaryIfIndex = -1;
-					String str = rs.getString(3);
-					if(str!=null)
-						isSnmpPrimary = str.charAt(0);
-				} 
-				rs.close();
-			}
-			catch (SQLException sqle)
-			{
-				if (log.isDebugEnabled())
-					log.debug("initialize: SQL exception!!", sqle);
-				throw new RuntimeException("SQL exception while attempting to retrieve node id for interface " + ipAddr.getHostAddress()); 
-			}
-			finally
-			{
-				try
-				{
-					stmt.close();
-				}
-				catch (Exception e)
-				{
-					// Ignore
-				}
-			}
-		
-			if (log.isDebugEnabled())
-				log.debug("initialize: db retrieval info: nodeid = " + nodeId + ", address = " + ipAddr.getHostAddress()
-					  + ", ifIndex = " + primaryIfIndex + ", isSnmpPrimary = " + isSnmpPrimary);
-			
-			// RuntimeException is thrown if any of the following are true:
-			// 	- node id is invalid
-			//      - primaryIfIndex is invalid
-			// 	- Interface is not the primary SNMP interface for the node
-			//
-			if (nodeId == -1)
-				throw new RuntimeException("Unable to retrieve node id for interface " + ipAddr.getHostAddress());
-			
-			if (primaryIfIndex == -1)
-				throw new RuntimeException("Unable to retrieve ifIndex for interface " + ipAddr.getHostAddress());
-				
-			if (isSnmpPrimary != DbIpInterfaceEntry.SNMP_PRIMARY)
-				throw new RuntimeException("Interface " + ipAddr.getHostAddress() + " is not the primary SNMP interface for nodeid " + nodeId);
-		}
-		finally
-		{
-			// Done with the database so close the connection
-			try
-			{
-				dbConn.close();
-			}
-			catch (SQLException sqle)
-			{
-				if(log.isEnabledFor(Priority.INFO))
-					log.info("initialize: SQLException while closing database connection", sqle);
-			}
-		}
-		
-		// Add nodeId as an attribute of the interface for retrieval
-		// by the check() method.
-		//
-		iface.setAttribute(NODE_ID_KEY, new Integer(nodeId));
-		
-		// Debug
-		//
-		if (log.isDebugEnabled())
-		{
-			log.debug("initialize: dumping node thresholds defined for " + ipAddr.getHostAddress() + "/" + groupName + ":");
-			Iterator iter = nodeMap.values().iterator();
-			while (iter.hasNext())
-			{
-				log.debug((ThresholdEntity)iter.next());
-			}
-			
-			log.debug("initialize: dumping interface thresholds defined for " + ipAddr.getHostAddress() + "/" + groupName + ":");
-			iter = baseIfMap.values().iterator();
-			while (iter.hasNext())
-			{
-				log.debug((ThresholdEntity)iter.next());
-			}
-		}
-	
-		if (log.isDebugEnabled())
-			log.debug("initialize: initialization completed for " + ipAddr.getHostAddress());
-		return;
-	}
+    /**
+     * Responsible for performing all necessary initialization for the specified
+     * interface in preparation for thresholding.
+     * 
+     * @param iface
+     *            Network interface to be prepped for thresholding.
+     * @param parameters
+     *            Key/value pairs associated with the package to which the
+     *            interface belongs..
+     * 
+     */
+    public void initialize(NetworkInterface iface, Map parameters) {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // Get interface address from NetworkInterface
+        //
+        if (iface.getType() != NetworkInterface.TYPE_IPV4)
+            throw new RuntimeException("Unsupported interface type, only TYPE_IPV4 currently supported");
+
+        InetAddress ipAddr = (InetAddress) iface.getAddress();
+
+        // Retrieve the name of the thresholding group associated
+        // with this interface.
+        String groupName = ParameterMap.getKeyedString(parameters, "thresholding-group", "default");
+
+        // Get the threshold group's RRD repository path
+        // 
+        String repository = null;
+        try {
+            repository = ThresholdingConfigFactory.getInstance().getRrdRepository(groupName);
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException("Thresholding group '" + groupName + "' does not exist.");
+        }
+
+        // Add RRD repository as an attribute of the interface for retrieval
+        // by the check() method.
+        //
+        iface.setAttribute(RRD_REPOSITORY_KEY, repository);
+
+        // Retrieve the collection of Threshold objects associated with
+        // the defined thresholding group and build two maps, one consisting
+        // of node level ThresholdEntity objects and another consisting of
+        // interface level ThresholdEntity objects both keyed by datasource
+        // name.
+        //
+        // Each ThresholdEntity can wrap one high Threshold and one low
+        // Threshold castor-generated object for a single datasource.
+        // If more than one high or more than one low threshold is defined
+        // for a single datasource a warning messages is generated. Only
+        // the first threshold in such a scenario will be used for thresholding.
+        //
+        Map nodeMap = new HashMap();
+        Map baseIfMap = new HashMap();
+        try {
+            Iterator iter = ThresholdingConfigFactory.getInstance().getThresholds(groupName).iterator();
+            while (iter.hasNext()) {
+                Threshold thresh = (Threshold) iter.next();
+
+                // See if map entry already exists for this datasource
+                // If not, create a new one.
+                boolean newEntity = false;
+                ThresholdEntity thresholdEntity = null;
+                if (thresh.getDsType().equals("node")) {
+                    thresholdEntity = (ThresholdEntity) nodeMap.get(thresh.getDsName());
+                } else if (thresh.getDsType().equals("if")) {
+                    thresholdEntity = (ThresholdEntity) baseIfMap.get(thresh.getDsName());
+                }
+
+                // Found entry?
+                if (thresholdEntity == null) {
+                    // Nope, create a new one
+                    newEntity = true;
+                    thresholdEntity = new ThresholdEntity();
+                }
+
+                try {
+                    // Set high/low threshold
+                    if (thresh.getType().equals(ThresholdEntity.HIGH_THRESHOLD))
+                        thresholdEntity.setHighThreshold(thresh);
+                    else if (thresh.getType().equals(ThresholdEntity.LOW_THRESHOLD))
+                        thresholdEntity.setLowThreshold(thresh);
+                } catch (IllegalStateException e) {
+                    log.warn("Encountered duplicate " + thresh.getType() + " for datasource " + thresh.getDsName(), e);
+                }
+
+                // Add new entity to the map
+                if (newEntity) {
+                    if (thresh.getDsType().equals("node"))
+                        nodeMap.put(thresh.getDsName(), thresholdEntity);
+                    else if (thresh.getDsType().equals("if"))
+                        baseIfMap.put(thresh.getDsName(), thresholdEntity);
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException("Thresholding group '" + groupName + "' does not exist.");
+        }
+
+        // Add node and interface thresholding maps as attributes of the
+        // interface
+        // for retrieval by the check() method.
+        //
+        iface.setAttribute(NODE_THRESHOLD_MAP_KEY, nodeMap);
+        iface.setAttribute(BASE_IF_THRESHOLD_MAP_KEY, baseIfMap);
+
+        // Now create an empty map which will hold interface level
+        // ThresholdEntity objects for each of the node's interfaces.
+        // This map will be keyed by the interface's iflabel and will
+        // contain as a value a map of ThresholdEntity objects keyed
+        // by datasource name.
+        //
+        iface.setAttribute(ALL_IF_THRESHOLD_MAP_KEY, new HashMap());
+
+        // Get database connection in order to retrieve the nodeid and
+        // ifIndex from the database for this interface.
+        //
+        java.sql.Connection dbConn = null;
+        try {
+            dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+        } catch (SQLException sqlE) {
+            if (log.isEnabledFor(Priority.ERROR))
+                log.error("initialize: Failed getting connection to the database.", sqlE);
+            throw new UndeclaredThrowableException(sqlE);
+        }
+
+        int nodeId = -1;
+        int primaryIfIndex = -1;
+        char isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
+
+        // All database calls wrapped in try/finally block so we make
+        // certain that the connection will be closed when we are
+        // finished.
+        //
+        try {
+            // Prepare & execute the SQL statement to get the 'nodeid',
+            // 'ifIndex' and 'isSnmpPrimary' fields from the ipInterface table.
+            //
+            PreparedStatement stmt = null;
+            try {
+                stmt = dbConn.prepareStatement(SQL_GET_NODEID);
+                stmt.setString(1, ipAddr.getHostAddress()); // interface address
+                ResultSet rs = stmt.executeQuery();
+                if (rs.next()) {
+                    nodeId = rs.getInt(1);
+                    if (rs.wasNull())
+                        nodeId = -1;
+                    primaryIfIndex = rs.getInt(2);
+                    if (rs.wasNull())
+                        primaryIfIndex = -1;
+                    String str = rs.getString(3);
+                    if (str != null)
+                        isSnmpPrimary = str.charAt(0);
+                }
+                rs.close();
+            } catch (SQLException sqle) {
+                if (log.isDebugEnabled())
+                    log.debug("initialize: SQL exception!!", sqle);
+                throw new RuntimeException("SQL exception while attempting to retrieve node id for interface " + ipAddr.getHostAddress());
+            } finally {
+                try {
+                    stmt.close();
+                } catch (Exception e) {
+                    // Ignore
+                }
+            }
+
+            if (log.isDebugEnabled())
+                log.debug("initialize: db retrieval info: nodeid = " + nodeId + ", address = " + ipAddr.getHostAddress() + ", ifIndex = " + primaryIfIndex + ", isSnmpPrimary = " + isSnmpPrimary);
+
+            // RuntimeException is thrown if any of the following are true:
+            // - node id is invalid
+            // - primaryIfIndex is invalid
+            // - Interface is not the primary SNMP interface for the node
+            //
+            if (nodeId == -1)
+                throw new RuntimeException("Unable to retrieve node id for interface " + ipAddr.getHostAddress());
+
+            if (primaryIfIndex == -1)
+                throw new RuntimeException("Unable to retrieve ifIndex for interface " + ipAddr.getHostAddress());
+
+            if (isSnmpPrimary != DbIpInterfaceEntry.SNMP_PRIMARY)
+                throw new RuntimeException("Interface " + ipAddr.getHostAddress() + " is not the primary SNMP interface for nodeid " + nodeId);
+        } finally {
+            // Done with the database so close the connection
+            try {
+                dbConn.close();
+            } catch (SQLException sqle) {
+                if (log.isEnabledFor(Priority.INFO))
+                    log.info("initialize: SQLException while closing database connection", sqle);
+            }
+        }
+
+        // Add nodeId as an attribute of the interface for retrieval
+        // by the check() method.
+        //
+        iface.setAttribute(NODE_ID_KEY, new Integer(nodeId));
+
+        // Debug
+        //
+        if (log.isDebugEnabled()) {
+            log.debug("initialize: dumping node thresholds defined for " + ipAddr.getHostAddress() + "/" + groupName + ":");
+            Iterator iter = nodeMap.values().iterator();
+            while (iter.hasNext()) {
+                log.debug((ThresholdEntity) iter.next());
+            }
+
+            log.debug("initialize: dumping interface thresholds defined for " + ipAddr.getHostAddress() + "/" + groupName + ":");
+            iter = baseIfMap.values().iterator();
+            while (iter.hasNext()) {
+                log.debug((ThresholdEntity) iter.next());
+            }
+        }
+
+        if (log.isDebugEnabled())
+            log.debug("initialize: initialization completed for " + ipAddr.getHostAddress());
+        return;
+    }
 

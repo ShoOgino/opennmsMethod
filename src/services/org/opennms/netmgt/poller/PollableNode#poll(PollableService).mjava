@@ -1,155 +1,144 @@
-	/**  
-	 * Invokes a poll of the remote interface. 
-	 * 
-	 * If the interface changes status then node outage processing 
-	 * will be invoked and the status of the entire node will be
-	 * evaluated.
-	 */
-	public synchronized int poll(PollableService pSvc)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		if (log.isDebugEnabled())
-			log.debug("poll: polling nodeid " + m_nodeId + " status=" + Pollable.statusType[m_status]);
-					
-		m_statusChangedFlag = false;
-		
-		// Retrieve PollableInterface object from the NIF
-		PollableInterface pInterface = pSvc.getInterface();
-		
-		int ifStatus = Pollable.STATUS_UNKNOWN;
-		
-		// Get critical service
-		String criticalSvc = getPollerConfig().getCriticalService();
-		
-		// Polling logic if node is currently DOWN
-		//
-		if (m_status == Pollable.STATUS_DOWN)
-		{
-			// Poll the service via the PollableInterface object
-			ifStatus = pInterface.poll(pSvc);
-			
-			// If interface status changed to UP
-			if (ifStatus == Pollable.STATUS_UP && pInterface.statusChanged())
-			{
-				// Check status of node's other interfaces
-				//
-				if (m_interfaces.size() > 1)
-				{
-					// Iterate over list of interfaces
-					Iterator iter = m_interfaces.values().iterator();
-					while (iter.hasNext())
-					{
-						PollableInterface pIf = (PollableInterface)iter.next();
-						
-						// Skip interface that was already polled
-						if (pIf == pInterface)
-							continue;
-							
-						// If critical service defined and interface supports the 
-						// critical service (regardless of package) then poll the 
-						// interface passing it the critical service
-					        if (criticalSvc != null && pInterface.supportsService(criticalSvc))
-						{
-						        PollableService criticalNif = pInterface.getService(criticalSvc);
-							pIf.poll(criticalNif);
-						}
-						else
-						{
-							// No critical service defined or interface doesn't
-							// support it...still need to test the interface so 
-							// simply retrieve any (.i.e, the first) service supported
-							// by the interface and poll the interface passing it 
-							// that service
-							Iterator s = pInterface.getServices().iterator();
-							PollableService firstSvc = (PollableService)s.next();
-							pIf.poll(firstSvc);
-						}
-					}
-				}
-				
-				// Mark node as UP 
-				m_status = Pollable.STATUS_UP;
-				m_statusChangedFlag = true;				
-			}
-		}
-		// Polling logic if node is currently UP
-		//
-		else if (m_status == Pollable.STATUS_UP)
-		{
-			// Poll the service via the PollableInterface object
-			ifStatus = pInterface.poll(pSvc);
-			
-			// If interface status changed to DOWN
-			if (ifStatus == Pollable.STATUS_DOWN && pInterface.statusChanged())
-			{
-				boolean allInterfacesDown = true;
-				
-				log.debug("poll: requested interface is down; testing remaining interfaces");
-				// Check status of node's other interfaces to determine
-				// if ALL the interfaces on the node are now DOWN
-				//
-				if (m_interfaces.size() > 1)
-				{
-					// Iterate over list of interfaces
-					Iterator iter = m_interfaces.values().iterator();
-					while (iter.hasNext())
-					{
-						PollableInterface pIf = (PollableInterface)iter.next();
-						
-						// Skip the interface that was already polled
-						if (pIf == pInterface)
-							continue;
-							
-					        log.debug("poll: (node outage) testing interface " 
-                                                        + pIf.getAddress().getHostAddress());
-					
-						// If critical service defined and interface supports the 
-						// critical service (regardless of package) then poll the 
-						// interface passing it the critical service
-						int tmpStatus = Pollable.STATUS_UNKNOWN;
-					        if (criticalSvc != null && pInterface.supportsService(criticalSvc))
-						{
-						        PollableService criticalNif = pIf.getService(criticalSvc);
-							tmpStatus = pIf.poll(criticalNif);
-						}
-						else
-						{
-							// No critical service defined or interface doesn't
-							// support it...still need to test the interface so 
-							// simply retrieve any (.i.e, the first) service supported
-							// by the interface and poll the interface passing it 
-							// that service
-						        Iterator s = pIf.getServices().iterator();
-							PollableService firstSvc = (PollableService)s.next();
-							tmpStatus = pIf.poll(firstSvc);
-						}
-						
-						if (tmpStatus == Pollable.STATUS_UP)
-					        {
-							allInterfacesDown = false;
-						        log.debug("poll: (node outage) not a node outage - at least one interface is up");
-					        }
-					}
-				}
-				
-				// If all interfaces are now DOWN then mark node DOWN
-				if (allInterfacesDown)
-				{
-					m_status = Pollable.STATUS_DOWN;
-					m_statusChangedFlag = true;
-				}
-			}
-		}
-		
-		// Call generateEvents() which will inspect the current status
-		// of the N/I/S tree and generate any events necessary to keep
-		// RTC and OutageManager in sync.
-		generateEvents();
-		
-		if (log.isDebugEnabled())
-			log.debug("poll: poll of nodeid " + m_nodeId + " completed, status=" + Pollable.statusType[m_status]);
-			
-		return m_status;
-	}
+    /**
+     * Invokes a poll of the remote interface.
+     * 
+     * If the interface changes status then node outage processing will be
+     * invoked and the status of the entire node will be evaluated.
+     */
+    public synchronized int poll(PollableService pSvc) {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        if (log.isDebugEnabled())
+            log.debug("poll: polling nodeid " + m_nodeId + " status=" + Pollable.statusType[m_status]);
+
+        m_statusChangedFlag = false;
+
+        // Retrieve PollableInterface object from the NIF
+        PollableInterface pInterface = pSvc.getInterface();
+
+        int ifStatus = Pollable.STATUS_UNKNOWN;
+
+        // Get critical service
+        String criticalSvc = getPollerConfig().getCriticalService();
+
+        // Polling logic if node is currently DOWN
+        //
+        if (m_status == Pollable.STATUS_DOWN) {
+            // Poll the service via the PollableInterface object
+            ifStatus = pInterface.poll(pSvc);
+
+            // If interface status changed to UP
+            if (ifStatus == Pollable.STATUS_UP && pInterface.statusChanged()) {
+                // Check status of node's other interfaces
+                //
+                if (m_interfaces.size() > 1) {
+                    // Iterate over list of interfaces
+                    Iterator iter = m_interfaces.values().iterator();
+                    while (iter.hasNext()) {
+                        PollableInterface pIf = (PollableInterface) iter.next();
+
+                        // Skip interface that was already polled
+                        if (pIf == pInterface)
+                            continue;
+
+                        // If critical service defined and interface supports
+                        // the
+                        // critical service (regardless of package) then poll
+                        // the
+                        // interface passing it the critical service
+                        if (criticalSvc != null && pInterface.supportsService(criticalSvc)) {
+                            PollableService criticalNif = pInterface.getService(criticalSvc);
+                            pIf.poll(criticalNif);
+                        } else {
+                            // No critical service defined or interface doesn't
+                            // support it...still need to test the interface so
+                            // simply retrieve any (.i.e, the first) service
+                            // supported
+                            // by the interface and poll the interface passing
+                            // it
+                            // that service
+                            Iterator s = pInterface.getServices().iterator();
+                            PollableService firstSvc = (PollableService) s.next();
+                            pIf.poll(firstSvc);
+                        }
+                    }
+                }
+
+                // Mark node as UP
+                m_status = Pollable.STATUS_UP;
+                m_statusChangedFlag = true;
+            }
+        }
+        // Polling logic if node is currently UP
+        //
+        else if (m_status == Pollable.STATUS_UP) {
+            // Poll the service via the PollableInterface object
+            ifStatus = pInterface.poll(pSvc);
+
+            // If interface status changed to DOWN
+            if (ifStatus == Pollable.STATUS_DOWN && pInterface.statusChanged()) {
+                boolean allInterfacesDown = true;
+
+                log.debug("poll: requested interface is down; testing remaining interfaces");
+                // Check status of node's other interfaces to determine
+                // if ALL the interfaces on the node are now DOWN
+                //
+                if (m_interfaces.size() > 1) {
+                    // Iterate over list of interfaces
+                    Iterator iter = m_interfaces.values().iterator();
+                    while (iter.hasNext()) {
+                        PollableInterface pIf = (PollableInterface) iter.next();
+
+                        // Skip the interface that was already polled
+                        if (pIf == pInterface)
+                            continue;
+
+                        log.debug("poll: (node outage) testing interface " + pIf.getAddress().getHostAddress());
+
+                        // If critical service defined and interface supports
+                        // the
+                        // critical service (regardless of package) then poll
+                        // the
+                        // interface passing it the critical service
+                        int tmpStatus = Pollable.STATUS_UNKNOWN;
+                        if (criticalSvc != null && pInterface.supportsService(criticalSvc)) {
+                            PollableService criticalNif = pIf.getService(criticalSvc);
+                            tmpStatus = pIf.poll(criticalNif);
+                        } else {
+                            // No critical service defined or interface doesn't
+                            // support it...still need to test the interface so
+                            // simply retrieve any (.i.e, the first) service
+                            // supported
+                            // by the interface and poll the interface passing
+                            // it
+                            // that service
+                            Iterator s = pIf.getServices().iterator();
+                            PollableService firstSvc = (PollableService) s.next();
+                            tmpStatus = pIf.poll(firstSvc);
+                        }
+
+                        if (tmpStatus == Pollable.STATUS_UP) {
+                            allInterfacesDown = false;
+                            log.debug("poll: (node outage) not a node outage - at least one interface is up");
+                        }
+                    }
+                }
+
+                // If all interfaces are now DOWN then mark node DOWN
+                if (allInterfacesDown) {
+                    m_status = Pollable.STATUS_DOWN;
+                    m_statusChangedFlag = true;
+                }
+            }
+        }
+
+        // Call generateEvents() which will inspect the current status
+        // of the N/I/S tree and generate any events necessary to keep
+        // RTC and OutageManager in sync.
+        generateEvents();
+
+        if (log.isDebugEnabled())
+            log.debug("poll: poll of nodeid " + m_nodeId + " completed, status=" + Pollable.statusType[m_status]);
+
+        return m_status;
+    }
 

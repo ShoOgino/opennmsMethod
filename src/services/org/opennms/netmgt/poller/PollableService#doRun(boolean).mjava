@@ -1,137 +1,110 @@
-	/**
-	 * This used to be the implementation for the run() method.  When
-	 * we created run(boolean), however, we needed to move the
-	 * implementation down a level lower so that we could overload the
-	 * run() method.
-	 *
-	 * @param allowedToRescheduleMyself set this to true if you want the
-	 *  pollable service to reschedule itself when done processing.
-	 *
-	 * @throws LockUnavailableException If it was unable to obtain a node
-	 *                                  lock
-	 * @throws ThreadInterruped If the thread was interrtuped while
-	 *                          waiting for a node lock.
-	 *
-	 */
-	private void doRun(boolean allowedToRescheduleMyself)
-		throws LockUnavailableException, InterruptedException
-	{
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * This used to be the implementation for the run() method. When we created
+     * run(boolean), however, we needed to move the implementation down a level
+     * lower so that we could overload the run() method.
+     * 
+     * @param allowedToRescheduleMyself
+     *            set this to true if you want the pollable service to
+     *            reschedule itself when done processing.
+     * 
+     * @throws LockUnavailableException
+     *             If it was unable to obtain a node lock
+     * @throws ThreadInterruped
+     *             If the thread was interrtuped while waiting for a node lock.
+     * 
+     */
+    private void doRun(boolean allowedToRescheduleMyself) throws LockUnavailableException, InterruptedException {
+        Category log = ThreadCategory.getInstance(getClass());
 
-		// Is the service marked for deletion?  If so simply return.
-		//
-		if (this.isDeleted())
-		{
-			if (log.isDebugEnabled())
-			{
-				log.debug("PollableService doRun: Skipping service marked as deleted on "
-						+ m_pInterface.getAddress().getHostAddress()
-						+ ", service = " + m_service.getName() + ", status = " + m_status);
-			}
-			return;
-		}
-		
-		// NodeId
-		int nodeId = m_pInterface.getNode().getNodeId();
-		
-		// Update last scheduled poll time if allowedToRescheduleMyself
-		// flag is true
-		if (allowedToRescheduleMyself)
-		    m_lastScheduledPoll = System.currentTimeMillis();
-		
-		// Check scheduled outages to see if any apply indicating
-		// that the poll should be skipped
-		//
-		if (scheduledOutage())
-		{
-			// Outage applied...reschedule the service and return
-			if (allowedToRescheduleMyself)
-				this.reschedule(true);
+        // Is the service marked for deletion? If so simply return.
+        //
+        if (this.isDeleted()) {
+            if (log.isDebugEnabled()) {
+                log.debug("PollableService doRun: Skipping service marked as deleted on " + m_pInterface.getAddress().getHostAddress() + ", service = " + m_service.getName() + ", status = " + m_status);
+            }
+            return;
+        }
 
-			return;
-		}
-		
-		// Is node outage processing enabled?
-		if (getPollerConfig().nodeOutageProcessingEnabled())
-		{
-			// Lookup PollableNode object using nodeId as index
-			//
+        // NodeId
+        int nodeId = m_pInterface.getNode().getNodeId();
+
+        // Update last scheduled poll time if allowedToRescheduleMyself
+        // flag is true
+        if (allowedToRescheduleMyself)
+            m_lastScheduledPoll = System.currentTimeMillis();
+
+        // Check scheduled outages to see if any apply indicating
+        // that the poll should be skipped
+        //
+        if (scheduledOutage()) {
+            // Outage applied...reschedule the service and return
+            if (allowedToRescheduleMyself)
+                this.reschedule(true);
+
+            return;
+        }
+
+        // Is node outage processing enabled?
+        if (getPollerConfig().nodeOutageProcessingEnabled()) {
+            // Lookup PollableNode object using nodeId as index
+            //
             // TODO: We alrady have the pollable node via the pollable interface
-			PollableNode pNode = getPoller().getNode(nodeId);
-			
-			/*
-			 * Acquire lock to 'PollableNode'
-			 */
-			boolean ownLock = false;
-			try
-			{
-				// Attempt to obtain node lock...wait no longer than 500ms
-				// We don't want to tie up the thread for long periods of time
-				// waiting for the lock on the PollableNode to be released.
-				if (log.isDebugEnabled())
-					log.debug("run: ------------- requesting node lock for nodeid: " + nodeId + " -----------");
-		
-				if (!(ownLock = pNode.getNodeLock(500)))
-					throw new LockUnavailableException("failed to obtain lock on nodeId " + nodeId);
-			}
-			catch (InterruptedException iE)
-			{
-				// failed to acquire lock
-				throw new InterruptedException("failed to obtain lock on nodeId " + nodeId + ": " + iE.getMessage());
-			}
-			// Now we have a lock
-			
-			if (ownLock) // This is probably redundant, but better to be sure.
-			{
-				try 
-				{
-					// Make sure the node hasn't been deleted.
-					if (!pNode.isDeleted())
-					{
-						if (log.isDebugEnabled())
-							log.debug("run: calling poll() for " +
-								nodeId + "/" +
-								m_pInterface.getAddress().getHostAddress() + "/" +
-								m_service.getName());
+            PollableNode pNode = getPoller().getNode(nodeId);
 
-						pNode.poll(this);
+            /*
+             * Acquire lock to 'PollableNode'
+             */
+            boolean ownLock = false;
+            try {
+                // Attempt to obtain node lock...wait no longer than 500ms
+                // We don't want to tie up the thread for long periods of time
+                // waiting for the lock on the PollableNode to be released.
+                if (log.isDebugEnabled())
+                    log.debug("run: ------------- requesting node lock for nodeid: " + nodeId + " -----------");
 
-						if (log.isDebugEnabled())
-							log.debug("run: call to poll() finished for " +
-								nodeId + "/" +
-								m_pInterface.getAddress().getHostAddress() + "/" +
-								m_service.getName());
-					}
-				}
-				finally
-				{
-					if (log.isDebugEnabled())
-						log.debug("run: ----------- releasing node lock for nodeid: " + nodeId + " ----------");
-					try
-					{
-						pNode.releaseNodeLock();
-					}
-					catch (InterruptedException iE)
-					{
-						log.error("run: thread interrupted...failed to release lock on nodeId " + nodeId);
-					}
-				}
-			}
-		}
-		else
-		{
-			// Node outage processing disabled so simply poll the service
-			if (log.isDebugEnabled())
-				log.debug("run: node outage processing disabled, polling: " + 
-						m_pInterface.getAddress().getHostAddress() + "/" + 
-						m_service.getName());
-			this.poll();
-		}
-		
-		// reschedule the service for polling
-		if (allowedToRescheduleMyself)
-			this.reschedule(false);
-			
-		return;
-	}	
+                if (!(ownLock = pNode.getNodeLock(500)))
+                    throw new LockUnavailableException("failed to obtain lock on nodeId " + nodeId);
+            } catch (InterruptedException iE) {
+                // failed to acquire lock
+                throw new InterruptedException("failed to obtain lock on nodeId " + nodeId + ": " + iE.getMessage());
+            }
+            // Now we have a lock
+
+            if (ownLock) // This is probably redundant, but better to be
+                            // sure.
+            {
+                try {
+                    // Make sure the node hasn't been deleted.
+                    if (!pNode.isDeleted()) {
+                        if (log.isDebugEnabled())
+                            log.debug("run: calling poll() for " + nodeId + "/" + m_pInterface.getAddress().getHostAddress() + "/" + m_service.getName());
+
+                        pNode.poll(this);
+
+                        if (log.isDebugEnabled())
+                            log.debug("run: call to poll() finished for " + nodeId + "/" + m_pInterface.getAddress().getHostAddress() + "/" + m_service.getName());
+                    }
+                } finally {
+                    if (log.isDebugEnabled())
+                        log.debug("run: ----------- releasing node lock for nodeid: " + nodeId + " ----------");
+                    try {
+                        pNode.releaseNodeLock();
+                    } catch (InterruptedException iE) {
+                        log.error("run: thread interrupted...failed to release lock on nodeId " + nodeId);
+                    }
+                }
+            }
+        } else {
+            // Node outage processing disabled so simply poll the service
+            if (log.isDebugEnabled())
+                log.debug("run: node outage processing disabled, polling: " + m_pInterface.getAddress().getHostAddress() + "/" + m_service.getName());
+            this.poll();
+        }
+
+        // reschedule the service for polling
+        if (allowedToRescheduleMyself)
+            this.reschedule(false);
+
+        return;
+    }
 

@@ -1,182 +1,158 @@
-	/**
-	 * The logic execution context to accept and process incomming
-	 * connection requests. When a new connection is received a new
-	 * thread of control is crated to process the connection. This 
-	 * method encapsulates that control logic so that it can be 
-	 * executed in it's own java thread.
-	 */
-	public void run()
-	{
-		// get the thread context for
-		// the ability to stop the process
-		//
-		m_context = Thread.currentThread();
-		synchronized(m_context)
-		{
-			m_context.notifyAll();
-		}
+    /**
+     * The logic execution context to accept and process incomming connection
+     * requests. When a new connection is received a new thread of control is
+     * crated to process the connection. This method encapsulates that control
+     * logic so that it can be executed in it's own java thread.
+     */
+    public void run() {
+        // get the thread context for
+        // the ability to stop the process
+        //
+        m_context = Thread.currentThread();
+        synchronized (m_context) {
+            m_context.notifyAll();
+        }
 
-		// get the log information
-		//
-		ThreadCategory.setPrefix(m_logPrefix);
-		Category log = ThreadCategory.getInstance(this.getClass());
-		boolean isTracing = log.isDebugEnabled();
+        // get the log information
+        //
+        ThreadCategory.setPrefix(m_logPrefix);
+        Category log = ThreadCategory.getInstance(this.getClass());
+        boolean isTracing = log.isDebugEnabled();
 
-		// check to see if the thread has already been stopped.
-		//
-		if(m_stop)
-		{
-			if(isTracing)
-				log.debug( "Stop flag set on thread startup");
+        // check to see if the thread has already been stopped.
+        //
+        if (m_stop) {
+            if (isTracing)
+                log.debug("Stop flag set on thread startup");
 
-			try
-			{
-				if(m_tcpSock != null)
-					m_tcpSock.close();
+            try {
+                if (m_tcpSock != null)
+                    m_tcpSock.close();
 
-				if(isTracing)
-					log.debug( "The socket has been closed");
-			}
-			catch(Exception e)
-			{
-				if(isTracing)
-					log.debug( "An exception occured closing the socket", e);
-			}
+                if (isTracing)
+                    log.debug("The socket has been closed");
+            } catch (Exception e) {
+                if (isTracing)
+                    log.debug("An exception occured closing the socket", e);
+            }
 
-			if(isTracing)
-				log.debug( "Thread exiting");
+            if (isTracing)
+                log.debug("Thread exiting");
 
-			return;
-		}
+            return;
+        }
 
-		// get the logger
-		//
-		if(isTracing)
-			log.debug( "Server connection processor started on port " + m_tcpPort);
+        // get the logger
+        //
+        if (isTracing)
+            log.debug("Server connection processor started on port " + m_tcpPort);
 
-		//
-		// Set the initial timeout on the socket. This allows
-		// the thread to wakeup every 1/2 second and check the
-		// shutdown status.
-		//
-		try
-		{
-			m_tcpSock.setSoTimeout(500);
-		}
-		catch(SocketException e)
-		{
-			if(!m_stop)
-				log.warn("An I/O exception occured setting the socket timeout", e);
+        //
+        // Set the initial timeout on the socket. This allows
+        // the thread to wakeup every 1/2 second and check the
+        // shutdown status.
+        //
+        try {
+            m_tcpSock.setSoTimeout(500);
+        } catch (SocketException e) {
+            if (!m_stop)
+                log.warn("An I/O exception occured setting the socket timeout", e);
 
-			if(isTracing)
-				log.debug( "Thread exiting due to socket error");
+            if (isTracing)
+                log.debug("Thread exiting due to socket error");
 
-			return;
-		}
-		// used to avoid seeing the trace message repeatedly
-		//
-		boolean ioInterrupted = false; 
+            return;
+        }
+        // used to avoid seeing the trace message repeatedly
+        //
+        boolean ioInterrupted = false;
 
-		//
-		// Check the status of the fiber and respond
-		// correctly. When the fiber enters a STOPPED or
-		// STOP PENDING state then shutdown occurs by exiting
-		// the while loop
-		//
-		while(m_parent.getStatus() != Fiber.STOPPED && m_parent.getStatus() != Fiber.STOP_PENDING && !m_stop)
-		{
-			try
-			{
-				if(isTracing && !ioInterrupted)
-					log.debug( "Waiting for new connection");
+        //
+        // Check the status of the fiber and respond
+        // correctly. When the fiber enters a STOPPED or
+        // STOP PENDING state then shutdown occurs by exiting
+        // the while loop
+        //
+        while (m_parent.getStatus() != Fiber.STOPPED && m_parent.getStatus() != Fiber.STOP_PENDING && !m_stop) {
+            try {
+                if (isTracing && !ioInterrupted)
+                    log.debug("Waiting for new connection");
 
-				// Get the newbie socket connection from the client.
-				// After accepting the connection start up a thread
-				// to process the request
-				//
-				Socket newbie = m_tcpSock.accept();
-				ioInterrupted = false; // reset the flag
+                // Get the newbie socket connection from the client.
+                // After accepting the connection start up a thread
+                // to process the request
+                //
+                Socket newbie = m_tcpSock.accept();
+                ioInterrupted = false; // reset the flag
 
-				// build a connection string for 
-				// the thread identifier
-				//
-				StringBuffer connection = new StringBuffer(newbie.getInetAddress().getHostAddress());
-				connection.append(":").append(newbie.getPort());
+                // build a connection string for
+                // the thread identifier
+                //
+                StringBuffer connection = new StringBuffer(newbie.getInetAddress().getHostAddress());
+                connection.append(":").append(newbie.getPort());
 
-				if(isTracing)
-					log.debug( "New connection accepted from " + connection);
+                if (isTracing)
+                    log.debug("New connection accepted from " + connection);
 
-				// start a new handler
-				//
-				TcpStreamHandler handler = new TcpStreamHandler(m_parent, newbie, m_handlers, m_recsPerConn);
-				Thread processor = new Thread(handler, m_parent.getName() + "[" + connection + "]");
-				synchronized(processor)
-				{
-					processor.start();
-					try
-					{
-						processor.wait();
-					}
-					catch(InterruptedException e)
-					{
-						log.warn("The thread was interrupted",e);
-					}
-				}
+                // start a new handler
+                //
+                TcpStreamHandler handler = new TcpStreamHandler(m_parent, newbie, m_handlers, m_recsPerConn);
+                Thread processor = new Thread(handler, m_parent.getName() + "[" + connection + "]");
+                synchronized (processor) {
+                    processor.start();
+                    try {
+                        processor.wait();
+                    } catch (InterruptedException e) {
+                        log.warn("The thread was interrupted", e);
+                    }
+                }
 
-				if(isTracing)
-					log.debug( "A new stream handler thread has been started");
+                if (isTracing)
+                    log.debug("A new stream handler thread has been started");
 
-				// add the handler to the list
-				//
-				m_receivers.add(handler);
-			}
-			catch(InterruptedIOException e)
-			{
-				// do nothing on interrupted I/O
-				// DON'T Continue, the end of the loop
-				// checks and removes terminated threads
-				//
-				ioInterrupted = true;
-			}
-			catch(IOException e)
-			{
-				log.error("Server Socket I/O Error", e);
-				break;
-			}
+                // add the handler to the list
+                //
+                m_receivers.add(handler);
+            } catch (InterruptedIOException e) {
+                // do nothing on interrupted I/O
+                // DON'T Continue, the end of the loop
+                // checks and removes terminated threads
+                //
+                ioInterrupted = true;
+            } catch (IOException e) {
+                log.error("Server Socket I/O Error", e);
+                break;
+            }
 
-			// go through the threads in the list of
-			// receivers and find the dead ones. When
-			// their no longer alive just remove them
-			// from the list.
-			//
-			Iterator i = m_receivers.iterator();
-			while(i.hasNext())
-			{
-				TcpStreamHandler t = (TcpStreamHandler)i.next();
-				if(!t.isAlive())
-					i.remove();
-			}
-		}
+            // go through the threads in the list of
+            // receivers and find the dead ones. When
+            // their no longer alive just remove them
+            // from the list.
+            //
+            Iterator i = m_receivers.iterator();
+            while (i.hasNext()) {
+                TcpStreamHandler t = (TcpStreamHandler) i.next();
+                if (!t.isAlive())
+                    i.remove();
+            }
+        }
 
-		// Either a fatal I/O error has occured or the
-		// service has been stopped.
-		//
-		try
-		{
-			if(isTracing)
-				log.debug( "closing the server socket connection");
+        // Either a fatal I/O error has occured or the
+        // service has been stopped.
+        //
+        try {
+            if (isTracing)
+                log.debug("closing the server socket connection");
 
-			m_tcpSock.close();
-		}
-		catch(Throwable t)
-		{
-			log.error("An I/O Error Occcured Closing the Server Socket", t);
-		}
+            m_tcpSock.close();
+        } catch (Throwable t) {
+            log.error("An I/O Error Occcured Closing the Server Socket", t);
+        }
 
-		// Log the termination of this runnable
-		//
-		if(isTracing)
-			log.debug( "TCP Server Shutdown");
+        // Log the termination of this runnable
+        //
+        if (isTracing)
+            log.debug("TCP Server Shutdown");
 
-	} // end run();
+    } // end run();
 

@@ -1,191 +1,158 @@
-	/**
-	 * The main worker of the fiber. This method is executed by the 
-	 * encapsulated thread to read events from the execution queue
-	 * and to execute any configured scripts, allowing these scripts 
-	 * to react to the received event. If the thread is interrupted
-	 * or the status changes to <code>STOP_PENDING</code> then the method
-	 * will return as quickly as possible.
-	 *
-	 */
-	public void run()
-	{
-		Category log = ThreadCategory.getInstance(Executor.class);
+    /**
+     * The main worker of the fiber. This method is executed by the encapsulated
+     * thread to read events from the execution queue and to execute any
+     * configured scripts, allowing these scripts to react to the received
+     * event. If the thread is interrupted or the status changes to
+     * <code>STOP_PENDING</code> then the method will return as quickly as
+     * possible.
+     * 
+     */
+    public void run() {
+        Category log = ThreadCategory.getInstance(Executor.class);
 
-		synchronized(this)
-		{
-			m_status = RUNNING;
-		}
+        synchronized (this) {
+            m_status = RUNNING;
+        }
 
-		for(;;)
-		{
-			synchronized(this)
-			{
-				// if stopped or stop pending then break out
+        for (;;) {
+            synchronized (this) {
+                // if stopped or stop pending then break out
 
-				if(m_status == STOP_PENDING || m_status == STOPPED)
-				{
-					break;
-				}
+                if (m_status == STOP_PENDING || m_status == STOPPED) {
+                    break;
+                }
 
-				// if paused or pause pending then block
+                // if paused or pause pending then block
 
-				while(m_status == PAUSE_PENDING ||
-								m_status == PAUSED)
-				{
-					m_status = PAUSED;
-					try
-					{
-						wait();
-					}
-					catch(InterruptedException ex)
-					{
-						// exit
-						break;
-					}
-				}
+                while (m_status == PAUSE_PENDING || m_status == PAUSED) {
+                    m_status = PAUSED;
+                    try {
+                        wait();
+                    } catch (InterruptedException ex) {
+                        // exit
+                        break;
+                    }
+                }
 
-				// if resume pending then change to running
+                // if resume pending then change to running
 
-				if(m_status == RESUME_PENDING)
-				{
-					m_status = RUNNING;
-				}
-			}
+                if (m_status == RESUME_PENDING) {
+                    m_status = RUNNING;
+                }
+            }
 
-			// Extract the next event
+            // Extract the next event
 
-			Event event = null;
-			try
-			{
-				event = (Event) m_execQ.remove(1000);
-				if(event == null)   // status check time
-				{
-					continue; // goto top of loop
-				}
-			}
-			catch(InterruptedException ex)
-			{
-				break;
-			}
-			catch(FifoQueueException ex)
-			{
-				log.warn("The input event queue has errors, exiting...", ex);
-				break;
-			}
+            Event event = null;
+            try {
+                event = (Event) m_execQ.remove(1000);
+                if (event == null) // status check time
+                {
+                    continue; // goto top of loop
+                }
+            } catch (InterruptedException ex) {
+                break;
+            } catch (FifoQueueException ex) {
+                log.warn("The input event queue has errors, exiting...", ex);
+                break;
+            }
 
-			// check for reload event
-			if ("uei.opennms.org/internal/reloadScriptConfig".equals(event.getUei())) {
-				try {
-					ScriptdConfigFactory.reload();
-					m_config = ScriptdConfigFactory.getInstance();
-					loadConfig();
-				
-					ReloadScript[] reloadScripts = m_config.getReloadScripts();
+            // check for reload event
+            if ("uei.opennms.org/internal/reloadScriptConfig".equals(event.getUei())) {
+                try {
+                    ScriptdConfigFactory.reload();
+                    m_config = ScriptdConfigFactory.getInstance();
+                    loadConfig();
 
-					for (int i = 0; i < reloadScripts.length; i++)
-					{
-						try
-						{
-							m_mgr.exec(reloadScripts[i].getLanguage(), "", 0, 0, reloadScripts[i].getContent());
-						}
+                    ReloadScript[] reloadScripts = m_config.getReloadScripts();
 
-						catch (BSFException ex)
-						{
-							log.error("Reload script[" + i + "] failed.", ex);
-						}
-					}
+                    for (int i = 0; i < reloadScripts.length; i++) {
+                        try {
+                            m_mgr.exec(reloadScripts[i].getLanguage(), "", 0, 0, reloadScripts[i].getContent());
+                        }
 
-					log.debug("Script configuration reloaded");
-				}
-				
-				catch (Exception ex) {
-					log.error("Unable to reload ScriptD configuration: ", ex);
-				}
-			}
-			
-			Script[] attachedScripts = event.getScript();
+                        catch (BSFException ex) {
+                            log.error("Reload script[" + i + "] failed.", ex);
+                        }
+                    }
 
-			ArrayList mapScripts = null;
+                    log.debug("Script configuration reloaded");
+                }
 
-			try
-			{
-				mapScripts = (ArrayList)m_eventScriptMap.get(event.getUei());
-			}
+                catch (Exception ex) {
+                    log.error("Unable to reload ScriptD configuration: ", ex);
+                }
+            }
 
-			catch (Exception ex)
-			{}
+            Script[] attachedScripts = event.getScript();
 
-			if (attachedScripts.length > 0 || mapScripts != null || m_eventScripts.size() > 0)
-			{
-				log.debug("Executing scripts for: " + event.getUei());
-				
-				m_mgr.registerBean("event", event);
+            ArrayList mapScripts = null;
 
-				// execute the scripts attached to the event
+            try {
+                mapScripts = (ArrayList) m_eventScriptMap.get(event.getUei());
+            }
 
-				if (attachedScripts.length > 0)
-				{
-					for (int i = 0; i < attachedScripts.length; i++)
-					{
-						try
-						{
-							Script script = attachedScripts[i];
-							m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
-						}
+            catch (Exception ex) {
+            }
 
-						catch (BSFException ex)
-						{
-							log.error("Attached script [" + i + "] execution failed", ex);
-						}
-					}
-				}
+            if (attachedScripts.length > 0 || mapScripts != null || m_eventScripts.size() > 0) {
+                log.debug("Executing scripts for: " + event.getUei());
 
-				// execute the scripts mapped to the UEI
+                m_mgr.registerBean("event", event);
 
-				if (mapScripts != null)
-				{
-					for (int i = 0; i < mapScripts.size(); i++)
-					{
-						try
-						{
-							EventScript script = (EventScript)mapScripts.get(i);
-							m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
-						}
+                // execute the scripts attached to the event
 
-						catch (BSFException ex)
-						{
-							log.error("UEI-specific event handler script execution failed: " + event.getUei(), ex);
-						}
-					}
-				}
+                if (attachedScripts.length > 0) {
+                    for (int i = 0; i < attachedScripts.length; i++) {
+                        try {
+                            Script script = attachedScripts[i];
+                            m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                        }
 
-				// execute the scripts that are not mapped to any UEI
+                        catch (BSFException ex) {
+                            log.error("Attached script [" + i + "] execution failed", ex);
+                        }
+                    }
+                }
 
-				for (int i = 0; i < m_eventScripts.size(); i++)
-				{
-					try
-					{
-						EventScript script = (EventScript)m_eventScripts.get(i);
-						m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
-					}
+                // execute the scripts mapped to the UEI
 
-					catch (BSFException ex)
-					{
-						log.error("Non-UEI-specific event handler script [" + i + "] execution failed", ex);
-					}
-				}
+                if (mapScripts != null) {
+                    for (int i = 0; i < mapScripts.size(); i++) {
+                        try {
+                            EventScript script = (EventScript) mapScripts.get(i);
+                            m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                        }
 
-				m_mgr.unregisterBean("event");
-				
-				log.debug("Finished executing scripts for: " + event.getUei());
+                        catch (BSFException ex) {
+                            log.error("UEI-specific event handler script execution failed: " + event.getUei(), ex);
+                        }
+                    }
+                }
 
-			}
-		} // end infinite loop
+                // execute the scripts that are not mapped to any UEI
 
-		synchronized(this)
-		{
-			m_status = STOPPED;
-		}
+                for (int i = 0; i < m_eventScripts.size(); i++) {
+                    try {
+                        EventScript script = (EventScript) m_eventScripts.get(i);
+                        m_mgr.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                    }
 
-	} // end run
+                    catch (BSFException ex) {
+                        log.error("Non-UEI-specific event handler script [" + i + "] execution failed", ex);
+                    }
+                }
+
+                m_mgr.unregisterBean("event");
+
+                log.debug("Finished executing scripts for: " + event.getUei());
+
+            }
+        } // end infinite loop
+
+        synchronized (this) {
+            m_status = STOPPED;
+        }
+
+    } // end run
 

@@ -1,134 +1,120 @@
-	/**
-	 * This method constructs the next SnmpPduPacket (pdu) for sending
-	 * to the remote node.
-	 * 
-	 * For SNMPv2, GETBULK commands are built. Each constructed PDU contains
-	 * a single varbind representing the next object to be retrieved.  If
-	 * that object pertains to all the remote node's interfaces (such as 
-	 * ifOctetsIn or ifOctetsOut) then maxRepetitions will be set to the
-	 * number of interfaces in the ifTable and the object will be collected
-	 * for every interface with a single GETBULK pdu. If the oid is a 
-	 * singular instance which doesn't pertain to all interfaces then 
-	 * a GETBULK pdu is built with nonRepeaters set to 1 and maxRepetitions
-	 * set to 0 and only that individual value is collected.  Therefore,
-	 * for SNMPv2 based collection the number of PDUs generated will
-	 * be equal to (numInterfaces * numInterfaceBasedObjects) + 
-	 * (numSingularObjects).
-	 *
-	 * @param ifAddress 	Interface address of the remote agent
-	 * 
-	 * @return An SnmpPduPacket appropriate for the SNMP version supported.
-	 *
-	 * @see org.opennms.protocols.snmp.SnmpNull		SnmpNull
-	 * @see org.opennms.protocols.snmp.SnmpPduPacket 	SnmpPduPacket
-	 */
-	private SnmpPduPacket getNextSnmpV2Pdu(String ifAddress)
-	{
-		// Log4j category
-		//
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		Integer index = null;
-		SnmpPduPacket pdu = new SnmpPduBulk();
-			
-			// Set Max repetitions
-			//
-			((SnmpPduBulk)pdu).setMaxRepititions(m_numInterfaces-m_responses); 
-			if (log.isDebugEnabled())
-			log.debug("getNextSnmpV2Pdu: responseCount: " + m_responses + " maxReps: " + (m_numInterfaces-m_responses));
-			
-			if (m_responses == 0)
-				index = new Integer(0);
-			else
-				index = new Integer(m_indexArray[m_responses-1]);
-		
-		if (log.isDebugEnabled())
-			log.debug("getNextSnmpV2Pdu: starting_ifindex: " + index);
-		
-		pdu.setRequestId(SnmpPduPacket.nextSequence());
-		
-		// Use next oid from object list to create SnmpVarBind object
-		// and add it to the pdu.
-		//
-		MibObject mibObject = (MibObject)m_objList_v2.get(0);
-			SnmpObjectId oid = null;
-			String instance = mibObject.getInstance();
-			
-			// instance must be one of the following:
-			//      1) null.  In this case the object's oid value is used as-is.
-			// 	2) a special keyword which indicates a specific
-			// 	value will be retrieved and appended to the object's oid.
-			//	Currently the only supported keywords are:
-			//		"ifIndex" - current interface's ifIndex is retrieved from the database
-			//		"ifAddress" - current interface's IP address
-			//	3) an integer value indicating the instance of the MIB object to be
-			// 	retrieved.  This value will be appended to the object's oid.
-			//
-			if (instance == null)
-			{
-				oid = new SnmpObjectId(mibObject.getOid());
-			}
-			else if (instance.equals(MibObject.INSTANCE_IFINDEX))
-			{
-				// Verify that we have a valid ifIndex value
-				if (index.intValue() == -1)
-				{
-					if(log.isEnabledFor(Priority.WARN))
-					{
-					log.warn("getNextSnmpV2Pdu: valid 'ifIndex' value unavailable for interface " + ifAddress + " and MIB object: " + mibObject.getOid());
-					log.warn("getNextSnmpV2Pdu: substituting instance value 0.");
-					}
-					oid = new SnmpObjectId(mibObject.getOid() + ".0");
-				}
-				else
-				{
-					oid = new SnmpObjectId(mibObject.getOid() + "." + index.toString());
-				}
-			}
-			else if (instance.equals(MibObject.INSTANCE_IFADDRESS))
-			{
-				// Append current interface's ip Address
-				oid = new SnmpObjectId(mibObject.getOid() + "." + ifAddress);
-			}
-			else 
-			{
-				// Attempt to convert the instance string to an integer value
-				// If the instance string cannot be converted to an integer just
-				// use an instance string of "0".
-				int temp = -1;
-				try 
-				{
-					temp = Integer.parseInt(instance);
-				}
-				catch (NumberFormatException nfe)
-				{
-					instance = "0";  
-				}
-				
-				// Create new SnmpObjectId using object's identifer appended with the instance id
-				//
-					// For SNMPV2 we are using GetBulk requests which in effect
-					// performs a GetNext as opposed to a Get.  Therefore we
-					// append (instance - 1) to the object id.  If instance
-					// is '0' we leave off the instance id entirely.
-					
-					if (instance.equals("0"))
-						oid = new SnmpObjectId(mibObject.getOid());
-					else
-					{
-						Integer temp_instance = new Integer(temp-1);
-						oid = new SnmpObjectId(mibObject.getOid() + "." + temp_instance.toString());
-					}
-					((SnmpPduBulk)pdu).setNonRepeaters(1);
-					((SnmpPduBulk)pdu).setMaxRepititions(0);
-				}
-			
-			// Add the variable binding to the pdu
-			if (log.isDebugEnabled()) 
-			log.debug("getNextSnmpV2Pdu: adding oid to pdu: " + oid.toString());
+    /**
+     * This method constructs the next SnmpPduPacket (pdu) for sending to the
+     * remote node.
+     * 
+     * For SNMPv2, GETBULK commands are built. Each constructed PDU contains a
+     * single varbind representing the next object to be retrieved. If that
+     * object pertains to all the remote node's interfaces (such as ifOctetsIn
+     * or ifOctetsOut) then maxRepetitions will be set to the number of
+     * interfaces in the ifTable and the object will be collected for every
+     * interface with a single GETBULK pdu. If the oid is a singular instance
+     * which doesn't pertain to all interfaces then a GETBULK pdu is built with
+     * nonRepeaters set to 1 and maxRepetitions set to 0 and only that
+     * individual value is collected. Therefore, for SNMPv2 based collection the
+     * number of PDUs generated will be equal to (numInterfaces *
+     * numInterfaceBasedObjects) + (numSingularObjects).
+     * 
+     * @param ifAddress
+     *            Interface address of the remote agent
+     * 
+     * @return An SnmpPduPacket appropriate for the SNMP version supported.
+     * 
+     * @see org.opennms.protocols.snmp.SnmpNull SnmpNull
+     * @see org.opennms.protocols.snmp.SnmpPduPacket SnmpPduPacket
+     */
+    private SnmpPduPacket getNextSnmpV2Pdu(String ifAddress) {
+        // Log4j category
+        //
+        Category log = ThreadCategory.getInstance(getClass());
 
-			pdu.addVarBind(new SnmpVarBind(oid));
+        Integer index = null;
+        SnmpPduPacket pdu = new SnmpPduBulk();
 
-		return pdu;
-	}
+        // Set Max repetitions
+        //
+        ((SnmpPduBulk) pdu).setMaxRepititions(m_numInterfaces - m_responses);
+        if (log.isDebugEnabled())
+            log.debug("getNextSnmpV2Pdu: responseCount: " + m_responses + " maxReps: " + (m_numInterfaces - m_responses));
+
+        if (m_responses == 0)
+            index = new Integer(0);
+        else
+            index = new Integer(m_indexArray[m_responses - 1]);
+
+        if (log.isDebugEnabled())
+            log.debug("getNextSnmpV2Pdu: starting_ifindex: " + index);
+
+        pdu.setRequestId(SnmpPduPacket.nextSequence());
+
+        // Use next oid from object list to create SnmpVarBind object
+        // and add it to the pdu.
+        //
+        MibObject mibObject = (MibObject) m_objList_v2.get(0);
+        SnmpObjectId oid = null;
+        String instance = mibObject.getInstance();
+
+        // instance must be one of the following:
+        // 1) null. In this case the object's oid value is used as-is.
+        // 2) a special keyword which indicates a specific
+        // value will be retrieved and appended to the object's oid.
+        // Currently the only supported keywords are:
+        // "ifIndex" - current interface's ifIndex is retrieved from the
+        // database
+        // "ifAddress" - current interface's IP address
+        // 3) an integer value indicating the instance of the MIB object to be
+        // retrieved. This value will be appended to the object's oid.
+        //
+        if (instance == null) {
+            oid = new SnmpObjectId(mibObject.getOid());
+        } else if (instance.equals(MibObject.INSTANCE_IFINDEX)) {
+            // Verify that we have a valid ifIndex value
+            if (index.intValue() == -1) {
+                if (log.isEnabledFor(Priority.WARN)) {
+                    log.warn("getNextSnmpV2Pdu: valid 'ifIndex' value unavailable for interface " + ifAddress + " and MIB object: " + mibObject.getOid());
+                    log.warn("getNextSnmpV2Pdu: substituting instance value 0.");
+                }
+                oid = new SnmpObjectId(mibObject.getOid() + ".0");
+            } else {
+                oid = new SnmpObjectId(mibObject.getOid() + "." + index.toString());
+            }
+        } else if (instance.equals(MibObject.INSTANCE_IFADDRESS)) {
+            // Append current interface's ip Address
+            oid = new SnmpObjectId(mibObject.getOid() + "." + ifAddress);
+        } else {
+            // Attempt to convert the instance string to an integer value
+            // If the instance string cannot be converted to an integer just
+            // use an instance string of "0".
+            int temp = -1;
+            try {
+                temp = Integer.parseInt(instance);
+            } catch (NumberFormatException nfe) {
+                instance = "0";
+            }
+
+            // Create new SnmpObjectId using object's identifer appended with
+            // the instance id
+            //
+            // For SNMPV2 we are using GetBulk requests which in effect
+            // performs a GetNext as opposed to a Get. Therefore we
+            // append (instance - 1) to the object id. If instance
+            // is '0' we leave off the instance id entirely.
+
+            if (instance.equals("0"))
+                oid = new SnmpObjectId(mibObject.getOid());
+            else {
+                Integer temp_instance = new Integer(temp - 1);
+                oid = new SnmpObjectId(mibObject.getOid() + "." + temp_instance.toString());
+            }
+            ((SnmpPduBulk) pdu).setNonRepeaters(1);
+            ((SnmpPduBulk) pdu).setMaxRepititions(0);
+        }
+
+        // Add the variable binding to the pdu
+        if (log.isDebugEnabled())
+            log.debug("getNextSnmpV2Pdu: adding oid to pdu: " + oid.toString());
+
+        pdu.addVarBind(new SnmpVarBind(oid));
+
+        return pdu;
+    }
 

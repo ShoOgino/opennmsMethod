@@ -1,515 +1,452 @@
-	/**
-	* Process a scan message.
-	* <p>This function is designed to parse any messages that
-	* come from Nessus during a scan session (eg. after the
-	* NEW_ATTACK directive has been sent)</p>
-	*
-	* <p>The following types of events are handled:
-	* <ul>
-	*	<li>Abbreviated STATUS messages</li>
-	*	<li>PORT</li>
-	*	<li>INFO</li>
-	*	<li>HOLE</li>
-	*	<li>BYE (as in BYE BYE)</li>
-	* </ul></p>
-	*
-	*/
-	private int processScanMessage(String message)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-
-		int vulnerabilityId = -1;
-
-		// DB connection; is connected and disconnected as necessary
-		Connection conn = null;
-
-		// Normal NTP messages
-		if (message.startsWith((NTP_SERVER_ENTITY + NTP_SEP).trim()))
-		{
-			int i = 0;
-
-			message = message.substring((NTP_SERVER_ENTITY + NTP_SEP).length()).trim();
-
-			String tokens[] = ntpTokenizer.split(message);
-
-			String next = tokens[i++];
-
-			// Indicates information about the target system or
-			// that a security hole has been located
-			if (next.equals("INFO") || next.equals("HOLE"))
-			{
-				NessusParser parser = NessusParser.getInstance();
-
-				PortValues portvals = null;
-				DescrValues descrvals = null;
-				int pluginId = -1, pluginSubId = -1;
-				String pluginLogmsg = "";
-
-				String hostname = tokens[i++];
-
-				String portString = tokens[i++];
-				try
-				{
-					// Parse the service, port, and protocol of the hole
-					portvals = parser.parsePort(portString);
-				}
-				catch (IllegalArgumentException ex)
-				{
-					log.error("Could not parse the port and protocol information out of this string: " +
-						portString
-					);
-
-					portvals = NessusParser.getDefaultPortValues();
-				}
-
-
-				String descrString = tokens[i++];
-				try
-				{
-					// Parse the descr of the event
-					descrvals = parser.parseDescr(descrString);
-				}
-				catch (IllegalArgumentException ex)
-				{
-					log.error("Could not parse the severity, descr, and/or CVE entry information out of this string: \n" +
-						descrString
-					);
-
-					descrvals = NessusParser.getDefaultDescrValues();
-				}
-
-
-				String pluginIdString = tokens[i++];
-				try
-				{
-					pluginId = Integer.parseInt(pluginIdString);
-				}
-				catch (NumberFormatException ex)
-				{
-					log.error("Could not parse the plugin ID out of the string: " + pluginIdString, ex);
-				}
-
-// Change this, once we get a way to break the
-// plugins down into separate vulnerabilities
-				pluginSubId = 0;
-//
-
-				try
-				{
-					conn = DatabaseConnectionFactory.getInstance().getConnection();
-				}
-				catch (SQLException ex)
-				{
-					log.error("Could not open DB connection", ex);
-					return SCAN_FATAL_ERROR;
-				}
-				try
-				{
-					PreparedStatement stmt = conn.prepareStatement(SELECT_OPEN_VULNERABILITY);
-
-					// ipaddr
-					stmt.setString(1, config.targetAddress.getHostAddress());
-
-					// port
-					if (portvals.port > 0) stmt.setInt(2, portvals.port);
-					else stmt.setNull(2, Types.INTEGER);
-
-					// protocol
-					if (portvals.protocol != null) stmt.setString(3, portvals.protocol);
-					else stmt.setNull(2, Types.VARCHAR);
-
-					// pluginid and pluginsubid
-					stmt.setInt(4, pluginId);
-					stmt.setInt(5, pluginSubId);
-
-					ResultSet openVuln = stmt.executeQuery();
-
-					// Update the timestamps on the existing events
-					if (openVuln.first())
-					{
-						stmt = conn.prepareStatement(VULNERABILITY_SCANNED);
-
-						Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
-						stmt.setTimestamp(1, currentTime);
-						stmt.setTimestamp(2, currentTime);
-						stmt.setInt(3, openVuln.getInt("vulnerabilityid"));
-
-						int rowCount = stmt.executeUpdate();
-						if (rowCount != 1)
-						{
-							log.error("UNEXPECTED CONDITION: " + rowCount + " row(s) updated during last scan successful UPDATE call");
-						}
-						else
-						{
-							openVulnerabilities.remove(new Integer(openVuln.getInt("vulnerabilityid")));
-						}
-
-						if (openVuln.next())
-						{
-							log.error("UNEXPECTED CONDITION: There are multiple rows that match this vulnerability, ignoring subsequent rows.");
-						}
-					}
-					// Insert a new vulnerability row into the database
-					else
-					{
-						stmt = conn.prepareStatement(SELECT_NEXT_ID);
-						ResultSet idRS = stmt.executeQuery();
-						idRS.next();
-						int vulnId = idRS.getInt(1);
-						idRS.close(); idRS = null;
-
-						stmt = conn.prepareStatement(INSERT_NEW_VULNERABILITY);
-
-						stmt.setInt(1, vulnId);
-
-						// Match the interface to a node in the database
-						int nodeId = VulnscandConfigFactory.getInterfaceDbNodeId(conn, config.targetAddress);
-						if (nodeId > 0) stmt.setInt(2, nodeId);
-						else stmt.setNull(2, Types.INTEGER);
-
-						stmt.setString(3, config.targetAddress.getHostAddress());
-// ADD SERVICE CORRELATION
-// Punt this for now also... not necessary
-//						stmt.setInt(4, serviceId);
-						stmt.setNull(4, Types.INTEGER);
-
-						Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
-						stmt.setTimestamp(5, currentTime);
-						stmt.setTimestamp(6, currentTime);
-						stmt.setTimestamp(7, currentTime);
-
-						stmt.setInt(8, descrvals.severity);
-
-						stmt.setInt(9, pluginId);
-						stmt.setInt(10, pluginSubId);
-
-						PreparedStatement pluginStmt = conn.prepareStatement(SELECT_PLUGIN_INFO);
-						pluginStmt.setInt(1, pluginId);
-						pluginStmt.setInt(2, pluginSubId);
-						ResultSet plugRS = pluginStmt.executeQuery();
-						if (plugRS.next())
-						{
-							if (plugRS.getString("name") != null && plugRS.getString("name").length() > 0)
-							{
-								pluginLogmsg = plugRS.getString("name");
-							}
-							if (plugRS.getString("summary") != null && plugRS.getString("summary").length() > 0)
-							{
-								if(!pluginLogmsg.equals("")) pluginLogmsg += ": ";
-								pluginLogmsg += plugRS.getString("summary");
-							}
-						}
-						plugRS.close(); plugRS = null;
-
-						// If the logmsg could not be populated from the database...
-						if (pluginLogmsg.equals(""))
-						{
-// ADD A METHOD THAT WILL QUERY THE NESSUS SERVER
-// FOR INFORMATION DIRECTLY IF IT CANNOT BE LOCATED
-// IN THE DATABASE
-// Punt this for now; we will pre-populate the DB
-							if (portvals.port >= 0)
-								pluginLogmsg = "A vulnerability was detected on port " + portvals.port +
-									". See the description for more information.";
-							else
-								pluginLogmsg = "A vulnerability was detected. See the description for " +
-									"more information.";
-						}
-
-						stmt.setString(11, pluginLogmsg);
-
-						stmt.setString(12, descrvals.descr);
-
-						if (portvals.port >= 0) stmt.setInt(13, portvals.port);
-						else stmt.setNull(13, Types.INTEGER);
-
-						stmt.setString(14, portvals.protocol);
-
-						if (descrvals.cveEntry != null) stmt.setString(15, descrvals.cveEntry);
-						else stmt.setNull(15, Types.VARCHAR);
-
-						if (stmt.executeUpdate() < 1)
-						{
-							log.error("UNEXPECTED CONDITION: No rows inserted during last INSERT call.");
-						}
-					}
-				}
-				catch (SQLException ex)
-				{
-					log.error("Error when querying database after " + next + " was found");
-					log.error(ex.getLocalizedMessage(), ex);
-					return SCAN_FATAL_ERROR;
-				}
-				finally
-				{
-					try
-					{
-						conn.close();
-					}
-					catch (SQLException ex)
-					{
-						log.error("Could not close DB connection", ex);
-					}
-				}
-				return SCAN_SUCCESS;
-			}
-			// Indicates that a port/protocol is open
-			else if (next.equals("PORT"))
-			{
-				NessusParser parser = NessusParser.getInstance();
-
-				PortValues portvals = null;
-				int pluginId = -1, pluginSubId = -1;
-
-				String hostname = tokens[i++];
-
-				String portString = tokens[i++];
-				try
-				{
-					// Parse the service, port, and protocol of the hole
-					portvals = parser.parsePort(portString);
-				}
-				catch (IllegalArgumentException ex)
-				{
-					log.error("Could not parse the port and protocol information out of this string: " +
-						portString
-					);
-
-					portvals = NessusParser.getDefaultPortValues();
-				}
-
-				if (portvals.port < 0)
-				{
-					log.error("Port could not be determined from Nessus PORT message (" + portvals.port + "), dropping the message.");
-					return SCAN_NON_FATAL_ERROR;
-				}
-
-				try
-				{
-					conn = DatabaseConnectionFactory.getInstance().getConnection();
-				}
-				catch (SQLException ex)
-				{
-					log.error("Could not open DB connection", ex);
-					return SCAN_FATAL_ERROR;
-				}
-				try
-				{
-					PreparedStatement stmt = conn.prepareStatement(SELECT_OPEN_VULNERABILITY);
-
-					// ipaddr
-					stmt.setString(1, config.targetAddress.getHostAddress());
-
-					// port
-					if (portvals.port > 0) stmt.setInt(2, portvals.port);
-					else stmt.setNull(2, Types.INTEGER);
-
-					// protocol
-					if (portvals.protocol != null) stmt.setString(3, portvals.protocol);
-					else stmt.setNull(2, Types.VARCHAR);
-
-					// pluginid and pluginsubid
-					stmt.setInt(4, PORTSCAN_PLUGIN_ID);
-					stmt.setInt(5, 0);
-
-					ResultSet openVuln = stmt.executeQuery();
-
-					// Update the timestamps on the existing events
-					if (openVuln.first())
-					{
-						stmt = conn.prepareStatement(VULNERABILITY_SCANNED);
-
-						Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
-						stmt.setTimestamp(1, currentTime);
-						stmt.setTimestamp(2, currentTime);
-						stmt.setInt(3, openVuln.getInt("vulnerabilityid"));
-
-						int rowCount = stmt.executeUpdate();
-						if (rowCount != 1)
-						{
-							log.error("UNEXPECTED CONDITION: " + rowCount + " row(s) updated during last scan successful UPDATE call");
-						}
-						else
-						{
-							openVulnerabilities.remove(new Integer(openVuln.getInt("vulnerabilityid")));
-						}
-
-						if (openVuln.next())
-						{
-							log.error("UNEXPECTED CONDITION: There are multiple rows that match this vulnerability, ignoring subsequent rows.");
-						}
-					}
-					// Insert a new vulnerability row into the database
-					else
-					{
-						stmt = conn.prepareStatement(SELECT_NEXT_ID);
-						ResultSet idRS = stmt.executeQuery();
-						idRS.next();
-						int vulnId = idRS.getInt(1);
-						idRS.close(); idRS = null;
-
-						stmt = conn.prepareStatement(INSERT_NEW_VULNERABILITY);
-
-						stmt.setInt(1, vulnId);
-
-						// Match the interface to a node in the database
-						int nodeId = VulnscandConfigFactory.getInterfaceDbNodeId(conn, config.targetAddress);
-						if (nodeId > 0) stmt.setInt(2, nodeId);
-						else stmt.setNull(2, Types.INTEGER);
-
-						stmt.setString(3, config.targetAddress.getHostAddress());
-// ADD SERVICE CORRELATION
-// Punt this for now also... not necessary
-//						stmt.setInt(4, serviceId);
-						stmt.setNull(4, Types.INTEGER);
-
-						Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
-						stmt.setTimestamp(5, currentTime);
-						stmt.setTimestamp(6, currentTime);
-						stmt.setTimestamp(7, currentTime);
-
-						// Use Normal severity for open ports
-						stmt.setInt(8, Constants.SEV_NORMAL);
-
-						stmt.setInt(9, PORTSCAN_PLUGIN_ID);
-						stmt.setInt(10, 0);
-
-						stmt.setString(11, "Port " + portvals.port + " is open on this host.");
-						stmt.setString(12, "Port " + portvals.port + " is open on this host.");
-
-						if (portvals.port >= 0) stmt.setInt(13, portvals.port);
-						else stmt.setNull(13, Types.INTEGER);
-
-						// Protocol
-						stmt.setString(14, portvals.protocol);
-
-						// CVE entry
-						stmt.setNull(15, Types.VARCHAR);
-
-						if (stmt.executeUpdate() < 1)
-						{
-							log.error("UNEXPECTED CONDITION: No rows inserted during last INSERT call.");
-						}
-					}
-				}
-				catch (SQLException ex)
-				{
-					log.error("Error when querying database after " + next + " was found");
-					log.error(ex.getLocalizedMessage(), ex);
-					return SCAN_FATAL_ERROR;
-				}
-				finally
-				{
-					try
-					{
-						conn.close();
-					}
-					catch (SQLException ex)
-					{
-						log.error("Could not close DB connection", ex);
-					}
-				}
-				return SCAN_SUCCESS;
-			}
-			else if (next.equals("STATUS"))
-			{
-				// Shouldn't get any of these
-				log.error("Weird... a non-abbreviated STATUS message. Check your code.");
-				return SCAN_NON_FATAL_ERROR;
-			}
-			else if (next.equals("BYE"))
-			{
-				log.debug("BYE message received, ending scan");
-
-				// If the scan completed running each plugin
-				if (lastPlugin == totalPlugins)
-					return SCAN_COMPLETE;
-				// Otherwise, do not resolve undetected plugins
-				else
-					return SCAN_FATAL_ERROR;
-			}
-			else
-			{
-				log.warn("Unhandled message type from Nessus: " + next + "\n" + message);
-				return SCAN_NON_FATAL_ERROR;
-			}
-		}
-		// Abbreviated status messages
-		else if (message.startsWith("s:"))
-		{
-			message = message.substring("s:".length()).trim();
-
-			StringTokenizer parts = new StringTokenizer(message, ":");
-			String type, hostname;
-			int last, total;
-
-			try
-			{
-				String next = parts.nextToken();
-
-				if (next.equals("p"))
-				{
-					type = "portscan";
-
-					// Ignore the parameters for portscans,
-					// always report SCAN_SUCCESS
-
-					return SCAN_SUCCESS;
-				}
-				else if (next.equals("a"))
-				{
-					type = "attack";
-
-					hostname = parts.nextToken();
-					last = Integer.parseInt(parts.nextToken());
-					total = Integer.parseInt(parts.nextToken());
-
-					if (lastPlugin >= 0)
-					{
-						// If the plugin increment magically
-						// goes down because Nessus is
-						// starting another unwanted scan,
-						// report the scan complete so it
-						// will terminate the connection
-						if (last < lastPlugin)
-						{
-							log.warn("UNEXPECTED CONDITION: The completed plugin counter decreased. Reporting the current scan complete.");
-							return SCAN_COMPLETE;
-						}
-					}
-					lastPlugin = last;
-					log.debug("Last plugin: " + lastPlugin);
-
-					// Set the plugin total
-					if (totalPlugins <= 0)
-					{
-						totalPlugins = total;
-						log.debug("Plugin total: " + totalPlugins);
-					}
-
-					return SCAN_SUCCESS;
-				}
-				else
-				{
-					log.error("UNEXPECTED CONDITION: Invalid abbreviated status message from Nessus, discarding...  \n\t" + message);
-					return SCAN_NON_FATAL_ERROR;
-				}
-			}
-			catch (NoSuchElementException ex)
-			{
-				log.error("UNEXPECTED CONDITION: Invalid abbreviated status message from Nessus, discarding...  \n\t" + message);
-				return SCAN_FATAL_ERROR;
-			}
-			catch (NumberFormatException ex)
-			{
-				log.error("UNEXPECTED CONDITION: Could not parse integers out of this Nessus status message: " + message);
-				return SCAN_FATAL_ERROR;
-			}
-		}
-		else
-		{
-			log.warn("UNEXPECTED CONDITION: Unhandled message from Nessus: " + message);
-			return SCAN_NON_FATAL_ERROR;
-		}
-	}
+    /**
+     * Process a scan message.
+     * <p>
+     * This function is designed to parse any messages that come from Nessus
+     * during a scan session (eg. after the NEW_ATTACK directive has been sent)
+     * </p>
+     * 
+     * <p>
+     * The following types of events are handled:
+     * <ul>
+     * <li>Abbreviated STATUS messages</li>
+     * <li>PORT</li>
+     * <li>INFO</li>
+     * <li>HOLE</li>
+     * <li>BYE (as in BYE BYE)</li>
+     * </ul>
+     * </p>
+     * 
+     */
+    private int processScanMessage(String message) {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        int vulnerabilityId = -1;
+
+        // DB connection; is connected and disconnected as necessary
+        Connection conn = null;
+
+        // Normal NTP messages
+        if (message.startsWith((NTP_SERVER_ENTITY + NTP_SEP).trim())) {
+            int i = 0;
+
+            message = message.substring((NTP_SERVER_ENTITY + NTP_SEP).length()).trim();
+
+            String tokens[] = ntpTokenizer.split(message);
+
+            String next = tokens[i++];
+
+            // Indicates information about the target system or
+            // that a security hole has been located
+            if (next.equals("INFO") || next.equals("HOLE")) {
+                NessusParser parser = NessusParser.getInstance();
+
+                PortValues portvals = null;
+                DescrValues descrvals = null;
+                int pluginId = -1, pluginSubId = -1;
+                String pluginLogmsg = "";
+
+                String hostname = tokens[i++];
+
+                String portString = tokens[i++];
+                try {
+                    // Parse the service, port, and protocol of the hole
+                    portvals = parser.parsePort(portString);
+                } catch (IllegalArgumentException ex) {
+                    log.error("Could not parse the port and protocol information out of this string: " + portString);
+
+                    portvals = NessusParser.getDefaultPortValues();
+                }
+
+                String descrString = tokens[i++];
+                try {
+                    // Parse the descr of the event
+                    descrvals = parser.parseDescr(descrString);
+                } catch (IllegalArgumentException ex) {
+                    log.error("Could not parse the severity, descr, and/or CVE entry information out of this string: \n" + descrString);
+
+                    descrvals = NessusParser.getDefaultDescrValues();
+                }
+
+                String pluginIdString = tokens[i++];
+                try {
+                    pluginId = Integer.parseInt(pluginIdString);
+                } catch (NumberFormatException ex) {
+                    log.error("Could not parse the plugin ID out of the string: " + pluginIdString, ex);
+                }
+
+                // Change this, once we get a way to break the
+                // plugins down into separate vulnerabilities
+                pluginSubId = 0;
+                //
+
+                try {
+                    conn = DatabaseConnectionFactory.getInstance().getConnection();
+                } catch (SQLException ex) {
+                    log.error("Could not open DB connection", ex);
+                    return SCAN_FATAL_ERROR;
+                }
+                try {
+                    PreparedStatement stmt = conn.prepareStatement(SELECT_OPEN_VULNERABILITY);
+
+                    // ipaddr
+                    stmt.setString(1, config.targetAddress.getHostAddress());
+
+                    // port
+                    if (portvals.port > 0)
+                        stmt.setInt(2, portvals.port);
+                    else
+                        stmt.setNull(2, Types.INTEGER);
+
+                    // protocol
+                    if (portvals.protocol != null)
+                        stmt.setString(3, portvals.protocol);
+                    else
+                        stmt.setNull(2, Types.VARCHAR);
+
+                    // pluginid and pluginsubid
+                    stmt.setInt(4, pluginId);
+                    stmt.setInt(5, pluginSubId);
+
+                    ResultSet openVuln = stmt.executeQuery();
+
+                    // Update the timestamps on the existing events
+                    if (openVuln.first()) {
+                        stmt = conn.prepareStatement(VULNERABILITY_SCANNED);
+
+                        Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
+                        stmt.setTimestamp(1, currentTime);
+                        stmt.setTimestamp(2, currentTime);
+                        stmt.setInt(3, openVuln.getInt("vulnerabilityid"));
+
+                        int rowCount = stmt.executeUpdate();
+                        if (rowCount != 1) {
+                            log.error("UNEXPECTED CONDITION: " + rowCount + " row(s) updated during last scan successful UPDATE call");
+                        } else {
+                            openVulnerabilities.remove(new Integer(openVuln.getInt("vulnerabilityid")));
+                        }
+
+                        if (openVuln.next()) {
+                            log.error("UNEXPECTED CONDITION: There are multiple rows that match this vulnerability, ignoring subsequent rows.");
+                        }
+                    }
+                    // Insert a new vulnerability row into the database
+                    else {
+                        stmt = conn.prepareStatement(SELECT_NEXT_ID);
+                        ResultSet idRS = stmt.executeQuery();
+                        idRS.next();
+                        int vulnId = idRS.getInt(1);
+                        idRS.close();
+                        idRS = null;
+
+                        stmt = conn.prepareStatement(INSERT_NEW_VULNERABILITY);
+
+                        stmt.setInt(1, vulnId);
+
+                        // Match the interface to a node in the database
+                        int nodeId = VulnscandConfigFactory.getInterfaceDbNodeId(conn, config.targetAddress);
+                        if (nodeId > 0)
+                            stmt.setInt(2, nodeId);
+                        else
+                            stmt.setNull(2, Types.INTEGER);
+
+                        stmt.setString(3, config.targetAddress.getHostAddress());
+                        // ADD SERVICE CORRELATION
+                        // Punt this for now also... not necessary
+                        // stmt.setInt(4, serviceId);
+                        stmt.setNull(4, Types.INTEGER);
+
+                        Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
+                        stmt.setTimestamp(5, currentTime);
+                        stmt.setTimestamp(6, currentTime);
+                        stmt.setTimestamp(7, currentTime);
+
+                        stmt.setInt(8, descrvals.severity);
+
+                        stmt.setInt(9, pluginId);
+                        stmt.setInt(10, pluginSubId);
+
+                        PreparedStatement pluginStmt = conn.prepareStatement(SELECT_PLUGIN_INFO);
+                        pluginStmt.setInt(1, pluginId);
+                        pluginStmt.setInt(2, pluginSubId);
+                        ResultSet plugRS = pluginStmt.executeQuery();
+                        if (plugRS.next()) {
+                            if (plugRS.getString("name") != null && plugRS.getString("name").length() > 0) {
+                                pluginLogmsg = plugRS.getString("name");
+                            }
+                            if (plugRS.getString("summary") != null && plugRS.getString("summary").length() > 0) {
+                                if (!pluginLogmsg.equals(""))
+                                    pluginLogmsg += ": ";
+                                pluginLogmsg += plugRS.getString("summary");
+                            }
+                        }
+                        plugRS.close();
+                        plugRS = null;
+
+                        // If the logmsg could not be populated from the
+                        // database...
+                        if (pluginLogmsg.equals("")) {
+                            // ADD A METHOD THAT WILL QUERY THE NESSUS SERVER
+                            // FOR INFORMATION DIRECTLY IF IT CANNOT BE LOCATED
+                            // IN THE DATABASE
+                            // Punt this for now; we will pre-populate the DB
+                            if (portvals.port >= 0)
+                                pluginLogmsg = "A vulnerability was detected on port " + portvals.port + ". See the description for more information.";
+                            else
+                                pluginLogmsg = "A vulnerability was detected. See the description for " + "more information.";
+                        }
+
+                        stmt.setString(11, pluginLogmsg);
+
+                        stmt.setString(12, descrvals.descr);
+
+                        if (portvals.port >= 0)
+                            stmt.setInt(13, portvals.port);
+                        else
+                            stmt.setNull(13, Types.INTEGER);
+
+                        stmt.setString(14, portvals.protocol);
+
+                        if (descrvals.cveEntry != null)
+                            stmt.setString(15, descrvals.cveEntry);
+                        else
+                            stmt.setNull(15, Types.VARCHAR);
+
+                        if (stmt.executeUpdate() < 1) {
+                            log.error("UNEXPECTED CONDITION: No rows inserted during last INSERT call.");
+                        }
+                    }
+                } catch (SQLException ex) {
+                    log.error("Error when querying database after " + next + " was found");
+                    log.error(ex.getLocalizedMessage(), ex);
+                    return SCAN_FATAL_ERROR;
+                } finally {
+                    try {
+                        conn.close();
+                    } catch (SQLException ex) {
+                        log.error("Could not close DB connection", ex);
+                    }
+                }
+                return SCAN_SUCCESS;
+            }
+            // Indicates that a port/protocol is open
+            else if (next.equals("PORT")) {
+                NessusParser parser = NessusParser.getInstance();
+
+                PortValues portvals = null;
+                int pluginId = -1, pluginSubId = -1;
+
+                String hostname = tokens[i++];
+
+                String portString = tokens[i++];
+                try {
+                    // Parse the service, port, and protocol of the hole
+                    portvals = parser.parsePort(portString);
+                } catch (IllegalArgumentException ex) {
+                    log.error("Could not parse the port and protocol information out of this string: " + portString);
+
+                    portvals = NessusParser.getDefaultPortValues();
+                }
+
+                if (portvals.port < 0) {
+                    log.error("Port could not be determined from Nessus PORT message (" + portvals.port + "), dropping the message.");
+                    return SCAN_NON_FATAL_ERROR;
+                }
+
+                try {
+                    conn = DatabaseConnectionFactory.getInstance().getConnection();
+                } catch (SQLException ex) {
+                    log.error("Could not open DB connection", ex);
+                    return SCAN_FATAL_ERROR;
+                }
+                try {
+                    PreparedStatement stmt = conn.prepareStatement(SELECT_OPEN_VULNERABILITY);
+
+                    // ipaddr
+                    stmt.setString(1, config.targetAddress.getHostAddress());
+
+                    // port
+                    if (portvals.port > 0)
+                        stmt.setInt(2, portvals.port);
+                    else
+                        stmt.setNull(2, Types.INTEGER);
+
+                    // protocol
+                    if (portvals.protocol != null)
+                        stmt.setString(3, portvals.protocol);
+                    else
+                        stmt.setNull(2, Types.VARCHAR);
+
+                    // pluginid and pluginsubid
+                    stmt.setInt(4, PORTSCAN_PLUGIN_ID);
+                    stmt.setInt(5, 0);
+
+                    ResultSet openVuln = stmt.executeQuery();
+
+                    // Update the timestamps on the existing events
+                    if (openVuln.first()) {
+                        stmt = conn.prepareStatement(VULNERABILITY_SCANNED);
+
+                        Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
+                        stmt.setTimestamp(1, currentTime);
+                        stmt.setTimestamp(2, currentTime);
+                        stmt.setInt(3, openVuln.getInt("vulnerabilityid"));
+
+                        int rowCount = stmt.executeUpdate();
+                        if (rowCount != 1) {
+                            log.error("UNEXPECTED CONDITION: " + rowCount + " row(s) updated during last scan successful UPDATE call");
+                        } else {
+                            openVulnerabilities.remove(new Integer(openVuln.getInt("vulnerabilityid")));
+                        }
+
+                        if (openVuln.next()) {
+                            log.error("UNEXPECTED CONDITION: There are multiple rows that match this vulnerability, ignoring subsequent rows.");
+                        }
+                    }
+                    // Insert a new vulnerability row into the database
+                    else {
+                        stmt = conn.prepareStatement(SELECT_NEXT_ID);
+                        ResultSet idRS = stmt.executeQuery();
+                        idRS.next();
+                        int vulnId = idRS.getInt(1);
+                        idRS.close();
+                        idRS = null;
+
+                        stmt = conn.prepareStatement(INSERT_NEW_VULNERABILITY);
+
+                        stmt.setInt(1, vulnId);
+
+                        // Match the interface to a node in the database
+                        int nodeId = VulnscandConfigFactory.getInterfaceDbNodeId(conn, config.targetAddress);
+                        if (nodeId > 0)
+                            stmt.setInt(2, nodeId);
+                        else
+                            stmt.setNull(2, Types.INTEGER);
+
+                        stmt.setString(3, config.targetAddress.getHostAddress());
+                        // ADD SERVICE CORRELATION
+                        // Punt this for now also... not necessary
+                        // stmt.setInt(4, serviceId);
+                        stmt.setNull(4, Types.INTEGER);
+
+                        Timestamp currentTime = new Timestamp(new java.util.Date().getTime());
+                        stmt.setTimestamp(5, currentTime);
+                        stmt.setTimestamp(6, currentTime);
+                        stmt.setTimestamp(7, currentTime);
+
+                        // Use Normal severity for open ports
+                        stmt.setInt(8, Constants.SEV_NORMAL);
+
+                        stmt.setInt(9, PORTSCAN_PLUGIN_ID);
+                        stmt.setInt(10, 0);
+
+                        stmt.setString(11, "Port " + portvals.port + " is open on this host.");
+                        stmt.setString(12, "Port " + portvals.port + " is open on this host.");
+
+                        if (portvals.port >= 0)
+                            stmt.setInt(13, portvals.port);
+                        else
+                            stmt.setNull(13, Types.INTEGER);
+
+                        // Protocol
+                        stmt.setString(14, portvals.protocol);
+
+                        // CVE entry
+                        stmt.setNull(15, Types.VARCHAR);
+
+                        if (stmt.executeUpdate() < 1) {
+                            log.error("UNEXPECTED CONDITION: No rows inserted during last INSERT call.");
+                        }
+                    }
+                } catch (SQLException ex) {
+                    log.error("Error when querying database after " + next + " was found");
+                    log.error(ex.getLocalizedMessage(), ex);
+                    return SCAN_FATAL_ERROR;
+                } finally {
+                    try {
+                        conn.close();
+                    } catch (SQLException ex) {
+                        log.error("Could not close DB connection", ex);
+                    }
+                }
+                return SCAN_SUCCESS;
+            } else if (next.equals("STATUS")) {
+                // Shouldn't get any of these
+                log.error("Weird... a non-abbreviated STATUS message. Check your code.");
+                return SCAN_NON_FATAL_ERROR;
+            } else if (next.equals("BYE")) {
+                log.debug("BYE message received, ending scan");
+
+                // If the scan completed running each plugin
+                if (lastPlugin == totalPlugins)
+                    return SCAN_COMPLETE;
+                // Otherwise, do not resolve undetected plugins
+                else
+                    return SCAN_FATAL_ERROR;
+            } else {
+                log.warn("Unhandled message type from Nessus: " + next + "\n" + message);
+                return SCAN_NON_FATAL_ERROR;
+            }
+        }
+        // Abbreviated status messages
+        else if (message.startsWith("s:")) {
+            message = message.substring("s:".length()).trim();
+
+            StringTokenizer parts = new StringTokenizer(message, ":");
+            String type, hostname;
+            int last, total;
+
+            try {
+                String next = parts.nextToken();
+
+                if (next.equals("p")) {
+                    type = "portscan";
+
+                    // Ignore the parameters for portscans,
+                    // always report SCAN_SUCCESS
+
+                    return SCAN_SUCCESS;
+                } else if (next.equals("a")) {
+                    type = "attack";
+
+                    hostname = parts.nextToken();
+                    last = Integer.parseInt(parts.nextToken());
+                    total = Integer.parseInt(parts.nextToken());
+
+                    if (lastPlugin >= 0) {
+                        // If the plugin increment magically
+                        // goes down because Nessus is
+                        // starting another unwanted scan,
+                        // report the scan complete so it
+                        // will terminate the connection
+                        if (last < lastPlugin) {
+                            log.warn("UNEXPECTED CONDITION: The completed plugin counter decreased. Reporting the current scan complete.");
+                            return SCAN_COMPLETE;
+                        }
+                    }
+                    lastPlugin = last;
+                    log.debug("Last plugin: " + lastPlugin);
+
+                    // Set the plugin total
+                    if (totalPlugins <= 0) {
+                        totalPlugins = total;
+                        log.debug("Plugin total: " + totalPlugins);
+                    }
+
+                    return SCAN_SUCCESS;
+                } else {
+                    log.error("UNEXPECTED CONDITION: Invalid abbreviated status message from Nessus, discarding...  \n\t" + message);
+                    return SCAN_NON_FATAL_ERROR;
+                }
+            } catch (NoSuchElementException ex) {
+                log.error("UNEXPECTED CONDITION: Invalid abbreviated status message from Nessus, discarding...  \n\t" + message);
+                return SCAN_FATAL_ERROR;
+            } catch (NumberFormatException ex) {
+                log.error("UNEXPECTED CONDITION: Could not parse integers out of this Nessus status message: " + message);
+                return SCAN_FATAL_ERROR;
+            }
+        } else {
+            log.warn("UNEXPECTED CONDITION: Unhandled message from Nessus: " + message);
+            return SCAN_NON_FATAL_ERROR;
+        }
+    }
 

@@ -1,127 +1,106 @@
-	/** 
-	 * This method is responsible for scheduling the specified node/address/svcname
-	 * tuple for data collection.  
-	 * 
-	 * @param nodeId	Node id
-	 * @param ipAddress	IP address 
-	 * @param svcName	Service name
-	 * @param existing	True if called by scheduleExistingInterfaces(), false otheriwse
-	 */
-	void scheduleInterface(int nodeId, String ipAddress, String svcName, boolean existing)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		CollectdConfigFactory cCfgFactory = CollectdConfigFactory.getInstance();
-		CollectdConfiguration cConfig = cCfgFactory.getConfiguration();
-		Enumeration epkgs = cConfig.enumeratePackage();
-		
-		// Compare interface/service pair against each collectd package
-		// For each match, create new SnmpCollector object and 
-		// schedule it for collection
-		//
-		while(epkgs.hasMoreElements())
-		{
-			org.opennms.netmgt.config.collectd.Package pkg = (org.opennms.netmgt.config.collectd.Package)epkgs.nextElement();
-	
-			// Make certain the the current service is in the package
-			// and enabled!
-			//
-			if (!cCfgFactory.serviceInPackageAndEnabled(svcName, pkg))
-			{
-				if (log.isDebugEnabled())
-					log.debug("scheduleInterface: address/service: " + 
-							ipAddress + "/" + svcName + 
-							" not scheduled, service is not enabled or does not exist in package: " + 
-							pkg.getName());
-				continue;
-			}
-	
-			// Is the interface in the package?
-			//
-			if (!cCfgFactory.interfaceInPackage(ipAddress, pkg))
-			{
-                                // The interface might be a newly added one, rebuild the package
-                                // to ipList mapping and again to verify if the interface is in 
-                                // the package
-                                cCfgFactory.rebuildPackageIpListMap();
-			        if (!cCfgFactory.interfaceInPackage(ipAddress, pkg))
-			        {
-				        if (log.isDebugEnabled())
-					        log.debug("scheduleInterface: address/service: " + 
-							ipAddress + "/" + svcName + 
-							" not scheduled, interface does not belong to package: " + 
-							pkg.getName());
-				        continue;
-                                }
-			}
-			
-			if (existing == false)
-			{
-				// It is possible that both a nodeGainedService and a primarySnmpInterfaceChanged
-				// event are generated for an interface during a rescan.  To handle 
-				// this scenario we must verify that the ipAddress/pkg pair identified by 
-				// this event does not already exist in the collectable services list.
-				//
-				if (alreadyScheduled(ipAddress, pkg.getName()))
-				{
-					if (log.isDebugEnabled())
-					{
-						log.debug("scheduleInterface: ipAddr/pkgName " + 
-							ipAddress + "/" + pkg.getName() + 
-							" already in collectable service list, skipping.");
-					}
-					continue;
-				}
-			}
-			
-			try
-			{
-				// Criteria checks have all passed.  The interface/service pair
-				// can be scheduled.
-				//
-				CollectableService cSvc = null;
-				
-				// Create a new SnmpCollector object representing this node, interface,
-				// service and package pairing
-				//
-				cSvc = new CollectableService(nodeId,
-								InetAddress.getByName(ipAddress),
-								svcName,
-								pkg);
-				
-				// Initialize the collector with the collectable service.
-				//
-				ServiceCollector collector = this.getServiceCollector(svcName);
-				collector.initialize(cSvc, cSvc.getPropertyMap());
-	
-				// Add new collectable service to the colleable service list.
-				//
-				m_collectableServices.add(cSvc);
-				
-				// Schedule the collectable service for immediate collection
-				//
-				m_scheduler.schedule(cSvc, 0);
-				
-				if (log.isDebugEnabled())
-					log.debug("scheduleInterface: " + nodeId + "/" + 
-						ipAddress + " scheduled for " + svcName + " collection");
-			} 
-			catch(UnknownHostException ex)
-			{
-				log.error("scheduleInterface: Failed to schedule interface " + ipAddress + 
-								" for service " + svcName + ", illegal address", ex);
-			}
-			catch(RuntimeException rE)
-			{
-				log.warn("scheduleInterface: Unable to schedule " + 
-						ipAddress + " for service " + svcName + 
-						", reason: " + rE.getMessage());
-			}
-			catch(Throwable t)
-			{
-				log.error("scheduleInterface: Uncaught exception, failed to schedule interface "
-						  + ipAddress + " for service " + svcName, t);
-			}
-		} // end while more packages exist
-	}	
+    /**
+     * This method is responsible for scheduling the specified
+     * node/address/svcname tuple for data collection.
+     * 
+     * @param nodeId
+     *            Node id
+     * @param ipAddress
+     *            IP address
+     * @param svcName
+     *            Service name
+     * @param existing
+     *            True if called by scheduleExistingInterfaces(), false
+     *            otheriwse
+     */
+    void scheduleInterface(int nodeId, String ipAddress, String svcName, boolean existing) {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        CollectdConfigFactory cCfgFactory = CollectdConfigFactory.getInstance();
+        CollectdConfiguration cConfig = cCfgFactory.getConfiguration();
+        Enumeration epkgs = cConfig.enumeratePackage();
+
+        // Compare interface/service pair against each collectd package
+        // For each match, create new SnmpCollector object and
+        // schedule it for collection
+        //
+        while (epkgs.hasMoreElements()) {
+            org.opennms.netmgt.config.collectd.Package pkg = (org.opennms.netmgt.config.collectd.Package) epkgs.nextElement();
+
+            // Make certain the the current service is in the package
+            // and enabled!
+            //
+            if (!cCfgFactory.serviceInPackageAndEnabled(svcName, pkg)) {
+                if (log.isDebugEnabled())
+                    log.debug("scheduleInterface: address/service: " + ipAddress + "/" + svcName + " not scheduled, service is not enabled or does not exist in package: " + pkg.getName());
+                continue;
+            }
+
+            // Is the interface in the package?
+            //
+            if (!cCfgFactory.interfaceInPackage(ipAddress, pkg)) {
+                // The interface might be a newly added one, rebuild the package
+                // to ipList mapping and again to verify if the interface is in
+                // the package
+                cCfgFactory.rebuildPackageIpListMap();
+                if (!cCfgFactory.interfaceInPackage(ipAddress, pkg)) {
+                    if (log.isDebugEnabled())
+                        log.debug("scheduleInterface: address/service: " + ipAddress + "/" + svcName + " not scheduled, interface does not belong to package: " + pkg.getName());
+                    continue;
+                }
+            }
+
+            if (existing == false) {
+                // It is possible that both a nodeGainedService and a
+                // primarySnmpInterfaceChanged
+                // event are generated for an interface during a rescan. To
+                // handle
+                // this scenario we must verify that the ipAddress/pkg pair
+                // identified by
+                // this event does not already exist in the collectable services
+                // list.
+                //
+                if (alreadyScheduled(ipAddress, pkg.getName())) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("scheduleInterface: ipAddr/pkgName " + ipAddress + "/" + pkg.getName() + " already in collectable service list, skipping.");
+                    }
+                    continue;
+                }
+            }
+
+            try {
+                // Criteria checks have all passed. The interface/service pair
+                // can be scheduled.
+                //
+                CollectableService cSvc = null;
+
+                // Create a new SnmpCollector object representing this node,
+                // interface,
+                // service and package pairing
+                //
+                cSvc = new CollectableService(nodeId, InetAddress.getByName(ipAddress), svcName, pkg);
+
+                // Initialize the collector with the collectable service.
+                //
+                ServiceCollector collector = this.getServiceCollector(svcName);
+                collector.initialize(cSvc, cSvc.getPropertyMap());
+
+                // Add new collectable service to the colleable service list.
+                //
+                m_collectableServices.add(cSvc);
+
+                // Schedule the collectable service for immediate collection
+                //
+                m_scheduler.schedule(cSvc, 0);
+
+                if (log.isDebugEnabled())
+                    log.debug("scheduleInterface: " + nodeId + "/" + ipAddress + " scheduled for " + svcName + " collection");
+            } catch (UnknownHostException ex) {
+                log.error("scheduleInterface: Failed to schedule interface " + ipAddress + " for service " + svcName + ", illegal address", ex);
+            } catch (RuntimeException rE) {
+                log.warn("scheduleInterface: Unable to schedule " + ipAddress + " for service " + svcName + ", reason: " + rE.getMessage());
+            } catch (Throwable t) {
+                log.error("scheduleInterface: Uncaught exception, failed to schedule interface " + ipAddress + " for service " + svcName, t);
+            }
+        } // end while more packages exist
+    }
 

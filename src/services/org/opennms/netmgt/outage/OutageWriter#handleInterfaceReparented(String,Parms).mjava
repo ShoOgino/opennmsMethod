@@ -1,151 +1,125 @@
-	/**
-	 * <p>Record the 'interfaceReparented' event in the outages table. 
-	 * Change'outages' table entries associated with the old nodeid/interface
-	 * pairing so that those outage entries will be associated with
-	 * the new nodeid/interface pairing.</p>
-	 *
-	 * <p><strong>Note:</strong>This event has no impact on the event id reference
-	 * fields</p>
-	 */
-	private void handleInterfaceReparented(String ipAddr,Parms eventParms)
-	{
-		Category log = ThreadCategory.getInstance(OutageWriter.class);
+    /**
+     * <p>
+     * Record the 'interfaceReparented' event in the outages table.
+     * Change'outages' table entries associated with the old nodeid/interface
+     * pairing so that those outage entries will be associated with the new
+     * nodeid/interface pairing.
+     * </p>
+     * 
+     * <p>
+     * <strong>Note: </strong>This event has no impact on the event id reference
+     * fields
+     * </p>
+     */
+    private void handleInterfaceReparented(String ipAddr, Parms eventParms) {
+        Category log = ThreadCategory.getInstance(OutageWriter.class);
 
-		if (log.isDebugEnabled())
-			log.debug("interfaceReparented event received...");
+        if (log.isDebugEnabled())
+            log.debug("interfaceReparented event received...");
 
-		if(ipAddr == null || eventParms == null)
-		{
-			log.warn(EventConstants.INTERFACE_REPARENTED_EVENT_UEI + " ignored - info incomplete - ip/parms: " + ipAddr + "/" + eventParms);
-			return;
-		}
+        if (ipAddr == null || eventParms == null) {
+            log.warn(EventConstants.INTERFACE_REPARENTED_EVENT_UEI + " ignored - info incomplete - ip/parms: " + ipAddr + "/" + eventParms);
+            return;
+        }
 
-		long oldNodeId = -1;
-		long newNodeId = -1;
-		
-		String parmName = null;
-		Value parmValue = null;
-		String parmContent = null;
+        long oldNodeId = -1;
+        long newNodeId = -1;
 
-		Enumeration parmEnum = eventParms.enumerateParm();
-		while(parmEnum.hasMoreElements())
-		{
-			Parm parm = (Parm)parmEnum.nextElement();
-			parmName  = parm.getParmName();
-			parmValue = parm.getValue();
-			if (parmValue == null)
-				continue;
-			else 
-				parmContent = parmValue.getContent();
+        String parmName = null;
+        Value parmValue = null;
+        String parmContent = null;
 
-			// old nodeid
-			if (parmName.equals(EventConstants.PARM_OLD_NODEID))
-			{
-				try
-				{
-					oldNodeId = Integer.valueOf(parmContent).intValue();
-				}
-				catch (NumberFormatException nfe)
-				{
-					log.warn("Parameter " +  EventConstants.PARM_OLD_NODEID + " cannot be non-numeric");
-					oldNodeId = -1;
-				}
+        Enumeration parmEnum = eventParms.enumerateParm();
+        while (parmEnum.hasMoreElements()) {
+            Parm parm = (Parm) parmEnum.nextElement();
+            parmName = parm.getParmName();
+            parmValue = parm.getValue();
+            if (parmValue == null)
+                continue;
+            else
+                parmContent = parmValue.getContent();
 
-			}
+            // old nodeid
+            if (parmName.equals(EventConstants.PARM_OLD_NODEID)) {
+                try {
+                    oldNodeId = Integer.valueOf(parmContent).intValue();
+                } catch (NumberFormatException nfe) {
+                    log.warn("Parameter " + EventConstants.PARM_OLD_NODEID + " cannot be non-numeric");
+                    oldNodeId = -1;
+                }
 
-			// new nodeid
-			else if (parmName.equals(EventConstants.PARM_NEW_NODEID))
-			{
-				try
-				{
-					newNodeId = Integer.valueOf(parmContent).intValue();
-				}
-				catch (NumberFormatException nfe)
-				{
-					log.warn("Parameter " +  EventConstants.PARM_NEW_NODEID + " cannot be non-numeric");
-					newNodeId = -1;
-				}
-			}
-		}
-		
-		if (newNodeId == -1 || oldNodeId == -1)
-		{
-			log.warn("Unable to process 'interfaceReparented' event, invalid event parm.");
-			return;
-		}
-			
-		Connection dbConn = null;
-		try
-		{
-			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+            }
 
-			// Set the database commit mode
-			try
-			{
-				dbConn.setAutoCommit(false);
-			}
-			catch (SQLException sqle)
-			{
-				log.error("Unable to change database AutoCommit to FALSE", sqle);
-				return;
-			}
+            // new nodeid
+            else if (parmName.equals(EventConstants.PARM_NEW_NODEID)) {
+                try {
+                    newNodeId = Integer.valueOf(parmContent).intValue();
+                } catch (NumberFormatException nfe) {
+                    log.warn("Parameter " + EventConstants.PARM_NEW_NODEID + " cannot be non-numeric");
+                    newNodeId = -1;
+                }
+            }
+        }
 
+        if (newNodeId == -1 || oldNodeId == -1) {
+            log.warn("Unable to process 'interfaceReparented' event, invalid event parm.");
+            return;
+        }
 
-			// Issue SQL update to change the 'outages' table entries
-			// associated with the old nodeid/interface pairing
-			// so that those outage entries will be associated with
-			// the new nodeid/interface pairing.
+        Connection dbConn = null;
+        try {
+            dbConn = DatabaseConnectionFactory.getInstance().getConnection();
 
-	 		// Prepare SQL statement used to reparent outage table entries -
-	 		// used when a 'interfaceReparented' event is received
-			PreparedStatement reparentOutagesStmt = dbConn.prepareStatement(OutageConstants.DB_REPARENT_OUTAGES);
-			reparentOutagesStmt.setLong   (1, newNodeId);
-			reparentOutagesStmt.setLong   (2, oldNodeId);
-			reparentOutagesStmt.setString (3, ipAddr);
-			int count = reparentOutagesStmt.executeUpdate();
+            // Set the database commit mode
+            try {
+                dbConn.setAutoCommit(false);
+            } catch (SQLException sqle) {
+                log.error("Unable to change database AutoCommit to FALSE", sqle);
+                return;
+            }
 
-			// commit work
-			try
-			{
-				dbConn.commit();
+            // Issue SQL update to change the 'outages' table entries
+            // associated with the old nodeid/interface pairing
+            // so that those outage entries will be associated with
+            // the new nodeid/interface pairing.
 
-				if(log.isDebugEnabled()) 
-					log.debug("Reparented " + count + " outages - ip: " + ipAddr + " reparented from " + oldNodeId + " to " + newNodeId);
-			}
-			catch(SQLException se)
-			{
-				log.warn("Rolling back transaction, reparent outages failed for newNodeId/ipAddr: " + newNodeId + "/" + ipAddr);
+            // Prepare SQL statement used to reparent outage table entries -
+            // used when a 'interfaceReparented' event is received
+            PreparedStatement reparentOutagesStmt = dbConn.prepareStatement(OutageConstants.DB_REPARENT_OUTAGES);
+            reparentOutagesStmt.setLong(1, newNodeId);
+            reparentOutagesStmt.setLong(2, oldNodeId);
+            reparentOutagesStmt.setString(3, ipAddr);
+            int count = reparentOutagesStmt.executeUpdate();
 
-				try 
-				{
-					dbConn.rollback();
-				}
-				catch (SQLException sqle)
-				{
-					log.warn("SQL exception during rollback, reason", sqle);
-				}
+            // commit work
+            try {
+                dbConn.commit();
 
-			}
+                if (log.isDebugEnabled())
+                    log.debug("Reparented " + count + " outages - ip: " + ipAddr + " reparented from " + oldNodeId + " to " + newNodeId);
+            } catch (SQLException se) {
+                log.warn("Rolling back transaction, reparent outages failed for newNodeId/ipAddr: " + newNodeId + "/" + ipAddr);
 
-			// close statement
-			reparentOutagesStmt.close();
+                try {
+                    dbConn.rollback();
+                } catch (SQLException sqle) {
+                    log.warn("SQL exception during rollback, reason", sqle);
+                }
 
-		}
-		catch(SQLException se)
-		{
-			log.warn("SQL exception while handling \'interfaceReparented\'", se);
-		}
-		finally
-		{
-			try
-			{
-				if(dbConn != null)
-					dbConn.close();
-			}
-			catch(SQLException e)
-			{
-				log.warn("Exception closing JDBC connection", e);
-			}
-		}
-	}
+            }
+
+            // close statement
+            reparentOutagesStmt.close();
+
+        } catch (SQLException se) {
+            log.warn("SQL exception while handling \'interfaceReparented\'", se);
+        } finally {
+            try {
+                if (dbConn != null)
+                    dbConn.close();
+            } catch (SQLException e) {
+                log.warn("Exception closing JDBC connection", e);
+            }
+        }
+    }
 

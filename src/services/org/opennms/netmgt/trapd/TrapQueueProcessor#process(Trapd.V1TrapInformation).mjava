@@ -1,193 +1,164 @@
-	/**
-	 * Process a V1 trap and convert it to an event. Once
-	 * the event is formatted, send it to eventd. 
-	 *
-	 * @param info		V1 trap
-	 */
-	private void process(Trapd.V1TrapInformation info)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * Process a V1 trap and convert it to an event. Once the event is
+     * formatted, send it to eventd.
+     * 
+     * @param info
+     *            V1 trap
+     */
+    private void process(Trapd.V1TrapInformation info) {
+        Category log = ThreadCategory.getInstance(getClass());
 
-		SnmpPduTrap pdu = info.getPdu();
-		InetAddress agent = info.getAgent();
-		
-		IPv4Address addr = new IPv4Address(agent);
-		String trapInterface = pdu.getAgentAddress().toString();
+        SnmpPduTrap pdu = info.getPdu();
+        InetAddress agent = info.getAgent();
 
-		Event event = new Event();
-		event.setSource("trapd");
-		event.setHost(addr.toString());
-		event.setSnmphost(trapInterface);
-		event.setInterface(trapInterface);
-		event.setTime(org.opennms.netmgt.EventConstants.formatToString(new java.util.Date()));
-		
-		String ipNodeId = TrapdIPMgr.getNodeId(trapInterface);
+        IPv4Address addr = new IPv4Address(agent);
+        String trapInterface = pdu.getAgentAddress().toString();
 
-		if (ipNodeId != null)
-			{
-			int intNodeId = Integer.parseInt(ipNodeId);
-			event.setNodeid((long)intNodeId);
-			}
+        Event event = new Event();
+        event.setSource("trapd");
+        event.setHost(addr.toString());
+        event.setSnmphost(trapInterface);
+        event.setInterface(trapInterface);
+        event.setTime(org.opennms.netmgt.EventConstants.formatToString(new java.util.Date()));
 
-		if(log.isDebugEnabled())
-			log.debug("V1 trap - trapInterface: " + trapInterface);
-		
-		//
-		// set the snmp information
-		//
-		Snmp snmpInfo = new Snmp();
+        String ipNodeId = TrapdIPMgr.getNodeId(trapInterface);
 
-		// id
-		// 
-		// NOTE:  Force leading "." (dot) on all id's
-		String entId = pdu.getEnterprise().toString();
-		if (!entId.startsWith("."))
-		{
-			entId = "." + entId;
-		}
-		snmpInfo.setId(entId);
+        if (ipNodeId != null) {
+            int intNodeId = Integer.parseInt(ipNodeId);
+            event.setNodeid((long) intNodeId);
+        }
 
-		// version
-		snmpInfo.setVersion("v1");
+        if (log.isDebugEnabled())
+            log.debug("V1 trap - trapInterface: " + trapInterface);
 
-		// specific
-		snmpInfo.setSpecific(pdu.getSpecific());
+        //
+        // set the snmp information
+        //
+        Snmp snmpInfo = new Snmp();
 
-		// generic
-		snmpInfo.setGeneric(pdu.getGeneric());
+        // id
+        // 
+        // NOTE: Force leading "." (dot) on all id's
+        String entId = pdu.getEnterprise().toString();
+        if (!entId.startsWith(".")) {
+            entId = "." + entId;
+        }
+        snmpInfo.setId(entId);
 
-		// community
-		snmpInfo.setCommunity(new String(info.getCommunity().getString()));
-		
-		// time-stamp
-		snmpInfo.setTimeStamp(pdu.getTimeStamp());
-		      
-		event.setSnmp(snmpInfo);
-		
-		Parms parms = new Parms();
-			
-		for(int i = 0; i < pdu.getLength(); i++)
-		{
-			Value val = new Value();
-			
-			String name    = pdu.getVarBindAt(i).getName().toString();
-			SnmpSyntax obj = pdu.getVarBindAt(i).getValue();
+        // version
+        snmpInfo.setVersion("v1");
 
-			if(obj instanceof SnmpInt32)
-			{
-				val.setType(EventConstants.TYPE_SNMP_INT32);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpNull)
-			{
-				val.setType(EventConstants.TYPE_SNMP_NULL);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpObjectId)
-			{
-				val.setType(EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpIPAddress)
-			{
-				val.setType(EventConstants.TYPE_SNMP_IPADDRESS);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpTimeTicks)
-			{
-				val.setType(EventConstants.TYPE_SNMP_TIMETICKS);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpCounter32)
-			{
-				val.setType(EventConstants.TYPE_SNMP_COUNTER32);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpGauge32)
-			{
-				val.setType(EventConstants.TYPE_SNMP_GAUGE32);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else if(obj instanceof SnmpOpaque)
-			{
-				val.setType(EventConstants.TYPE_SNMP_OPAQUE);
-				val.setEncoding(EventConstants.XML_ENCODING_BASE64);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_BASE64, obj));
-			}
-			else if(obj instanceof SnmpOctetString)
-			{
-				//
-				// check for non-printable characters. If they
-				// exist then print the string out as hexidecimal
-				//
-				boolean asHex = false;
-				byte[]  data  = ((SnmpOctetString)obj).getString();
-				for(int x = 0; x < data.length; x++)
-				{
-					byte b = data[x];
-					if((b < 32 && b != 9 && b != 10 && b != 13 && b != 0) ||  b == 127)
-					{
-						asHex = true;
-						break;
-					}
-				}
+        // specific
+        snmpInfo.setSpecific(pdu.getSpecific());
 
-				data = null;
+        // generic
+        snmpInfo.setGeneric(pdu.getGeneric());
 
-				String encoding = asHex ? EventConstants.XML_ENCODING_BASE64 
-								: EventConstants.XML_ENCODING_TEXT; 
+        // community
+        snmpInfo.setCommunity(new String(info.getCommunity().getString()));
 
-				val.setType(EventConstants.TYPE_SNMP_OCTET_STRING);
-				val.setEncoding(encoding);
-				val.setContent(EventConstants.toString(encoding, obj));
+        // time-stamp
+        snmpInfo.setTimeStamp(pdu.getTimeStamp());
 
-				// DEBUG
-				if (!asHex && log.isDebugEnabled())
-				{
-					log.debug("snmpReceivedTrap: string varbind: " + ( ((SnmpOctetString)obj).toString() ));
-				}
-			}
-			else if(obj instanceof SnmpCounter64)
-			{
-				val.setType(EventConstants.TYPE_SNMP_COUNTER64);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
-			}
-			else
-			{
-				val.setType(EventConstants.TYPE_STRING);
-				val.setEncoding(EventConstants.XML_ENCODING_TEXT);
-				val.setContent(obj.toString());
-			}
+        event.setSnmp(snmpInfo);
 
-			Parm parm = new Parm();
-			parm.setParmName(name);
-			parm.setValue(val);
-			
-			parms.addParm(parm);
-		} // end for loop
+        Parms parms = new Parms();
 
-		event.setParms(parms);
-		
-		// send the event to eventd
-		EventIpcManagerFactory.getInstance().getManager().sendNow(event);
+        for (int i = 0; i < pdu.getLength(); i++) {
+            Value val = new Value();
 
-		if(log.isDebugEnabled())
-				log.debug("V1 Trap successfully converted and sent to eventd");
-		
-		if (TrapdIPMgr.getNodeId(trapInterface) == null && m_newSuspect)
-		{
-			sendNewSuspectEvent(trapInterface);
+            String name = pdu.getVarBindAt(i).getName().toString();
+            SnmpSyntax obj = pdu.getVarBindAt(i).getValue();
 
-			if(log.isDebugEnabled())
-				log.debug("Sent newSuspectEvent for interface: " + trapInterface);
-		}
-	}
+            if (obj instanceof SnmpInt32) {
+                val.setType(EventConstants.TYPE_SNMP_INT32);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpNull) {
+                val.setType(EventConstants.TYPE_SNMP_NULL);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpObjectId) {
+                val.setType(EventConstants.TYPE_SNMP_OBJECT_IDENTIFIER);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpIPAddress) {
+                val.setType(EventConstants.TYPE_SNMP_IPADDRESS);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpTimeTicks) {
+                val.setType(EventConstants.TYPE_SNMP_TIMETICKS);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpCounter32) {
+                val.setType(EventConstants.TYPE_SNMP_COUNTER32);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpGauge32) {
+                val.setType(EventConstants.TYPE_SNMP_GAUGE32);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else if (obj instanceof SnmpOpaque) {
+                val.setType(EventConstants.TYPE_SNMP_OPAQUE);
+                val.setEncoding(EventConstants.XML_ENCODING_BASE64);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_BASE64, obj));
+            } else if (obj instanceof SnmpOctetString) {
+                //
+                // check for non-printable characters. If they
+                // exist then print the string out as hexidecimal
+                //
+                boolean asHex = false;
+                byte[] data = ((SnmpOctetString) obj).getString();
+                for (int x = 0; x < data.length; x++) {
+                    byte b = data[x];
+                    if ((b < 32 && b != 9 && b != 10 && b != 13 && b != 0) || b == 127) {
+                        asHex = true;
+                        break;
+                    }
+                }
+
+                data = null;
+
+                String encoding = asHex ? EventConstants.XML_ENCODING_BASE64 : EventConstants.XML_ENCODING_TEXT;
+
+                val.setType(EventConstants.TYPE_SNMP_OCTET_STRING);
+                val.setEncoding(encoding);
+                val.setContent(EventConstants.toString(encoding, obj));
+
+                // DEBUG
+                if (!asHex && log.isDebugEnabled()) {
+                    log.debug("snmpReceivedTrap: string varbind: " + (((SnmpOctetString) obj).toString()));
+                }
+            } else if (obj instanceof SnmpCounter64) {
+                val.setType(EventConstants.TYPE_SNMP_COUNTER64);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(EventConstants.toString(EventConstants.XML_ENCODING_TEXT, obj));
+            } else {
+                val.setType(EventConstants.TYPE_STRING);
+                val.setEncoding(EventConstants.XML_ENCODING_TEXT);
+                val.setContent(obj.toString());
+            }
+
+            Parm parm = new Parm();
+            parm.setParmName(name);
+            parm.setValue(val);
+
+            parms.addParm(parm);
+        } // end for loop
+
+        event.setParms(parms);
+
+        // send the event to eventd
+        EventIpcManagerFactory.getInstance().getManager().sendNow(event);
+
+        if (log.isDebugEnabled())
+            log.debug("V1 Trap successfully converted and sent to eventd");
+
+        if (TrapdIPMgr.getNodeId(trapInterface) == null && m_newSuspect) {
+            sendNewSuspectEvent(trapInterface);
+
+            if (log.isDebugEnabled())
+                log.debug("Sent newSuspectEvent for interface: " + trapInterface);
+        }
+    }
 

@@ -1,137 +1,115 @@
-	/** 
-	 * This method is responsible for scheduling the specified node/address/svcname
-	 * tuple for thresholding.  
-	 * 
-	 * @param nodeId	Node id
-	 * @param ipAddress	IP address 
-	 * @param svcName	Service name
-	 * @param existing	True if called by scheduleExistingInterfaces(), false otheriwse
-	 */
-	void scheduleInterface(int nodeId, String ipAddress, String svcName, boolean existing)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		ThreshdConfigFactory cfgFactory = ThreshdConfigFactory.getInstance();
-		ThreshdConfiguration config = cfgFactory.getConfiguration();
-		Enumeration epkgs = config.enumeratePackage();
-		
-		// Compare interface/service pair against each threshd package
-		// For each match, create new ThresholdableService object and 
-		// schedule it for collection
-		//
-		while(epkgs.hasMoreElements())
-		{
-			org.opennms.netmgt.config.threshd.Package pkg = (org.opennms.netmgt.config.threshd.Package)epkgs.nextElement();
+    /**
+     * This method is responsible for scheduling the specified
+     * node/address/svcname tuple for thresholding.
+     * 
+     * @param nodeId
+     *            Node id
+     * @param ipAddress
+     *            IP address
+     * @param svcName
+     *            Service name
+     * @param existing
+     *            True if called by scheduleExistingInterfaces(), false
+     *            otheriwse
+     */
+    void scheduleInterface(int nodeId, String ipAddress, String svcName, boolean existing) {
+        Category log = ThreadCategory.getInstance(getClass());
 
-			// Make certain the the current service is in the package
-			// and enabled!
-			//
-			if (!cfgFactory.serviceInPackageAndEnabled(svcName, pkg))
-			{
-				if (log.isDebugEnabled())
-					log.debug("scheduleInterface: address/service: " + 
-							ipAddress + "/" + svcName + 
-							" not scheduled, service is not enabled or does not exist in package: " + 
-							pkg.getName());
-				continue;
-			}
+        ThreshdConfigFactory cfgFactory = ThreshdConfigFactory.getInstance();
+        ThreshdConfiguration config = cfgFactory.getConfiguration();
+        Enumeration epkgs = config.enumeratePackage();
 
-			// Is the interface in the package?
-			//
-			log.debug("scheduleInterface: checking ipaddress " + ipAddress + " for inclusion in pkg " + pkg.getName());
-			boolean foundInPkg = cfgFactory.interfaceInPackage(ipAddress, pkg);
-			if (!foundInPkg && existing == false)
-			{
-			    // The interface might be a newly added one, rebuild the package
-			    // to ipList mapping and again to verify if the interface is in
-			    // the package.
-			    cfgFactory.rebuildPackageIpListMap();
-			    foundInPkg = cfgFactory.interfaceInPackage(ipAddress, pkg);
-			}
-			if (!foundInPkg)
-			{
-			    if (log.isDebugEnabled())
-			        log.debug("scheduleInterface: address/service: " + 
-			                ipAddress + "/" + svcName + 
-			                " not scheduled, interface does not belong to package: " + 
-			                pkg.getName());
-			    continue;
-			}
-		
-			
-			log.debug("scheduleInterface: ipaddress " + ipAddress + " IS in pkg " + pkg.getName());
-			
-			if (existing == false)
-			{
-				// It is possible that both a nodeGainedService and a primarySnmpInterfaceChanged
-				// event are generated for an interface during a rescan.  To handle 
-				// this scenario we must verify that the ipAddress/pkg pair identified by 
-				// this event does not already exist in the thresholdable services list.
-				//
-				if (alreadyScheduled(ipAddress, pkg.getName()))
-				{
-					if (log.isDebugEnabled())
-					{
-						log.debug("scheduleInterface: ipAddr/pkgName " + 
-							ipAddress + "/" + pkg.getName() + 
-							" already in thresholdable service list, skipping.");
-					}
-					continue;
-				}
-			}
-			
-			try
-			{
-				// Criteria checks have all passed.  The interface/service pair
-				// can be scheduled.
-				//
-				ThresholdableService tSvc = null;
-				
-				// Create a new SnmpThresholder object representing this node, interface,
-				// service and package pairing
-				//
-				tSvc = new ThresholdableService(nodeId,
-								InetAddress.getByName(ipAddress),
-								svcName,
-								pkg);
-				
-				// Initialize the thresholder with the service.
-				//
-				ServiceThresholder thresholder = this.getServiceThresholder(svcName);
-				thresholder.initialize(tSvc, tSvc.getPropertyMap());
+        // Compare interface/service pair against each threshd package
+        // For each match, create new ThresholdableService object and
+        // schedule it for collection
+        //
+        while (epkgs.hasMoreElements()) {
+            org.opennms.netmgt.config.threshd.Package pkg = (org.opennms.netmgt.config.threshd.Package) epkgs.nextElement();
 
-				// Add new service to the thresholdable service list.
-				//
-				m_thresholdableServices.add(tSvc);
-				
-				// Schedule the service for threshold checking
-				//
-				// NOTE:  Service will be scheduled at the configured
-				//        interval (default is 5 minutes).  This should give
-				// 	  the collector a chance to update the RRD file so
-				//        there is data available to be fetched.
-				m_scheduler.schedule(tSvc, tSvc.getInterval());
-				
-				if (log.isDebugEnabled())
-					log.debug("scheduleInterface: " + nodeId + "/" + 
-						ipAddress + " scheduled for " + svcName + " threshold checking");
-			} 
-			catch(UnknownHostException ex)
-			{
-				log.error("scheduleInterface: Failed to schedule interface " + ipAddress + 
-								" for service " + svcName + ", illegal address", ex);
-			}
-			catch(RuntimeException rE)
-			{
-				log.warn("scheduleInterface: Unable to schedule " + 
-						ipAddress + " for service " + svcName + 
-						", reason: " + rE.getMessage());
-			}
-			catch(Throwable t)
-			{
-				log.error("scheduleInterface: Uncaught exception, failed to schedule interface "
-						  + ipAddress + " for service " + svcName, t);
-			}
-		} // end while more packages exist
-	}
+            // Make certain the the current service is in the package
+            // and enabled!
+            //
+            if (!cfgFactory.serviceInPackageAndEnabled(svcName, pkg)) {
+                if (log.isDebugEnabled())
+                    log.debug("scheduleInterface: address/service: " + ipAddress + "/" + svcName + " not scheduled, service is not enabled or does not exist in package: " + pkg.getName());
+                continue;
+            }
+
+            // Is the interface in the package?
+            //
+            log.debug("scheduleInterface: checking ipaddress " + ipAddress + " for inclusion in pkg " + pkg.getName());
+            boolean foundInPkg = cfgFactory.interfaceInPackage(ipAddress, pkg);
+            if (!foundInPkg && existing == false) {
+                // The interface might be a newly added one, rebuild the package
+                // to ipList mapping and again to verify if the interface is in
+                // the package.
+                cfgFactory.rebuildPackageIpListMap();
+                foundInPkg = cfgFactory.interfaceInPackage(ipAddress, pkg);
+            }
+            if (!foundInPkg) {
+                if (log.isDebugEnabled())
+                    log.debug("scheduleInterface: address/service: " + ipAddress + "/" + svcName + " not scheduled, interface does not belong to package: " + pkg.getName());
+                continue;
+            }
+
+            log.debug("scheduleInterface: ipaddress " + ipAddress + " IS in pkg " + pkg.getName());
+
+            if (existing == false) {
+                // It is possible that both a nodeGainedService and a
+                // primarySnmpInterfaceChanged
+                // event are generated for an interface during a rescan. To
+                // handle
+                // this scenario we must verify that the ipAddress/pkg pair
+                // identified by
+                // this event does not already exist in the thresholdable
+                // services list.
+                //
+                if (alreadyScheduled(ipAddress, pkg.getName())) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("scheduleInterface: ipAddr/pkgName " + ipAddress + "/" + pkg.getName() + " already in thresholdable service list, skipping.");
+                    }
+                    continue;
+                }
+            }
+
+            try {
+                // Criteria checks have all passed. The interface/service pair
+                // can be scheduled.
+                //
+                ThresholdableService tSvc = null;
+
+                // Create a new SnmpThresholder object representing this node,
+                // interface,
+                // service and package pairing
+                //
+                tSvc = new ThresholdableService(nodeId, InetAddress.getByName(ipAddress), svcName, pkg);
+
+                // Initialize the thresholder with the service.
+                //
+                ServiceThresholder thresholder = this.getServiceThresholder(svcName);
+                thresholder.initialize(tSvc, tSvc.getPropertyMap());
+
+                // Add new service to the thresholdable service list.
+                //
+                m_thresholdableServices.add(tSvc);
+
+                // Schedule the service for threshold checking
+                //
+                // NOTE: Service will be scheduled at the configured
+                // interval (default is 5 minutes). This should give
+                // the collector a chance to update the RRD file so
+                // there is data available to be fetched.
+                m_scheduler.schedule(tSvc, tSvc.getInterval());
+
+                if (log.isDebugEnabled())
+                    log.debug("scheduleInterface: " + nodeId + "/" + ipAddress + " scheduled for " + svcName + " threshold checking");
+            } catch (UnknownHostException ex) {
+                log.error("scheduleInterface: Failed to schedule interface " + ipAddress + " for service " + svcName + ", illegal address", ex);
+            } catch (RuntimeException rE) {
+                log.warn("scheduleInterface: Unable to schedule " + ipAddress + " for service " + svcName + ", reason: " + rE.getMessage());
+            } catch (Throwable t) {
+                log.error("scheduleInterface: Uncaught exception, failed to schedule interface " + ipAddress + " for service " + svcName, t);
+            }
+        } // end while more packages exist
+    }
 

@@ -1,119 +1,111 @@
-	/**
-	 * This method is responsible for building a list of existing nodes
-	 * from the 'node' table and then processing that list of nodes in 
-	 * order to determine if there are any nodes which must be reparented
-	 * because they share the same NetBIOS name with another node.  During
-	 * this processing the reparent node map is built which contains a
-	 * mapping of reparent nodes to their duplicate node lists.
-	 *
-	 * @throws SQLException if an error occurs querying the database.
-	 */
-	private void buildNodeLists()
-		throws SQLException
-	{		
-		Category log = ThreadCategory.getInstance(getClass());
-		m_existingNodeList = new ArrayList();
-		
-		PreparedStatement stmt = m_connection.prepareStatement(SQL_DB_RETRIEVE_NODES);	
-		try
-		{
-			// Issue database query
-			ResultSet rs = stmt.executeQuery();
-			
-			// Process result set
-			// Build list of LightWeightNodeEntry objects representing each of the 
-			// nodes pulled from the 'node' table
-			while (rs.next())
-			{
-				m_existingNodeList.add(new LightWeightNodeEntry(rs.getInt(1), rs.getString(2)));
-			}
-			
-			rs.close();
-			
-		}
-		catch(SQLException sqlE)
-		{
-			throw sqlE;
-		}
-		finally
-		{
-			stmt.close();
-		}
-		
-		// 
-		// Loop through node list and verify that all of the nodes
-		// have unique NetBIOS names.  If any two nodes have the same
-		// NetBIOS name then an entry will be added to the reparenting
-		// map.  
-		//
-		// Currently the nodeID with the lowest nodeID will have all
-		// the interfaces associated with the other node(s) reparented
-		// under it and it's LightWeightNodeEntry object will serve as the map key.
-		// Each of the other (duplicate) nodes will be added to a reparent
-		// list and then added to the map under the reparent node key.
-		//
-		Iterator outer = m_existingNodeList.iterator();
-		
-		while(outer.hasNext())
-		{
-			LightWeightNodeEntry outerEntry = (LightWeightNodeEntry)outer.next();
-			String outerNetbiosName = outerEntry.getNetbiosName();
-			
-			// Skip this node if NetBIOS name is null or is in list to skip
-			if (outerNetbiosName == null || m_netbiosNamesToSkip.contains(outerNetbiosName))
-				continue;
-				
-			// If node is already marked as a duplicate just move on
-			if (outerEntry.isDuplicate())
-				continue;
-				
-			List duplicateNodeList = null;
-			
-			Iterator inner = m_existingNodeList.iterator();
-			while(inner.hasNext())
-			{
-				LightWeightNodeEntry innerEntry = (LightWeightNodeEntry)inner.next();
-				String innerNetbiosName = innerEntry.getNetbiosName();
-				
-				// Skip if inner node id is less than or equal to 
-				// the current outer node id (since these have already
-				// been processed as an outer node).
-				if (innerEntry.getNodeId() <= outerEntry.getNodeId())
-					continue;
-				
-				// Skip this node if NetBIOS name is null or is in list to skip
-				if (innerNetbiosName == null || m_netbiosNamesToSkip.contains(innerNetbiosName))
-					continue;
-				
-				// Skip if current node is already marked as a duplicate
-				if (innerEntry.isDuplicate())
-					continue;
-					
-				if (innerNetbiosName.equals(outerNetbiosName))
-				{
-					// We've found two nodes with same NetBIOS name
-					// Add innerEntry to duplicate node list
-					if (duplicateNodeList == null)
-						duplicateNodeList = new ArrayList();
-					
-					innerEntry.setDuplicate(true); // mark node as duplicate
-					duplicateNodeList.add(innerEntry);  // add to current dup list
-					if(log.isDebugEnabled())
-						log.debug("ReparentViaSmb.retrieveNodeData: found that nodeid " + innerEntry.getNodeId() + " is a duplicate of nodeid " + outerEntry.getNodeId());
-				}
-			} // end inner while()
-			
-			// Anything need reparenting?
-			if (duplicateNodeList != null)
-			{
-				// We found duplicates...add to reparent map
-				if (m_reparentNodeMap == null)
-					m_reparentNodeMap = new HashMap();
+    /**
+     * This method is responsible for building a list of existing nodes from the
+     * 'node' table and then processing that list of nodes in order to determine
+     * if there are any nodes which must be reparented because they share the
+     * same NetBIOS name with another node. During this processing the reparent
+     * node map is built which contains a mapping of reparent nodes to their
+     * duplicate node lists.
+     * 
+     * @throws SQLException
+     *             if an error occurs querying the database.
+     */
+    private void buildNodeLists() throws SQLException {
+        Category log = ThreadCategory.getInstance(getClass());
+        m_existingNodeList = new ArrayList();
 
-				if(log.isDebugEnabled())
-					log.debug("ReparentViaSmb.retrieveNodeData: adding dup list w/ " + duplicateNodeList.size() + " to reparent Map for reparent nodeid " + outerEntry.getNodeId());
-				m_reparentNodeMap.put(outerEntry, duplicateNodeList);
-			}
-		}// end outer while()
-	}
+        PreparedStatement stmt = m_connection.prepareStatement(SQL_DB_RETRIEVE_NODES);
+        try {
+            // Issue database query
+            ResultSet rs = stmt.executeQuery();
+
+            // Process result set
+            // Build list of LightWeightNodeEntry objects representing each of
+            // the
+            // nodes pulled from the 'node' table
+            while (rs.next()) {
+                m_existingNodeList.add(new LightWeightNodeEntry(rs.getInt(1), rs.getString(2)));
+            }
+
+            rs.close();
+
+        } catch (SQLException sqlE) {
+            throw sqlE;
+        } finally {
+            stmt.close();
+        }
+
+        // 
+        // Loop through node list and verify that all of the nodes
+        // have unique NetBIOS names. If any two nodes have the same
+        // NetBIOS name then an entry will be added to the reparenting
+        // map.
+        //
+        // Currently the nodeID with the lowest nodeID will have all
+        // the interfaces associated with the other node(s) reparented
+        // under it and it's LightWeightNodeEntry object will serve as the map
+        // key.
+        // Each of the other (duplicate) nodes will be added to a reparent
+        // list and then added to the map under the reparent node key.
+        //
+        Iterator outer = m_existingNodeList.iterator();
+
+        while (outer.hasNext()) {
+            LightWeightNodeEntry outerEntry = (LightWeightNodeEntry) outer.next();
+            String outerNetbiosName = outerEntry.getNetbiosName();
+
+            // Skip this node if NetBIOS name is null or is in list to skip
+            if (outerNetbiosName == null || m_netbiosNamesToSkip.contains(outerNetbiosName))
+                continue;
+
+            // If node is already marked as a duplicate just move on
+            if (outerEntry.isDuplicate())
+                continue;
+
+            List duplicateNodeList = null;
+
+            Iterator inner = m_existingNodeList.iterator();
+            while (inner.hasNext()) {
+                LightWeightNodeEntry innerEntry = (LightWeightNodeEntry) inner.next();
+                String innerNetbiosName = innerEntry.getNetbiosName();
+
+                // Skip if inner node id is less than or equal to
+                // the current outer node id (since these have already
+                // been processed as an outer node).
+                if (innerEntry.getNodeId() <= outerEntry.getNodeId())
+                    continue;
+
+                // Skip this node if NetBIOS name is null or is in list to skip
+                if (innerNetbiosName == null || m_netbiosNamesToSkip.contains(innerNetbiosName))
+                    continue;
+
+                // Skip if current node is already marked as a duplicate
+                if (innerEntry.isDuplicate())
+                    continue;
+
+                if (innerNetbiosName.equals(outerNetbiosName)) {
+                    // We've found two nodes with same NetBIOS name
+                    // Add innerEntry to duplicate node list
+                    if (duplicateNodeList == null)
+                        duplicateNodeList = new ArrayList();
+
+                    innerEntry.setDuplicate(true); // mark node as duplicate
+                    duplicateNodeList.add(innerEntry); // add to current dup
+                                                        // list
+                    if (log.isDebugEnabled())
+                        log.debug("ReparentViaSmb.retrieveNodeData: found that nodeid " + innerEntry.getNodeId() + " is a duplicate of nodeid " + outerEntry.getNodeId());
+                }
+            } // end inner while()
+
+            // Anything need reparenting?
+            if (duplicateNodeList != null) {
+                // We found duplicates...add to reparent map
+                if (m_reparentNodeMap == null)
+                    m_reparentNodeMap = new HashMap();
+
+                if (log.isDebugEnabled())
+                    log.debug("ReparentViaSmb.retrieveNodeData: adding dup list w/ " + duplicateNodeList.size() + " to reparent Map for reparent nodeid " + outerEntry.getNodeId());
+                m_reparentNodeMap.put(outerEntry, duplicateNodeList);
+            }
+        }// end outer while()
+    }
 
