@@ -28,38 +28,20 @@
         // 
         DbIpInterfaceEntry[] dbInterfaces = null;
 
-        if (m_forceRescan) {
-            // Retrieve list of interfaces associated with this nodeID
-            // from the database
-            if (log.isDebugEnabled())
-                log.debug("retrieving all interfaces for node: " + m_scheduledNode.getNodeId());
-            try {
-                dbInterfaces = dbNodeEntry.getInterfaces();
-            } catch (NullPointerException npE) {
-                log.error("RescanProcessor: Null pointer when retrieving interfaces for node " + m_scheduledNode.getNodeId(), npE);
-                log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
-                return;
-            } catch (SQLException sqlE) {
-                log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
-                log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
-                return;
-            }
-        } else {
-            // Retrieve list of managed interfaces associated with this nodeID
-            // from the database
-            if (log.isDebugEnabled())
-                log.debug("retrieving managed interfaces for node: " + m_scheduledNode.getNodeId());
-            try {
-                dbInterfaces = dbNodeEntry.getManagedInterfaces();
-            } catch (NullPointerException npE) {
-                log.error("RescanProcessor: Null pointer when retrieving managed interfaces for node " + m_scheduledNode.getNodeId(), npE);
-                log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
-                return;
-            } catch (SQLException sqlE) {
-                log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
-                log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
-                return;
-            }
+        // Retrieve list of interfaces associated with this nodeID
+        // from the database
+        if (log.isDebugEnabled())
+            log.debug("retrieving all interfaces for node: " + m_scheduledNode.getNodeId());
+        try {
+            dbInterfaces = dbNodeEntry.getInterfaces();
+        } catch (NullPointerException npE) {
+            log.error("RescanProcessor: Null pointer when retrieving interfaces for node " + m_scheduledNode.getNodeId(), npE);
+            log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+            return;
+        } catch (SQLException sqlE) {
+            log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
+            log.error("Forced rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+            return;
         }
 
         boolean doesSnmp = true;
@@ -93,28 +75,44 @@
             IfCollector collector = new IfCollector(ifaddr, true);
             collector.run();
             snmpc = collector.getSnmpCollector();
-            if (log.isDebugEnabled()) {
-                if (snmpc == null) {
+            if (snmpc == null) {
+                if (log.isDebugEnabled())
                     log.debug("SNMP Collector from DB primary snmp interface is null");
-                } else {
-                    if (!snmpc.hasIpAddrTable())
-                        log.debug("SNMP Collector from DB primary snmp interface has no IpAddrTable");
-                    if (!snmpc.hasIfTable())
-                        log.debug("SNMP Collector from DB primary snmp interface has no IfTable");
-                }
-            }
-            if (snmpc != null && snmpc.hasIpAddrTable()) {
-                gotSnmpc = true;
-                collectorMap.put(ifaddr.getHostAddress(), collector);
+            } else {
                 gotSnmpCollection = true;
-                if (log.isDebugEnabled()) {
+                collectorMap.put(ifaddr.getHostAddress(), collector);
+                if (log.isDebugEnabled())
                     log.debug("SNMP data collected from DB primary snmp interface" + ifaddr.getHostAddress());
-                    log.debug("Adding " + ifaddr.getHostAddress() + " to collectorMap for node: " + m_scheduledNode.getNodeId());
+                if (!snmpc.hasIfTable()) {
+                    if (log.isDebugEnabled())
+                        log.debug("SNMP Collector has no IfTable");
+                }
+                if (!snmpc.hasIpAddrTable() || snmpc.getIfIndex(snmpc.getTarget()) == -1) {
+                    if (log.isDebugEnabled())
+                        log.debug("SNMP Collector has no IpAddrTable. Assume its a lame SNMP host.");
                 }
             }
         }
 
         if(!gotSnmpCollection) {
+
+            if (!m_forceRescan) {
+                // just rescan managed interfaces interfaces associated with this nodeID
+                if (log.isDebugEnabled())
+                    log.debug("retrieving managed interfaces for node: " + m_scheduledNode.getNodeId());
+                try {
+                    dbInterfaces = dbNodeEntry.getManagedInterfaces();
+                } catch (NullPointerException npE) {
+                    log.error("RescanProcessor: Null pointer when retrieving managed interfaces for node " + m_scheduledNode.getNodeId(), npE);
+                    log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+                    return;
+                } catch (SQLException sqlE) {
+                    log.error("RescanProcessor: unable to load interface info for nodeId " + m_scheduledNode.getNodeId() + " from the database.", sqlE);
+                    log.error("Rescan failed for node w/ nodeid " + m_scheduledNode.getNodeId());
+                    return;
+                }
+            }
+
             // Run collector for each retrieved interface and add result
             // to a collector map.
             for (int i = 0; i < dbInterfaces.length; i++) {
@@ -133,10 +131,9 @@
                 collector.run();
 
                 snmpc = collector.getSnmpCollector();
-                if (snmpc != null && snmpc.hasIpAddrTable()) {
-
-                    // Got a successful SNMP collection from the node
+                if (snmpc != null)
                     gotSnmpc = true;
+                if (snmpc != null && snmpc.hasIpAddrTable() && snmpc.getIfIndex(snmpc.getTarget()) != -1) {
 
                     if (areDbInterfacesInSnmpCollection(dbInterfaces, snmpc)) {
                         collectorMap.put(ifaddr.getHostAddress(), collector);
@@ -148,7 +145,7 @@
                         snmpcAgree = false;
                         break;
                     }
-                    else if (ipAddTable == null && snmpc.hasIpAddrTable()) {
+                    else if (ipAddTable == null) {
                         snmpcAgree = true;
                         collectorMap.put(ifaddr.getHostAddress(), collector);
                         ipAddTable = snmpc.getIpAddrTable();
@@ -217,16 +214,24 @@
         if (!gotSnmpCollection && snmpcAgree == false) {
             // We didn't get a collection from a primary snmp interface,
             // and we didn't get a collection that agrees with the db, and
-            // multiple interface collections don't agree with each other,
-            // so use the nonSnmpCollectorMap and set doesSnmp = false
+            // multiple interface collections don't agree with each other.
+            // First check for lame SNMP host, otherwise use the
+            // nonSnmpCollectorMap and set doesSnmp = false
             //
             collectorMap = nonSnmpCollectorMap;
-            doesSnmp = false;
-            if (log.isDebugEnabled()) {
-                if (gotSnmpc == false) {
-                    log.debug("Could not collect SNMP data for node: " + m_scheduledNode.getNodeId());
-                } else {
-                    log.debug("Not using SNMP data for node: " + m_scheduledNode.getNodeId() + ". Collection does not agree with database.");
+            if (nonSnmpCollectorMap.size() == 1 && gotSnmpc) {
+                doesSnmp = true;
+                if (log.isDebugEnabled()) {
+                    log.debug("node " + m_scheduledNode.getNodeId() + " appears to be a lame SNMP host... Proceeding");
+                }
+            } else {
+                doesSnmp = false;
+                if (log.isDebugEnabled()) {
+                    if (gotSnmpc == false) {
+                        log.debug("Could not collect SNMP data for node: " + m_scheduledNode.getNodeId());
+                    } else {
+                        log.debug("Not using SNMP data for node: " + m_scheduledNode.getNodeId() + ". Collection does not agree with database.");
+                    }
                 }
             }
         }
