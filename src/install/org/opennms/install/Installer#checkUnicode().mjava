@@ -1,0 +1,69 @@
+    // XXX Should this all be in Java, instead of calling
+    //      convert_db_to_unicode.sh?
+    /* 
+       XXX This doesn't work reliably.  Here are two errors:
+
+    - dumping data to /tmp/pg_dump-opennms... ok
+    - dropping old database... failed
+    Exception in thread "main" java.lang.Exception: convert_db_to_unicode.sh returned non-zero exit value: 20
+        at org.opennms.install.Installer.checkUnicode(Installer.java:917)
+        at org.opennms.install.Installer.install(Installer.java:165)
+        at org.opennms.install.Installer.main(Installer.java:1985)
+
+    - dumping data to /tmp/pg_dump-opennms... ok
+    - dropping old database... ok
+    - creating new unicode database... failed
+    Exception in thread "main" java.lang.Exception: convert_db_to_unicode.sh returned non-zero exit value: 30
+        at org.opennms.install.Installer.checkUnicode(Installer.java:917)
+        at org.opennms.install.Installer.install(Installer.java:165)
+        at org.opennms.install.Installer.main(Installer.java:1985)
+
+    ... and their errors in /tmp/unicode-convert.log:
+
+	Sun Jul 11 03:16:26 EDT 2004 dumping data to /tmp/pg_dump-opennms
+	Sun Jul 11 03:16:26 EDT 2004 dropping old database
+	dropdb: database removal failed: ERROR:  database "opennms" is being accessed by other users
+
+	Sun Jul 11 03:18:14 EDT 2004 dumping data to /tmp/pg_dump-opennms
+	Sun Jul 11 03:18:15 EDT 2004 dropping old database
+	DROP DATABASE
+	Sun Jul 11 03:18:15 EDT 2004 creating new unicode database
+	createdb: database creation failed: ERROR:  source database "template1" is being accessed by other users
+     */
+    public void checkUnicode() throws Exception {
+	Statement st = m_dbconnection.createStatement();
+	ResultSet rs;
+
+	System.out.print("- checking if database \"" + m_database +
+			 "\" is unicode... ");
+	
+	rs = st.executeQuery("SELECT encoding FROM pg_database WHERE " +
+			     "datname='" + m_database.toLowerCase() + "'");
+	rs.next();
+	if (rs.getInt(1) == 5 || rs.getInt(1) == 6) {
+	    System.out.println("ALREADY UNICODE");
+	    return;
+	}
+
+	System.out.println("NOT UNICODE, CONVERTING");
+
+	databaseDisconnect();
+
+	String[] cmd = {
+	    m_opennms_home + "/bin/convert_db_to_unicode.sh", 
+	    m_pg_user,
+	    m_user,
+	    m_database,
+	    m_sql_dir + File.separator + "create.sql"
+	};
+
+	ProcessExec e = new ProcessExec();
+	int exitVal;
+	if ((exitVal = e.exec(cmd)) != 0) {
+	    throw new Exception("convert_db_to_unicode.sh returned " +
+				"non-zero exit value: " + exitVal);
+	}
+
+	databaseConnect(m_database);
+    }
+

@@ -1,0 +1,98 @@
+    public List getTableColumnsFromDB(String table) throws Exception {
+	Statement st = m_dbconnection.createStatement();
+	ResultSet rs;
+	LinkedList r = new LinkedList();
+
+	rs = st.executeQuery("SELECT DISTINCT tablename FROM pg_tables " +
+			     "WHERE lower(tablename) = '" +
+			     table.toLowerCase() + "'");
+	if (!rs.next()) {
+	    return r;
+	}
+
+	String query = 
+		"SELECT " +
+		"        a.attname, " +
+		"        format_type(a.atttypid, a.atttypmod), " +
+		"        a.attnotnull, " +
+		"        c.contype " +
+		"FROM " +
+		"        pg_constraint c RIGHT JOIN " +
+		"                (pg_attribute a JOIN pg_type t ON " +
+		"                        a.atttypid = t.oid) " +
+		"                ON c.conrelid = a.attrelid AND " +
+		"		   a.attnum = ANY(c.conkey) AND " +
+		"		   c.contype = 'p' " +
+		"		    " +
+		"		 " +
+		"WHERE " +
+		"        a.attrelid = " +
+		"                (SELECT oid FROM pg_class WHERE relname = '" +
+	                         table + "') AND " +
+		"        a.attnum > 0 AND " +
+		"        a.attisdropped = false  " +
+		"ORDER BY " +
+		"        a.attnum;";
+
+	rs = st.executeQuery(query);
+
+	while (rs.next()) {
+	    Column c = new Column();
+	    c.setName(rs.getString(1));
+	    c.parseColumnType(rs.getString(2));
+	    c.setNotNull(rs.getBoolean(3));
+
+	    String constraintType = rs.getString(4);
+	    r.add(c);
+	}
+
+	query =
+		"SELECT " +
+		"       c.conname, " +
+		"	c.contype, " +
+		"	a.attname, " +
+		"	d.relname, " +
+		"	b.attname " +
+		"FROM " +
+		"	pg_class d RIGHT JOIN " +
+		"	  (pg_attribute b RIGHT JOIN " +
+		"	    (pg_constraint c JOIN pg_attribute a " +
+		"	      ON c.conrelid = a.attrelid AND " +
+		"	         a.attnum = ANY(c.conkey)) " +
+		"	    ON c.confrelid = b.attrelid AND " +
+		"	       b.attnum = ANY(c.confkey)) " +
+		"	  ON b.attrelid = d.oid " +
+		"WHERE " +
+		"	a.attrelid = " +
+	        "         (SELECT oid FROM pg_class WHERE relname = '" +
+	                       table.toLowerCase() + "');";
+
+	rs = st.executeQuery(query);
+
+	while (rs.next()) {
+	    Constraint constraint;
+	    if (rs.getString(2).equals("p")) {
+		constraint = new Constraint(rs.getString(1), rs.getString(3));
+	    } else if (rs.getString(2).equals("f")) {
+		constraint = new Constraint(rs.getString(1), rs.getString(3),
+					    rs.getString(4), rs.getString(5));
+	    } else {
+		throw new Exception("Do not support constraint type \"" +
+				    rs.getString(2) + "\" in constraint \"" +
+				    rs.getString(1) + "\"");
+	    }
+
+	    Column c = findColumn(r, constraint.getColumn());
+	    if (c == null) {
+		throw new Exception("Got a constraint for column \"" +
+				    constraint.getColumn() + "\" of table " +
+				    table + ", but could not find column.  " +
+				    "Constraint: " + constraint);
+	    }
+
+	    c.addConstraint(constraint);
+	}
+
+	return r;
+    }
+

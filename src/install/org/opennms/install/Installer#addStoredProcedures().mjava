@@ -1,0 +1,75 @@
+    public void addStoredProcedures() throws Exception {
+	Statement st = m_dbconnection.createStatement();
+	ResultSet rs;
+
+	System.out.print("- adding stored procedures... ");
+
+	FileFilter sqlFilter = new FileFilter() {
+		public boolean accept(File pathname) {
+		    return (pathname.getName().startsWith("get") &&
+			    pathname.getName().endsWith(".sql"));
+		}
+	    };
+
+	File[] list = new File(m_sql_dir).listFiles(sqlFilter);
+
+	for (int i = 0; i < list.length; i++) {
+	    LinkedList drop = new LinkedList();
+	    StringBuffer create = new StringBuffer();
+	    String line;
+	    
+	    System.out.print("\n  - " + list[i].getName() + "... ");
+	    
+	    BufferedReader r = new BufferedReader(new FileReader(list[i]));
+	    while ((line = r.readLine()) != null) {
+		line = line.trim();
+
+		if (line.matches("--.*")) {
+		    continue;
+		}
+
+		if (line.toLowerCase().startsWith("drop function")) {
+		    drop.add(line);
+		} else {
+		    create.append(line);
+		    create.append("\n");
+		}
+	    }
+	    r.close();
+
+	    // XXX install.pl has code to drop the functions, however I think
+	    //     it is buggy and it would have ever droopped a function.
+	    //     The supposed buggy code is not implemented here.
+	
+	    Matcher m = Pattern.compile("(?is)\\bCREATE FUNCTION\\s+" +
+					"(\\w+)\\s*\\((.+?)\\)\\s+" +
+					"RETURNS\\s+(\\S+)\\s+AS\\s+" +
+					"(.+? language ['\"]?\\w+['\"]?);").
+		matcher(create.toString());
+
+	    if (!m.find()) {
+		throw new Exception("Could match \"" + m.pattern().pattern() +
+				    "\" in string \"" + create + "\"");
+	    }
+	    String function = m.group(1);
+	    String columns = m.group(2);
+	    String returns = m.group(3);
+	    String rest = m.group(4);
+
+	    if (functionExists(function, columns, returns)) {
+		if (m_force) {
+		    st.execute("DROP FUNCTION " +
+			       function + "(" + columns + ")");
+		    st.execute(create.toString());
+		    System.out.print("OK (dropped and re-added)");
+		} else {
+		    System.out.print("EXISTS");
+		}
+	    } else {
+		st.execute(create.toString());
+		System.out.print("OK");
+	    }
+	}
+	System.out.println("");
+    }
+
