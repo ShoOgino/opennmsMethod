@@ -1,0 +1,301 @@
+  /**
+   * Walk the abstract syntax tree and collect the text oids
+   */
+  public void collectOids() {
+    //if (printDebug) System.out.println("collectOids node=" + this.toString());
+    if (this.getVisited() == true) {
+      return;
+    }
+    boolean foundDeclOID = ParseMibTreeConstants.jjtNodeName[this.id].equals(
+        "DeclOID") ||
+        ParseMibTreeConstants.jjtNodeName[this.id].equals("ModuleIdentity");
+    boolean processMultipleOids = false;
+
+    if (children != null) {
+      // if (printDebug) System.out.println("Found DeclOID=" + foundDeclOID + " node= " + toString());
+      // build the OIDs
+      // there are some children under this node like:
+      //  DeclOID default children=3
+      //    ObjectIdentifier smsFileQueue children=0
+      //    GetTypeIdentifier Gauge32 visited=false children=0
+      //    GetAccessIdentifier read-only visited=false children=0
+      //    Parent products children=0
+      //    PartialOID 7 children=0
+      // get all that info from the children
+      // this example would be something like
+      //   iso...products.smsFileQueue
+      //   .1...2.7   if products was 2 (products is already saved in the ST)
+      String parent = null;
+      String textOid = null;
+      String numericOid = null;
+      String typeId = null;
+      String accessName = OidValues.NOT_ACCESSIBLE;
+
+      // walk through the children and collect information
+      for (int i = 0; i < children.length; ++i) {
+        SimpleNode n = (SimpleNode) children[i];
+        if (n != null) {
+          // if (printDebug && foundDeclOID) System.out.println("DeclOID child=" + toString());
+
+          if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals("Parent")) {
+            parent = n.identifier_parent_text;
+            textOid = n.identifier_text;
+          }
+          else if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals(
+              "PartialOID")) {
+            numericOid = n.identifier_text;
+          }
+          else if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals(
+              "GetTypeIdentifier")) {
+            typeId = n.identifier_text;
+          }
+          else if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals(
+              "GetAccessIdentifier")) {
+            accessName = n.identifier_text;
+          }
+          else if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals(
+              "MultipleOids")) {
+            processMultipleOids = true; // more complicated tree walk
+          }
+
+        } // end if
+
+        if (n != null) {
+          n.collectOids();
+          n.setVisited(true);
+        }
+      } // end for
+
+      if (foundDeclOID) {
+        // now that we have all the info, look in the hash table, the parent
+        // should be in there, from the parent we build new oids for the currentOid
+        if (printDebug) {
+          System.out.println("found parent=" + parent + " textOid=" + textOid +
+                             " numericOid=" + numericOid);
+        }
+        String tableName = (String) oidVarsTableName.get(textOid);
+
+        if (tableName != null) {
+          if (printDebug) {
+            System.out.println("the OID " + textOid + " is in table=" +
+                               tableName);
+          }
+          if (printDebug) {
+            System.out.println("the index name=" +
+                               (String) tableAndIndex.get(tableName));
+          }
+        }
+
+        // get the oid record out of the hashtable
+        OidValues parentOid = (OidValues) oidNames.get(parent);
+
+        if (printDebug) {
+          System.out.println("found numericOid=" + numericOid);
+
+        }
+        if (processMultipleOids) {
+          String curTextOid = textOid; // add to ST after loops
+          String curNumericOid = numericOid; // add to ST after loops
+
+          if (printDebug) {
+            System.out.println("process multiple oids in a list");
+            // this is a declaration like
+            // mgmt OBJECT IDENTIFIER ::= { iso org(3) dod(6) internet(1) mgmt(2) }
+            // that requires walking the tree and adding a piece at a time
+            // go down the tree and add the MultipleOids subtrees a piece at
+            // a time.
+            // the tree has some nodes like:
+            // already have the parent from above.
+            // note that the parent has both the parent and child names in the node
+            // n.identifier_parent_text is the parent
+            // n.identifier_text is the child only when there is 1 id in the {}
+            /*
+                             DeclOID default visited=false children=6
+             ObjectIdentifier mgmt visited=false children=0
+             Parent mgmt visited=false children=0
+             MultipleOids default visited=false children=2
+              ChildTextIdentifier org visited=false children=0
+              ChildNumericIdentifier 3 visited=false children=0
+             MultipleOids default visited=false children=2
+              ChildTextIdentifier dod visited=false children=0
+              ChildNumericIdentifier 6 visited=false children=0
+             MultipleOids default visited=false children=2
+              ChildTextIdentifier internet visited=false children=0
+              ChildNumericIdentifier 1 visited=false children=0
+             MultipleOids default visited=false children=2
+              ChildTextIdentifier mgmt visited=false children=0
+              ChildNumericIdentifier 2 visited=false children=0
+             */
+            // walk through the children and collect information
+          }
+          for (int i = 0; i < children.length; ++i) {
+            SimpleNode nouter = (SimpleNode) children[i];
+            if (nouter != null) {
+
+              if (ParseMibTreeConstants.jjtNodeName[nouter.getId()].equals(
+                  "MultipleOids")) {
+
+                for (int j = 0; j < nouter.jjtGetNumChildren(); ++j) {
+                  SimpleNode n = (SimpleNode) nouter.jjtGetChild(j);
+                  if (n != null) {
+
+                    if (ParseMibTreeConstants.jjtNodeName[n.getId()].equals(
+                        "ChildTextIdentifier")) {
+                      textOid = n.identifier_text;
+                    }
+                    else if (ParseMibTreeConstants.jjtNodeName[n.getId()].
+                             equals("ChildNumericIdentifier")) {
+                      if (printDebug) {
+                        System.out.println(
+                            "processing multiple ids in a declaration");
+                      }
+                      numericOid = n.identifier_text;
+
+                      // we have everything that we need to add to the ST
+                      OidValues currentOid = new OidValues();
+                      String fullOid = parentOid.getTextOid();
+                      if (printDebug) {
+                        System.out.println("found fullOid * =" + fullOid);
+
+                        // build the text oid
+                      }
+                      fullOid = fullOid + "." + textOid;
+                      currentOid.setTextOid(fullOid);
+                      if (printDebug) {
+                        System.out.println("added text oid * : " + fullOid);
+
+                        // build the numeric oid
+                      }
+                      fullOid = parentOid.getNumericOid();
+                      fullOid = fullOid + "." + numericOid;
+                      currentOid.setNumericOid(fullOid);
+                      if (printDebug) {
+                        System.out.println("added numeric oid * : " + fullOid);
+
+                      }
+                      accessName = OidValues.READ_ONLY;
+                      currentOid.setAccess(accessName);
+                      if (printDebug) {
+                        System.out.println("added access=" + accessName);
+
+                      }
+                      oidNames.put(textOid, currentOid);
+                      // The Hashtables do not save in order so maintain a list that
+                      // will have the correct order on output
+                      orderList.addElement(textOid);
+
+                      // so that as we walk down the oids, the prev becomes the parent
+                      parentOid = (OidValues) oidNames.get(textOid);
+                    }
+
+                  } // end if
+
+                } // end for j inner
+
+                // now add the child of all the children just added
+                OidValues currentOid = new OidValues();
+                String fullOid = parentOid.getTextOid();
+                if (printDebug) {
+                  System.out.println("found fullOid ** =" + fullOid);
+
+                  // build the text oid
+                }
+                fullOid = fullOid + "." + curTextOid;
+                currentOid.setTextOid(fullOid);
+                if (printDebug) {
+                  System.out.println("added text oid ** : " + fullOid);
+
+                  // build the numeric oid
+                }
+                fullOid = parentOid.getNumericOid();
+                fullOid = fullOid + "." + curNumericOid;
+                currentOid.setNumericOid(fullOid);
+                if (printDebug) {
+                  System.out.println("added numeric oid ** : " + fullOid);
+
+                }
+                accessName = OidValues.READ_ONLY;
+                currentOid.setAccess(accessName);
+                if (printDebug) {
+                  System.out.println("added access=" + accessName);
+
+                }
+                oidNames.put(curTextOid, currentOid);
+                // The Hashtables do not save in order so maintain a list that
+                // will have the correct order on output
+                orderList.addElement(curTextOid);
+
+              }
+            }
+          } // end for i outer
+
+        }
+        else {
+          OidValues currentOid = new OidValues();
+          String fullOid = null;
+          try {
+            fullOid = parentOid.getTextOid();
+          }
+          catch (Throwable t) {
+            System.err.println("ERROR: can't find parent '" + parent +
+                               "' for textOid '" + textOid +
+                "'\nFind which MIB the parent is defined in and add that to the command line\n");
+            if (printDebug) {
+              dumpOidNamesSymbolTable();
+            }
+            System.exit(Errors.INCLUDE_MIB_MISSING);
+          }
+          if (printDebug) {
+            System.out.println("found fullOid *** =" + fullOid);
+
+            // build the text oid
+          }
+          fullOid = fullOid + "." + textOid;
+          currentOid.setTextOid(fullOid);
+          if (printDebug) {
+            System.out.println("added text oid *** : " + fullOid);
+
+            // build the numeric oid
+          }
+          fullOid = parentOid.getNumericOid();
+          fullOid = fullOid + "." + numericOid;
+          currentOid.setNumericOid(fullOid);
+          if (printDebug) {
+            System.out.println("added numeric oid *** : " + fullOid);
+
+          }
+          if (typeId != null) {
+            currentOid.setTypeId(typeId);
+            if (printDebug) {
+              System.out.println("added typeId=" + typeId);
+            }
+          }
+          else {
+            if (printDebug) {
+              System.out.println("typeId was null and not added");
+            }
+          }
+
+          currentOid.setAccess(accessName);
+          if (printDebug) {
+            System.out.println("added access=" + accessName);
+
+          }
+          oidNames.put(textOid, currentOid);
+          // The Hashtables do not save in order so maintain a list that
+          // will have the correct order on output
+          orderList.addElement(textOid);
+
+          /*
+                  String fullOid = (String)oidNames.get(parent);
+               if (printDebug) System.out.println("found fullOid **** =" + fullOid);
+                  fullOid = fullOid + "." + textOid;
+                  oidNames.put(textOid, fullOid);
+               if (printDebug) System.out.println("added to oidNames: " + fullOid);
+           */
+        }
+      } // end if foundDeclOID
+
+    } // end if children != null
+  } // end collectOIDS
+
