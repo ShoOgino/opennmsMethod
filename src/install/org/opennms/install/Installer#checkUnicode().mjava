@@ -1,68 +1,127 @@
-    // XXX Should this all be in Java, instead of calling
-    //      convert_db_to_unicode.sh?
-    /* 
-       XXX This doesn't work reliably.  Here are two errors:
-
-    - dumping data to /tmp/pg_dump-opennms... ok
-    - dropping old database... failed
-    Exception in thread "main" java.lang.Exception: convert_db_to_unicode.sh returned non-zero exit value: 20
-        at org.opennms.install.Installer.checkUnicode(Installer.java:917)
-        at org.opennms.install.Installer.install(Installer.java:165)
-        at org.opennms.install.Installer.main(Installer.java:1985)
-
-    - dumping data to /tmp/pg_dump-opennms... ok
-    - dropping old database... ok
-    - creating new unicode database... failed
-    Exception in thread "main" java.lang.Exception: convert_db_to_unicode.sh returned non-zero exit value: 30
-        at org.opennms.install.Installer.checkUnicode(Installer.java:917)
-        at org.opennms.install.Installer.install(Installer.java:165)
-        at org.opennms.install.Installer.main(Installer.java:1985)
-
-    ... and their errors in /tmp/unicode-convert.log:
-
-	Sun Jul 11 03:16:26 EDT 2004 dumping data to /tmp/pg_dump-opennms
-	Sun Jul 11 03:16:26 EDT 2004 dropping old database
-	dropdb: database removal failed: ERROR:  database "opennms" is being accessed by other users
-
-	Sun Jul 11 03:18:14 EDT 2004 dumping data to /tmp/pg_dump-opennms
-	Sun Jul 11 03:18:15 EDT 2004 dropping old database
-	DROP DATABASE
-	Sun Jul 11 03:18:15 EDT 2004 creating new unicode database
-	createdb: database creation failed: ERROR:  source database "template1" is being accessed by other users
-     */
     public void checkUnicode() throws Exception {
 	Statement st = m_dbconnection.createStatement();
 	ResultSet rs;
 
-	System.out.print("- checking if database \"" + m_database +
+	m_out.print("- checking if database \"" + m_database +
 			 "\" is unicode... ");
 	
 	rs = st.executeQuery("SELECT encoding FROM pg_database WHERE " +
 			     "datname='" + m_database.toLowerCase() + "'");
 	rs.next();
 	if (rs.getInt(1) == 5 || rs.getInt(1) == 6) {
-	    System.out.println("ALREADY UNICODE");
+	    m_out.println("ALREADY UNICODE");
 	    return;
 	}
 
-	System.out.println("NOT UNICODE, CONVERTING");
+	m_out.println("NOT UNICODE, CONVERTING");
 
 	databaseDisconnect();
 
-	String[] cmd = {
-	    m_opennms_home + "/bin/convert_db_to_unicode.sh", 
-	    m_pg_user,
-	    m_user,
-	    m_database,
-	    m_sql_dir + File.separator + "create.sql"
-	};
+	String dumpFile = "/tmp/pg_dump-" + m_database;
+	String logFile = "/tmp/unicode-convert.log";
+	PrintStream log = new PrintStream(new FileOutputStream(logFile, true));
+	ProcessExec e = new ProcessExec(log, log);
 
-	ProcessExec e = new ProcessExec();
 	int exitVal;
-	if ((exitVal = e.exec(cmd)) != 0) {
-	    throw new Exception("convert_db_to_unicode.sh returned " +
-				"non-zero exit value: " + exitVal);
+
+	log.println("------------------------------------------------------" +
+		    "------------------------");
+
+	m_out.print("  - dumping data to " + dumpFile + "... ");
+	String[] cmd1 = {
+	    m_pg_bindir + File.separator + "pg_dump",
+	    "-U",
+	    m_pg_user,
+	    "-a",
+	    "-D",
+	    m_database,
+	    "-f",
+	    dumpFile
+	};
+	if ((exitVal = e.exec(cmd1)) != 0) {
+	    throw new Exception("Dumping database returned non-zero exit " +
+				"value " + exitVal + " while executing " +
+				"command '" + join(" ", cmd1) + "', check " +
+				logFile);
 	}
+	m_out.println("OK");
+
+	m_out.print("  - waiting 3s for PostgreSQL to notice " +
+			 "that pg_dump has disconnected.");
+	Thread.sleep(1000);
+	m_out.print(".");
+	Thread.sleep(1000);
+	m_out.print(".");
+	Thread.sleep(1000);
+	m_out.println(" OK");
+
+	m_out.print("  - dropping old database... ");
+	String[] cmd2 = {
+	    m_pg_bindir + File.separator + "dropdb",
+	    "-U",
+	    m_pg_user,
+	    m_database
+	};
+	if ((exitVal = e.exec(cmd2)) != 0) {
+	    throw new Exception("Dropping database returned non-zero exit " +
+				"value " + exitVal + " while executing " +
+				"command '" + join(" ", cmd2) + "', check " +
+				logFile);
+	}
+	m_out.println("OK");
+
+	m_out.print("  - creating new unicode database... ");
+	String[] cmd3 = {
+	    m_pg_bindir + File.separator + "createdb",
+	    "-U",
+	    m_pg_user,
+	    "-E",
+	    "UNICODE",
+	    m_database
+	};
+	if ((exitVal = e.exec(cmd3)) != 0) {
+	    throw new Exception("Creating database returned non-zero exit " +
+				"value " + exitVal + " while executing " +
+				"command '" + join(" ", cmd3) + "', check " +
+				logFile);
+	}
+	m_out.println("OK");
+
+	m_out.print("  - recreating tables... ");
+	String[] cmd4 = {
+	    m_pg_bindir + File.separator + "psql",
+	    "-U",
+	    m_user,
+	    "-f",
+	    m_sql_dir + File.separator + "create.sql",
+	    m_database
+	};
+	if ((exitVal = e.exec(cmd4)) != 0) {
+	    throw new Exception("Recreating tables returned non-zero exit " +
+				"value " + exitVal + " while executing " +
+				"command '" + join(" ", cmd4) + "', check " +
+				logFile);
+	}
+	m_out.println("OK");
+
+	m_out.print("  - restoring data... ");
+	String[] cmd5 = {
+	    m_pg_bindir + File.separator + "psql",
+	    "-U",
+	    m_user,
+	    "-f",
+	    dumpFile,
+	    m_database
+	};
+	if ((exitVal = e.exec(cmd5)) != 0) {
+	    throw new Exception("Restoring data returned non-zero exit " +
+				"value " + exitVal + " while executing " +
+				"command '" + join(" ", cmd5) + "', check " +
+				logFile);
+	}
+	m_out.println("OK");
+
+	log.close();
 
 	databaseConnect(m_database);
     }
