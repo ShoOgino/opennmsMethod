@@ -1,0 +1,102 @@
+	/**
+	 * Perform threshold checking.
+	 * 
+	 * @param iface 	Network interface to be data collected.
+	 * @param eproxy	Eventy proxy for sending events.
+	 * @param parameters	Key/value pairs from the package to which 
+	 * 			the interface belongs.
+	 */
+	public int check(NetworkInterface iface, EventProxy eproxy, Map parameters)
+	{
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		InetAddress ipAddr = (InetAddress)iface.getAddress();
+		int thresholdingStatus = THRESHOLDING_UNKNOWN;
+		
+		// Get configuration parameters
+		//
+		String groupName = ParameterMap.getKeyedString(parameters, "thresholding-group", "default");
+		int interval = ParameterMap.getKeyedInteger(parameters, "interval", DEFAULT_INTERVAL);
+		
+		// NodeId attribute
+		int nodeId = -1;
+		Integer tmp = (Integer)iface.getAttribute(NODE_ID_KEY);
+		if (tmp != null)
+			nodeId = tmp.intValue();	
+		if (nodeId == -1)
+		{
+			log.error("Threshold checking failed for " + m_svcName + "/" + ipAddr.getHostAddress() + ", missing nodeId.");
+			return THRESHOLDING_FAILED;
+		}
+		
+		if (log.isDebugEnabled())
+			log.debug("check: service= " + m_svcName + " interface= " + ipAddr.getHostAddress() + 
+				" nodeId= " + nodeId + " thresholding-group=" + groupName + " interval=" + interval + "ms");
+		
+		// RRD Repository attribute
+		//
+		String repository = (String)iface.getAttribute(RRD_REPOSITORY_KEY);
+		if (log.isDebugEnabled())
+			log.debug("check: rrd repository=" + repository);
+		
+		// ThresholdEntity map attributes
+		//
+		Map thresholdMap = (Map)iface.getAttribute(THRESHOLD_MAP_KEY);
+		
+		// Get File object representing the '/opt/OpenNMS/share/rrd/<svc_name>/<ipAddress>/' directory
+		File latencyDir = new File(repository + File.separator + ipAddr.getHostAddress());
+		if (!latencyDir.exists())
+		{
+			log.error("Latency directory for " + m_svcName + "/" + ipAddr.getHostAddress() + " does not exist.");
+			log.error("Threshold checking failed for " + ipAddr.getHostAddress());
+			return THRESHOLDING_FAILED;
+		}
+		else if (!RrdFileConstants.isValidRRDLatencyDir(latencyDir))
+		{
+			log.error("Latency directory for " + m_svcName + "/" + ipAddr.getHostAddress() + " is not a valid RRD latency directory.");
+			log.error("Threshold checking failed for " + ipAddr.getHostAddress());
+			return THRESHOLDING_FAILED;
+		}
+		
+		// Create empty Events object to hold any threshold
+		// events generated during the thresholding check...
+		Events events = new Events();
+		
+		try
+		{
+			checkRrdDir(latencyDir, 
+					nodeId,
+					ipAddr,
+					interval,
+					new Date(),  // time stamp for outgoing events
+					thresholdMap,
+					events);
+		}
+		catch (IllegalArgumentException e)
+		{
+			log.error("check: Threshold checking failed for " + m_svcName + "/" + ipAddr.getHostAddress(), e);
+			return THRESHOLDING_FAILED;
+		}
+		
+		// Send created events
+		//
+		if (events.getEventCount() > 0)
+		{
+			try
+			{
+				Log eventLog = new Log();
+				eventLog.setEvents(events);
+				eproxy.send(eventLog);
+			}
+			catch(RuntimeException e)
+			{
+				log.error("check: Failed sending threshold events via event proxy...", e);
+				return THRESHOLDING_FAILED;
+			}
+		}
+		
+		// return the status of the threshold check
+		//
+		return THRESHOLDING_SUCCEEDED;
+	}
+
