@@ -4,7 +4,74 @@
 
                 //the list of all nodes marked for deletion
                 java.util.List nodeList = getList(request.getParameterValues("nodeCheck"));
+                java.util.List nodeDataList = getList(request.getParameterValues("nodeData"));
 
+		//get the directories storing the response time and SNMP data
+        	this.snmpProps = new java.util.Properties();
+        	this.snmpProps.load( new FileInputStream( Vault.getHomeDir() + RRDTOOL_SNMP_GRAPH_PROPERTIES_FILENAME ));
+
+        	this.snmpRrdDirectory = new File( this.snmpProps.getProperty( "command.input.dir" ));
+
+                this.rtProps = new java.util.Properties();
+                this.rtProps.load( new FileInputStream( Vault.getHomeDir() + RRDTOOL_RT_GRAPH_PROPERTIES_FILENAME ));
+
+                this.rtRrdDirectory = new File( this.rtProps.getProperty( "command.input.dir" ));
+
+
+		//delete data directories if desired
+                for (int j = 0; j < nodeDataList.size(); j++)
+                {
+			//SNMP RRD directory
+        		File nodeDir = new File(this.snmpRrdDirectory, (String)nodeDataList.get(j));
+
+        		if(nodeDir.exists() && nodeDir.isDirectory()) 
+			{
+                        	this.log("DEBUG: Attempting to Delete Node Data Directory: " + nodeDir.getAbsolutePath());
+				if(deleteDir(nodeDir))
+                        		this.log("DEBUG: Node Data Directory Deleted Successfully");
+			}
+        		StringBuffer select = new StringBuffer("SELECT DISTINCT ipaddr FROM ipinterface WHERE nodeid=");
+
+        		select.append((String)nodeDataList.get(j));
+			
+			try
+			{
+        			Connection conn = Vault.getDbConnection();
+        			ArrayList intfs = new ArrayList();
+
+        			try
+        			{
+            				Statement stmt = conn.createStatement();
+            				ResultSet rs = stmt.executeQuery(select.toString());
+
+            				while( rs.next() )
+            				{
+                				String ipAddr = rs.getString("ipaddr");
+						//Response Time RRD directory
+                				File intfDir = new File(this.rtRrdDirectory, ipAddr);
+
+                				if(intfDir.exists() && intfDir.isDirectory())
+                				{
+                                			this.log("DEBUG: Attempting to Delete Node Response Time Data Directory: " + intfDir.getAbsolutePath());
+                                			if(deleteDir(intfDir))
+                                        			this.log("DEBUG: Node Response Time Data Directory Deleted Successfully");
+                				}
+            				}
+            				rs.close();
+            				stmt.close();
+        			}
+        			finally
+        			{
+            				Vault.releaseDbConnection(conn);
+        			}
+        		}
+                	catch (SQLException e)
+                	{
+                       		throw new ServletException("There was a problem with the database connection: " + e.getMessage(), e);
+                	}
+		}
+
+		// Now, Delete the node from the database
                 try
                 {
                         Connection connection = Vault.getDbConnection();
@@ -98,7 +165,6 @@
                 {
 			throw new ServletException("There was a problem with the database connection: " + e.getMessage(), e);
                 }
-
 
 
                 //forward the request for proper display
