@@ -86,6 +86,9 @@
 				isAlias = isInterfaceAlias(target, snmpc); 
 				if (isAlias)
 				{
+
+                                        // the target interface is not exist in the ipAddrTable of this node.
+                                        // Do nothing
 					if (log.isDebugEnabled())
 						log.debug("updateInterface: target interface " + ifaddr.getHostAddress() + " is an alias, reparenting all interfaces from node " + oldNodeId + " to node " + node.getNodeId());
 						
@@ -125,29 +128,53 @@
 				}
 				else
 				{
-					// 
-					// Its not an alias, issue SQL update to move the sub-interface and 
-					// its services under its new parent node
-					//
-					if (log.isDebugEnabled())
-						log.debug("updateInterface: target interface " + ifaddr.getHostAddress() + " is not an alias, reparenting " + ifaddr.getHostAddress() + " under nodeid " + node.getNodeId());
-						
-					// Get ifindex for this address
-					int ifIndex = -1;
-					if (snmpc != null && !snmpc.failed() && snmpc.hasIpAddrTable())
-					{
-						ifIndex = IpAddrTable.getIfIndex(snmpc.getIpAddrTable().getEntries(), ifaddr.getHostAddress());
-					}
-					if (log.isDebugEnabled())
-						log.debug("updateInterface: interface " + ifaddr.getHostAddress() + " has ifIndex " + ifIndex);
-					
-					reparentInterface(dbc, ifaddr, ifIndex, node.getNodeId(), oldNodeId);
-					
-					// Create interfaceReparented event
-					createInterfaceReparentedEvent(node, oldNodeId, ifaddr);
-					
-					// Set reparent flag
-					reparentFlag = true;
+                                        // 
+                                        // target interface is not an alias. Check if the updating interface
+                                        // exists in the ipAddrTable of the oldNode. If it is not in the old 
+                                        // node, reparent the interface to the new node. Otherwise, it is a
+                                        // duplicate interface, and add it to the new node and create an 
+                                        // interfaceAdded event and duplicateInterface event.
+                                        //
+					duplicateNodeEntry = DbNodeEntry.get(dbc, oldNodeId);
+					if (duplicateNodeEntry != null)
+        				{
+                                                if (isInIpAddrTable(ifaddr, duplicateNodeEntry))
+                                                {
+                                                        addDuplicateInterface(node, ifaddr, protocols, snmpc);
+                                                }
+                                                else
+                                                {
+        					        // 
+        					        // It is not in the ipAddrTable of the oldNodeId, issue SQL update to 
+                                                        // move the sub-interface and its services under its new parent node
+        					        //
+        					        if (log.isDebugEnabled())
+                						log.debug("updateInterface: target interface " 
+                                                                        + ifaddr.getHostAddress() 
+                                                                        + " is not exist on nodeID: " + oldNodeId 
+                                                                        +". Reparenting " + ifaddr.getHostAddress() 
+                                                                        + " under nodeid " + node.getNodeId());
+                						
+                					// Get ifindex for this address
+                					int ifIndex = -1;
+                					if (snmpc != null && !snmpc.failed() && snmpc.hasIpAddrTable())
+                					{
+                						ifIndex = IpAddrTable.getIfIndex(snmpc.getIpAddrTable().getEntries(), 
+                                                                                                 ifaddr.getHostAddress());
+                					}
+                					if (log.isDebugEnabled())
+                						log.debug("updateInterface: interface " + ifaddr.getHostAddress() 
+                                                                        + " has ifIndex " + ifIndex);
+                					
+                					reparentInterface(dbc, ifaddr, ifIndex, node.getNodeId(), oldNodeId);
+                					
+                					// Create interfaceReparented event
+                					createInterfaceReparentedEvent(node, oldNodeId, ifaddr);
+                					
+                					// Set reparent flag
+                					reparentFlag = true;
+                                                }
+                                        }
 				}
 				
 				// Delete the old node id if it has no additional IP interfaces
@@ -587,7 +614,8 @@
 				if (aaddrs[1] != null)
 				{
 					if (log.isDebugEnabled()) 
-						log.debug("updateInterface: interface " + aaddrs[0].getHostAddress() + " has netmask: " + aaddrs[1].getHostAddress());
+						log.debug("updateInterface: interface " + aaddrs[0].getHostAddress() 
+                                                        + " has netmask: " + aaddrs[1].getHostAddress());
 					currSnmpIfEntry.setNetmask(aaddrs[1]);
 				}
 				

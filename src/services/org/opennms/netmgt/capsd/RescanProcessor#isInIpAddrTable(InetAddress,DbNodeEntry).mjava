@@ -1,0 +1,84 @@
+	/**
+	 * This method checks if a given ipaddress is in the ipAddrTable of a given
+         * node. If the ipaddress is in the ipAddrtable of a specific node, return 
+         * true, otherwise return false.
+	 * 
+	 * @param node		DbNodeEntry object 
+	 * @param ifaddr	the interface to check
+	 */
+        private boolean isInIpAddrTable(InetAddress ipAddress, DbNodeEntry oldNode)
+        {
+
+		Category log = ThreadCategory.getInstance(getClass());
+
+		// Retrieve all the interfaces
+		// associated with the old node and perform collections against them.  
+		// 
+		DbIpInterfaceEntry[] dbInterfaces = null;
+		
+		// Retrieve list of interfaces associated with this nodeID
+		// from the database
+		log.debug("RescanProcessor: retrieving all interfaces for node: " + oldNode.getNodeId());
+		try
+		{
+			dbInterfaces = oldNode.getInterfaces();
+		}
+		catch (NullPointerException npE)
+		{
+			log.error("RescanProcessor: Null pointer when retrieving interfaces for node " + oldNode.getNodeId(), npE);
+			return false;
+		}
+		catch (SQLException sqlE)
+		{
+			log.error("RescanProcessor: unable to load interface info for nodeId " + oldNode.getNodeId() 
+                                + " from the database.", sqlE);
+			return false;
+		}
+
+		// Run collector for each retrieved interface 
+		// 
+                IfCollector collector = null;
+		IfSnmpCollector snmpc = null;
+		boolean doSnmpCollection = true;
+		for (int i=0; i<dbInterfaces.length && doSnmpCollection; i++)
+		{
+			InetAddress ifaddr = dbInterfaces[i].getIfAddress();
+				
+			// collect the information from the interface.  
+			// NOTE: skip '127.*.*.*' and '0.0.0.0' addresses.
+			if(ifaddr.getHostAddress().startsWith("127") || 
+				ifaddr.getHostAddress().equals("0.0.0.0"))
+			{
+				continue;
+			}
+
+			if (log.isDebugEnabled())
+				log.debug("RescanProcessor: running collection for " + ifaddr.getHostAddress());
+			
+			collector = new IfCollector(ifaddr, doSnmpCollection);
+			collector.run();
+			
+			// Only need to collect SNMP data from one of the
+			// node's interfaces. 
+			//
+			if (doSnmpCollection)
+			{
+				snmpc = collector.getSnmpCollector();
+				if (snmpc != null && !snmpc.failed())
+				{
+					// Got a successful SNMP collection from the node
+					doSnmpCollection = false;
+					
+					if (log.isDebugEnabled())
+						log.debug("RescanProcessor: SNMP data collected via " + ifaddr.getHostAddress());
+				}
+			}
+
+			if (log.isDebugEnabled())
+				log.debug("RescanProcessor: collection completed for " + ifaddr.getHostAddress());
+		}
+
+                // Check if a given ipAddress is on the ipAddrTable of the oldNode
+                return !isInterfaceAlias(ipAddress, snmpc);
+        }
+
