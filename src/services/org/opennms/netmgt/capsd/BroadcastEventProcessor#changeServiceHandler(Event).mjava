@@ -1,0 +1,372 @@
+	/**
+	 * Process the event,  add or remove a specified service from an interface. An 'action'
+         * parameter wraped in the event will tell which action to take to the service.
+	 *
+	 * @param event	The event to process.
+	 */
+	private void changeServiceHandler(Event event)
+	{
+	        String ipaddr = event.getInterface();
+                String serviceName = event.getService();
+
+                Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("changeServiceHandler:  processing changeService event on: " + ipaddr);
+
+		// Extract action from the event parms
+		String action = null;
+                long txNo = -1;
+		Parms parms = event.getParms();
+		if (parms != null)
+		{
+                                
+			String parmName = null;
+			Value parmValue = null;
+			String parmContent = null;
+		
+			Enumeration parmEnum = parms.enumerateParm();
+			while(parmEnum.hasMoreElements())
+			{
+				Parm parm = (Parm)parmEnum.nextElement();
+				parmName  = parm.getParmName();
+				parmValue = parm.getValue();
+				if (parmValue == null)
+					continue;
+                                else 
+					parmContent = parmValue.getContent();
+				//  get the action 
+				if (parmName.equals(EventConstants.PARM_ACTION))
+				{
+					action = parmContent;
+		                        if (log.isDebugEnabled())
+			                        log.debug("changeServiceHandler:  ParmName:" + parmName 
+                                                + " / ParmContent: " + parmContent);
+				}
+				else if (parmName.equals(EventConstants.PARM_TRANSACTION_NO))
+                                {
+                                        String temp = parmContent;
+		                        if (log.isDebugEnabled())
+			                        log.debug("changeServiceHandler:  parmName: " + parmName
+                                                        + " /parmContent: " + parmContent);
+                                        try
+                                        {
+                                                txNo = Long.valueOf(temp).longValue();
+                                        }
+                                        catch (NumberFormatException nfe)
+                                        {
+                                                log.warn("changeServiceHandler: Parameter " + EventConstants.PARM_TRANSACTION_NO 
+                                                        + " cannot be non-numberic", nfe);
+                                                txNo = -1L;
+                                        }
+                                }
+						
+			}
+		}
+                
+                boolean invalidParameters = ((ipaddr == null) || (action == null) || serviceName == null);
+                if(m_xmlrpc)
+                        invalidParameters = invalidParameters || (txNo == -1L);
+
+                if (invalidParameters)
+                {
+		        if (log.isDebugEnabled())
+		                log.debug("changeServiceHandler:  Invalid parameters." );
+                        
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), "Invalid parameters");
+		                        if (log.isDebugEnabled())
+			                        log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
+                        
+			return;
+		}
+
+		java.sql.Connection dbConn = null;
+		PreparedStatement stmt = null;
+		try
+		{
+			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+
+                        // Retrieve the serviceId
+			stmt = dbConn.prepareStatement(SQL_RETRIEVE_SERVICE_ID);
+	
+			stmt.setString(1, serviceName);
+	
+			ResultSet rs = stmt.executeQuery();
+                        int  serviceId = -1;
+			while(rs.next())
+			{
+				if (log.isDebugEnabled())
+					log.debug("changeServiceHandler: retrieve serviceid for service " + serviceName);
+                                serviceId = rs.getInt(1); 
+			}
+                        
+                        if (serviceId < 0)
+                        {
+				if (log.isDebugEnabled())
+					log.debug("changeServiceHandler: the specified service: " 
+                                                + serviceName + " does not exist in the database.");
+                                if (m_xmlrpc)
+                                {
+                                        try
+                                        {
+                                                XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                StringBuffer message = new StringBuffer("Invalid service: ").append(serviceName);
+                                                String reply = notifier.notifyFailure(txNo, event.getUei(), message.toString());
+		                                if (log.isDebugEnabled())
+			                                log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                        }
+                                        catch (XmlRpcException xe)
+                                        {
+                                                log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                        }
+                                        catch (IOException ioe)
+                                        {
+                                                log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                        }
+                                }
+                                return;
+                        }
+                        
+                        stmt.close();
+
+                        int nodeId = -1;
+                        
+                        // Verify if the specified service already exist.        
+			stmt = dbConn.prepareStatement(SQL_QUERY_SERVICE_EXIST);
+	
+			stmt.setString(1, ipaddr);
+			stmt.setString(2, event.getService());
+	
+			rs = stmt.executeQuery();
+			while(rs.next())
+			{
+				if (log.isDebugEnabled())
+				{
+					log.debug("changeService: service " + serviceName  + " on IPAddress " 
+                                        + ipaddr + " already exists in the database.");
+				}
+                                nodeId = rs.getInt(1);
+                                
+                                // The service exists on the ipinterface, a 'DELETE operation could be performed,
+                                // but just return for the 'ADD' operation.
+                                if (action.equalsIgnoreCase("DELETE"))
+                                {
+				        if (log.isDebugEnabled())
+				        {
+					        log.debug("changeServiceHandler: delete service: " + serviceName  
+                                                + " on IPAddress: " + ipaddr);
+				        }
+			                stmt = dbConn.prepareStatement(SQL_DELETE_SERVICE);
+	
+			                stmt.setString(1, ipaddr);
+			                stmt.setInt(2, serviceId);
+	
+			                stmt.executeUpdate();
+                                        
+                                        if (m_xmlrpc)
+                                        {
+                                                try
+                                                {
+                                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                        StringBuffer message = new StringBuffer("Deleted service: ");
+                                                        message.append(serviceName).append(" on ").append(ipaddr);
+                                                        String reply = notifier.notifySuccess(txNo, event.getUei(), message.toString()); 
+                        		                if (log.isDebugEnabled())
+                        			                log.debug("changeServiceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                                }
+                                                catch (XmlRpcException xe)
+                                                {
+                                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                                }
+                                                catch (IOException ioe)
+                                                {
+                                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                                }
+                                        }
+                                        
+                                        // Create a serviceDeleted event to eventd
+                                        DbNodeEntry nodeEntry = DbNodeEntry.get(nodeId);
+                                        createAndSendServiceDeletedEvent(nodeEntry, InetAddress.getByName(ipaddr), serviceName, txNo);
+                                        //Create a restartPollingInterface event to eventd. 
+                                        createAndSendRestartPollingInterfaceEvent(nodeId, ipaddr, event.getHost(), txNo);
+                                }
+			        else // could not perform 'ADD' since the service already exists.
+                                {
+                                        log.warn("changeServiceHandler: could not add an existing service in.");
+                                        if (m_xmlrpc)
+                                        {
+                                                try
+                                                {
+                                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                        StringBuffer message = new StringBuffer("Could not add in service: ");
+                                                        message.append(serviceName).append(". It is already in the database.");
+                                                        String reply = notifier.notifySuccess(txNo, event.getUei(), message.toString());
+		                                        if (log.isDebugEnabled())
+			                                        log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                                }
+                                                catch (XmlRpcException xe)
+                                                {
+                                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                                }
+                                                catch (IOException ioe)
+                                                {
+                                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                                }
+                                        }
+                                }
+                                
+                                return;
+			}
+                        stmt.close();
+                        
+                        // verify if the interface exists in the database. If it does, that means
+                        // the service does not exist in the database, and an 'ADD' operation could
+                        // be performed. In any other cases, log error message.
+                        if (action.equalsIgnoreCase("ADD"))
+                        {
+                                stmt = dbConn.prepareStatement(SQL_QUERY_IPADDRESS_EXIST);
+
+                                stmt.setString(1, ipaddr);
+                                rs = stmt.executeQuery();
+                                
+                                while (rs.next())
+                                {
+				        if (log.isDebugEnabled())
+				        {
+					        log.debug("changeServiceHandler: add service " + serviceName  
+                                                + " to interface: " + ipaddr);
+				        }
+
+                                        nodeId = rs.getInt(1);
+                                        // insert service
+                                        DbIfServiceEntry service = DbIfServiceEntry.create(nodeId, 
+                                                InetAddress.getByName(ipaddr),
+                                                serviceId);
+                                        service.setSource(DbIfServiceEntry.SOURCE_PLUGIN);
+                                        service.setStatus(DbIfServiceEntry.STATUS_ACTIVE);
+                                        service.setNotify(DbIfServiceEntry.NOTIFY_ON);
+                                        service.store(dbConn);
+                                        
+                                        //Create a nodeGainedService event to eventd. 
+                                        DbNodeEntry nodeEntry = DbNodeEntry.get(nodeId);
+                                        createAndSendNodeGainedServiceEvent(nodeEntry,InetAddress.getByName(ipaddr),serviceName,txNo);
+                                        if (m_xmlrpc)
+                                        {
+                                                try
+                                                {
+                                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                        StringBuffer message = new StringBuffer("Added service: ");
+                                                        message.append(serviceName).append(" to ").append(ipaddr);
+                                                        message.append(" on node: ").append(nodeEntry.getLabel());
+                                                        String reply = notifier.notifySuccess(txNo, event.getUei(), message.toString()); 
+                        		                if (log.isDebugEnabled())
+                        			                log.debug("changeServiceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                                }
+                                                catch (XmlRpcException xe)
+                                                {
+                                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                                }
+                                                catch (IOException ioe)
+                                                {
+                                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                                }
+        
+                                        }
+                                }
+                        }
+                        else 
+                        {
+                                log.error("changeServiceHandler: could not delete non-existing service.");
+                                if (m_xmlrpc)
+                                {
+                                        try
+                                        {
+                                                XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                StringBuffer message = new StringBuffer("Could not delete non-existing service: ");
+                                                message.append(serviceName).append(".");
+                                                String reply = notifier.notifySuccess(txNo, event.getUei(),message.toString()); 
+		                                if (log.isDebugEnabled())
+			                                log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                        }
+                                        catch (XmlRpcException xe)
+                                        {
+                                                log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                        }
+                                        catch (IOException ioe)
+                                        {
+                                                log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                        }
+                                }
+                        }
+		}
+		catch(SQLException sqlE)
+		{
+			log.error("SQLException during changeService on database.", sqlE);
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), sqlE.getMessage()); 
+		                        if (log.isDebugEnabled())
+			                        log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
+		}
+		catch(java.net.UnknownHostException e)
+		{
+			log.error("changeServiceHandler: can not solve unknow host.", e);
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), e.getMessage()); 
+		                        if (log.isDebugEnabled())
+			                        log.debug("changeServiceHandler: Notify failure with xmlrpc:\n\t\t" + reply); 
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("changeServiceHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("changeServiceHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
+		}
+		finally
+		{
+			// close the statement
+			if (stmt != null)
+				try { stmt.close(); } catch(SQLException sqlE) { };
+
+			// close the connection
+			if (dbConn != null)
+				try { dbConn.close(); } catch(SQLException sqlE) { };					
+		}
+		
+	}
+

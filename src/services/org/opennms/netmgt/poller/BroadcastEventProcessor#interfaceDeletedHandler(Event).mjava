@@ -7,14 +7,76 @@
 		
 		int nodeId = (int)event.getNodeid();
 		
-		PollableNode pNode = Poller.getInstance().getNode(nodeId);
+		
+                // Extract node label and transaction No. from the event parms
+                long txNo = -1L;
+                Parms parms = event.getParms();
+                if (parms != null)
+                {
+                        String parmName = null;
+                        Value parmValue = null;
+                        String parmContent = null;
+                                                                                                                                                                     Enumeration parmEnum = parms.enumerateParm();
+                        while(parmEnum.hasMoreElements())
+                        {
+                                Parm parm = (Parm)parmEnum.nextElement();
+                                parmName  = parm.getParmName();
+                                parmValue = parm.getValue();
+                                if (parmValue == null)
+                                        continue;
+                                else
+                                        parmContent = parmValue.getContent();
+
+                                //  get the external transaction number
+                                if (parmName.equals(EventConstants.PARM_TRANSACTION_NO))
+                                {
+                                        String temp = parmContent;
+                                        if (log.isDebugEnabled())
+                                                log.debug("interfaceDeletedHandlerHandler:  parmName: " + parmName
+                                                        + " /parmContent: " + parmContent);
+                                        try
+                                        {
+                                                txNo = Long.valueOf(temp).longValue();
+                                        }
+                                        catch (NumberFormatException nfe)
+                                        {
+                                                log.warn("interfaceDeletedHandlerHandler: Parameter " 
+                                                        + EventConstants.PARM_TRANSACTION_NO
+                                                        + " cannot be non-numberic", nfe);
+                                                txNo = -1;
+                                        }
+                                }
+                        }
+                }
+		
+                PollableNode pNode = Poller.getInstance().getNode(nodeId);
 		if (pNode == null)  // Sanity check
 		{
-			log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete interface " + event.getInterface());
+			log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete interface " 
+                                + event.getInterface());
+                        
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), "Node does not exist.");
+                                        if (log.isDebugEnabled())
+                                                log.debug("interfaceDeletedHandler:  notify failure with xmlrpc:\n\t\t" + reply);
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
 			return;
 		}
 		
-		// acquire lock to 'PollableNode'
+                // acquire lock to 'PollableNode'
 		//
 		boolean ownLock = false;
 		try
@@ -39,6 +101,26 @@
 					if (log.isDebugEnabled())
 						log.debug("interfaceDeletedHandler: interface " + event.getInterface() + 
 								" not in interface map for " + nodeId);
+                                        if (m_xmlrpc)
+                                        {
+                                                try
+                                                {
+                                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                        String reply = notifier.notifyFailure(txNo, event.getUei(), 
+                                                                "Interface not in interface map.");
+                                                        if (log.isDebugEnabled())
+                                                                log.debug("interfaceDeletedHandler: notify failure with xmlrpc:\n\t\t" 
+                                                                        + reply);
+                                                }
+                                                catch (XmlRpcException xe)
+                                                {
+                                                        log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                                }
+                                                catch (IOException ioe)
+                                                {
+                                                        log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                                }
+                                        }
 					return;
 				}
 				
@@ -73,18 +155,21 @@
 				//
 				if (log.isDebugEnabled())
 				{
-					log.debug("Interface deletion completed, dumping node info for nodeid " + pNode.getNodeId() + ", status=" + Pollable.statusType[pNode.getStatus()] );
+					log.debug("Interface deletion completed, dumping node info for nodeid " + pNode.getNodeId() 
+                                                + ", status=" + Pollable.statusType[pNode.getStatus()] );
 					Iterator k = pNode.getInterfaces().iterator();
 					while(k.hasNext())
 					{
 						PollableInterface tmpIf = (PollableInterface)k.next();
-						log.debug("		interface=" + tmpIf.getAddress().getHostAddress() + " status=" + Pollable.statusType[tmpIf.getStatus()]);
+						log.debug("		interface=" + tmpIf.getAddress().getHostAddress() 
+                                                        + " status=" + Pollable.statusType[tmpIf.getStatus()]);
 						
 						Iterator s = tmpIf.getServices().iterator();
 						while(s.hasNext())
 						{
 							PollableService tmpSvc = (PollableService)s.next();
-							log.debug("			service=" + tmpSvc.getServiceName() + " status=" + Pollable.statusType[tmpSvc.getStatus()]);
+							log.debug("			service=" + tmpSvc.getServiceName() 
+                                                                + " status=" + Pollable.statusType[tmpSvc.getStatus()]);
 						}
 					}
 				}
@@ -93,17 +178,71 @@
 			{
 				// failed to acquire lock
 				log.error("interfaceDeletedHandler: failed to obtain lock on nodeId " + nodeId);
+                                if (m_xmlrpc)
+                                {
+                                        try
+                                        {
+                                                XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                String reply = notifier.notifyFailure(txNo, event.getUei(), "Internal error.");
+                                                if (log.isDebugEnabled())
+                                                        log.debug("interfaceDeletedHandler: notify failure with xmlrpc:\n\t\t" + reply);
+                                        }
+                                        catch (XmlRpcException xe)
+                                        {
+                                                log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                        }
+                                        catch (IOException ioe)
+                                        {
+                                                log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                        }
+                                }
 			}
 		}
 		catch (InterruptedException iE)
 		{
 			// failed to acquire lock,
 			log.error("interfaceDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), iE.getMessage());
+                                        if (log.isDebugEnabled())
+                                                log.debug("interfaceDeletedHandler: notify failure with xmlrpc:\n\t\t" + reply);
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
 		}
 		catch (Throwable t)
 		{
 			log.error("exception caught processing interfaceDeleted event for " + 
 					nodeId + "/" + event.getInterface(), t);
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), "Caught unknown exception.");
+                                        if (log.isDebugEnabled())
+                                                log.debug("interfaceDeletedHandler: notify failure with xmlrpc:\n\t\t" + reply);
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
 		}
 		finally
 		{
@@ -119,6 +258,25 @@
 				catch (InterruptedException iE)
 				{
 					log.error("interfaceDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
+                                        if (m_xmlrpc)
+                                        {
+                                                try
+                                                {
+                                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                        String reply = notifier.notifyFailure(txNo, event.getUei(), iE.getMessage());
+                                                        if (log.isDebugEnabled())
+                                                                log.debug("interfaceDeletedHandler: notify failure with xmlrpc:\n\t\t" 
+                                                                        + reply);
+                                                }
+                                                catch (XmlRpcException xe)
+                                                {
+                                                        log.warn("interfaceDeletedHandler: XMLRPC failure. ", xe);
+                                                }
+                                                catch (IOException ioe)
+                                                {
+                                                        log.warn("interfaceDeletedHandler: IOException on XMLRPC. ", ioe);
+                                                }
+                                        }
 				}
 			}
 		}

@@ -1,0 +1,252 @@
+	/** 
+	 * This method is responsible for:
+         * 1. stop all services associated with the specified interface.
+         * 2. removing all services associated with the interface.
+         * 3. remove the interface from the database.
+         * 4. issue an interfaceDeleted event to stop polling all the services on 
+         *    this interface
+         */
+	private void deleteInterfaceHandler(Event event)
+	{
+                String ipaddr = event.getInterface();
+		
+                Category log = ThreadCategory.getInstance(getClass());
+		if (log.isDebugEnabled())
+			log.debug("deleteInterfaceHandler: deleting interface: " + ipaddr);
+			
+		// Extract node label and transaction No. from the event parms
+		String nodeLabel = null;
+                long txNo = -1L;
+                
+		Parms parms = event.getParms();
+		if (parms != null)
+		{
+			String parmName = null;
+			Value parmValue = null;
+			String parmContent = null;
+		
+			Enumeration parmEnum = parms.enumerateParm();
+			while(parmEnum.hasMoreElements())
+			{
+				Parm parm = (Parm)parmEnum.nextElement();
+				parmName  = parm.getParmName();
+				parmValue = parm.getValue();
+				if (parmValue == null)
+					continue;
+				else 
+					parmContent = parmValue.getContent();
+	
+				//  get node label
+				if (parmName.equals(EventConstants.PARM_NODE_LABEL))
+				{
+					nodeLabel = parmContent;
+		                        if (log.isDebugEnabled())
+			                        log.debug("deleteInterfaceHandler:  parmName: " + parmName
+                                                        + " /parmContent: " + parmContent);
+				}
+				else if (parmName.equals(EventConstants.PARM_TRANSACTION_NO))
+                                {
+                                        String temp = parmContent;
+		                        if (log.isDebugEnabled())
+			                        log.debug("deleteInterfaceHandler:  parmName: " + parmName
+                                                        + " /parmContent: " + parmContent);
+                                        try
+                                        {
+                                                txNo = Long.valueOf(temp).longValue();
+                                        }
+                                        catch (NumberFormatException nfe)
+                                        {
+                                                log.warn("deleteInterfaceHandler: Parameter " + EventConstants.PARM_TRANSACTION_NO 
+                                                        + " cannot be non-numberic", nfe);
+                                                txNo = -1L;
+                                        }
+                                }
+			}
+		}
+                
+                boolean invalidParameters = ((ipaddr == null) || (nodeLabel == null));
+                if (m_xmlrpc)
+                        invalidParameters = invalidParameters || (txNo == -1L);
+                
+                if (invalidParameters)
+                {
+		        if (log.isDebugEnabled())
+		                log.debug("deleteInterfaceHandler:  Invalid parameters." );
+                        
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), "Invalid parameters");
+		                        if (log.isDebugEnabled())
+			                        log.debug("deleteInterfaceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("deleteInterfaceHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("deleteInterfaceHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
+                        
+			return;
+		}
+
+		java.sql.Connection dbConn = null;
+		PreparedStatement stmt = null;
+		try
+		{
+			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+		        
+                        // First, verify if the node exists in database, and retrieve
+                        // nodeid if exists.
+			stmt = dbConn.prepareStatement(SQL_QUERY_NODE_EXIST);
+	
+			stmt.setString(1, nodeLabel);
+                        int nodeid = -1;
+                        
+			ResultSet rs = stmt.executeQuery();
+			while(rs.next())
+			{
+                                nodeid = rs.getInt(1);
+                        }
+		        
+                        if (nodeid == -1)  // Sanity check
+		        {
+			        log.error("deleteInterfaceHandler: There is no node with node label: " 
+                                        + nodeLabel + " exists in the database.");
+                        
+                                if (m_xmlrpc)
+                                {
+                                        try
+                                        {
+                                                XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                String reply = notifier.notifySuccess(txNo, event.getUei(), 
+                                                        "No node with the specified node label exists.");
+		                                if (log.isDebugEnabled())
+			                                log.debug("deleteInterfaceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                        }
+                                        catch (XmlRpcException xe)
+                                        {
+                                                log.warn("deleteInterfaceHandler: XMLRPC failure. ", xe);
+                                        }
+                                        catch (IOException ioe)
+                                        {
+                                                log.warn("deleteInterfaceHandler: IOException on XMLRPC. ", ioe);
+                                        }
+                                }
+			        return;
+		        }
+		
+                        stmt.close();
+                        
+                        // Count interfaces on the node
+			if (log.isDebugEnabled())
+		        {
+			        log.debug("deleteInterfaceHandler: count interfaces on node: " + nodeLabel);
+		        }
+		        stmt = dbConn.prepareStatement(SQL_COUNT_INTERFACES_ON_NODE);
+		        stmt.setString(1, nodeLabel);
+		        rs = stmt.executeQuery();
+                        int numOfInterface = 0;
+                                       
+                        if (rs.next())
+                              numOfInterface = rs.getInt(1);
+
+                        // if the interface is the only interface on the node, issue a delete node event.
+                        if (numOfInterface == 1 )
+                        {
+                                createAndSendDeleteNodeEvent(event.getHost(), nodeLabel, txNo);
+                        }
+                        else
+                        {
+        	                // Deleting all the ifservices associated with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_IFSERVICES_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted all ifservices on interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+        
+        
+        	                // Deleting the interface on the node
+        			stmt = dbConn.prepareStatement(SQL_DELETE_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, event.getInterface());
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted the ipaddress: " 
+                                                + ipaddr + " on  nodeid: " + nodeid);
+                                
+        			}
+                        
+                                // Create an interfaceDeleted event and send it to eventd, this new event will remove all
+                                // the services on the interface and the interface from the nodeid/interface/services 
+                                // conbination of the pollable node list.
+                                createAndSendInterfaceDeletedEvent(nodeid, event.getHost(), ipaddr, txNo);
+                                if (m_xmlrpc)
+                                {
+                                        try
+                                        {
+                                                XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                                String message = new String("Successfully deleted interface: ") + ipaddr 
+                                                        + " on node: " + nodeLabel;
+                                                String reply = notifier.notifySuccess(txNo, event.getUei(), message); 
+                		                if (log.isDebugEnabled())
+                			                log.debug("deleteInterfaceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                        }
+                                        catch (XmlRpcException xe)
+                                        {
+                                                log.warn("deleteInterfaceHandler: XMLRPC failure. ", xe);
+                                        }
+                                        catch (IOException ioe)
+                                        {
+                                                log.warn("deleteInterfaceHandler: IOException on XMLRPC. ", ioe);
+                                        }
+                                }
+        
+                        }
+	                
+		}
+		catch(SQLException sqlE)
+		{
+			log.error("deleteInterfaceHandler: SQLException during delete interface from the database.", sqlE);
+                        if (m_xmlrpc)
+                        {
+                                try
+                                {
+                                        XmlRpcNotifier notifier = new XmlRpcNotifier(m_xmlrpcServerUrl);
+                                        String reply = notifier.notifyFailure(txNo, event.getUei(), sqlE.getMessage());
+		                        if (log.isDebugEnabled())
+			                        log.debug("deleteInterfaceHandler: Notify failure with xmlrpc: \n\t\t" + reply); 
+                                }
+                                catch (XmlRpcException xe)
+                                {
+                                        log.warn("deleteInterfaceHandler: XMLRPC failure. ", xe);
+                                }
+                                catch (IOException ioe)
+                                {
+                                        log.warn("deleteInterfaceHandler: IOException on XMLRPC. ", ioe);
+                                }
+                        }
+		}
+		finally
+		{
+			// close the statement
+			if (stmt != null)
+				try { stmt.close(); } catch(SQLException sqlE) { };
+
+			// close the connection
+			if (dbConn != null)
+				try { dbConn.close(); } catch(SQLException sqlE) { };					
+		}
+	}
+
