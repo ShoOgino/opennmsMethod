@@ -1,212 +1,163 @@
-	/** 
-	 * 
-	 */
-	private void interfaceDeletedHandler(Event event)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
-		
-		int nodeId = (int)event.getNodeid();
-	        String sourceUei = event.getUei();	
-		
-                // Extract node label and transaction No. from the event parms
-                long txNo = -1L;
-                Parms parms = event.getParms();
-                if (parms != null)
-                {
-                        String parmName = null;
-                        Value parmValue = null;
-                        String parmContent = null;
-                                                                                                                                                                     Enumeration parmEnum = parms.enumerateParm();
-                        while(parmEnum.hasMoreElements())
-                        {
-                                Parm parm = (Parm)parmEnum.nextElement();
-                                parmName  = parm.getParmName();
-                                parmValue = parm.getValue();
-                                if (parmValue == null)
-                                        continue;
-                                else
-                                        parmContent = parmValue.getContent();
+    /**
+     * 
+     */
+    private void interfaceDeletedHandler(Event event) {
+        Category log = ThreadCategory.getInstance(getClass());
 
-                                //  get the external transaction number
-                                if (parmName.equals(EventConstants.PARM_TRANSACTION_NO))
-                                {
-                                        String temp = parmContent;
-                                        if (log.isDebugEnabled())
-                                                log.debug("interfaceDeletedHandlerHandler:  parmName: " + parmName
-                                                        + " /parmContent: " + parmContent);
-                                        try
-                                        {
-                                                txNo = Long.valueOf(temp).longValue();
-                                        }
-                                        catch (NumberFormatException nfe)
-                                        {
-                                                log.warn("interfaceDeletedHandlerHandler: Parameter " 
-                                                        + EventConstants.PARM_TRANSACTION_NO
-                                                        + " cannot be non-numberic", nfe);
-                                                txNo = -1;
-                                        }
-                                }
-                        }
+        int nodeId = (int) event.getNodeid();
+        String sourceUei = event.getUei();
+
+        // Extract node label and transaction No. from the event parms
+        long txNo = -1L;
+        Parms parms = event.getParms();
+        if (parms != null) {
+            String parmName = null;
+            Value parmValue = null;
+            String parmContent = null;
+            Enumeration parmEnum = parms.enumerateParm();
+            while (parmEnum.hasMoreElements()) {
+                Parm parm = (Parm) parmEnum.nextElement();
+                parmName = parm.getParmName();
+                parmValue = parm.getValue();
+                if (parmValue == null)
+                    continue;
+                else
+                    parmContent = parmValue.getContent();
+
+                // get the external transaction number
+                if (parmName.equals(EventConstants.PARM_TRANSACTION_NO)) {
+                    String temp = parmContent;
+                    if (log.isDebugEnabled())
+                        log.debug("interfaceDeletedHandlerHandler:  parmName: " + parmName + " /parmContent: " + parmContent);
+                    try {
+                        txNo = Long.valueOf(temp).longValue();
+                    } catch (NumberFormatException nfe) {
+                        log.warn("interfaceDeletedHandlerHandler: Parameter " + EventConstants.PARM_TRANSACTION_NO + " cannot be non-numberic", nfe);
+                        txNo = -1;
+                    }
                 }
-		
-                PollableNode pNode = Poller.getInstance().getNode(nodeId);
-		if (pNode == null)  // Sanity check
-		{
-			log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete interface " 
-                                + event.getInterface());
-                        
-                        if (m_xmlrpc)
-                        {
-                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                           "Node does not exist.", status, "OpenNMS.Poller");
+            }
+        }
+
+        PollableNode pNode = getPoller().getNode(nodeId);
+        if (pNode == null) // Sanity check
+        {
+            log.error("Nodeid " + nodeId + " does not exist in pollable node map, unable to delete interface " + event.getInterface());
+
+            if (isXmlRPCEnabled()) {
+                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, "Node does not exist.", status, "OpenNMS.Poller");
+            }
+            return;
+        }
+
+        // acquire lock to 'PollableNode'
+        //
+        boolean ownLock = false;
+        try {
+            // Attempt to obtain node lock...wait as long as it takes.
+            // 
+            if (log.isDebugEnabled())
+                log.debug("interfaceDeletedHandler: deleting nodeid/interface: " + nodeId + "/" + event.getInterface());
+
+            ownLock = pNode.getNodeLock(WAIT_FOREVER);
+            if (ownLock) {
+                if (log.isDebugEnabled())
+                    log.debug("interfaceDeletedHandler: obtained node lock for nodeid: " + nodeId);
+
+                // Retrieve the PollableInterface object corresponding to
+                // the interface address specified in the event
+                PollableInterface pIf = pNode.findInterface(event.getInterface());
+                if (pIf == null) {
+                    if (log.isDebugEnabled())
+                        log.debug("interfaceDeletedHandler: interface " + event.getInterface() + " not in interface map for " + nodeId);
+                    if (isXmlRPCEnabled()) {
+                        int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                        String message = "Interface " + event.getInterface() + " not in interface map for " + nodeId;
+                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, message, status, "OpenNMS.Poller");
+                    }
+                    return;
+                }
+
+                // Iterate over the interface's services and mark
+                // them for deletion.
+                //
+                // NOTE: This is probably overkill because by the time
+                // the Outage Mgr generates the interfaceDeleted
+                // event all of the interface's underlying
+                // services have already been deleted...but just
+                // to be safe...
+                Iterator svc_iter = pIf.getServices().iterator();
+                while (svc_iter.hasNext()) {
+                    PollableService pSvc = (PollableService) svc_iter.next();
+                    pSvc.markAsDeleted();
+
+                    // Now remove the service from the pollable services list
+                    getPollableServices().remove(pSvc);
+                }
+
+                // Delete all entries from the interface's internal service map
+                pIf.deleteAllServices();
+
+                // Delete the interface from the node
+                pNode.removeInterface(pIf);
+
+                // Recalculate node status
+                pNode.recalculateStatus();
+
+                // Debug dump pollable node content
+                //
+                if (log.isDebugEnabled()) {
+                    log.debug("Interface deletion completed, dumping node info for nodeid " + pNode.getNodeId() + ", status=" + Pollable.statusType[pNode.getStatus()]);
+                    Iterator k = pNode.getInterfaces().iterator();
+                    while (k.hasNext()) {
+                        PollableInterface tmpIf = (PollableInterface) k.next();
+                        log.debug("		interface=" + tmpIf.getAddress().getHostAddress() + " status=" + Pollable.statusType[tmpIf.getStatus()]);
+
+                        Iterator s = tmpIf.getServices().iterator();
+                        while (s.hasNext()) {
+                            PollableService tmpSvc = (PollableService) s.next();
+                            log.debug("			service=" + tmpSvc.getServiceName() + " status=" + Pollable.statusType[tmpSvc.getStatus()]);
                         }
-			return;
-		}
-		
-                // acquire lock to 'PollableNode'
-		//
-		boolean ownLock = false;
-		try
-		{
-			// Attempt to obtain node lock...wait as long as it takes.
-			// 
-			if (log.isDebugEnabled())
-				log.debug("interfaceDeletedHandler: deleting nodeid/interface: " + nodeId + 
-							"/" + event.getInterface());
-	
-			ownLock = pNode.getNodeLock(WAIT_FOREVER);
-			if (ownLock)
-			{
-				if (log.isDebugEnabled())
-					log.debug("interfaceDeletedHandler: obtained node lock for nodeid: " + nodeId);
-				
-				// Retrieve the PollableInterface object corresponding to 
-				// the interface address specified in the event
-				PollableInterface pIf = pNode.getInterface(event.getInterface());
-				if (pIf == null)
-				{
-					if (log.isDebugEnabled())
-						log.debug("interfaceDeletedHandler: interface " + event.getInterface() + 
-								" not in interface map for " + nodeId);
-                                        if (m_xmlrpc)
-                                        {
-                                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-						String message = "Interface " + event.getInterface() + 
-								" not in interface map for " + nodeId;
-                                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                                        message, status, "OpenNMS.Poller"); 
-                                        }
-					return;
-				}
-				
-				// Iterate over the interface's services and mark
-				// them for deletion.
-				//
-				// NOTE:  This is probably overkill because by the time
-				//        the Outage Mgr generates the interfaceDeleted
-				// 	  event all of the interface's underlying 
-				// 	  services have already been deleted...but just
-				//	  to be safe...
-				Iterator svc_iter = pIf.getServices().iterator();
-				while (svc_iter.hasNext())
-				{
-					PollableService pSvc = (PollableService)svc_iter.next();
-					pSvc.markAsDeleted();
-					
-					// Now remove the service from the pollable services list
-					m_pollableServices.remove(pSvc);
-				}
-				
-				// Delete all entries from the interface's internal service map
-				pIf.deleteAllServices();
-				
-				// Delete the interface from the node
-				pNode.removeInterface(pIf);
-				
-				// Recalculate node status
-				pNode.recalculateStatus();
-				
-				// Debug dump pollable node content
-				//
-				if (log.isDebugEnabled())
-				{
-					log.debug("Interface deletion completed, dumping node info for nodeid " + pNode.getNodeId() 
-                                                + ", status=" + Pollable.statusType[pNode.getStatus()] );
-					Iterator k = pNode.getInterfaces().iterator();
-					while(k.hasNext())
-					{
-						PollableInterface tmpIf = (PollableInterface)k.next();
-						log.debug("		interface=" + tmpIf.getAddress().getHostAddress() 
-                                                        + " status=" + Pollable.statusType[tmpIf.getStatus()]);
-						
-						Iterator s = tmpIf.getServices().iterator();
-						while(s.hasNext())
-						{
-							PollableService tmpSvc = (PollableService)s.next();
-							log.debug("			service=" + tmpSvc.getServiceName() 
-                                                                + " status=" + Pollable.statusType[tmpSvc.getStatus()]);
-						}
-					}
-				}
-			}
-			else
-			{
-				// failed to acquire lock
-				log.error("interfaceDeletedHandler: failed to obtain lock on nodeId " + nodeId);
-                                if (m_xmlrpc)
-                                {
-                                        int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-				        String message = new String("Internal error.");
-                                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                                message, status, "OpenNMS.Poller"); 
-                                }
-			}
-		}
-		catch (InterruptedException iE)
-		{
-			// failed to acquire lock,
-			log.error("interfaceDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
-                        if (m_xmlrpc)
-                        {
-                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, iE.getMessage(), 
-                                        status, "OpenNMS.Poller"); 
-                        }
-		}
-		catch (Throwable t)
-		{
-			log.error("exception caught processing interfaceDeleted event for " + 
-					nodeId + "/" + event.getInterface(), t);
-                        if (m_xmlrpc)
-                        {
-                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                        "Caught unknown exception.", status, "OpenNMS.Poller");
-                        }
-		}
-		finally
-		{
-			if (ownLock)
-			{
-				if (log.isDebugEnabled())
-					log.debug("interfaceDeletedHandler: releasing node lock for nodeid: " + nodeId);
-				
-				try
-				{
-					pNode.releaseNodeLock();
-				}
-				catch (InterruptedException iE)
-				{
-					log.error("interfaceDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
-                                        if (m_xmlrpc)
-                                        {
-                                                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                                        iE.getMessage(), status, "OpenNMS.Poller"); 
-                                        }
-				}
-			}
-		}
-	}
+                    }
+                }
+            } else {
+                // failed to acquire lock
+                log.error("interfaceDeletedHandler: failed to obtain lock on nodeId " + nodeId);
+                if (isXmlRPCEnabled()) {
+                    int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                    String message = new String("Internal error.");
+                    XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, message, status, "OpenNMS.Poller");
+                }
+            }
+        } catch (InterruptedException iE) {
+            // failed to acquire lock,
+            log.error("interfaceDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
+            if (isXmlRPCEnabled()) {
+                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, iE.getMessage(), status, "OpenNMS.Poller");
+            }
+        } catch (Throwable t) {
+            log.error("exception caught processing interfaceDeleted event for " + nodeId + "/" + event.getInterface(), t);
+            if (isXmlRPCEnabled()) {
+                int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, "Caught unknown exception.", status, "OpenNMS.Poller");
+            }
+        } finally {
+            if (ownLock) {
+                if (log.isDebugEnabled())
+                    log.debug("interfaceDeletedHandler: releasing node lock for nodeid: " + nodeId);
+
+                try {
+                    pNode.releaseNodeLock();
+                } catch (InterruptedException iE) {
+                    log.error("interfaceDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
+                    if (isXmlRPCEnabled()) {
+                        int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
+                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, iE.getMessage(), status, "OpenNMS.Poller");
+                    }
+                }
+            }
+        }
+    }
 

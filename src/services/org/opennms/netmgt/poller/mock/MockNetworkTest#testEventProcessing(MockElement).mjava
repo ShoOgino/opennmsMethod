@@ -1,0 +1,60 @@
+    /**
+     * @param element
+     */
+    private void testEventProcessing(MockElement element) {
+        m_network.setNodeOutageProcessingEnabled(false);
+
+        EventAnticipator anticipator = m_network.getEventAnticipator();
+
+        String nlsUei = EventConstants.NODE_LOST_SERVICE_EVENT_UEI;
+        String nrsUei = EventConstants.NODE_REGAINED_SERVICE_EVENT_UEI;
+        anticipateServiceEvents(anticipator, element, nlsUei);
+        element.bringDown();
+
+        assertFalse(0 == anticipator.waitForAnticipated(0).size());
+
+        anticipator.reset();
+        anticipateServiceEvents(anticipator, element, nrsUei);
+        element.bringUp();
+
+        assertFalse(0 == anticipator.waitForAnticipated(0).size());
+
+        anticipator.reset();
+        anticipateServiceEvents(anticipator, element, nlsUei);
+        element.bringDown();
+
+        MockVisitor lostSvcSender = new MockVisitorAdapter() {
+            public void visitService(MockService svc) {
+                Event event = MockUtil.createEvent(EventConstants.NODE_LOST_SERVICE_EVENT_UEI, svc.getNodeId(), svc.getIpAddr(), svc.getName());
+                m_network.getEventMgr().sendNow(event);
+            }
+        };
+        element.visit(lostSvcSender);
+
+        assertEquals(0, anticipator.waitForAnticipated(0).size());
+
+        anticipator.reset();
+        anticipateServiceEvents(anticipator, element, nrsUei);
+        element.bringUp();
+
+        MockVisitor gainedSvcSender = new MockVisitorAdapter() {
+            public void visitService(MockService svc) {
+                Event event = MockUtil.createEvent(EventConstants.NODE_REGAINED_SERVICE_EVENT_UEI, svc.getNodeId(), svc.getIpAddr(), svc.getName());
+                m_network.getEventMgr().sendNow(event);
+            }
+        };
+        element.visit(gainedSvcSender);
+
+        assertEquals(0, anticipator.waitForAnticipated(0).size());
+        assertEquals(0, anticipator.unanticipatedEvents().size());
+
+        MockNode node = m_network.getNode(1);
+        Event nodeEvent = MockUtil.createEvent(EventConstants.NODE_DOWN_EVENT_UEI, 1, null, null);
+
+        anticipator.reset();
+        m_network.getEventMgr().sendNow(nodeEvent);
+        assertEquals(0, anticipator.waitForAnticipated(0).size());
+        assertEquals(1, anticipator.unanticipatedEvents().size());
+
+    }
+

@@ -1,0 +1,56 @@
+    public void testReparentCausesStatusChange() {
+
+        m_network.setNodeOutageProcessingEnabled(true);
+
+        MockNode node1 = m_network.getNode(1);
+        MockNode node2 = m_network.getNode(2);
+
+        MockInterface node1Iface = m_network.getInterface(1, "192.168.1.1");
+        MockInterface reparentedIface = m_network.getInterface(1, "192.168.1.2");
+        MockInterface node2Iface = m_network.getInterface(2, "192.168.1.3");
+
+        //
+        // Plan to bring down both nodes except the reparented interface
+        // the node owning the interface should be up while the other is down
+        // after reparenting we should got the old owner go down while the other
+        // comes up.
+        //
+        EventAnticipator anticipator = m_network.getEventAnticipator();
+        anticipateNodeStatusChanged(node2, anticipator, ServiceMonitor.SERVICE_UNAVAILABLE);
+        anticipateInterfaceStatusChanged(node1Iface, anticipator, ServiceMonitor.SERVICE_UNAVAILABLE);
+
+        // bring down both nodes but bring iface back up
+        node1.bringDown();
+        node2.bringDown();
+        reparentedIface.bringUp();
+
+        Event reparentEvent = MockUtil.createReparentEvent("192.168.1.2", 1, 2);
+
+        m_poller.init();
+        m_poller.start();
+
+        assertEquals(0, anticipator.waitForAnticipated(2000).size());
+        assertEquals(0, anticipator.unanticipatedEvents().size());
+
+        anticipator.reset();
+
+        // FIXME: should I expect this to send new events saying that the old
+        // node is now down
+        // and the new node is now up? YES I SHOULD
+        // after moving the interface we expect node down on node1 and node up
+        // on node2;
+        // anticipateNodeStatusChanged(node1, anticipator,
+        // ServiceMonitor.SERVICE_UNAVAILABLE);
+        // anticipateNodeStatusChanged(node2, anticipator,
+        // ServiceMonitor.SERVICE_AVAILABLE);
+
+        reparentedIface.moveTo(node2);
+        m_network.sendEventToListeners(reparentEvent);
+
+        assertEquals(0, anticipator.waitForAnticipated(2000).size());
+        assertEquals(0, anticipator.unanticipatedEvents().size());
+
+        m_poller.stop();
+
+    }
+

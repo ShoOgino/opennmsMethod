@@ -1,261 +1,40 @@
-	/**
-	 * Process the event, construct a new PollableService object representing
- 	 * the node/interface/service/pkg combination, and schedule the service
-	 * for polling. 
-	 * 
-	 * If any errors occur scheduling the interface no error is returned.
-	 *
-	 * @param event	The event to process.
-	 *
-	 */
-	private void nodeGainedServiceHandler(Event event)
-	{
-		Category log = ThreadCategory.getInstance(getClass());
+    /**
+     * Process the event, construct a new PollableService object representing
+     * the node/interface/service/pkg combination, and schedule the service for
+     * polling.
+     * 
+     * If any errors occur scheduling the interface no error is returned.
+     * 
+     * @param event
+     *            The event to process.
+     * 
+     */
+    private void nodeGainedServiceHandler(Event event) {
+        Category log = ThreadCategory.getInstance(getClass());
 
-		// Is this the result of a resumePollingService event?
-		String whichEvent = "Unexpected Event: " + event.getUei() + ": ";
-		if(event.getUei().equals(EventConstants.NODE_GAINED_SERVICE_EVENT_UEI))
-		{
-			whichEvent = "nodeGainedService: ";
-		}
-		else if(event.getUei().equals(EventConstants.RESUME_POLLING_SERVICE_EVENT_UEI))
-		{
-			whichEvent = "resumePollingService: ";
-		}
+        // Is this the result of a resumePollingService event?
+        String whichEvent = "Unexpected Event: " + event.getUei() + ": ";
+        if (event.getUei().equals(EventConstants.NODE_GAINED_SERVICE_EVENT_UEI)) {
+            whichEvent = "nodeGainedService: ";
+        } else if (event.getUei().equals(EventConstants.RESUME_POLLING_SERVICE_EVENT_UEI)) {
+            whichEvent = "resumePollingService: ";
+        }
 
-		// First make sure the service gained is in active state before trying to
-		// schedule
-		java.sql.Connection dbConn = null;
-		PreparedStatement stmt = null;
-		try
-		{
-			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
-		
-			stmt = dbConn.prepareStatement(SQL_COUNT_IFSERVICE_STATUS);
-	
-			stmt.setInt(1, (int)event.getNodeid());
-			stmt.setString(2, event.getInterface());
-			stmt.setString(3, event.getService());
-	
-			int count = -1;
-			ResultSet rs = stmt.executeQuery();
-			while(rs.next())
-			{
-				count = rs.getInt(1);
-			}
+        // First make sure the service gained is in active state before trying
+        // to
+        // schedule
 
-			// count should be 1 to indicate an active status
-			if (count <= 0)
-			{
-				if (log.isDebugEnabled())
-				{
-					log.debug(whichEvent + "number check to see if service is in status: " + count); 
-					log.debug(whichEvent + event.getNodeid() + "/" + event.getInterface() 
-                                                + "/" + event.getService() + " not active - hence not scheduled");
-				}
-				return;
-			}
+        String ipAddr = event.getInterface();
+        int nodeid = (int)event.getNodeid();
+        String svcName = event.getService();
+        
+        if (!getPoller().getQueryMgr().activeServiceExists(whichEvent, nodeid, ipAddr, svcName)) {
+            if (log.isDebugEnabled()) {
+                log.debug(whichEvent + nodeid + "/" + ipAddr + "/" + svcName + " not active - hence not scheduled");
+            }
+            return;
+        }
 
-			if (log.isDebugEnabled())
-				log.debug(whichEvent + event.getNodeid() + "/" + event.getInterface() 
-                                        + "/" + event.getService() + " active");
-		}
-		catch(SQLException sqlE)
-		{
-			log.error("SQLException during check to see if nodeid/ip/service is active", sqlE);
-		}
-		finally
-		{
-			// close the statement
-			if (stmt != null)
-				try { stmt.close(); } catch(SQLException sqlE) { };
-
-			// close the connection
-			if (dbConn != null)
-				try { dbConn.close(); } catch(SQLException sqlE) { };					
-		}
-		
-		PollerConfigFactory pCfgFactory = PollerConfigFactory.getInstance();
-		PollerConfiguration config =  pCfgFactory.getConfiguration();
-		Enumeration epkgs = config.enumeratePackage();
-		while(epkgs.hasMoreElements())
-		{
-			org.opennms.netmgt.config.poller.Package pkg = (org.opennms.netmgt.config.poller.Package)epkgs.nextElement();
-			
-			// Make certain the the current service is in the package
-			// and enabled!
-			//
-			if (!pCfgFactory.serviceInPackageAndEnabled(event.getService(), pkg))
-			{
-				if(log.isDebugEnabled())
-					log.debug(whichEvent + "interface " + event.getInterface() + 
-							" gained service " + event.getService() + 
-							", but the service is not enabled or does not exist in package: " 
-							+ pkg.getName());
-				continue;
-			}
-					
-			// Is the interface in the package?
-			//
-			if(!pCfgFactory.interfaceInPackage(event.getInterface(), pkg))
-			{
-                                // The interface might be a newly added one, rebuild the package
-                                // to ipList mapping and again verify if the interface is in the 
-                                // package.
-                                //
-                                pCfgFactory.rebuildPackageIpListMap();
-			        if(!pCfgFactory.interfaceInPackage(event.getInterface(), pkg))
-                                {
-				        if(log.isDebugEnabled())
-					        log.debug("nodeGainedService: interface " + event.getInterface() + 
-						          " gained service " + event.getService() + 
-							  ", but the interface was not in package: " 
-							  + pkg.getName());
-				        continue;
-                                }
-			}
-			
-			// Update Node Outage Hierarchy and schedule new service for polling
-			//
-			PollableNode pNode = null;
-			PollableInterface pInterface = null;
-			PollableService pSvc = null;
-			boolean ownLock = false;
-			boolean nodeCreated = false;
-			boolean interfaceCreated = false;
-			
-			try
-			{								
-				// Does the node already exist in the poller's pollable node map?
-				//
-				int nodeId = (int)event.getNodeid();
-				pNode = Poller.getInstance().getNode(nodeId);
-				log.debug(whichEvent + "attempting to retrieve pollable node object for nodeid " + nodeId);
-				if (pNode == null)
-				{
-					// Nope...so we need to create it
-					pNode = new PollableNode(nodeId);
-					nodeCreated = true;
-				} 
-				else
-				{
-					// Obtain node lock
-					//
-					ownLock = pNode.getNodeLock(WAIT_FOREVER);
-				}
-				
-				// Does the interface exist in the pollable node?
-				//
-				pInterface = pNode.getInterface(event.getInterface());
-				if (pInterface == null)
-				{
-					// Create the PollableInterface and add it to the node
-					if (log.isDebugEnabled())
-						log.debug(whichEvent + "creating new pollable interface: " + event.getInterface() + 
-								" to pollable node " + pNode.getNodeId());
-					pInterface = new PollableInterface(pNode, InetAddress.getByName(event.getInterface()));
-					interfaceCreated = true;
-				}
-				
-				// Create a new PollableService representing this node, interface,
-				// service and package pairing
-				log.debug(whichEvent + "creating new pollable service object for: " + nodeId + "/" 
-                                        + event.getInterface() + "/" + event.getService());
-				pSvc = new PollableService(pInterface,
-								event.getService(),
-								pkg,
-								ServiceMonitor.SERVICE_AVAILABLE,
-								new Date());
-
-				// Initialize the service monitor with the pollable service and schedule 
-				// the service for polling. 
-				//							
-				ServiceMonitor monitor = Poller.getInstance().getServiceMonitor(event.getService());
-				monitor.initialize(pSvc);
-				
-				// Add new service to the pollable services list.  
-				//
-				m_pollableServices.add(pSvc);
-				
-				// Add the service to the PollableInterface object
-				//
-				// WARNING:  The PollableInterface stores services in a map
-				//           keyed by service name, therefore, only the LAST
-				//           PollableService aded to the interface for a 
-				//           particular service will be represented in the
-				//           map.  THIS IS BY DESIGN
-				log.debug(whichEvent + "adding pollable service to service list of interface: " 
-                                        + event.getInterface());
-				pInterface.addService(pSvc);
-				
-				if (interfaceCreated)
-				{
-					// Add the interface to the node
-					//
-					// NOTE:  addInterface() calls recalculateStatus() automatically
-					if (log.isDebugEnabled())
-						log.debug(whichEvent + "adding new pollable interface " + 
-								event.getInterface() + " to pollable node " + pNode.getNodeId());
-					pNode.addInterface(pInterface);
-				}
-				else
-				{
-					// Recalculate node status
-					//
-					pNode.recalculateStatus();
-				}
-				
-				if (nodeCreated)
-				{
-					// Add the node to the node map
-					//
-					if (log.isDebugEnabled())
-						log.debug(whichEvent + "adding new pollable node: " + pNode.getNodeId());
-					Poller.getInstance().addNode(pNode);
-				}
-								
-				// Schedule the service for polling
-				m_scheduler.schedule(pSvc, pSvc.recalculateInterval());
-				if (log.isDebugEnabled())
-					log.debug(whichEvent + event.getNodeid() + "/" + event.getInterface() + 
-							"/" + event.getService() + " scheduled ");
-			}
-			catch(UnknownHostException ex)
-			{
-				log.error("Failed to schedule interface " + event.getInterface() + 
-						" for service monitor " + event.getService() + ", illegal address", ex);
-			}
-			catch(InterruptedException ie)
-			{
-				log.error("Failed to schedule interface " + event.getInterface() + 
-						" for service monitor " + event.getService() + ", thread interrupted", ie);
-			}
-			catch(RuntimeException rE)
-			{
-				log.warn("Unable to schedule " + event.getInterface() + " for service monitor " + event.getService() + 
-						", reason: " + rE.getMessage());
-			}
-			catch(Throwable t)
-			{
-				log.error("Uncaught exception, failed to schedule interface " + event.getInterface() + 
-						" for service monitor " + event.getService(), t);
-			}
-			finally
-			{
-				if (ownLock)
-				{
-					try
-					{
-						pNode.releaseNodeLock();
-					}
-					catch (InterruptedException iE)
-					{
-						log.error("Failed to release node lock on nodeid " + 
-								pNode.getNodeId() + ", thread interrupted.");
-					}
-				}
-			}
-				
-		} // end while more packages exist
-	}
+        getPoller().scheduleService(nodeid, ipAddr, svcName);   
+    }
 
