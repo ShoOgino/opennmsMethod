@@ -1,0 +1,60 @@
+    private void pollWhileUp(PollableService pSvc) {
+        Category log = ThreadCategory.getInstance(getClass());
+        
+        // Get configured critical service
+        String criticalSvcName = getPollerConfig().getCriticalService();
+
+        // If no critical service defined then retrieve the
+        // value of the 'pollAllIfNoCriticalServiceDefined' flag
+        boolean pollAllServices = getPollerConfig().pollAllIfNoCriticalServiceDefined();
+
+        // Issue poll
+        PollStatus svcStatus = pSvc.poll();
+        if (svcStatus == PollStatus.STATUS_DOWN && pSvc.statusChanged()) {
+            // If this is the only service supported by
+            // the interface mark it as down
+            if (m_services.size() == 1) {
+                setStatus(PollStatus.STATUS_DOWN);
+                setStatusChanged(true);
+            }
+            // else if Critical service defined and supported by interface
+            // (regardless of pkg)
+            else if (hasCriticalService()) {
+                // Retrieve critical service PollableService object
+                // and poll it.
+                if (log.isDebugEnabled())
+                    log.debug("poll: status changed to DOWN, now polling critical svc...");
+                PollableService criticalSvc = this.findService(criticalSvcName);
+
+                // If the service we just polled WAS in fact the critical
+                // service
+                // then no need to poll it again...the interface is DOWN!
+                PollStatus criticalSvcStatus = (pSvc == criticalSvc ? svcStatus : criticalSvc.poll());
+
+                if (criticalSvcStatus == PollStatus.STATUS_DOWN) {
+                    if (log.isDebugEnabled())
+                        log.debug("poll: critical svc DOWN, interface is down!");
+                    setStatus(PollStatus.STATUS_DOWN);
+                    setStatusChanged(true);
+                } else {
+                    if (log.isDebugEnabled())
+                        log.debug("poll: critical svc UP, interface still up!");
+                }
+            }
+            // else if no critical service or critical service not supported
+            else {
+                // Check flag which controls whether all services
+                // are polled if no critical service is defined
+
+                // Poll all remaining services on the interface
+                // If all services are DOWN then mark the interface DOWN
+                boolean allSvcDown = pollRemainingServices(pSvc, pollAllServices);
+                
+                if (allSvcDown) {
+                    setStatus(PollStatus.STATUS_DOWN);
+                    setStatusChanged(true);
+                }
+            }
+        }
+    }
+
