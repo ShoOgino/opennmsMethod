@@ -1,61 +1,37 @@
-    public synchronized void init() {
-        ThreadCategory.setPrefix(LOG4J_CATEGORY);
+	public synchronized void init() {
+		ThreadCategory.setPrefix(LOG4J_CATEGORY);
 
-        Category log = ThreadCategory.getInstance();
+		Category log = ThreadCategory.getInstance();
 
-        try {
-            if (log.isDebugEnabled())
-                log.debug("start: Initializing the trapd config factory");
+		try {
+			log.debug("start: Initializing the trapd config factory");
+			TrapdConfigFactory.init();
+		} catch (MarshalException e) {
+			log.error("Failed to load configuration", e);
+			throw new UndeclaredThrowableException(e);
+		} catch (ValidationException e) {
+			log.error("Failed to load configuration", e);
+			throw new UndeclaredThrowableException(e);
+		} catch (IOException e) {
+			log.error("Failed to load configuration", e);
+			throw new UndeclaredThrowableException(e);
+		}
 
-            TrapdConfigFactory.reload();
-            TrapdConfigFactory tFactory = TrapdConfigFactory.getInstance();
+		try {
+			// clear out the known nodes
+			TrapdIPMgr.dataSourceSync();
+		} catch (SQLException e) {
+			log.error("Failed to load known IP address list", e);
+			throw new UndeclaredThrowableException(e);
+		}
 
-            if (log.isDebugEnabled())
-                log.debug("start: Getting the already known IPs");
+		TrapHandler trapHandler = getTrapHandler();
+		trapHandler.setTrapdConfig(TrapdConfigFactory.getInstance());
 
-            // clear out the known nodes
-            TrapdIPMgr.dataSourceSync();
+		EventIpcManagerFactory.init();
+		EventIpcManager mgr = EventIpcManagerFactory.getIpcManager();
+		trapHandler.setEventManager(mgr);
 
-            // Get the newSuspectOnTrap flag
-            boolean m_newSuspect = tFactory.getNewSuspectOnTrap();
-
-            // set up the trap processor
-            m_backlogQ = new FifoQueueImpl();
-            m_processor = new TrapQueueProcessor(m_backlogQ, m_newSuspect);
-
-            if (log.isDebugEnabled())
-                log.debug("start: Creating the trap queue processor");
-
-            // Initialize the trapd session
-            int port = tFactory.getSnmpTrapPort();
-            m_trapSession = new SnmpTrapSession(this, port);
-
-            if (log.isDebugEnabled())
-                log.debug("start: Creating the trap session");
-
-        } catch (SocketException e) {
-            log.error("Failed to setup SNMP trap port", e);
-            throw new UndeclaredThrowableException(e);
-        } catch (MarshalException e) {
-            log.error("Failed to load configuration", e);
-            throw new UndeclaredThrowableException(e);
-        } catch (ValidationException e) {
-            log.error("Failed to load configuration", e);
-            throw new UndeclaredThrowableException(e);
-        } catch (IOException e) {
-            log.error("Failed to load configuration", e);
-            throw new UndeclaredThrowableException(e);
-        } catch (SQLException e) {
-            log.error("Failed to load known IP address list", e);
-            throw new UndeclaredThrowableException(e);
-        }
-
-        try {
-            m_eventReader = new BroadcastEventProcessor();
-        } catch (Exception ex) {
-            ThreadCategory.getInstance().error("Failed to create event reader", ex);
-            throw new UndeclaredThrowableException(ex);
-        }
-
-    }
+		trapHandler.init();
+	}
 
