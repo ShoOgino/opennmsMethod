@@ -9,21 +9,26 @@
     public synchronized PollStatus poll(PollableService pSvc) {
         Category log = ThreadCategory.getInstance(getClass());
 
-        setStatusChanged(false);
+        resetStatusChanged();
 
-        // Polling logic if interface is currently DOWN
-        //
-        // Remember if critical service is defined and the interface is DOWN
-        // we only poll the critical service (provided that the interface
-        // actually supports the critical service).
-        //
-        if (getStatus() == PollStatus.STATUS_DOWN) {
-            pollWhileDown(pSvc);
-        }
-        // Polling logic if interface is currently UP
-        //
-        else if (getStatus() == PollStatus.STATUS_UP) {
-            pollWhileUp(pSvc);
+        // Critical service defined and supported by interface
+        if (isEssential(pSvc)) {
+            // Issue poll
+            PollStatus svcStatus = pSvc.poll();
+            if (svcStatus != getStatus() && pSvc.statusChanged()) {
+                // Mark interface as up
+                PollStatus newStatus = pollRemainingEssentialServices(pSvc);
+                updateStatus(newStatus);
+                
+            }
+        } else {
+            // This may be the first time this status has been
+            // polled since the interface was found to be DOWN
+            // (since it only takes the critical service being DOWN
+            // for the entire interface to be seen as DOWN) so go
+            // ahead and set the status on this service to DOWN.
+            pSvc.updateStatus(PollStatus.STATUS_DOWN);
+            // markRemainingServices(pSvc, PollStatus.STATUS_DOWN);
         }
 
         if (log.isDebugEnabled())
