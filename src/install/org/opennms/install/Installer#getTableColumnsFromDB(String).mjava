@@ -11,20 +11,25 @@
 	}
 
 	String query = 
-		"SELECT " +
-		"        a.attname, " +
-		"        format_type(a.atttypid, a.atttypmod), " +
-		"        a.attnotnull " +
-		"FROM " +
-		"        pg_attribute a " +
-		"WHERE " +
-		"        a.attrelid = " +
-		"                (SELECT oid FROM pg_class WHERE relname = '" +
-	                         table + "') AND " +
-		"        a.attnum > 0 AND " +
-		"        a.attisdropped = false " +
-		"ORDER BY " +
-		"        a.attnum;";
+	    "SELECT " +
+	    "        a.attname, " +
+	    "        format_type(a.atttypid, a.atttypmod), " +
+	    "        a.attnotnull " +
+	    "FROM " +
+	    "        pg_attribute a " +
+	    "WHERE " +
+	    "        a.attrelid = " +
+	    "                (SELECT oid FROM pg_class WHERE relname = '" +
+	                       table + "') AND " +
+	    "        a.attnum > 0 ";
+
+	if (m_pg_version >= 7.3) {
+	    query = query + "AND a.attisdropped = false ";
+	}
+
+	query = query +
+	    "ORDER BY " +
+	    "        a.attnum";
 
 	rs = st.executeQuery(query);
 
@@ -37,11 +42,12 @@
 	    r.add(c);
 	}
 
-	// XXX the [1] on conkey and confkey is a hack and assumes that
-	//     we have at most one constrained column and at most one
-	//     referenced foreign column (which is correct with the current
-	//     database layout.
-	query =
+	if (m_pg_version > 7.3) {
+	    // XXX the [1] on conkey and confkey is a hack and assumes that
+	    //     we have at most one constrained column and at most one
+	    //     referenced foreign column (which is correct with the current
+	    //     database layout.
+	    query =
 		"SELECT " +
 		"       c.conname, " +
 		"	c.contype, " +
@@ -60,32 +66,100 @@
 		"WHERE " +
 		"	a.attrelid = " +
 	        "         (SELECT oid FROM pg_class WHERE relname = '" +
-	                       table.toLowerCase() + "');";
+		table.toLowerCase() + "');";
 
-	rs = st.executeQuery(query);
+	    rs = st.executeQuery(query);
 
-	while (rs.next()) {
-	    Constraint constraint;
-	    if (rs.getString(2).equals("p")) {
-		constraint = new Constraint(rs.getString(1), rs.getString(3));
-	    } else if (rs.getString(2).equals("f")) {
-		constraint = new Constraint(rs.getString(1), rs.getString(3),
-					    rs.getString(4), rs.getString(5));
-	    } else {
-		throw new Exception("Do not support constraint type \"" +
-				    rs.getString(2) + "\" in constraint \"" +
-				    rs.getString(1) + "\"");
+	    while (rs.next()) {
+		Constraint constraint;
+		if (rs.getString(2).equals("p")) {
+		    constraint = new Constraint(rs.getString(1), rs.getString(3));
+		} else if (rs.getString(2).equals("f")) {
+		    constraint = new Constraint(rs.getString(1), rs.getString(3),
+						rs.getString(4), rs.getString(5));
+		} else {
+		    throw new Exception("Do not support constraint type \"" +
+					rs.getString(2) + "\" in constraint \"" +
+					rs.getString(1) + "\"");
+		}
+
+		Column c = findColumn(r, constraint.getColumn());
+		if (c == null) {
+		    throw new Exception("Got a constraint for column \"" +
+					constraint.getColumn() + "\" of table " +
+					table + ", but could not find column.  " +
+					"Constraint: " + constraint);
+		}
+
+		c.addConstraint(constraint);
+	    }
+	} else {
+
+	    query =
+		"SELECT " +
+		"        c.relname, " +
+		"        a.attname " +
+		"FROM " +
+		"        pg_index i, " +
+		"        pg_class c, " + 
+		"        pg_attribute a " +
+		"WHERE " +
+		"        i.indrelid = " +
+		"          (SELECT oid FROM pg_class WHERE relname = '" +
+		             table.toLowerCase() + "') AND " +
+		"        i.indisprimary = 't' AND " +
+		"        i.indrelid = a.attrelid AND " +
+		"        i.indkey[0] = a.attnum AND " +
+		"        i.indexrelid = c.relfilenode";
+
+	    rs = st.executeQuery(query);
+	    while (rs.next()) {
+		Constraint constraint = 
+		    new Constraint(rs.getString(1), rs.getString(2));
+
+		Column c = findColumn(r, constraint.getColumn());
+		if (c == null) {
+		    throw new Exception("Got a constraint for column \"" +
+					constraint.getColumn() + "\" of table " +
+					table + ", but could not find column.  " +
+					"Constraint: " + constraint);
+		}
+
+		c.addConstraint(constraint);
 	    }
 
-	    Column c = findColumn(r, constraint.getColumn());
-	    if (c == null) {
-		throw new Exception("Got a constraint for column \"" +
-				    constraint.getColumn() + "\" of table " +
-				    table + ", but could not find column.  " +
-				    "Constraint: " + constraint);
-	    }
 
-	    c.addConstraint(constraint);
+	    query =
+		"SELECT " +
+		"        tgconstrname, " +
+		"        tgargs " + 
+		"FROM " +
+		"        pg_trigger t " +
+		"WHERE " +
+		"        t.tgrelid = (SELECT oid FROM pg_class WHERE relname = '" +
+		           table.toLowerCase() + "') AND " +
+		"        t.tgfoid = (SELECT oid FROM pg_proc WHERE proname = " +
+		"          'RI_FKey_check_ins')";
+	    rs = st.executeQuery(query);
+
+	    while (rs.next()) {
+		String name = rs.getString(1);
+		String[] args = new String(rs.getBytes(2)).split("\000");
+
+		Constraint constraint = 
+		    new Constraint(rs.getString(1), args[4],
+				   args[2], args[5]);
+
+		Column c = findColumn(r, constraint.getColumn());
+		if (c == null) {
+		    throw new Exception("Got a constraint for column \"" +
+					constraint.getColumn() + "\" of table " +
+					table + ", but could not find column.  " +
+					"Constraint: " + constraint);
+		}
+
+		c.addConstraint(constraint);
+	    }
 	}
 
 	return r;
