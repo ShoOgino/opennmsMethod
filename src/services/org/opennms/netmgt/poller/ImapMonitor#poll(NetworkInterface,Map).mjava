@@ -34,6 +34,18 @@
 		int retry   = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
 		int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
 		int port    = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
+                String rrdPath = ParameterMap.getKeyedString(parameters, "rrd-repository", null);
+                String dsName = ParameterMap.getKeyedString(parameters, "ds-name", null);
+
+                if (rrdPath == null)
+                {
+                        log.info("poll: RRD repository not specified in parameters, latency data will not be stored.");
+                }
+                if (dsName == null)
+                {
+                        dsName = DS_NAME;
+                }
+
 
 		// Get interface address from NetworkInterface
 		//
@@ -43,6 +55,8 @@
 			log.debug("ImapMonitor.poll: address: " + ipv4Addr + " port: " + port + " timeout: " + timeout + " retry: " + retry);
 		
 		int serviceStatus = ServiceMonitor.SERVICE_UNAVAILABLE;
+                long responseTime = -1;
+
 		for (int attempts=0; attempts <= retry && serviceStatus != ServiceMonitor.SERVICE_AVAILABLE; attempts++)
 		{
                         SocketChannel sChannel = null;
@@ -51,6 +65,8 @@
 				//
 				// create a connected socket
 				//
+                                long sentTime = System.currentTimeMillis();
+
                                 sChannel = SocketChannelUtil.getConnectedSocketChannel(ipv4Addr, port, timeout);
                                 if (sChannel == null)
                                 {
@@ -69,6 +85,8 @@
 				// line for a valid return.
 				//
 				String banner = rdr.readLine();
+                                responseTime = System.currentTimeMillis() - sentTime;
+
 				if (log.isDebugEnabled())
 					log.debug("ImapMonitor.Poll(): banner: " + banner);
 
@@ -91,6 +109,9 @@
 						if(response != null && response.startsWith(IMAP_LOGOUT_RESPONSE_PREFIX))
 						{
 							serviceStatus = ServiceMonitor.SERVICE_AVAILABLE;
+                		                        // Store response time in RRD
+        	                	                if (responseTime >= 0 && rrdPath != null)
+	                                	                this.updateRRD(m_rrdInterface, rrdPath, ipv4Addr, dsName, responseTime);
 						}
 					}
 				}
