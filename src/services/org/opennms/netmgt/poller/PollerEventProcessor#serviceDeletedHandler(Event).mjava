@@ -10,87 +10,22 @@
         int nodeId = (int) event.getNodeid();
         String ipAddr = event.getInterface();
         String service = event.getService();
-
-        PollerNode pNode = getPoller().findNode(nodeId);
-        if (pNode == null) // Sanity check
-        {
-            log.error("Nodeid " + nodeId + " does not exist in pollable node map, " + "unable to delete service " + event.getService());
-
+        
+        InetAddress addr;
+        try {
+            addr = InetAddress.getByName(ipAddr);
+        } catch (UnknownHostException e) {
+            log.error("serviceDeletedHandler: Could not convert "+ipAddr+" to an InetAddress", e);
             return;
         }
-
-        // acquire lock to 'PollableNode'
-        //
-        boolean ownLock = false;
-        try {
-            // Attempt to obtain node lock...wait as long as it takes.
-            // 
-            if (log.isDebugEnabled())
-                log.debug("serviceDeletedHandler: deleting nodeid/interface/service: " + nodeId + "/" + ipAddr + "/" + service);
-
-            ownLock = pNode.getNodeLock(NodeLocker.WAIT_FOREVER);
-            if (ownLock) {
-                if (log.isDebugEnabled())
-                    log.debug("serviceDeletedHandler: obtained node lock for nodeid: " + nodeId);
-
-                // Retrieve the PollableInterface object corresponding to
-                // the interface address specified in the event
-                PollerInterface pIf = pNode.findInterface(ipAddr);
-                if (pIf == null) {
-                    if (log.isDebugEnabled())
-                        log.debug("serviceDeletedHandler: interface " + ipAddr + " not in interface map for " + nodeId);
-                    return;
-                }
-
-                // Iterate over the interface's services and find the service
-                // to delete and mark it for deletion.
-                //
-                Iterator svc_iter = pIf.getServices().iterator();
-                while (svc_iter.hasNext()) {
-                    PollerService pSvc = (PollerService) svc_iter.next();
-                    if (pSvc.getServiceName().equals(service)) {
-                        pSvc.markAsDeleted();
-
-                        // Now remove the service from the pollable services
-                        // list
-                        getPollableServices().remove(pSvc);
-
-                        // remove the service from the interface's internal
-                        // service map
-                        pIf.removeService(pSvc);
-                        break;
-                    }
-                }
-
-                // Recalculate interface status
-                pIf.recalculateStatus();
-
-                // Debug dump pollable node content
-                //
-                if (log.isDebugEnabled()) {
-                    log.debug("Service deletion completed");
-                    getPoller().getNetwork().dumpNode(pNode);
-                }
-            } else {
-                // failed to acquire lock
-                log.error("serviceDeletedHandler: failed to obtain lock on nodeId " + nodeId);
-            }
-        } catch (InterruptedException iE) {
-            // failed to acquire lock,
-            log.error("serviceDeletedHandler: thread interrupted...failed to obtain lock on nodeId " + nodeId);
-        } catch (Throwable t) {
-            log.error("exception caught processing interfaceDeleted event for " + nodeId + "/" + ipAddr, t);
-        } finally {
-            if (ownLock) {
-                if (log.isDebugEnabled())
-                    log.debug("serviceDeletedHandler: releasing node lock for nodeid: " + nodeId);
-
-                try {
-                    pNode.releaseNodeLock();
-                } catch (InterruptedException iE) {
-                    log.error("serviceDeletedHandler: thread interrupted...failed to release lock on nodeId " + nodeId);
-                }
-            }
+        
+        
+        PollableService svc = getNetwork().getService(nodeId, addr, service);
+        if (svc == null) {
+          log.error("Interface " + nodeId + "/" + event.getInterface() + " does not exist in pollable node map, unable to delete node.");
+          return;
         }
+        svc.delete();
+
     }
 

@@ -16,6 +16,8 @@
         // Verify that the event has an interface associated with it
         if (event.getInterface() == null)
             return;
+        
+        String ipAddr = event.getInterface();
 
         // Extract the old and new nodeId's from the event parms
         String oldNodeIdStr = null;
@@ -54,82 +56,41 @@
             log.error("interfaceReparentedHandler: old and new nodeId parms are required, unable to process.");
             return;
         }
-
-        // Update node outage processing hierarchy based on this reparenting
-        // event. Must "move" the interface from the "old" PollableNode object
-        // to the "new" PollableNode object as identified by the old and new
-        // nodeid parms.
-        // 	
-        // In order to perform this "move" a node lock must be obtained on both
-        // PollableNode objects.
-        //
-
-        // Retrieve old and new PollableNode objects from the Poller's pollable
-        // node map.
-        PollerNode oldPNode = null;
-        PollerNode newPNode = null;
+        
+        PollableNode oldNode;
+        PollableNode newNode;
         try {
-            oldPNode = getPoller().findNode(Integer.parseInt(oldNodeIdStr));
-            newPNode = getPoller().findNode(Integer.parseInt(newNodeIdStr));
+            oldNode = getNetwork().getNode(Integer.parseInt(oldNodeIdStr));
+            if (oldNode == null) {
+                log.error("interfaceReparentedHandler: Cannot locate old node "+oldNodeIdStr+" belonging to interface "+ipAddr);
+                return;
+            }
+            newNode = getNetwork().getNode(Integer.parseInt(newNodeIdStr));
+            if (newNode == null) {
+                log.error("interfaceReparentedHandler: Cannot locate new node "+newNodeIdStr+" to move interface to.");
+                return;
+            }
+            
+            PollableInterface iface = oldNode.getInterface(InetAddress.getByName(ipAddr));
+            if (iface == null) {
+                log.error("interfaceReparentedHandler: Cannot locate interface with ipAddr "+ipAddr+" to reparent.");
+                return;
+            }
+
+            iface.reparentTo(newNode);
+            
+            // process the status changes related to the 
+            Date date = new Date();
+            oldNode.processStatusChange(date);
+            newNode.processStatusChange(date);
+            
         } catch (NumberFormatException nfe) {
             log.error("interfaceReparentedHandler: failed converting old/new nodeid parm to integer, unable to process.");
             return;
-        }
-
-        // Sanity check, make certain we've were able to obtain both
-        // PollableNode objects.
-        //
-        if (oldPNode == null || newPNode == null) {
-            log.error("interfaceReparentedHandler: old or new nodeId doesn't exist, unable to process.");
+        } catch (UnknownHostException e) {
+            log.error("interfaceReparentedHandler: failed converting ipAddr "+ipAddr+" to an inet address");
             return;
-        }
-
-        // Obtain node lock on both pollable node objects and then move the
-        // interface from the old node to the new node.
-        //
-        boolean ownOldLock = false;
-        boolean ownNewLock = false;
-
-        try {
-            // FIXME: Deadlock potential below.... two locks in arbitrary order
-            // Obtain lock on old nodeId...wait indefinitely
-            log.debug("interfaceReparentedHandler: requesting node lock for old nodeId " + oldPNode.getNodeId());
-            ownOldLock = oldPNode.getNodeLock(NodeLocker.WAIT_FOREVER);
-            PollerInterface pIf = oldPNode.findInterface(event.getInterface());
-            log.debug("interfaceReparentedHandler: old node lock obtained, removing interface...");
-            oldPNode.removeInterface(pIf);
-
-            // Obtain lock on new nodeId...wait indefinitely
-            log.debug("interfaceReparentedHandler: requesting node lock for new nodeId " + newPNode.getNodeId());
-            ownNewLock = newPNode.getNodeLock(NodeLocker.WAIT_FOREVER);
-            log.debug("interfaceReparentedHandler: new node lock obtained, adding interface...");
-            newPNode.addInterface(pIf);
-
-            pIf.setNode(newPNode);
-            
-            Date date = new Date();
-            oldPNode.generateEvents(date);
-            newPNode.generateEvents(date);
-            
-        } catch (InterruptedException iE) {
-            log.error("interfaceReparentedHandler: thread interrupted...failed to obtain required node locks");
-            return;
-        } finally {
-            if (ownOldLock) {
-                try {
-                    oldPNode.releaseNodeLock();
-                } catch (InterruptedException iE) {
-                    log.error("interfaceReparentedHandler: thread interrupted...failed to release old node lock on nodeid " + oldPNode.getNodeId());
-                }
-            }
-
-            if (ownNewLock) {
-                try {
-                    newPNode.releaseNodeLock();
-                } catch (InterruptedException iE) {
-                    log.error("interfaceReparentedHandler: thread interrupted...failed to release new node lock on nodeid " + newPNode.getNodeId());
-                }
-            }
-        }
+        } 
+        
     }
 
