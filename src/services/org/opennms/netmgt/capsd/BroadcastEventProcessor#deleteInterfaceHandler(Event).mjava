@@ -77,8 +77,8 @@
                         if (m_xmlrpc)
                         {
                                 int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                        "Invalid parameters.", status); 
+                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
+                                        "Invalid parameters.", status, "OpenNMS.Capsd"); 
                         }
                         
 			return;
@@ -111,12 +111,12 @@
                                 if (m_xmlrpc)
                                 {
                                         int status = EventConstants.XMLRPC_NOTIFY_SUCCESS;
-                                        createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                                        "No node with the specified node label exists.", status);
+                                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
+                                                "No node with the specified node label exists.", status, "OpenNMS.Capsd");
                                 }
 			        return;
 		        }
-		
+	                rs.close();	
                         stmt.close();
                         
                         // Count interfaces on the node
@@ -139,7 +139,67 @@
                         }
                         else
                         {
-        	                // Deleting all the ifservices associated with the nodeid and ipaddress
+                                // Deleting all usersnotified info associated with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_USERSNOTIFIED_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted all usersnotified info on interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+        	                
+                                // Deleting all the notifications associated with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_NOTIFICATIONS_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted all notifications on interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+                                
+                                // Deleting all outages associated with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_OUTAGES_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted all outages on interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+                                
+                                // Deleting all events associated with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_EVENTS_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted all events on interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+                                
+                                // Deleting the snmpinterface entry with the nodeid and ipaddress
+        			stmt = dbConn.prepareStatement(SQL_DELETE_SNMPINTERFACE_ON_INTERFACE);
+        			stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+        			stmt.executeUpdate();
+        			if (log.isDebugEnabled())
+                                {
+        				log.debug("deleteInterfaceHandler: deleted the snmpinterface entry of interface: "
+                                                + ipaddr + " at nodeid: " + nodeid);
+                                }
+                                stmt.close();
+                                
+                                // Deleting all the ifservices associated with the nodeid and ipaddress
         			stmt = dbConn.prepareStatement(SQL_DELETE_IFSERVICES_ON_INTERFACE);
         			stmt.setInt(1, nodeid);
                                 stmt.setString(2, ipaddr);
@@ -151,31 +211,51 @@
                                 }
                                 stmt.close();
         
-        
+                                // if the deleted interface is the SNMP primary interface of a node,
+                                // an forceRescan event should be issued.
+                                //
+                                stmt = dbConn.prepareStatement(SQL_QUERY_PRIMARY_INTERFACE);
+                                stmt.setInt(1, nodeid);
+                                stmt.setString(2, ipaddr);
+                                
+                                rs = stmt.executeQuery();
+                                char isPrimary = 'N';
+                                if (rs.next())
+                                        isPrimary = rs.getString(1).charAt(0);
+
+                                rs.close();
+                                stmt.close();
         	                // Deleting the interface on the node
         			stmt = dbConn.prepareStatement(SQL_DELETE_INTERFACE);
         			stmt.setInt(1, nodeid);
-                                stmt.setString(2, event.getInterface());
+                                stmt.setString(2, ipaddr);
         			stmt.executeUpdate();
-        			if (log.isDebugEnabled())
+        			
+                                stmt.close();
+                                
+                                if (log.isDebugEnabled())
                                 {
         				log.debug("deleteInterfaceHandler: deleted the ipaddress: " 
                                                 + ipaddr + " on  nodeid: " + nodeid);
                                 
         			}
-                        
-                                // Create an interfaceDeleted event and send it to eventd, this new event will remove all
-                                // the services on the interface and the interface from the nodeid/interface/services 
-                                // conbination of the pollable node list.
+                                        
+                                // Create an interfaceDeleted event and send it to eventd, this new event will 
+                                // remove all the services on the interface and the interface from the 
+                                // nodeid/interface/services conbination of the pollable node list.
+                                //
                                 createAndSendInterfaceDeletedEvent(nodeid, event.getHost(), ipaddr, txNo, sourceUei);
                                 if (m_xmlrpc)
                                 {
                                         int status = EventConstants.XMLRPC_NOTIFY_SUCCESS;
                                         String message = new String("Successfully deleted interface: ") + ipaddr 
                                                         + " on node: " + nodeLabel;
-                                        createAndSendXmlrpcNotificationEvent(txNo, sourceUei, message, status); 
+                                        XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, message, 
+                                                status, "OpenNMS.Capsd"); 
                                 }
-        
+                                
+                                if (isPrimary == 'P')
+                                        createAndSendForceRescanEvent(event.getHost(), (long)nodeid);
                         }
 	                
 		}
@@ -185,8 +265,8 @@
                         if (m_xmlrpc)
                         {
                                 int status = EventConstants.XMLRPC_NOTIFY_FAILURE;
-                                createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
-                                        sqlE.getMessage(), status); 
+                                XmlrpcUtil.createAndSendXmlrpcNotificationEvent(txNo, sourceUei, 
+                                        sqlE.getMessage(), status, "OpenNMS.Capsd"); 
                         }
 		}
 		finally
