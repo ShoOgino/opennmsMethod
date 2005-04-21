@@ -1,0 +1,47 @@
+    public void testPersistManyAlarmsAtOnce() throws InterruptedException {
+        
+        int numberOfAlarmsToReduce = 10;
+        //there should be no alarms in the alarms table
+        assertEquals(0, m_db.countRows("select * from alarms"));
+ 
+        final String reductionKey = "countThese";
+        final MockNode node = m_network.getNode(1);
+        
+        final long millis = System.currentTimeMillis()+2500;
+
+        
+        for (int i=1; i<= numberOfAlarmsToReduce; i++) {
+            MockUtil.println("Creating Runnable: "+i+" of "+numberOfAlarmsToReduce+" events to reduce.");
+
+            class EventRunner implements Runnable {
+                Object lock = new Object();
+                public void run() {
+                    synchronized (lock) {
+                        while (System.currentTimeMillis() < millis) {
+                            try {
+                                lock.wait(10);
+                            } catch (InterruptedException e) {
+                                MockUtil.println(e.getMessage());
+                            }
+                        }
+                        sendNodeDownEvent(reductionKey, node);                    
+                    }
+                }
+            }
+            
+            Runnable r = new EventRunner();
+            r.run();
+        }
+        sleep(5000);
+        
+        //this should be the first occurrence of this alarm
+        //there should be 1 alarm now
+        int rowCount = m_db.countRows("select * from alarms");
+        Integer counterColumn = m_db.getAlarmCount(reductionKey);
+        MockUtil.println("rowcCount is: "+rowCount+", expected 1.");
+        MockUtil.println("counterColumn is: "+counterColumn+", expected "+numberOfAlarmsToReduce);
+        assertEquals(1, rowCount);
+        assertEquals(numberOfAlarmsToReduce, counterColumn.intValue());
+        
+    }
+
