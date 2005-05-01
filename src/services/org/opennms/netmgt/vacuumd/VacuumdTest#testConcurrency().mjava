@@ -1,0 +1,65 @@
+    /**
+     * This is an attempt at testing scheduled automations.
+     * @throws InterruptedException
+     */
+    public final void testConcurrency() throws InterruptedException {
+        
+        /*
+         * Test status of threads
+         */
+        assertEquals(Fiber.START_PENDING, m_vacuumd.getStatus());
+        assertEquals(Fiber.START_PENDING, m_vacuumd.getScheduler().getStatus());
+        
+        /*
+         * Testing the start
+         */
+        m_vacuumd.start();
+        assertEquals(Fiber.STARTING, m_vacuumd.getStatus());
+        Thread.sleep(200);
+        assertEquals(Fiber.RUNNING, m_vacuumd.getStatus());
+        assertEquals(Fiber.RUNNING, m_vacuumd.getScheduler().getStatus());
+        
+        /*
+         * Testing the pause
+         */
+        m_vacuumd.pause();
+        Thread.sleep(200);
+        assertEquals(PausableFiber.PAUSED, m_vacuumd.getStatus());
+        assertEquals(PausableFiber.PAUSED, m_vacuumd.getScheduler().getStatus());
+
+        /*
+         * Changes to the automations to the VACUUMD_CONFIG will
+         * probably affect this.  There should be one node down
+         * alarm.
+         */
+        assertEquals(1, verifyInitialAlarmState());
+
+        /*
+         * Send in another alarm for reduction and increased count
+         * that so we can verify the escalation automation.
+         */
+        MockNode node = m_network.getNode(1);
+        m_eventd.processEvent(node.createDownEvent());
+
+        m_vacuumd.resume();
+        Thread.sleep(200);
+        assertEquals(PausableFiber.RUNNING, m_vacuumd.getStatus());
+        assertEquals(PausableFiber.RUNNING, m_vacuumd.getScheduler().getStatus());
+        
+        /*
+         * Sleep and wait for the alarm to be written
+         */
+        Thread.sleep(200);
+        assertEquals(2, alarmDeDuplicated());
+        
+        /*
+         * Sleep long enough for the automation to run.
+         */
+        Thread.sleep(VacuumdConfigFactory.getInstance().getAutomation("autoEscalate").getInterval()+100);
+        assertEquals(7, verifyAlarmEscalated());
+                
+        //Stop what you start.
+        m_vacuumd.stop();
+
+    }
+
