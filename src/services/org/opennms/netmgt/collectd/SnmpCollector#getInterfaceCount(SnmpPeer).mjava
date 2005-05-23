@@ -9,78 +9,23 @@
      * @return number of interfaces on the remote node.
      */
     private int getInterfaceCount(SnmpPeer peer) {
-        Category log = ThreadCategory.getInstance(getClass());
-
-        InetAddress addr = peer.getPeer();
-
-        // Establish SNMP session with interface
-        //
+        
         SnmpSession session = null;
         try {
             session = new SnmpSession(peer);
+            return getIfNumber(session);
+            
         } catch (SocketException e) {
-            if (log.isEnabledFor(Priority.ERROR))
-                log.error("getInterfaceCount: Error creating the SnmpSession to collect from " + addr.getHostAddress(), e);
-            if (session != null) {
-                try {
-                    session.close();
-                } catch (Exception ex) {
-                    if (log.isInfoEnabled())
-                        log.info("getInterfaceCount: an error occured closing the SNMP session", ex);
-                }
-            }
-
-            // We will go ahead and return here...if the remote agent
-            // is truly inaccessible an event will be generated the
-            // first time the interface is collected and fails.
+            log().error("getInterfaceCount: Error creating the SnmpSession to collect from " + peer.getPeer().getHostAddress(), e);
             return -1;
-        }
 
-        // Retrieve the number of interfaces on the remote node by
-        // retrieving 'interface.ifNumber' object.
-        // 
-        // Need to be certain that we close the SNMP session when
-        // the data retreival is completed...wrapping in a try/finally block
-        int ifCount = -1;
-
-        try {
-            SnmpResponseHandler handler = new SnmpResponseHandler();
-            SnmpPduPacket pkt = new SnmpPduRequest(SnmpPduPacket.GETNEXT, new SnmpVarBind[] { new SnmpVarBind(new SnmpObjectId(INTERFACES_IFNUMBER)) });
-
-            synchronized (handler) {
-                session.send(pkt, handler);
-                try {
-                    handler.wait((long) ((peer.getRetries() + 1) * peer.getTimeout()));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-
-            if (handler.getResult() != null) {
-                String ifCountStr = handler.getResult().getValue().toString();
-                try {
-                    ifCount = Integer.parseInt(ifCountStr);
-                } catch (NumberFormatException nfE) {
-                    log.warn("getInterfaceCount: Retrieval of interface count failed for " + addr.getHostAddress());
-                }
-            }
-        } catch (Throwable t) {
-            throw new UndeclaredThrowableException(t);
         } finally {
-            //
-            // Regardless of what happens with
-            // the collection, close the session
-            // when we're finished collecting data.
-            //
             try {
-                session.close();
+                if (session != null) session.close();
             } catch (Exception e) {
-                if (log.isEnabledFor(Priority.WARN))
-                    log.warn("collect: An error occured closing the SNMP session for " + addr.getHostAddress(), e);
+                log().warn("collect: An error occured closing the SNMP session for " + peer.getPeer().getHostAddress(), e);
             }
         }
 
-        log.debug("getInterfaceCount: " + addr.getHostAddress() + " has ifCount= " + ifCount);
-        return ifCount;
     }
 

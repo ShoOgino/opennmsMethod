@@ -7,8 +7,6 @@
      * @return true if remote SNMP agent supports SNMPv2, false otherwise.
      */
     private boolean testSnmpV2Support(InetAddress addr) {
-        Category log = ThreadCategory.getInstance(getClass());
-
         boolean supportsV2 = false;
 
         // Get SnmpPeer object for this interface
@@ -23,60 +21,19 @@
         SnmpSession session = null;
         try {
             session = new SnmpSession(peer);
+            SnmpSyntax[] results = session.getBulk(1, 0, new SnmpObjectId(DEFAULT_OBJECT_IDENTIFIER));
+            return (results != null);
+
         } catch (SocketException e) {
-            if (log.isEnabledFor(Priority.ERROR))
-                log.error("testSnmpV2Support: Error creating the SnmpSession to collect from " + addr.getHostAddress(), e);
-            if (session != null) {
-                try {
-                    session.close();
-                } catch (Exception ex) {
-                    if (log.isInfoEnabled())
-                        log.info("testSnmpV2Support: an error occured closing the SNMP session", ex);
-                }
-            }
-
-            // We will go ahead and return here...if the remote agent
-            // is truly inaccessible an event will be generated the
-            // first time the interface is collected and fails.
+            log().error("testSnmpV2Support: Error creating the SnmpSession to collect from " + addr.getHostAddress(), e);
             return false; // just assume SNMPv1
-        }
 
-        try {
-            SnmpResponseHandler handler = new SnmpResponseHandler();
-
-            SnmpPduPacket pkt = null;
-            pkt = new SnmpPduBulk(1, // nonRepeaters
-                    0, // maxRepetitions
-                    new SnmpVarBind[] { new SnmpVarBind(DEFAULT_OBJECT_IDENTIFIER) });
-
-            synchronized (handler) {
-                session.send(pkt, handler);
-                try {
-                    handler.wait((long) ((peer.getRetries() + 1) * peer.getTimeout()));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-
-            if (handler.getResult() != null) {
-                supportsV2 = true;
-            }
-        } catch (Throwable t) {
-            throw new UndeclaredThrowableException(t);
         } finally {
-            //
-            // Regardless of what happens with
-            // the collection, close the session
-            // when we're finished collecting data.
-            //
             try {
-                session.close();
+                if (session != null) session.close();
             } catch (Exception e) {
-                if (log.isEnabledFor(Priority.WARN))
-                    log.warn("testSnmpV2Support: An error occured closing the SNMP session for " + addr.getHostAddress(), e);
+                log().warn("testSnmpV2Support: An error occured closing the SNMP session for " + addr.getHostAddress(), e);
             }
         }
-
-        return supportsV2;
     }
 
