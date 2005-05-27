@@ -1,0 +1,88 @@
+    private void verifyCollection() {
+        SnmpCollectionTracker tracker = new SnmpCollectionTracker(m_objList);
+        final List colTrackers = new ArrayList(m_objList.size());
+        for (Iterator it = m_objList.iterator(); it.hasNext();) {
+            MibObject mibObj = (MibObject) it.next();
+            SnmpObjId base = SnmpObjId.get(mibObj.getOid());
+            InstanceTracker colTracker = InstanceTracker.get(base, mibObj.getInstance());
+            colTrackers.add(colTracker);
+        }
+        
+        while(!tracker.isFinished()) {
+            
+            // compute the list of oids we need to request
+            final List expectedOids = new ArrayList(colTrackers.size());
+            for (Iterator it = colTrackers.iterator(); it.hasNext();) {
+                InstanceTracker colTracker = (InstanceTracker) it.next();
+                if (colTracker.hasOidForNext())
+                    expectedOids.add(colTracker.getOidForNext());
+            }
+            
+            
+            // build a pdu for reqeusting them
+            final int[] callCount = new int[3];
+            ResponseProcessor rp = tracker.buildNextPdu(new PduBuilder() {
+                
+                int currIndex = 0;
+
+                public void addOid(SnmpObjId snmpObjId) {
+                    assertEquals(expectedOids.get(currIndex), snmpObjId);
+                    currIndex++;
+                    callCount[0]++;
+                }
+
+                public void setNonRepeaters(int numNonRepeaters) {
+                    assertTrue(numNonRepeaters <= expectedOids.size());
+                    callCount[1]++;
+                }
+
+                public void setMaxRepititions(int maxRepititions) {
+                    assertTrue(maxRepititions > 0);
+                    callCount[2]++;
+                }
+                
+            });
+            
+            // make sure we properly built the pdu
+            assertEquals(callCount[0], expectedOids.size());
+            assertEquals(1, callCount[1]);
+            assertEquals(1, callCount[2]);
+
+            // generate responses and update the tracking
+            for (Iterator it = colTrackers.iterator(); it.hasNext();) {
+                InstanceTracker colTracker = (InstanceTracker) it.next();
+                if (colTracker.hasOidForNext()) {
+                    // then we requested it earlier so it is in expectedOids
+                    // and the below is the value it has
+                    SnmpObjId req = colTracker.getOidForNext();
+                    
+                    // these are the response for this pdu
+                    SnmpObjId resp = getNextSnmpId(req);
+                    Object val = getSnmpData(resp);
+                    
+                    // notify the response processor
+                    rp.processResponse(resp, val);
+                    
+                    // update the tracker
+                    colTracker.receivedOid(resp);
+                }
+            }
+            
+        }
+
+        for (Iterator it = colTrackers.iterator(); it.hasNext();) {
+            InstanceTracker colTracker = (InstanceTracker) it.next();
+            SnmpObjId base = colTracker.getBaseOid();
+
+            for(SnmpObjId mib = getNextSnmpId(base); base.isPrefixOf(mib); mib = getNextSnmpId(mib)) {
+                SnmpInstId inst = mib.getInstance(base);
+                Object result = getSnmpData(mib);
+                Map store = tracker.getDataForInstance(inst);
+                assertNotNull(store);
+
+                assertEquals(result, store.get(base));
+                
+            }
+        }
+    }
+
