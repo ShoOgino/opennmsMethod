@@ -14,48 +14,47 @@
      * @param ifCollector
      *            Interface level MIB data collected via SNMP for the polled
      *            interface
+     * @throws CollectionError 
      * 
      * @exception RuntimeException
      *                Thrown if the data source list for the interface is null.
      */
-    private boolean updateRRDs(String collectionName, NetworkInterface iface, SnmpNodeCollector nodeCollector, SnmpIfCollector ifCollector) {
+    private boolean updateRRDs(String collectionName, NetworkInterface iface, SnmpNodeCollector nodeCollector, SnmpIfCollector ifCollector) throws CollectionError {
         // Log4j category
         //
-        Category log = log();
-
         InetAddress ipaddr = getInetAddress(iface);
-
+        
         // Retrieve SNMP storage attribute
-        String snmpStorage = (String) iface.getAttribute(SNMP_STORAGE_KEY);
-
+        String snmpStorage = getSnmpStorage(iface);
+        
         // Get primary interface index from NodeInfo object
-        NodeInfo nodeInfo = (NodeInfo) iface.getAttribute(NODE_INFO_KEY);
-        Integer primaryIfIndex = new Integer(nodeInfo.getPrimarySnmpIfIndex());
-
+        NodeInfo nodeInfo = getNodeInfo(iface);
+        int primaryIfIndex = nodeInfo.getPrimarySnmpIfIndex();
+        
         // Retrieve interface map attribute
         //
-        Map ifMap = (Map) iface.getAttribute(IF_MAP_KEY);
-
+        Map ifMap = getIfMap(iface);
+        
         // Write relevant collected SNMP statistics to RRD database
         // 
         // First the node level RRD info will be updated.
         // Secondly the interface level RRD info will be updated.
         //
         boolean rrdError = false;
-
+        
         // -----------------------------------------------------------
         // Node data
         // -----------------------------------------------------------
         if (nodeCollector != null) {
-            log.debug("updateRRDs: processing node-level collection...");
-
+            log().debug("updateRRDs: processing node-level collection...");
+            
             // Build path to node RRD repository. createRRD() will make the
             // appropriate directories if they do not already exist.
             //
             String nodeRepository = m_rrdPath + File.separator + String.valueOf(nodeInfo.getNodeId());
-
+            
             SNMPCollectorEntry nodeEntry = nodeCollector.getEntry();
-
+            
             // Iterate over the node datasource list and issue RRD update
             // commands to update each datasource which has a corresponding
             // value in the collected SNMP data
@@ -63,89 +62,90 @@
             Iterator iter = nodeInfo.getDsList().iterator();
             while (iter.hasNext()) {
                 DataSource ds = (DataSource) iter.next();
-
+                
                 try {
-
+                    
                     String dsVal = getRRDValue(ds, nodeEntry);
                     if (dsVal == null) {
                         // Do nothing, no update is necessary
-                        if (log.isDebugEnabled())
-                            log.debug("updateRRDs: Skipping update, no data retrieved for nodeId: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
+                        if (log().isDebugEnabled())
+                            log().debug("updateRRDs: Skipping update, no data retrieved for nodeId: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
                     } else {
                         //createRRD(collectionName, ipaddr, nodeRepository, ds);
-			if(ds.performUpdate(collectionName, ipaddr.getHostAddress(), nodeRepository, ds.getName(), dsVal)) {
-	                    log.warn("updateRRDs: ds.performUpdate() failed for node: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
-			    rrdError = true;
-			}
+                        if(ds.performUpdate(collectionName, ipaddr.getHostAddress(), nodeRepository, ds.getName(), dsVal)) {
+                            log().warn("updateRRDs: ds.performUpdate() failed for node: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
+                            rrdError = true;
+                        }
                     }
                 } catch (IllegalArgumentException e) {
-                    log.warn("getRRDValue: " + e.getMessage());
+                    log().warn("getRRDValue: " + e.getMessage());
                     // Set rrdError flag
                     rrdError = true;
-                    log.warn("updateRRDs: call to getRRDValue() failed for node: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
+                    log().warn("updateRRDs: call to getRRDValue() failed for node: " + nodeInfo.getNodeId() + " datasource: " + ds.getName());
                 }
-
+                
             } // end while(more datasources)
         } // end if(nodeCollector != null)
-
+        
         // -----------------------------------------------------------
         // Interface-specific data
         // -----------------------------------------------------------
-
+        
         if (ifCollector != null) {
             // Retrieve list of SNMP collector entries generated for the
             // remote node's interfaces.
             //
             List snmpCollectorEntries = ifCollector.getEntries();
-            if (snmpCollectorEntries == null)
-                throw new RuntimeException("updateRRDs:  No data retrieved for the interface " + ipaddr.getHostAddress());
-
+            if (snmpCollectorEntries == null || snmpCollectorEntries.size() == 0) {
+                log().warn("updateRRDs:  No data retrieved for the interface " + ipaddr.getHostAddress());
+            }
+            
             // Iterate over the SNMP collector entries
             //
             Iterator iter = snmpCollectorEntries.iterator();
             while (iter.hasNext()) {
                 SNMPCollectorEntry ifEntry = (SNMPCollectorEntry) iter.next();
-
-                String ifIndex = (String) ifEntry.get(SNMPCollectorEntry.IF_INDEX);
-
+                
+                int ifIndex = Integer.parseInt((String) ifEntry.get(SNMPCollectorEntry.IF_INDEX));
+                
+                
                 // Are we storing SNMP data for all interfaces or primary
                 // interface only?
                 // If only storing for primary interface only proceed if current
                 // ifIndex is equal to the ifIndex of the primary SNMP interface
                 if (snmpStorage.equals(SNMP_STORAGE_PRIMARY)) {
-                    if (!ifIndex.equals(primaryIfIndex.toString())) {
-                        if (log.isDebugEnabled())
-                            log.debug("updateRRDs: only storing SNMP data for primary interface (" + primaryIfIndex + "), skipping ifIndex: " + ifIndex);
+                    if (ifIndex != primaryIfIndex) {
+                        if (log().isDebugEnabled())
+                            log().debug("updateRRDs: only storing SNMP data for primary interface (" + primaryIfIndex + "), skipping ifIndex: " + ifIndex);
                         continue;
                     }
                 }
-
-                IfInfo ifInfo = (IfInfo) ifMap.get(new Integer(ifIndex));
-
-                if (ifInfo.getCollType() == null){
-                        log.warn("updateRRDs: No SNMP info for ifIndex: " + ifIndex);
-                        continue;
-                }
-
-                if (snmpStorage.equals(SNMP_STORAGE_SELECT)) {
-                    if (ifInfo.getCollType() == null) {
-                        if (log.isDebugEnabled())
-                            log.debug("updateRRDs: selectively storing SNMP data for primary interface (" + primaryIfIndex + "), skipping ifIndex: " + ifIndex + " because collType = null");
-                        continue;
-                    }
-                    if (ifInfo.getCollType().equals("N")) {
-                        if (log.isDebugEnabled())
-                            log.debug("updateRRDs: selectively storing SNMP data for primary interface (" + primaryIfIndex + "), skipping ifIndex: " + ifIndex + " because collType = N");
-                        continue;
-                    }
-                }
-
+                
                 // Use ifIndex to lookup the IfInfo object from the interface
                 // map
                 //
+                IfInfo ifInfo = (IfInfo) ifMap.get(new Integer(ifIndex));
+                if (ifInfo == null) {
+                    // no data needed for this interface
+                    continue;
+                }
+                
+                if (ifInfo.getCollType() == null){
+                    log().warn("updateRRDs: No SNMP info for ifIndex: " + ifIndex);
+                    continue;
+                }
+                
+                if (snmpStorage.equals(SNMP_STORAGE_SELECT)) {
+                    if (ifInfo.getCollType() == null || ifInfo.getCollType().equals("N")) {
+                        if (log().isDebugEnabled())
+                            log().debug("updateRRDs: selectively storing SNMP data for primary interface (" + primaryIfIndex + "), skipping ifIndex: " + ifIndex + " because collType = "+ifInfo.getCollType());
+                        continue;
+                    }
+                }
+                
                 if (ifInfo.getDsList() == null)
                     throw new RuntimeException("Data Source list not available for primary IP addr " + ipaddr.getHostAddress() + " and ifIndex " + ifInfo.getIndex());
-
+                
                 // Iterate over the interface datasource list and issue RRD
                 // update
                 // commands to update each datasource which has a corresponding
@@ -154,41 +154,41 @@
                 Iterator i = ifInfo.getDsList().iterator();
                 while (i.hasNext()) {
                     DataSource ds = (DataSource) i.next();
-
+                    
                     // Build path to interface RRD repository. createRRD() will
                     // make the
                     // appropriate directories if they do not already exist.
                     //
                     String ifRepository = m_rrdPath + File.separator + String.valueOf(nodeInfo.getNodeId()) + File.separator + ifInfo.getLabel();
-
+                    
                     try {
-
+                        
                         String dsVal = getRRDValue(ds, ifEntry);
-
+                        
                         // Build RRD update command
                         //
                         if (dsVal == null) {
                             // Do nothing, no update is necessary
-                            if (log.isDebugEnabled())
-                                log.debug("updateRRDs: Skipping update, no data retrieved for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
+                            if (log().isDebugEnabled())
+                                log().debug("updateRRDs: Skipping update, no data retrieved for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
                         } else {
                             // Call createRRD() to create RRD if it doesn't
                             // already exist
                             //
                             //createRRD(collectionName, ipaddr, ifRepository, ds);
                             if(ds.performUpdate(collectionName, ipaddr.getHostAddress(), ifRepository, ds.getName(), dsVal)) {
-				log.warn("updateRRDs: ds.performUpdate() failed for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
-				rrdError = true;
-			    }
-
+                                log().warn("updateRRDs: ds.performUpdate() failed for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
+                                rrdError = true;
+                            }
+                            
                         }
                     } catch (IllegalArgumentException e) {
-                        log.warn("buildRRDUpdateCmd: " + e.getMessage());
+                        log().warn("buildRRDUpdateCmd: " + e.getMessage());
                         // Set rrdError flag
                         rrdError = true;
-                        log.warn("updateRRDs: call to buildRRDUpdateCmd() failed for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
+                        log().warn("updateRRDs: call to buildRRDUpdateCmd() failed for node/ifindex: " + nodeInfo.getNodeId() + "/" + ifIndex + " datasource: " + ds.getName());
                     }
-
+                    
                 } // end while(more datasources)
             } // end while(more SNMP collector entries)
         } // end if(ifCollector != null)
