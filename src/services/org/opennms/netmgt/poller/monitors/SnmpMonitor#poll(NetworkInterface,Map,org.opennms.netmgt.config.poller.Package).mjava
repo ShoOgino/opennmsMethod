@@ -23,18 +23,17 @@
 
         int status = ServiceMonitor.SERVICE_UNAVAILABLE;
         InetAddress ipaddr = (InetAddress) iface.getAddress();
-        SnmpSession session = null;
 
         // Retrieve this interface's SNMP peer object
         //
-        SnmpPeer peer = (SnmpPeer) iface.getAttribute(SNMP_PEER_KEY);
-        if (peer == null)
-            throw new RuntimeException("SnmpPeer object not available for interface " + ipaddr);
+        SnmpAgentConfig agentConfig = (SnmpAgentConfig) iface.getAttribute(SNMP_AGENTCONFIG_KEY);
+        if (agentConfig == null)
+            throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
 
         // Get configuration parameters
         //
-        int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", peer.getTimeout());
-        int retries = ParameterMap.getKeyedInteger(parameters, "retries", peer.getRetries());
+        int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout());
+        int retries = ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries());
         int port = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
         String oid = ParameterMap.getKeyedString(parameters, "oid", DEFAULT_OBJECT_IDENTIFIER);
         String operator = ParameterMap.getKeyedString(parameters, "operator", null);
@@ -42,25 +41,24 @@
 
         // set timeout and retries on SNMP peer object
         //
-        peer.setTimeout(timeout);
-        peer.setRetries(retries);
+        agentConfig.setTimeout(timeout);
+        agentConfig.setRetries(retries);
+        agentConfig.setPort(port);
 
         if (log.isDebugEnabled())
-            log.debug("poll: service= SNMP address= " + ipaddr.getHostAddress() + " port= " + port + " oid=" + oid + " timeout= " + timeout + " retries= " + retries + " operator = " + operator + " operand = " + operand);
+            log.debug("poll: service= SNMP address= " + agentConfig);
 
         // Establish SNMP session with interface
         //
         try {
-            peer.setPort(port);
             if (log.isDebugEnabled()) {
                 String nl = System.getProperty("line.separator");
-                log.debug("SnmpMonitor.poll: SnmpPeer configuration: address: " + peer.getPeer() + nl + "      version: " + SnmpSMI.getVersionString(peer.getParameters().getVersion()) + nl + "      timeout: " + peer.getTimeout() + nl + "      retries: " + peer.getRetries() + nl + "      read commString: " + peer.getParameters().getReadCommunity() + nl + "      write commString: " + peer.getParameters().getWriteCommunity());
+                log.debug("SnmpMonitor.poll: SnmpAgentConfig address: " +agentConfig);
             }
-            session = new SnmpSession(peer);
-            SnmpObjectId snmpObjectId = new SnmpObjectId(oid);
+            SnmpObjId snmpObjectId = new SnmpObjId(oid);
             
             // TODO: Someday this should be changed to GET rather than GETNEXT
-            SnmpSyntax result = session.getNext(snmpObjectId);
+            SnmpValue result = SnmpUtils.get(agentConfig, snmpObjectId);
 
             if (result != null) {
                 log.debug("poll: SNMP poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + oid + " value=" + result);
@@ -76,18 +74,9 @@
         } catch (IllegalArgumentException e) {
             log.error("Invalid Snmp Criteria: " + e.getMessage());
             status = ServiceMonitor.SERVICE_UNAVAILABLE;
-        } catch (SocketException e) {
-            log.error("poll: Error creating the SnmpSession to collect from " + ipaddr.getHostAddress(), e);
-            return ServiceMonitor.SERVICE_UNAVAILABLE;
         } catch (Throwable t) {
             log.warn("poll: Unexpected exception during SNMP poll of interface " + ipaddr.getHostAddress(), t);
             status = ServiceMonitor.SERVICE_UNAVAILABLE;
-        } finally {
-            try {
-                if (session != null) session.close();
-            } catch (Exception e) {
-                log.warn("collect: An error occured closing the SNMP session for " + ipaddr.getHostAddress(), e);
-            }
         }
 
         return status;

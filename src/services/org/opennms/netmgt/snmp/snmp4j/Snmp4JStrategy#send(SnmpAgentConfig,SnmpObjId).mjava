@@ -1,0 +1,54 @@
+    /*
+     * TODO: make send take a target and a pdu so that this can be called
+     * from getBulk after the pdu is built
+     * TODO: Write tests for null SnmpValues
+     */
+    private SnmpValue send(SnmpAgentConfig agentConfig, SnmpObjId oid) {
+        
+        SnmpValue value = null;
+        Snmp session = null;
+        
+        try {
+            Address targetAddress = GenericAddress.parse("udp:"+agentConfig.getAddress().getHostAddress()+"/"+agentConfig.getPort());
+            session = new Snmp(new DefaultUdpTransportMapping());
+            session.listen();
+            
+            session.getUSM().addUser((createOctetString(agentConfig.getSecurityName())),
+                    new UsmUser(createOctetString(agentConfig.getSecurityName()),
+                            convertAuthProtocol(agentConfig.getAuthProtocol()),
+                            createOctetString(agentConfig.getAuthPassPhrase()),
+                            convertPrivProtocol(agentConfig.getAuthPrivProtocol()),
+                            createOctetString(agentConfig.getPrivPassPhrase())));
+            
+            Target target = getTarget(agentConfig);
+            PDU pdu = SnmpHelpers.createPDU(agentConfig);
+            pdu.add(new VariableBinding(new OID(oid.toString())));
+            ResponseEvent responseEvent = session.send(pdu, target);
+            
+            if (responseEvent.getResponse() == null) {
+                log().warn("Timeout.  Agent: "+agentConfig);
+            } else if (responseEvent.getError() != null) {
+                log().warn("Error during getNext operation.  Error: "+responseEvent.getError().getLocalizedMessage());
+            } else if (responseEvent.getResponse().getVariableBindings().size() < 1) {
+                log().warn("send: Received PDU with 0 varbinds.");
+            } else {
+                value = new Snmp4JValue(responseEvent.getResponse().get(0).getVariable());
+                if (log().isDebugEnabled())
+                    log().debug("send: Snmp operation successful. Value: "+value);
+            }
+            
+            
+        } catch (IOException e) {
+            log().error("getNext: Could not create Snmp session for Agent: "+agentConfig+". "+e);
+        } finally {
+            try {
+                session.close();
+                return value;
+            } catch (IOException e) {
+                log().error("send: Error closinging SNMP connection: "+e);
+            }
+        }
+        return value;
+        
+    }
+
