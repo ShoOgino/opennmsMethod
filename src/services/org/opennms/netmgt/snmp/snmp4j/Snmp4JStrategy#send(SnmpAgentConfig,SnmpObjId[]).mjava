@@ -3,9 +3,9 @@
      * from getBulk after the pdu is built
      * TODO: Write tests for null SnmpValues
      */
-    private SnmpValue send(SnmpAgentConfig agentConfig, SnmpObjId oid) {
+    private SnmpValue[] send(SnmpAgentConfig agentConfig, SnmpObjId[] oids) {
         
-        SnmpValue value = null;
+        SnmpValue[] values = { null };
         Snmp session = null;
         
         try {
@@ -22,33 +22,43 @@
             
             Target target = getTarget(agentConfig);
             PDU pdu = SnmpHelpers.createPDU(agentConfig);
-            pdu.add(new VariableBinding(new OID(oid.toString())));
+            
+            //TODO:log this
+            if (!buildPdu(pdu, oids))
+                return null;
+            
             ResponseEvent responseEvent = session.send(pdu, target);
             
             if (responseEvent.getResponse() == null) {
-                log().warn("Timeout.  Agent: "+agentConfig);
+                log().warn("send: Timeout.  Agent: "+agentConfig);
+            } else if (responseEvent.getResponse().get(0).getSyntax() == SMIConstants.SYNTAX_NULL) {
+                values[0] = null;
             } else if (responseEvent.getError() != null) {
-                log().warn("Error during getNext operation.  Error: "+responseEvent.getError().getLocalizedMessage());
+                log().warn("send: Error during getNext operation.  Error: "+responseEvent.getError().getLocalizedMessage());
             } else if (responseEvent.getResponse().getVariableBindings().size() < 1) {
                 log().warn("send: Received PDU with 0 varbinds.");
             } else {
-                value = new Snmp4JValue(responseEvent.getResponse().get(0).getVariable());
+                
+                values = new Snmp4JValue[responseEvent.getResponse().getVariableBindings().size()];
+                
+                for (int i=0; i<values.length; i++) {
+                    values[i] = new Snmp4JValue(responseEvent.getResponse().get(0).getVariable());
+                }
+                
                 if (log().isDebugEnabled())
-                    log().debug("send: Snmp operation successful. Value: "+value);
+                    log().debug("send: Snmp operation successful. Value: "+values);
             }
-            
             
         } catch (IOException e) {
             log().error("getNext: Could not create Snmp session for Agent: "+agentConfig+". "+e);
         } finally {
             try {
                 session.close();
-                return value;
             } catch (IOException e) {
                 log().error("send: Error closinging SNMP connection: "+e);
             }
         }
-        return value;
+        return values;
         
     }
 
