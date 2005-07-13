@@ -1,0 +1,231 @@
+    /**
+     * Responsible for syncing up the 'isPrimarySnmp' field of the ipInterface
+     * table based on the capsd and collectd configurations. Note that the
+     * 'sync' only takes place for interfaces that are not deleted. Also, it
+     * will prefer a loopback interface over other interfaces.
+     * 
+     * @param conn
+     *            Connection to the database.
+     * 
+     * @exception SQLException
+     *                Thrown if an error occurs while syncing the database.
+     */
+    public synchronized void syncSnmpPrimaryState(Connection conn) throws SQLException {
+        Category log = ThreadCategory.getInstance();
+    
+        if (conn == null) {
+            throw new IllegalArgumentException("Sync failed...must have valid database connection.");
+        }
+    
+        //
+        // Retrieve all non-deleted SNMP-supporting IP interfaces from the
+        // ipInterface table and build a map of nodes to interface entry list
+        //
+        if (log.isDebugEnabled())
+            log.debug("syncSnmpPrimaryState: building map of nodes to interfaces...");
+    
+        Map nodes = new HashMap();
+    
+        // prepare the SQL statement to query the database
+        PreparedStatement ipRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_SNMP_IP_INTERFACES);
+        ResultSet result = null;
+        try {
+            // run the statement
+            result = ipRetStmt.executeQuery();
+    
+            // Iterate over result set and build map of interface
+            // entries keyed by node id.
+            List ifList = new ArrayList();
+            while (result.next()) {
+                // Node Id
+                int nodeId = result.getInt(1);
+    
+                // IP address
+                String address = result.getString(2);
+                if (address == null) {
+                    log.warn("invalid ipInterface table entry, no IP address, skipping...");
+                    continue;
+                }
+    
+                // ifIndex
+                int ifIndex = result.getInt(6);
+                if (result.wasNull()) {
+                    if (log.isDebugEnabled())
+                        log.debug("ipInterface table entry for address " + address + " does not have a valid ifIndex ");
+                    ifIndex = LightWeightIfEntry.NULL_IFINDEX;
+                } else if (ifIndex < 1) {
+                    if (ifIndex == LAME_SNMP_HOST_IFINDEX) {
+                        if (log.isDebugEnabled())
+                            log.debug("Using ifIndex = " + LAME_SNMP_HOST_IFINDEX + " for address " + address);
+                    } else {
+                        if (log.isDebugEnabled())
+                            log.debug("ipInterface table entry for address " + address + " does not have a valid ifIndex ");
+                        ifIndex = LightWeightIfEntry.NULL_IFINDEX;
+                    } 
+                }
+    
+                // Primary SNMP State
+                char primarySnmpState = DbIpInterfaceEntry.SNMP_UNKNOWN;
+                String str = result.getString(4);
+                if (str != null)
+                    primarySnmpState = str.charAt(0);
+    
+                // ifType
+                int ifType = result.getInt(5);
+                if (result.wasNull()) {
+                    if (log.isDebugEnabled())
+                        log.debug("snmpInterface table entry for address " + address + " does not have a valid ifType");
+                    ifType = LightWeightIfEntry.NULL_IFTYPE;
+                }
+    
+                // New node or existing node?
+                ifList = (List) nodes.get(new Integer(nodeId));
+                if (ifList == null) {
+                    // Create new interface entry list
+                    ifList = new ArrayList();
+                    ifList.add(new LightWeightIfEntry(nodeId, ifIndex, address, DbIpInterfaceEntry.STATE_UNKNOWN, primarySnmpState, ifType));
+    
+                    // Add interface entry list to the map
+                    nodes.put(new Integer(nodeId), ifList);
+                } else {
+                    // Just add the current interface to the
+                    // node's interface list
+                    ifList.add(new LightWeightIfEntry(nodeId, ifIndex, address, DbIpInterfaceEntry.STATE_UNKNOWN, primarySnmpState, ifType));
+                }
+            }
+        } finally {
+            try {
+                result.close();
+                ipRetStmt.close();
+            } catch (Exception e) {
+                // Ignore
+            }
+        }
+    
+        // Iterate over the nodes in the map and determine what the primary SNMP
+        // interface for each node should be. Keep track of those interfaces
+        // whose primary SNMP interface state has changed so that the database
+        // can be updated accordingly.
+        //
+        if (log.isDebugEnabled())
+            log.debug("syncSnmpPrimaryState: iterating over nodes in map and checking primary SNMP interface, node count: " + nodes.size());
+        Iterator niter = nodes.keySet().iterator();
+        while (niter.hasNext()) {
+            // Get the nodeid (key)
+            Integer nId = (Integer) niter.next();
+            if (log.isDebugEnabled())
+                log.debug("building SNMP address list for node " + nId);
+    
+            // Lookup the interface list (value)
+            List ifEntries = (List) nodes.get(nId);
+    
+            // From the interface entries build a list of InetAddress objects
+            // eligible to be the primary SNMP interface for the node, and a
+            // list of loopback InetAddress objects eligible to be the primary
+            //  SNMP interface for the node.
+            //
+            List addressList = new ArrayList();
+            List lbAddressList = new ArrayList();
+            Iterator iter = ifEntries.iterator();
+            while (iter.hasNext()) {
+                LightWeightIfEntry lwIf = (LightWeightIfEntry) iter.next();
+    
+                // Skip interfaces which do not have a valid (non-null) ifIndex
+                // as they are not eligible to be the primary SNMP interface
+                if (lwIf.getIfIndex() == LightWeightIfEntry.NULL_IFINDEX) {
+                    if (log.isDebugEnabled())
+                        log.debug("skipping address " + lwIf.getAddress() + ": does not have a valid ifIndex.");
+                    continue;
+                }
+    
+                try {
+                    InetAddress addr = InetAddress.getByName(lwIf.getAddress());
+                    addressList.add(addr);
+                    if (lwIf.getIfType() == LightWeightIfEntry.LOOPBACK_IFTYPE) {
+                        lbAddressList.add(addr);
+                    }
+                } catch (UnknownHostException uhe) {
+                    log.warn("Unknown host exception for " + lwIf.getAddress(), uhe);
+                }
+            }
+    
+            // Determine primary SNMP interface from the lists of possible addresses
+            // in this order: loopback interfaces in collectd-configuration.xml,
+            // other interfaces in collectd-configuration.xml, loopback interfaces in
+            // the database, other interfaces in the database.
+            //
+            boolean strict = true;
+            InetAddress primarySnmpIf = null;
+            String psiType = null;
+            if (lbAddressList != null) {
+                primarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(lbAddressList, strict);
+                psiType = ConfigFileConstants.getFileName(ConfigFileConstants.COLLECTD_CONFIG_FILE_NAME) + " loopback addresses";
+            }
+            if(primarySnmpIf == null) {
+                primarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(addressList, strict);
+                psiType = ConfigFileConstants.getFileName(ConfigFileConstants.COLLECTD_CONFIG_FILE_NAME) + " addresses";
+            }
+            strict = false;
+            if((primarySnmpIf == null) && (lbAddressList != null)){
+                primarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(lbAddressList, strict);
+                psiType = "DB loopback addresses";
+            }
+            if(primarySnmpIf == null) {
+                primarySnmpIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(addressList, strict);
+                psiType = "DB addresses";
+            }
+    
+            if (log.isDebugEnabled()) {
+                if(primarySnmpIf == null) {
+                    log.debug("syncSnmpPrimaryState: No primary SNMP interface found for node " + nId);
+                } else {
+                    log.debug("syncSnmpPrimaryState: primary SNMP interface for node " + nId + " is: " + primarySnmpIf + ", selected from " + psiType);
+                }
+            }
+    
+            // Iterate back over interface list and update primary SNMP
+            // interface state
+            // for this node...if the primary SNMP interface state has changed
+            // update
+            // the database to reflect the new state.
+            iter = ifEntries.iterator();
+            while (iter.hasNext()) {
+                LightWeightIfEntry lwIf = (LightWeightIfEntry) iter.next();
+    
+                if (lwIf.getIfIndex() == LightWeightIfEntry.NULL_IFINDEX) {
+                    lwIf.setSnmpPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
+                } else if (primarySnmpIf == null || !lwIf.getAddress().equals(primarySnmpIf.getHostAddress())) {
+                    lwIf.setSnmpPrimaryState(DbIpInterfaceEntry.SNMP_SECONDARY);
+                } else {
+                    lwIf.setSnmpPrimaryState(DbIpInterfaceEntry.SNMP_PRIMARY);
+                }
+    
+                // Has SNMP primary state changed?
+                if (lwIf.hasSnmpPrimaryStateChanged()) {
+                    if (log.isDebugEnabled())
+                        log.debug("syncSnmpPrimaryState: updating " + lwIf.getNodeId() + "/" + lwIf.getAddress() + ", marking with state: " + lwIf.getSnmpPrimaryState());
+    
+                    // prepare the SQL statement to query the database
+                    PreparedStatement updateStmt = conn.prepareStatement(SQL_DB_UPDATE_SNMP_PRIMARY_STATE);
+                    updateStmt.setString(1, new String(new char[] { lwIf.getSnmpPrimaryState() }));
+                    updateStmt.setInt(2, lwIf.getNodeId());
+                    updateStmt.setString(3, lwIf.getAddress());
+    
+                    try {
+                        // run the statement
+                        updateStmt.executeUpdate();
+                    } finally {
+                        try {
+                            updateStmt.close();
+                        } catch (Exception e) {
+                            // Ignore
+                        }
+                    }
+                }
+            }
+        }
+    
+        if (log.isDebugEnabled())
+            log.debug("syncSnmpPrimaryState: sync completed.");
+    }
+
