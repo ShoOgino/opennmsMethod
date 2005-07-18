@@ -10,6 +10,7 @@
      *            The address to which the trap should be forwarded
      * @param destPort
      *            The port to which the trap should be forwarded
+     * @throws  
      * 
      * @exception Throws
      *                SnmpTrapHelperException if the variable binding cannot be
@@ -23,19 +24,26 @@
         if (snmpInfo == null) {
             throw new SnmpTrapHelperException("Cannot forward an event with no SNMP info: " + event.getUei());
         }
+        
 
         // check the version of the original trap
 
         String version = snmpInfo.getVersion();
 
-        SnmpPduTrap trap = new SnmpPduTrap();
+        SnmpV1TrapBuilder trap = SnmpUtils.getV1TrapBuilder();
 
         if ("v1".equals(version)) {
 
-            trap.setEnterprise(snmpInfo.getId());
+            trap.setEnterprise(SnmpObjId.get(snmpInfo.getId()));
 
-            IPv4Address addr = new IPv4Address(event.getSnmphost());
-            trap.setAgentAddress(new SnmpIPAddress(addr.getAddressBytes()));
+            InetAddress agentAddress;
+            try {
+                agentAddress = InetAddress.getByName(event.getSnmphost());
+            } catch (UnknownHostException e) {
+                throw new SnmpTrapHelperException("Invalid ip address: "+e.getMessage(), e);
+            }
+
+            trap.setAgentAddress(agentAddress);
 
             trap.setGeneric(snmpInfo.getGeneric());
 
@@ -63,26 +71,33 @@
 
             // converting V2 trap to V1 (see RFC2576)
 
-            trap.setEnterprise(snmpInfo.getId());
+            trap.setEnterprise(SnmpObjId.get(snmpInfo.getId()));
 
             Parm[] parms = event.getParms().getParm();
-
-            IPv4Address addr = null;
+            
+            String addr = null;
 
             for (int i = 0; i < parms.length; i++) {
                 Parm parm = parms[i];
 
                 if (SNMP_TRAP_ADDRESS_OID.equals(parm.getParmName())) {
-                    addr = new IPv4Address(parm.getValue().getContent());
+                    addr = parm.getValue().getContent();
                     break;
                 }
             }
 
             if (addr == null) {
-                addr = new IPv4Address("0.0.0.0");
+                addr = "0.0.0.0";
+            }
+            
+            InetAddress agentAddress;
+            try {
+                agentAddress = InetAddress.getByName(addr);
+            } catch (UnknownHostException e) {
+                throw new SnmpTrapHelperException("Invalid ip address: "+e.getMessage(), e);
             }
 
-            trap.setAgentAddress(new SnmpIPAddress(addr.getAddressBytes()));
+            trap.setAgentAddress(agentAddress);
 
             trap.setGeneric(snmpInfo.getGeneric());
 
@@ -115,7 +130,7 @@
         }
 
         // send the trap
-
-        sendTrap(snmpInfo.getCommunity(), trap, destAddr, destPort);
+        
+        sendTrap(destAddr, destPort, snmpInfo.getCommunity(), trap);
     }
 
