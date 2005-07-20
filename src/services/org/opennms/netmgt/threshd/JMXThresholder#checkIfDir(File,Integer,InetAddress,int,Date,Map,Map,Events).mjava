@@ -1,0 +1,214 @@
+    /**
+     * Performs threshold checking on an JMX RRD interface directory.
+     * 
+     * @param directory
+     *            RRD repository directory
+     * @param nodeId
+     *            Node identifier
+     * @param primary
+     *            Primary JMX interface address
+     * @param interval
+     *            Configured thresholding interval
+     * @param date
+     *            Source for timestamp to be used for all generated events
+     * @param baseIfThresholdMap
+     *            Map of configured interface level ThresholdEntity objects
+     *            keyed by datasource name.
+     * @param allIfThresholdMap
+     *            Map of threshold maps indexed by ifLabel
+     * @param events
+     *            Castor events object containing any events to be generated as
+     *            a result of threshold checking.
+     * 
+     * @throws IllegalArgumentException
+     *             if path parameter is not a directory.
+     */
+    private void checkIfDir(File directory, Integer nodeId, InetAddress primary, int interval, Date date, Map baseIfThresholdMap, Map allIfThresholdMap, Events events) throws IllegalArgumentException {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // Sanity Check
+        if (directory == null || nodeId == null || primary == null || date == null || baseIfThresholdMap == null || allIfThresholdMap == null || events == null) {
+            throw new IllegalArgumentException("Null parameters not permitted.");
+        }
+
+        if (log.isDebugEnabled())
+            log.debug("checkIfDir: threshold checking interface dir: " + directory.getAbsolutePath());
+
+        String ifLabel = directory.getName();
+        if (log.isDebugEnabled())
+            log.debug("checkIfDir: ifLabel=" + ifLabel);
+
+        // This is an interface directory extract the
+        // interface label from the full path name of the file
+        //
+        /*
+         * String path = directory.getAbsolutePath(); String path = directory
+         * int fileSepIndex = path.lastIndexOf(File.separatorChar); if
+         * (fileSepIndex >= 0) ifLabel = path.substring(fileSepIndex+1,
+         * path.length()); else ifLabel = path;
+         */
+
+        // Attempt to retrieve the threshold map for this interface
+        // using the ifLabel for the interface
+        // 
+        Map thresholdMap = (Map) allIfThresholdMap.get(ifLabel);
+        if (thresholdMap == null) {
+            // Doesn't exist yet, go ahead and create it
+            // Must maintain a separate threshold map for
+            // each interface.
+            thresholdMap = new HashMap();
+
+            // Iterate over base interface threshold map and clone each
+            // ThresholdEntity object and add it to the threshold map.
+            // for this interface.
+            // 
+            Iterator iter = baseIfThresholdMap.values().iterator();
+            while (iter.hasNext()) {
+                ThresholdEntity entity = (ThresholdEntity) iter.next();
+                thresholdMap.put(entity.getDatasourceName(), entity.clone());
+            }
+
+            // Add the new threshold map for this interface
+            // to the all interfaces map.
+            allIfThresholdMap.put(ifLabel, thresholdMap);
+        }
+
+        // Iterate over directory contents and threshold
+        // check any RRD files which represent datasources
+        // in the threshold maps.
+        //
+        File[] files = directory.listFiles(RrdFileConstants.RRD_FILENAME_FILTER);
+
+        if (files == null || files.length == 0) {
+            if (log.isDebugEnabled())
+                log.debug("checkIfDir: no RRD files in dir: " + directory);
+            return;
+        }
+
+        Map ifDataMap = null;
+        for (int i = 0; i < files.length; i++) {
+            // File name has format: <datsource>.rrd
+            // Must strip off ".rrd" portion.
+            String filename = files[i].getName();
+            String datasource = filename.substring(0, filename.indexOf(".rrd"));
+
+            // Lookup the ThresholdEntity object corresponding
+            // to this datasource.
+            //
+            if (log.isDebugEnabled())
+                log.debug("checkIfDir: looking up datasource: " + datasource);
+            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(datasource);
+            if (threshold != null) {
+                // Use RRD JNI interface to "fetch" value of the
+                // datasource from the RRD file
+                //
+                Double dsValue = null;
+                try {
+                    dsValue = RrdUtils.fetchLastValue(files[i].getAbsolutePath(), interval);
+                } catch (NumberFormatException nfe) {
+                    log.warn("Unable to convert retrieved value for datasource '" + datasource + "' to a double, skipping evaluation.");
+                } catch (RrdException e) {
+                    log.error("An error occurred retriving the last value for datasource '" + datasource + "'", e);
+                }
+
+                if (dsValue != null && !dsValue.isNaN()) {
+                    // Evaluate the threshold
+                    // 
+                    // ThresholdEntity.evaluate() returns an integer value
+                    // which indicates which threshold values were
+                    // triggered and require an event to be generated (if any).
+                    // 
+                    int result = threshold.evaluate(dsValue.doubleValue());
+                    if (result != ThresholdEntity.NONE_TRIGGERED) {
+                        // ifLabel will either be set to null for node level
+                        // datasource values
+                        // or to a specific interface in the case of an
+                        // interface level datasource.
+                        //
+                        // ifLabel has the following format:
+                        // <ifName|ifDescr>-<macAddr>
+                        // 
+                        // Call IfLabel.getInterfaceInfoFromLabel() utility
+                        // method to retrieve
+                        // data from the 'snmpInterfaces' table for this
+                        // interface. This method
+                        // will return a Map of database values keyed by field
+                        // name.
+                        //
+                        if (ifLabel != null && ifDataMap == null) {
+                            // Get database connection
+                            //
+                            java.sql.Connection dbConn = null;
+                            try {
+                                dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+                            } catch (SQLException sqlE) {
+                                if (log.isEnabledFor(Priority.ERROR))
+                                    log.error("checkIfDir: Failed getting connection to the database.", sqlE);
+                                throw new UndeclaredThrowableException(sqlE);
+                            }
+
+                            // Make certain we close the connection
+                            //
+                            try {
+                                ifDataMap = IfLabel.getInterfaceInfoFromIfLabel(dbConn, nodeId.intValue(), ifLabel);
+                            } catch (SQLException e) {
+                                // Logging a warning message but processing will
+                                // continue for
+                                // this thresholding event, when the event is
+                                // created it
+                                // will be created with an interface value set
+                                // to the primary
+                                // SNMP interface address and an event source
+                                // set to
+                                // <datasource>:<ifLabel>.
+                                //
+                                log.warn("Failed to retrieve interface info from database using ifLabel '" + ifLabel);
+                                ifDataMap = new HashMap();
+                            } finally {
+                                // Done with the database so close the
+                                // connection
+                                try {
+                                    if (dbConn != null)
+                                        dbConn.close();
+                                } catch (SQLException sqle) {
+                                    if (log.isEnabledFor(Priority.INFO))
+                                        log.info("checkIfDir: SQLException while closing database connection", sqle);
+                                }
+                            }
+                            // Adding ifLabel value to the map for potential use
+                            // by
+                            // the createEvent() method
+                            ifDataMap.put("iflabel", ifLabel);
+
+                            // Debug - dump data map
+                            //
+                            if (log.isDebugEnabled()) {
+                                Iterator iter = ifDataMap.keySet().iterator();
+                                while (iter.hasNext()) {
+                                    String key = (String) iter.next();
+                                    String value = (String) ifDataMap.get(key);
+                                }
+                            }
+                        }
+
+                        if (result == ThresholdEntity.HIGH_AND_LOW_TRIGGERED || result == ThresholdEntity.HIGH_TRIGGERED) {
+                            events.addEvent(createEvent(nodeId, primary, ifDataMap, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_EVENT_UEI, date));
+                        }
+
+                        if (result == ThresholdEntity.HIGH_AND_LOW_TRIGGERED || result == ThresholdEntity.LOW_TRIGGERED) {
+                            events.addEvent(createEvent(nodeId, primary, ifDataMap, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_EVENT_UEI, date));
+                        }
+
+                        if (result == ThresholdEntity.HIGH_AND_LOW_REARMED || result == ThresholdEntity.HIGH_REARMED) {
+                            events.addEvent(createEvent(nodeId, primary, ifDataMap, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_REARM_EVENT_UEI, date));
+                        }
+
+                        if (result == ThresholdEntity.HIGH_AND_LOW_REARMED || result == ThresholdEntity.LOW_REARMED) {
+                            events.addEvent(createEvent(nodeId, primary, ifDataMap, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_REARM_EVENT_UEI, date));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
