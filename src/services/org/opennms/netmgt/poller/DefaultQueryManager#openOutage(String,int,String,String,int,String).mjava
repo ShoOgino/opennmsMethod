@@ -1,24 +1,41 @@
     public void openOutage(String outageIdSQL, int nodeId, String ipAddr, String svcName, int dbId, String time) {
         
-        try {
-            ThreadCategory.getInstance(getClass()).info("opening outage for "+nodeId+":"+ipAddr+":"+svcName+" with cause "+dbId+":"+time);
-            int serviceId = getServiceID(svcName);
-            
-            String sql = "insert into outages (outageId, svcLostEventId, nodeId, ipAddr, serviceId, ifLostService) values (" +
-            "("+outageIdSQL+"), " +
-            "?, ?, ?, ?, ?)";
-            
-            Object values[] = {
-                    new Integer(dbId),
-                    new Integer(nodeId),
-                    ipAddr,
-                    new Integer(serviceId),
-                    convertEventTimeToTimeStamp(time),
-            };
-            Updater updater = new Updater(m_dbConnectionFactory, sql);
-            updater.execute(values);
-        } catch (Exception e) {
-            ThreadCategory.getInstance(getClass()).fatal(" Error opening outage for "+nodeId+":"+ipAddr+":"+svcName, e);
+        int attempt = 1;
+        boolean notUpdated = true;
+        int serviceId = getServiceID(svcName);
+        
+        while (attempt < 2 && notUpdated) {
+            try {
+                log().info("openOutage: opening outage for "+nodeId+":"+ipAddr+":"+svcName+" with cause "+dbId+":"+time);
+                
+                SingleResultQuerier srq = new SingleResultQuerier(m_dbConnectionFactory, outageIdSQL);
+                srq.execute();
+                Object outageId = srq.getResult();
+                
+                if (outageId == null) {
+                    throw (new Exception("Null outageId returned from Querier with SQL: "+outageIdSQL));
+                }
+                
+                String sql = "insert into outages (outageId, svcLostEventId, nodeId, ipAddr, serviceId, ifLostService) values ("+outageId+", ?, ?, ?, ?, ?)";
+                
+                Object values[] = {
+                        new Integer(dbId),
+                        new Integer(nodeId),
+                        ipAddr,
+                        new Integer(serviceId),
+                        convertEventTimeToTimeStamp(time),
+                };
+                Updater updater = new Updater(m_dbConnectionFactory, sql);
+                updater.execute(values);
+                notUpdated = false;
+            } catch (Exception e) {
+                if (attempt > 1) {
+                    log().fatal("openOutage: Second and final attempt failed opening outage for "+nodeId+":"+ipAddr+":"+svcName, e);
+                } else {
+                    log().info("openOutage: First attempt failed opening outage for "+nodeId+":"+ipAddr+":"+svcName, e);
+                }
+            }
+            attempt++;
         }
     }
 
