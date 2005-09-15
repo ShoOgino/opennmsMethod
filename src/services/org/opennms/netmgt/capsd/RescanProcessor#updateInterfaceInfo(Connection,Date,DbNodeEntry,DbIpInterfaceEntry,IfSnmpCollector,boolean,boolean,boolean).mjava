@@ -59,11 +59,6 @@
         // Hostname
         currIpIfEntry.setHostname(ifaddr.getHostName());
 
-        // set ifIndex for lame SNMP host
-        // if(ifIndex == CapsdConfigFactory.LAME_SNMP_HOST_IFINDEX) {
-        //     currIpIfEntry.setIfIndex(ifIndex);
-        // }
-
         // Managed state
         // NOTE: (reference internal bug# 201)
         // If the ip is 'managed', it might still be 'not polled' based
@@ -73,17 +68,15 @@
         // each service, try to get the first package here and use
         // that for service evaluation
         //
-        // At this point the ip is already/ in the database, so package filter
-        // evaluation should go through OK
+        // At this point IF the ip is already in the database, package filter
+        // evaluation should go through OK. New interfaces will be dealt with
+        // later
         //
         org.opennms.netmgt.config.poller.Package ipPkg = null;
 
         if (cFactory.isAddressUnmanaged(ifaddr))
             currIpIfEntry.setManagedState(DbIpInterfaceEntry.STATE_UNMANAGED);
         else {
-            // rebuildPackageIpListMap now done in updateInterfaces
-            // PollerConfigFactory.getInstance().rebuildPackageIpListMap();
-
             boolean ipToBePolled = false;
             ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
             if (ipPkg != null)
@@ -99,38 +92,29 @@
         }
 
         // If SNMP data collection is available set SNMP Primary state
-        // as well as ifIndex and ifStatus. It appears ifType is no
-        // longer used here, so it is commented out.
-        //
-        // int ifType = -1;
+        // as well as ifIndex and ifStatus.
+
+        // For all interfaces simply set 'isSnmpPrimary' field to
+        // not eligible for now. Following the interface updates
+        // the primary and secondary SNMP interfaces will be
+        // determined and the value of the 'isSnmpPrimary' field
+        // set accordingly for each interface. The old primary
+        // interface should have already been saved for future
+        // reference.
+
         if (doesSnmp && snmpc != null && snmpc.hasIpAddrTable()) {
             if (ifIndex != -1) {
                 if (snmpc.hasIfTable()) {
                     int status = snmpc.getAdminStatus(ifIndex);
                     currIpIfEntry.setStatus(status);
                 }
-                // ifType = snmpc.getIfType(ifIndex);
-
-                // For new interfaces simply set 'isSnmpPrimary' field to
-                // secondary for now.
-                // Following the interface updates the primary SNMP interface
-                // will be determined
-                // and the value of the 'isSnmpPrimary' field set to 'P'
-                // (primary) for that
-                // interface.
-                if (isNewIpEntry)
-                    currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_SECONDARY);
-                else
-                    currIpIfEntry.setPrimaryState(originalIpIfEntry.getPrimaryState());
             } else {
-                // No ifIndex found so set primary state to NOT_ELIGIBLE
-                currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
+                // No ifIndex found
+                log.debug("updateInterfaceInfo:  No ifIndex found for " + ifaddr.getHostAddress() + ". Not eligible for primary SNMP interface");
             }
+            currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
         } else if (doesSnmp) {
-           if (isNewIpEntry)
-               currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_SECONDARY);
-           else
-               currIpIfEntry.setPrimaryState(originalIpIfEntry.getPrimaryState());
+            currIpIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
         }
 
         // Update any fields which have changed
@@ -179,6 +163,35 @@
             log.debug("updateInterfaceInfo: hostname changed: " + ipHostnameChangedFlag);
         if (ipHostnameChangedFlag) {
             createIpHostNameChangedEvent(dbIpIfEntry, originalIpIfEntry);
+        }
+        if(isNewIpEntry) {
+            // if its new, the packageIpListMap needs to be rebuilt,
+            // polling status rechecked, and ismanaged updated if necessary
+            boolean ipToBePolled = false;
+            log.debug("updateInterfaceInfo: rebuilding PackageIpListMap for new interface " + ifaddr.getHostAddress());
+            PollerConfigFactory.getInstance().rebuildPackageIpListMap();
+            ipPkg = pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+            if (ipPkg != null)
+                ipToBePolled = true;
+            log.debug("updateInterfaceInfo: interface " + ifaddr.getHostAddress() + " to be polled: " + ipToBePolled);
+            if (ipToBePolled) {
+                PreparedStatement stmt = dbc.prepareStatement(SQL_DB_UPDATE_ISMANAGED);
+                stmt.setString(1, new String(new char[] { DbIpInterfaceEntry.STATE_MANAGED }));
+                stmt.setInt(2, dbIpIfEntry.getNodeId());
+                stmt.setString(3, ifaddr.getHostAddress());
+                try {
+                    stmt.executeUpdate();
+                    log.debug("updateInterfaceInfo: updated managed state for new interface " + ifaddr.getHostAddress() + " on node " + dbIpIfEntry.getNodeId() + " to managed");
+                } catch (SQLException sqlE) {
+                    throw sqlE;
+                } finally {
+                    try {
+                        stmt.close();
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                }
+            }
         }
     }
 

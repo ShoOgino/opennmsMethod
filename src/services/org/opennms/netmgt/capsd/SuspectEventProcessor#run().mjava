@@ -89,6 +89,30 @@
                         CollectdConfigFactory.getInstance().rebuildPackageIpListMap();
                         List lbAddressList = buildLBSnmpAddressList(collector);
                         List addressList = buildSnmpAddressList(collector);
+                        // first set the value of issnmpprimary for secondaries
+                        Iterator iter = addressList.iterator();
+                        while(iter.hasNext()) {
+                            InetAddress addr = (InetAddress) iter.next();
+                            if (CollectdConfigFactory.getInstance().lookupInterfaceServicePair(addr.getHostAddress(), "SNMP")) {
+                                PreparedStatement stmt = dbc.prepareStatement("UPDATE ipInterface SET isSnmpPrimary='S' WHERE nodeId=? AND ipAddr=? AND isManaged!='D'");
+                                stmt.setInt(1, entryNode.getNodeId());
+                                stmt.setString(2, addr.getHostAddress());
+
+                                // Execute statement
+                                try {
+                                    stmt.executeUpdate();
+                                    log.debug("updated " + addr.getHostAddress() + " to secondary.");
+                                } catch (SQLException sqlE) {
+                                    throw sqlE;
+                                } finally {
+                                    try {
+                                        stmt.close();
+                                    } catch (Exception e) {
+                                        // Ignore
+                                    }
+                                }
+                            }
+                        }
                         String psiType = null;
                         if (lbAddressList != null) {
                             newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(lbAddressList, strict);
@@ -114,9 +138,9 @@
 
                         if (log.isDebugEnabled()) {
                             if(newSnmpPrimaryIf == null) {
-                                log.debug("SuspectEventProcessor: No primary SNMP interface found");
+                                log.debug("No primary SNMP interface found");
                             } else {
-                                log.debug("SuspectEventProcessor: primary SNMP interface is: " + newSnmpPrimaryIf + ", selected from " + psiType);
+                                log.debug("primary SNMP interface is: " + newSnmpPrimaryIf + ", selected from " + psiType);
                             }
                         }  
                         // iterate over list of old primaries. There should only be

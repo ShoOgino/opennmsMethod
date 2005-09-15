@@ -1,9 +1,5 @@
-    private InetAddress updatePrimarySnmpInterface(Connection dbc, DbNodeEntry dbNodeEntry, Map collectorMap) throws SQLException {
+    private InetAddress updatePrimarySnmpInterface(Connection dbc, DbNodeEntry dbNodeEntry, Map collectorMap, InetAddress oldPriIf) throws SQLException {
         Category log = ThreadCategory.getInstance(getClass());
-
-        // Get old primary SNMP interface(s) (if one or more exists)
-        //
-        List oldPriIfs = SuspectEventProcessor.getPrimarySnmpInterfaceFromDb(dbc, dbNodeEntry);
 
         // Now that all interfaces have been added to the
         // database we can update the 'primarySnmpInterface'
@@ -20,9 +16,35 @@
         // all eligible interfaces.
         //
         boolean strict = true;
+        CollectdConfigFactory.getInstance().rebuildPackageIpListMap();
         IfSnmpCollector snmpc = findSnmpCollector(collectorMap);
         List snmpLBAddresses = buildLBSnmpAddressList(collectorMap, snmpc);
         List snmpAddresses = buildSnmpAddressList(collectorMap, snmpc);
+        // first set the value of issnmpprimary for secondaries
+        Iterator iter = snmpAddresses.iterator();
+        while(iter.hasNext()) {
+            InetAddress addr = (InetAddress) iter.next();
+            if (CollectdConfigFactory.getInstance().lookupInterfaceServicePair(addr.getHostAddress(), "SNMP")) {
+                PreparedStatement stmt = dbc.prepareStatement("UPDATE ipInterface SET isSnmpPrimary='S' WHERE nodeId=? AND ipAddr=? AND isManaged!='D'");
+                stmt.setInt(1, dbNodeEntry.getNodeId());
+                stmt.setString(2, addr.getHostAddress());
+
+                // Execute statement
+                try {
+                    stmt.executeUpdate();
+                    log.debug("updatePrimarySnmpInterface: updated " + addr.getHostAddress() + " to secondary.");
+                } catch (SQLException sqlE) {
+                    throw sqlE;
+                } finally {
+                    try {
+                        stmt.close();
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                }
+            }
+        }
+
         InetAddress newSnmpPrimaryIf = CollectdConfigFactory.getInstance().determinePrimarySnmpInterface(snmpLBAddresses, strict);
         String psiType = ConfigFileConstants.getFileName(ConfigFileConstants.COLLECTD_CONFIG_FILE_NAME) + " loopback addresses";
 
@@ -49,18 +71,9 @@
 
         if (newSnmpPrimaryIf != null) {
             if(log.isDebugEnabled()) {
-                log.debug("primary SNMP interface is: " + newSnmpPrimaryIf + ", selected from " + psiType);
+                log.debug("updatePrimarySnmpInterface: primary SNMP interface is: " + newSnmpPrimaryIf + ", selected from " + psiType);
             }
-            // iterate over list of old primaries. There should only be one,
-            // but in case there are more, this should clear out the extras.
-            Iterator opiter = oldPriIfs.iterator();
-            if(opiter.hasNext()) {
-                while (opiter.hasNext()) {
-                    SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, (InetAddress) opiter.next());
-                }
-            } else {
-                SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, null);
-            }
+            SuspectEventProcessor.setPrimarySnmpInterface(dbc, dbNodeEntry, newSnmpPrimaryIf, oldPriIf);
         }
         else {
             if(log.isDebugEnabled())
@@ -71,7 +84,7 @@
         // generate certain SNMP data collection related
         // events
         //
-        generateSnmpDataCollectionEvents(dbNodeEntry, oldPriIfs, newSnmpPrimaryIf);
+        generateSnmpDataCollectionEvents(dbNodeEntry, oldPriIf, newSnmpPrimaryIf);
         return newSnmpPrimaryIf;
     }
 
