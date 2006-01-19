@@ -4,55 +4,63 @@
      * to the <code>ServletOutputStream</code> back to the requesting web
      * browser.
      */
-    public void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+    public void doGet(HttpServletRequest request, HttpServletResponse response)
+	    throws ServletException, IOException {
         try {
+            String type = request.getParameter("type");
             String report = request.getParameter("report");
             String[] rrds = request.getParameterValues("rrd");
 	    String propertiesFile = request.getParameter("props");
             String start = request.getParameter("start");
             String end = request.getParameter("end");
 
-            if (report == null || rrds == null || start == null || end == null) {
+            if (type == null || report == null || rrds == null || start == null
+		|| end == null) {
                 response.setContentType("image/png");
-                StreamUtils.streamToStream(this.getServletContext().getResourceAsStream("/images/rrd/missingparams.png"), response.getOutputStream());
+                StreamUtils.streamToStream(getServletContext().getResourceAsStream("/images/rrd/missingparams.png"), response.getOutputStream());
                 return;
             }
 
+	    GraphTypeConfig config = getGraphConfig(type);
+
             for (int i = 0; i < rrds.length; i++) {
                 if (!RrdFileConstants.isValidRRDName(rrds[i])) {
-                    this.log("Illegal RRD filename: " + rrds[i]);
+                    log("Illegal RRD filename: " + rrds[i]);
                     throw new IllegalArgumentException("Illegal RRD filename: " + rrds[i]);
                 }
             }
 
-            String command = this.createPrefabCommand(request, report, rrds, propertiesFile, start, end);
+            File workDir = config.getWorkDir();
+
+            String command = createPrefabCommand(request,
+						 config.getReportMap(),
+						 config.getCommandPrefix(),
+						 workDir, report, rrds,
+						 propertiesFile,
+						 start, end);
 
             InputStream tempIn = null;
             ServletOutputStream out = response.getOutputStream();
             try {
-
-                this.log("Executing RRD command in this directory: " + workDir);
-                this.log(command);
-
-                File workDir = this.workDir;
+                log("Executing RRD command in this directory: " + workDir);
+                log(command);
 
                 tempIn = RrdUtils.createGraph(command, workDir);
-
             } catch (RrdException e) {
-                this.log("Read from stderr: " + e.getMessage());
+                log("Read from stderr: " + e.getMessage());
                 response.setContentType("image/png");
-                StreamUtils.streamToStream(this.getServletContext().getResourceAsStream("/images/rrd/error.png"), out);
+                StreamUtils.streamToStream(getServletContext().getResourceAsStream("/images/rrd/error.png"), out);
             }
 
             if (tempIn != null) {
-                response.setContentType(this.mimeType);
+                response.setContentType(config.getMimeType());
                 StreamUtils.streamToStream(tempIn, out);
 
                 tempIn.close();
             }
             out.close();
         } catch (Exception e) {
-            this.log("Exception occurred: " + e.getMessage(), e);
+            log("Exception occurred: " + e.getMessage(), e);
         }
     }
 
