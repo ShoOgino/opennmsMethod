@@ -1,0 +1,76 @@
+    public PrefabGraph[] getAllQueries(String nodeOrDomain, boolean isNode) {
+        if (nodeOrDomain == null) {
+            throw new IllegalArgumentException("Cannot take null parameters.");
+        }
+        Category log = ThreadCategory.getInstance(this.getClass());
+        boolean includeNodeQueries = false;
+        HashMap queryCount = new HashMap();
+        String mostFreqQuery = "none";
+        int mostFreqCount = 0;
+
+        // get the full list of all possible queries
+        PrefabGraph[] queries = getQueries();
+
+        File nodeOrDomainDir = new File(getRrdDirectory(), nodeOrDomain);
+
+        // get each interface directory
+        File[] intfDir = nodeOrDomainDir.listFiles(RrdFileConstants.INTERFACE_DIRECTORY_FILTER);
+
+        // for each interface directory, get all available data sources
+        for (int j = 0; j < intfDir.length; j++) {
+            String dirName = intfDir[j].getName();
+
+            //
+
+            List availDataSourceList = getDataSourceList(nodeOrDomain, dirName, includeNodeQueries, isNode);
+
+            // for each query, see if all the required data sources are available
+            // in the available data source list, if so, add that query to the
+            // queryCount HashMap
+            //
+            for (int i = 0; i < queries.length; i++) {
+	        String qname = queries[i].getName();
+                List requiredList = Arrays.asList(queries[i].getColumns());
+
+                if (availDataSourceList.containsAll(requiredList)) {
+                    if(isNode || queries[i].getExternalValues().length == 0) {
+                        if(queryCount.containsKey(queries[i])) {
+                            int x = ( (Integer) queryCount.get(queries[i])).intValue();
+                            queryCount.put(queries[i], new Integer(x++));
+                        } else {
+                            queryCount.put(queries[i], new Integer(1));
+                        }
+                        if(( (Integer) queryCount.get(queries[i])).intValue() > mostFreqCount) {
+                            mostFreqCount = ( (Integer) queryCount.get(queries[i])).intValue();
+                            mostFreqQuery = qname;
+                        }
+                    }
+                }
+            }
+        }	
+
+        // put the queries in queryCount keySet into an array
+        PrefabGraph[] availQueries = (PrefabGraph[]) queryCount.keySet().toArray(new PrefabGraph[queryCount.size() + 1]);
+
+        // determine working default graph and copy to end of array. It will be pulled
+        // off again by the calling method.
+        for(int i = 0; i < queryCount.size(); i++ ) {
+            if(availQueries[i].getName().equals(getDefaultReport())) {
+                availQueries[queryCount.size()] = availQueries[i];
+                break;
+            }
+            if(availQueries[i].getName().equals(mostFreqQuery)) {
+                availQueries[queryCount.size()] = availQueries[i];
+            }
+        }
+        if (log.isDebugEnabled() && queryCount.size() > 0) {
+            if(availQueries[queryCount.size()].getName().equals(getDefaultReport())) {
+                log.debug("Found default report " + getDefaultReport() + " in list of available queries");
+            } else {
+                log.debug("Default report " + getDefaultReport() + " not found in list of available queries. Using most frequent query " + mostFreqQuery + " as the default.");
+            }
+        }
+
+        return availQueries;
+    }	
+
