@@ -16,159 +16,120 @@
      *             category rule fails for some reason
      */
     private void populateNodesFromDB(Connection dbConn) throws SQLException, FilterParseException, RTCException {
-        // create a hashtable of IP->RTCNodes list for startup to save on
-        // database access
-        HashMap knownIPs = new HashMap();
 
-        // Create the filter
-        Filter filter = new Filter();
+    	final String getOutagesInWindow = 
+    			"select " + 
+    			"       ifsvc.nodeid as nodeid, " + 
+    			"       ifsvc.ipAddr as ipaddr, " + 
+    			"       s.servicename as servicename, " + 
+    			"       o.ifLostService as ifLostService, " + 
+    			"       o.ifRegainedService as ifRegainedService " + 
+    			"  from " + 
+    			"       ifservices ifsvc " + 
+    			"  join " + 
+    			"       service s on (ifsvc.serviceid = s.serviceid) " + 
+    			"left outer  join " + 
+    			"       outages o on " +
+    			"          (" + 
+    			"            o.nodeid = ifsvc.nodeid " + 
+    			"            and o.ipaddr = ifsvc.ipaddr " + 
+    			"            and o.serviceid = ifsvc.serviceid " + 
+    			"            and " +
+    			"            (" + 
+    			"               o.ifLostService > ? " + 
+    			"               OR  o.ifRegainedService > ? " + 
+    			"               OR  o.ifRegainedService is null " +
+    			"            )" +
+    			"          ) " +
+    			"order by " + 
+    			"       ifsvc.nodeid, ifsvc.ipAddr, ifsvc.serviceid, o.ifLostService;";
+    	
+		long window = (new Date()).getTime() - RTCManager.getRollingWindow();
+		Timestamp windowTS = new Timestamp(window);
+    	
+    	RowCallbackHandler rowHandler = new RowCallbackHandler() {
+    		
+    		RTCNodeKey m_currentKey = null;
+    		Map m_categoryIpLists = new HashMap();
 
-        // Prepare the statement to get service entries for each IP
-        PreparedStatement servicesGetStmt = dbConn.prepareStatement(RTCConstants.DB_GET_SVC_ENTRIES);
-        // Prepared statement to get node info for an ip
-        PreparedStatement ipInfoGetStmt = dbConn.prepareStatement(RTCConstants.DB_GET_INFO_FOR_IP);
-        // Prepared statement to get outages entries
-        PreparedStatement outagesGetStmt = dbConn.prepareStatement(RTCConstants.DB_GET_OUTAGE_ENTRIES);
+			public void processRow(ResultSet rs) throws SQLException {
+				RTCNodeKey key = new RTCNodeKey(rs.getLong("nodeid"), rs.getString("ipaddr"), rs.getString("svcname"));
+				if (!matchesCurrent(key)) {
+					m_currentKey = key;
+					processIfService(key);
+				}
+				processOutage(key, rs.getTimestamp("ifLostService"), rs.getTimestamp("ifRegainedService"));
+			}
+    	
+    		private boolean matchesCurrent(RTCNodeKey key) {
+    			return (m_currentKey != null && m_currentKey.equals(key));
+    		}
+			
+			// This is called exactly once for each unique (nodeid, ipaddr, svcname) tuple
+			public void processIfService(RTCNodeKey key) {
+				for (Iterator it = m_categories.values().iterator(); it.hasNext();) {
+					RTCCategory cat = (RTCCategory) it.next();
+					if (catContainsIfService(cat, key)) {
+						RTCNode rtcN = getRTCNode(key);
+						addNodeToCategory(cat, rtcN);
+					}
+				}
+			
+			}
+			
+			private boolean catContainsIfService(RTCCategory cat, RTCNodeKey key) {
+				return cat.containsService(key.getSvcName()) && catContainsIp(cat, key.getIP());
+			}
 
-        Category log = ThreadCategory.getInstance(DataManager.class);
+			private boolean catContainsIp(RTCCategory cat, String ip) {
+				List ips = catGetIpList(cat);
+				return ips.contains(ip);
+			}
 
-        // loop through the categories
+			private List catGetIpList(RTCCategory cat) {
+				List ips = (List)m_categoryIpLists.get(cat.getLabel());
+				if (ips == null) {
+					ips = catConstructIpList(cat);
+					m_categoryIpLists.put(cat.getLabel(), ips);
+				}
+				return ips;
+			}
 
-        Iterator catIter = m_categories.values().iterator();
-        while (catIter.hasNext()) {
-            RTCCategory cat = (RTCCategory) catIter.next();
+			private List catConstructIpList(RTCCategory cat) {
+				String filterRule = cat.getEffectiveRule();
+				try {
+					Filter filter = new Filter();
 
-            // get the rule for this category, get the list of nodes that
-            // satisfy this rule
-            String filterRule = cat.getEffectiveRule();
+					if (log().isDebugEnabled())
+						log().debug("Category: " + cat.getLabel() + "\t" + filterRule);
 
-            if (log.isDebugEnabled())
-                log.debug("Category: " + cat.getLabel() + "\t" + filterRule);
+					List ips = filter.getIPList(filterRule);
+					
+	                if (log().isDebugEnabled())
+	                    log().debug("Number of IPs satisfying rule: " + ips.size());
 
-            String ip = null;
-            ResultSet ipRS = null;
-            try {
-                List nodeIPs = filter.getIPList(filterRule);
+	                return ips;
+	                
+				} catch (FilterParseException e) {
+					log().error("Unable to parse filter rule "+filterRule+" ignoring category "+cat.getLabel(), e);
+					return Collections.EMPTY_LIST;
+				}
+			}
 
-                if (log.isDebugEnabled())
-                    log.debug("Number of IPs satisfying rule: " + nodeIPs.size());
-
-                // For each of these IP addresses, get the details from the
-                // ifServices and services tables
-                Iterator ipIter = nodeIPs.iterator();
-                while (ipIter.hasNext()) {
-                    ip = (String) ipIter.next();
-
-                    if (log.isDebugEnabled())
-                        log.debug("IP: " + ip);
-
-                    // check if this ip is something we already know about
-                    // so we can avoid database lookups
-                    List ipRTCs = (List) knownIPs.get(ip);
-                    if (ipRTCs != null) {
-                        addIpToCategory(ipRTCs, cat);
-                        continue;
-                    }
-
-                    // get node info for this ip
-                    ipInfoGetStmt.setString(1, ip);
-
-                    ipRS = ipInfoGetStmt.executeQuery();
-                    while (ipRS.next()) {
-                        int nodeColIndex = 1;
-
-                        long nodeid = ipRS.getLong(nodeColIndex++);
-
-                        if (log.isDebugEnabled())
-                            log.debug("IP->node info lookup result: " + nodeid);
-
-                        //
-                        // get the services for this IP address
-                        //
-                        ResultSet svcRS = null;
-                        servicesGetStmt.setLong(1, nodeid);
-                        servicesGetStmt.setString(2, ip);
-                        svcRS = servicesGetStmt.executeQuery();
-
-                        // create node objects for this nodeID/IP/service
-                        while (svcRS.next()) {
-                            int colIndex = 1;
-
-                            // read data from the resultset
-                            String svcname = svcRS.getString(colIndex++);
-
-                            if (log.isDebugEnabled())
-                                log.debug("services result: " + nodeid + "\t" + ip + "\t" + svcname);
-
-                            // unless the service found is in the category's
-                            // services list,
-                            // do not add that service
-                            if (!cat.containsService(svcname)) {
-                                if (log.isDebugEnabled())
-                                    log.debug("service " + svcname + " not in category service list of cat " + cat.getLabel() + " - skipping " + nodeid + "\t" + ip + "\t" + svcname);
-                                continue;
-                            }
-
-                            addNodeIpSvcToCategory(nodeid, ip, svcname, cat, knownIPs, outagesGetStmt);
-                        }
-
-                        // finally close the result set
-                        try {
-                            if (svcRS != null)
-                                svcRS.close();
-                        } catch (Exception e) {
-                            if (log.isDebugEnabled())
-                                log.debug("Exception while closing the services result set", e);
-                        }
-                    }
-                }
-
-            } catch (SQLException e) {
-                if (log.isDebugEnabled())
-                    log.debug("Unable to get node list for category \'" + cat.getLabel(), e);
-                throw e;
-            } catch (FilterParseException e) {
-                // if we get here, the error was most likely in
-                // getting the nodelist from the filters
-                if (log.isDebugEnabled())
-                    log.debug("Unable to get node list for category \'" + cat.getLabel(), e);
-
-                // throw exception
-                throw e;
-            } catch (Exception e) {
-                if (log.isDebugEnabled())
-                    log.debug("Unable to get node list for category \'" + cat.getLabel(), e);
-
-                // throw rtc exception
-                throw new RTCException("Unable to get node list for category \'" + cat.getLabel() + "\':\n\t" + e.getMessage());
-            } finally {
-                try {
-                    if (ipRS != null)
-                        ipRS.close();
-                } catch (Exception e) {
-                    if (log.isDebugEnabled())
-                        log.debug("Exception while closing the ip get node info result set - ip: " + ip, e);
-                }
-            }
-        }
-
-        //
-        // close the prepared statements
-        //
-        try {
-            if (servicesGetStmt != null)
-                servicesGetStmt.close();
-
-            if (ipInfoGetStmt != null)
-                ipInfoGetStmt.close();
-
-            if (outagesGetStmt != null)
-                outagesGetStmt.close();
-        } catch (SQLException csqle) {
-            if (log.isDebugEnabled())
-                log.debug("Exception while closing the prepared statements after populating nodes from DB");
-
-            // do nothing
-        }
+			// This is processed for each outage, passing two null means there is not outage
+			public void processOutage(RTCNodeKey key, Timestamp ifLostService, Timestamp ifRegainedService) {
+				RTCNode rtcN = findRTCNode(key);
+				// if we can't find the node it doesn't belong to any category
+				if (rtcN == null) return;
+				
+				addOutageToRTCNode(rtcN, ifLostService, ifRegainedService);
+				
+			}
+    		
+    	};
+    	
+    	JdbcTemplate template = new JdbcTemplate(getConnectionFactory());
+    	template.query(getOutagesInWindow, new Object[] {windowTS, windowTS}, rowHandler);
+    	
     }
 
