@@ -1,0 +1,59 @@
+    /**
+     * Poplulates nodes from the database. For each category in the categories
+     * list, this reads the services and outage tables to get the initial data,
+     * creates 'RTCNode' objects that are added to the map and and to the
+     * appropriate category.
+     * @param dbConn
+     *            the database connection.
+     * 
+     * @throws SQLException
+     *             if the database read fails due to an SQL error
+     * @throws FilterParseException
+     *             if filtering the data against the category rule fails due to
+     *             the rule being incorrect
+     * @throws RTCException
+     *             if the database read or filtering the data against the
+     *             category rule fails for some reason
+     */
+    private void populateNodesFromDB(String query, Object[] args) throws SQLException, FilterParseException, RTCException {
+
+    	final String getOutagesInWindow = 
+    			"select " + 
+    			"       ifsvc.nodeid as nodeid, " + 
+    			"       ifsvc.ipAddr as ipaddr, " + 
+    			"       s.servicename as servicename, " + 
+    			"       o.ifLostService as ifLostService, " + 
+    			"       o.ifRegainedService as ifRegainedService " + 
+    			"  from " + 
+    			"       ifservices ifsvc " + 
+    			"  join " + 
+    			"       service s on (ifsvc.serviceid = s.serviceid) " + 
+    			"left outer  join " + 
+    			"       outages o on " +
+    			"          (" + 
+    			"            o.nodeid = ifsvc.nodeid " + 
+    			"            and o.ipaddr = ifsvc.ipaddr " + 
+    			"            and o.serviceid = ifsvc.serviceid " + 
+    			"            and " +
+    			"            (" + 
+    			"               o.ifLostService > ? " + 
+    			"               OR  o.ifRegainedService > ? " + 
+    			"               OR  o.ifRegainedService is null " +
+    			"            )" +
+    			"          ) " +
+    			"order by " + 
+    			"       ifsvc.nodeid, ifsvc.ipAddr, ifsvc.serviceid, o.ifLostService " +
+    			(query == null ? "" : "where "+query);
+    	
+		long window = (new Date()).getTime() - RTCManager.getRollingWindow();
+		Timestamp windowTS = new Timestamp(window);
+    	
+    	RowCallbackHandler rowHandler = new RTCNodeProcessor();
+
+    	Object[] sqlArgs = createArgs(windowTS, windowTS, args);
+    	
+    	JdbcTemplate template = new JdbcTemplate(getConnectionFactory());
+    	template.query(getOutagesInWindow, sqlArgs, rowHandler);
+    	
+    }
+
