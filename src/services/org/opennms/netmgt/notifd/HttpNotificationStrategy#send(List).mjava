@@ -1,0 +1,51 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.notifd.NotificationStrategy#send(java.util.List)
+     */
+    public int send(List arguments) {
+        
+        m_arguments = arguments;
+        
+        String url = getUrl();
+        if (url == null) {
+            log().warn("send: url argument is null, HttpNotification requires a URL");
+            return 1;
+        }
+        
+        HttpClient client = new HttpClient();
+        HttpMethod method = null;
+        NameValuePair[] posts = getPosts();
+                
+        if (posts == null) {
+            method = new GetMethod(url);
+            log().info("send: No \"post-\" arguments..., continuing with an HTTP GET using URL: "+url);
+        } else {
+            log().info("send: Found \"post-\" arguments..., continuing with an HTTP POST using URL: "+url);
+            for (Iterator it = m_arguments.iterator(); it.hasNext();) {
+                Argument arg = (Argument) it.next();
+                log().debug("send: post argument: "+arg.getSwitch() +" = "+arg.getValue());
+            }
+            method = new PostMethod(url);
+            ((PostMethod)method).addParameters(posts);
+        }
+
+        String contents = null;
+        int statusCode = -1;
+        try {
+            statusCode = client.executeMethod( method );
+            contents = method.getResponseBodyAsString();
+            log().info("send: Contents is: "+contents);
+        } catch (HttpException e) {
+            log().error("send: problem with HTTP post: "+e);
+            throw new RuntimeException("Problem with HTTP post: "+e.getMessage());
+        } catch (IOException e) {
+            log().error("send: IO problem with HTTP post/response: "+e);
+            throw new RuntimeException("Problem with HTTP post: "+e.getMessage());
+        } finally {
+            method.releaseConnection();
+        }
+        
+        doSql(contents);
+        
+        return statusCode;
+    }
+
