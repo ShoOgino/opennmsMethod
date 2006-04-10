@@ -1,0 +1,67 @@
+    void scheduleInterface(OnmsMonitoredService svc, boolean existing) {
+        Collection matchingPkgs = m_collectorConfigDao.getPackagesForService(svc);
+        
+        for (Iterator it = matchingPkgs.iterator(); it.hasNext();) {
+			Package pkg = (Package) it.next();
+			
+            if (existing == false) {
+                /*
+                 * It is possible that both a nodeGainedService and a
+                 * primarySnmpInterfaceChanged event are generated for an
+                 * interface during a rescan. To handle this scenario we must
+                 * verify that the ipAddress/pkg pair identified by this event
+                 * does not already exist in the collectable services list.
+                 */
+                if (alreadyScheduled(svc, pkg.getName())) {
+                    if (log().isDebugEnabled()) {
+                        log().debug("scheduleInterface: svc/pkgName "
+                                  + svc + "/" + pkg.getName()
+                                  + " already in collectable service list, "
+                                  + "skipping.");
+                    }
+                    continue;
+                }
+            }
+
+            try {
+                /*
+                 * Criteria checks have all passed. The interface/service pair
+                 * can be scheduled.
+                 */
+                CollectableService cSvc = null;
+
+                /*
+                 * Create a new SnmpCollector object representing this node,
+                 * interface,
+                 * service and package pairing
+                 */
+                cSvc = new CollectableService(svc.getNodeId().intValue(),
+                                              InetAddress.getByName(svc.getIpAddress()),
+                                              svc.getServiceType().getName(), pkg);
+
+                // Initialize the collector with the collectable service.
+                ServiceCollector collector = this.getServiceCollector(svc.getServiceType().getName());
+                collector.initialize(cSvc, cSvc.getPropertyMap());
+
+                // Add new collectable service to the colleable service list.
+                m_collectableServices.add(cSvc);
+
+                // Schedule the collectable service for immediate collection
+                m_scheduler.schedule(cSvc, 0);
+
+                if (log().isDebugEnabled()) {
+                    log().debug("scheduleInterface: " + svc + " collection");
+                }
+            } catch (UnknownHostException ex) {
+                log().error("scheduleInterface: Failed to schedule interface "
+                          + svc + ", illegal address", ex);
+            } catch (RuntimeException rE) {
+                log().warn("scheduleInterface: Unable to schedule " + svc + ", reason: "
+                         + rE.getMessage());
+            } catch (Throwable t) {
+                log().error("scheduleInterface: Uncaught exception, failed to "
+                          + "schedule interface " + svc + ".", t);
+            }
+        } // end while more packages exist
+    }
+

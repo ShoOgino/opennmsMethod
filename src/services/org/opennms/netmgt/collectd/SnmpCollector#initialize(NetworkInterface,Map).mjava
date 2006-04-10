@@ -1,526 +1,496 @@
-    /**
-     * Responsible for performing all necessary initialization for the
-     * specified interface in preparation for data collection.
-     * 
-     * @param iface
-     *            Network interface to be prepped for collection.
-     * @param parameters
-     *            Key/value pairs associated with the package to which the
-     *            interface belongs..
-     */
-    public void initialize(NetworkInterface iface, Map parameters) {
-        Category log = log();
+	/**
+	 * Responsible for performing all necessary initialization for the specified
+	 * interface in preparation for data collection.
+	 * 
+	 * @param iface
+	 *            Network interface to be prepped for collection.
+	 * @param parameters
+	 *            Key/value pairs associated with the package to which the
+	 *            interface belongs..
+	 */
+	public void initialize(NetworkInterface iface, Map parameters) {
 
-        // Get interface address from NetworkInterface
-        if (iface.getType() != NetworkInterface.TYPE_IPV4)
-            throw new RuntimeException("Unsupported interface type, "
-                    + "only TYPE_IPV4 currently supported");
+		// Get interface address from NetworkInterface
+		InetAddress ipAddr = getInetAddress(iface);
 
-        InetAddress ipAddr = getInetAddress(iface);
+		String collectionName = getCollectionName(parameters);
 
-        String collectionName = getCollectionName(parameters);
+		/*
+		 * Determine if data to be collected for all interfaces or only for the
+		 * primary SNMP interface.
+		 */
+		String storageFlag = getStorageFlag(collectionName);
 
-        /*
-         * Determine if data to be collected for all interfaces or only for
-         * the primary SNMP interface.
-         */
-        String storageFlag = DataCollectionConfigFactory.getInstance().getSnmpStorageFlag(
-                                                                                          collectionName);
-        if (storageFlag == null) {
-            if (log.isEnabledFor(Priority.WARN)) {
-                log.warn("initialize: Configuration error, failed to "
-                        + "retrieve SNMP storage flag for collection: "
-                        + collectionName);
-            }
-            storageFlag = SNMP_STORAGE_PRIMARY;
-        }
+		// Add the SNMP storage value as an attribute of the interface
+		setStorageFlag(iface, storageFlag);
 
-        // Add the SNMP storage value as an attribute of the interface
-        iface.setAttribute(SNMP_STORAGE_KEY, storageFlag);
-        if (log.isDebugEnabled()) {
-            log.debug("initialize: SNMP storage flag: '" + storageFlag + "'");
-        }
+		int maxVarsPerPdu = getMaxVarsPerPdu(collectionName);
 
-        // Retrieve configured value for max number of vars per PDU
-        int maxVarsPerPdu = DataCollectionConfigFactory.getInstance().getMaxVarsPerPdu(
-                                                                                       collectionName);
-        if (maxVarsPerPdu == -1) {
-            if (log.isEnabledFor(Priority.WARN)) {
-                log.warn("initialize: Configuration error, failed to "
-                        + "retrieve max vars per pdu from collection: "
-                        + collectionName);
-            }
-            maxVarsPerPdu = DEFAULT_MAX_VARS_PER_PDU;
-        } else if (maxVarsPerPdu == 0) {
-            /*
-             * Special case, zero indicates "no limit" on number of vars in a
-             * single PDU...so set maxVarsPerPdu to maximum integer value:
-             * Integer.MAX_VALUE. This is a lot easier than building in
-             * special logic to handle a value of zero. Doubt anyone will
-             * attempt to collect over 2 billion oids.
-             */
-            maxVarsPerPdu = Integer.MAX_VALUE;
-        }
+		setMaxVarsPerPdu(iface, maxVarsPerPdu);
 
-        // Add max vars per pdu value as an attribute of the interface
-        iface.setAttribute(MAX_VARS_PER_PDU_STORAGE_KEY,
-                           new Integer(maxVarsPerPdu));
-        if (log.isDebugEnabled()) {
-            log.debug("initialize: maxVarsPerPdu=" + maxVarsPerPdu);
-        }
+		/*
+		 * Get database connection in order to retrieve the nodeid, ifIndex and
+		 * sysoid information from the database for this interface.
+		 */
+		java.sql.Connection dbConn = null;
+		try {
+			dbConn = DatabaseConnectionFactory.getInstance().getConnection();
+		} catch (SQLException sqlE) {
+			log().error(
+					"initialize: Failed getting connection to the database.",
+					sqlE);
+			throw new UndeclaredThrowableException(sqlE);
+		}
 
-        /*
-         * Get database connection in order to retrieve the nodeid, ifIndex
-         * and sysoid information from the database for this interface.
-         */
-        java.sql.Connection dbConn = null;
-        try {
-            dbConn = DatabaseConnectionFactory.getInstance().getConnection();
-        } catch (SQLException sqlE) {
-            log.error(
-                      "initialize: Failed getting connection to the database.",
-                      sqlE);
-            throw new UndeclaredThrowableException(sqlE);
-        }
+		int nodeID = -1;
+		int primaryIfIndex = -1;
+		char isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
+		boolean snmpv2Supported = false;
+		String sysoid = null;
 
-        int nodeID = -1;
-        int primaryIfIndex = -1;
-        char isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
-        boolean snmpv2Supported = false;
-        String sysoid = null;
+		/*
+		 * All database calls wrapped in try/finally block so we make certain
+		 * that the connection will be closed when we are finished.
+		 */
+		try {
+			/*
+			 * Prepare & execute the SQL statement to get the 'nodeid' from the
+			 * ipInterface table 'nodeid' will be used to retrieve the node's
+			 * system object id from the node table. In addition to nodeid, the
+			 * interface's ifIndex and isSnmpPrimary fields are also retrieved.
+			 */
+			PreparedStatement stmt = null;
+			try {
+				stmt = dbConn.prepareStatement(SQL_GET_NODEID);
+				stmt.setString(1, ipAddr.getHostAddress()); // interface
+				// address
+				ResultSet rs = stmt.executeQuery();
+				if (rs.next()) {
+					nodeID = rs.getInt(1);
+					if (rs.wasNull()) {
+						nodeID = -1;
+					}
 
-        Map ifMap = new TreeMap();
-        NodeInfo nodeInfo = null;
+					primaryIfIndex = rs.getInt(2);
+					if (rs.wasNull()) {
+						primaryIfIndex = -1;
+					}
 
-        /*
-         * All database calls wrapped in try/finally block so we make certain
-         * that the connection will be closed when we are finished.
-         */
-        try {
-            /*
-             * Prepare & execute the SQL statement to get the 'nodeid' from
-             * the ipInterface table 'nodeid' will be used to retrieve the
-             * node's system object id from the node table. In addition to
-             * nodeid, the interface's ifIndex and isSnmpPrimary fields are
-             * also retrieved.
-             */
-            PreparedStatement stmt = null;
-            try {
-                stmt = dbConn.prepareStatement(SQL_GET_NODEID);
-                stmt.setString(1, ipAddr.getHostAddress()); // interface
-                                                            // address
-                ResultSet rs = stmt.executeQuery();
-                if (rs.next()) {
-                    nodeID = rs.getInt(1);
-                    if (rs.wasNull()) {
-                        nodeID = -1;
-                    }
+					String str = rs.getString(3);
+					if (str != null) {
+						isSnmpPrimary = str.charAt(0);
+					}
+				} else {
+					nodeID = -1;
+					primaryIfIndex = -1;
+					isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
+				}
 
-                    primaryIfIndex = rs.getInt(2);
-                    if (rs.wasNull()) {
-                        primaryIfIndex = -1;
-                    }
+				rs.close();
+			} catch (SQLException sqle) {
+				log().debug("initialize: SQL exception!!", sqle);
+				throw new RuntimeException("SQL exception while attempting "
+						+ "to retrieve node id for interface "
+						+ ipAddr.getHostAddress());
+			} finally {
+				try {
+					stmt.close();
+				} catch (Exception e) {
+					// Ignore
+				}
+			}
 
-                    String str = rs.getString(3);
-                    if (str != null) {
-                        isSnmpPrimary = str.charAt(0);
-                    }
-                } else {
-                    nodeID = -1;
-                    primaryIfIndex = -1;
-                    isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
-                }
+			if (log().isDebugEnabled())
+				log().debug(
+						"initialize: db retrieval info: nodeid = " + nodeID
+								+ ", address = " + ipAddr.getHostAddress()
+								+ ", primaryIfIndex = " + primaryIfIndex
+								+ ", isSnmpPrimary = " + isSnmpPrimary);
 
-                rs.close();
-            } catch (SQLException sqle) {
-                log.debug("initialize: SQL exception!!", sqle);
-                throw new RuntimeException("SQL exception while attempting "
-                        + "to retrieve node id for interface "
-                        + ipAddr.getHostAddress());
-            } finally {
-                try {
-                    stmt.close();
-                } catch (Exception e) {
-                    // Ignore
-                }
-            }
+			/*
+			 * RuntimeException is thrown if any of the following are true: -
+			 * node id is invalid - primaryIfIndex is invalid - Interface is not
+			 * the primary SNMP interface for the node
+			 */
+			if (nodeID == -1) {
+				throw new RuntimeException("Unable to retrieve node id "
+						+ "for interface " + ipAddr.getHostAddress());
+			}
 
-            if (log.isDebugEnabled())
-                log.debug("initialize: db retrieval info: nodeid = " + nodeID
-                        + ", address = " + ipAddr.getHostAddress()
-                        + ", primaryIfIndex = " + primaryIfIndex
-                        + ", isSnmpPrimary = " + isSnmpPrimary);
+			if (primaryIfIndex == -1) {
+				// allow this for nodes without ipAddrTables
+				// throw new RuntimeException("Unable to retrieve ifIndex for
+				// interface " + ipAddr.getHostAddress());
+				if (log().isDebugEnabled()) {
+					log().debug(
+							"initialize: db retrieval info: node " + nodeID
+									+ " does not have a legitimate "
+									+ "primaryIfIndex.  Assume node does not "
+									+ "supply ipAddrTable and continue...");
+				}
+			}
 
-            /*
-             * RuntimeException is thrown if any of the following are true: -
-             * node id is invalid - primaryIfIndex is invalid - Interface is
-             * not the primary SNMP interface for the node
-             */
-            if (nodeID == -1) {
-                throw new RuntimeException("Unable to retrieve node id "
-                        + "for interface " + ipAddr.getHostAddress());
-            }
+			if (isSnmpPrimary != DbIpInterfaceEntry.SNMP_PRIMARY) {
+				throw new RuntimeException("Interface "
+						+ ipAddr.getHostAddress()
+						+ " is not the primary SNMP interface for nodeid "
+						+ nodeID);
+			}
 
-            if (primaryIfIndex == -1) {
-                // allow this for nodes without ipAddrTables
-                // throw new RuntimeException("Unable to retrieve ifIndex for
-                // interface " + ipAddr.getHostAddress());
-                if (log.isDebugEnabled()) {
-                    log.debug("initialize: db retrieval info: node " + nodeID
-                            + " does not have a legitimate "
-                            + "primaryIfIndex.  Assume node does not "
-                            + "supply ipAddrTable and continue...");
-                }
-            }
+			/*
+			 * Prepare & execute the SQL statement to get the node's system
+			 * object id (sysoid)
+			 */
+			try {
+				stmt = dbConn.prepareStatement(SQL_GET_NODESYSOID);
+				stmt.setInt(1, nodeID); // node ID
+				ResultSet rs = stmt.executeQuery();
+				if (rs.next()) {
+					sysoid = rs.getString(1);
+				} else {
+					sysoid = null;
+				}
+				rs.close();
+			} catch (SQLException sqle) {
+				log().debug("initialize: SQL exception retrieving the node id",
+						sqle);
+				throw new RuntimeException("SQL exception while attempting "
+						+ "to retrieve interface's node id");
+			} catch (NullPointerException npe) {
+				/*
+				 * Thrown by ResultSet.getString() if database query did not
+				 * return anything.
+				 */
+				log().debug("initialize: NullPointerException", npe);
+				sysoid = null;
+			} finally {
+				try {
+					stmt.close();
+				} catch (Exception e) {
+					log().info(
+							"initialize: an error occured trying to close "
+									+ "an SQL statement", e);
+				}
+			}
 
-            if (isSnmpPrimary != DbIpInterfaceEntry.SNMP_PRIMARY) {
-                throw new RuntimeException("Interface "
-                        + ipAddr.getHostAddress()
-                        + " is not the primary SNMP interface for nodeid "
-                        + nodeID);
-            }
+			if (sysoid == null) {
+				throw new RuntimeException("System Object ID for interface "
+						+ ipAddr.getHostAddress()
+						+ " does not exist in the database.");
+			}
 
-            /*
-             * Prepare & execute the SQL statement to get the node's system
-             * object id (sysoid)
-             */
-            try {
-                stmt = dbConn.prepareStatement(SQL_GET_NODESYSOID);
-                stmt.setInt(1, nodeID); // node ID
-                ResultSet rs = stmt.executeQuery();
-                if (rs.next()) {
-                    sysoid = rs.getString(1);
-                } else {
-                    sysoid = null;
-                }
-                rs.close();
-            } catch (SQLException sqle) {
-                log.debug("initialize: SQL exception retrieving the node id",
-                          sqle);
-                throw new RuntimeException("SQL exception while attempting "
-                        + "to retrieve interface's node id");
-            } catch (NullPointerException npe) {
-                /*
-                 * Thrown by ResultSet.getString() if database query did not
-                 * return anything.
-                 */
-                log.debug("initialize: NullPointerException", npe);
-                sysoid = null;
-            } finally {
-                try {
-                    stmt.close();
-                } catch (Exception e) {
-                    log.info("initialize: an error occured trying to close "
-                            + "an SQL statement", e);
-                }
-            }
+			/*
+			 * Our implmentation requires that all sysObjectID's must have a
+			 * leading period ('.'). Add the leading period if it is not
+			 * present.
+			 */
+			if (!sysoid.startsWith(".")) {
+				String period = ".";
+				period.concat(sysoid);
+				sysoid = period;
+			}
 
-            if (sysoid == null) {
-                throw new RuntimeException("System Object ID for interface "
-                        + ipAddr.getHostAddress()
-                        + " does not exist in the database.");
-            }
+			// Create the NodeInfo obect for this node
+			NodeInfo nodeInfo = new NodeInfo(nodeID, primaryIfIndex);
 
-            /*
-             * Our implmentation requires that all sysObjectID's must have a
-             * leading period ('.'). Add the leading period if it is not
-             * present.
-             */
-            if (!sysoid.startsWith(".")) {
-                String period = ".";
-                period.concat(sysoid);
-                sysoid = period;
-            }
+			/*
+			 * Retrieve list of mib objects to be collected from the remote
+			 * agent which are to be stored in the node-level RRD file. These
+			 * objects pertain to the node itself not any individual interfaces.
+			 */
+			List oidList = DataCollectionConfigFactory.getInstance()
+					.getMibObjectList(collectionName, sysoid,
+							ipAddr.getHostAddress(), -1);
+			nodeInfo.setOidList(oidList);
+			List dsList = buildDataSourceList(collectionName, oidList);
+			nodeInfo.setDsList(dsList);
 
-            // Create the NodeInfo obect for this node
-            nodeInfo = new NodeInfo(nodeID, primaryIfIndex);
+			// Add the NodeInfo object as an attribute of the interface
+			iface.setAttribute(NODE_INFO_KEY, nodeInfo);
 
-            /*
-             * Retrieve list of mib objects to be collected from the remote
-             * agent which are to be stored in the node-level RRD file. These
-             * objects pertain to the node itself not any individual
-             * interfaces.
-             */
-            List oidList = DataCollectionConfigFactory.getInstance().getMibObjectList(
-                                                                                      collectionName,
-                                                                                      sysoid,
-                                                                                      ipAddr.getHostAddress(),
-                                                                                      -1);
-            nodeInfo.setOidList(oidList);
-            List dsList = buildDataSourceList(collectionName, oidList);
-            nodeInfo.setDsList(dsList);
+			/*
+			 * Prepare & execute the SQL statement for retrieving the SNMP
+			 * version of node
+			 */
+			try {
+				stmt = dbConn.prepareStatement(SQL_CHECK_SNMPV2);
+				stmt.setInt(1, nodeID);
+				ResultSet rs = stmt.executeQuery();
+				if (rs.next()) {
+					rs.getInt(1);
+					snmpv2Supported = true;
+				} else {
+					snmpv2Supported = false;
+				}
+				rs.close();
+			} catch (SQLException sqle) {
+				log().debug("initialize: SQL exception!!", sqle);
+				throw new RuntimeException("SQL exception while attempting "
+						+ "to retrieve snmp version information");
+			} finally {
+				try {
+					stmt.close();
+				} catch (Exception e) {
+					log().info(
+							"initialize: an error occured while closing "
+									+ "an SQL statement", e);
+				}
+			}
 
-            // Add the NodeInfo object as an attribute of the interface
-            iface.setAttribute(NODE_INFO_KEY, nodeInfo);
+			if (log().isDebugEnabled()) {
+				log().debug(
+						"initialize: address = " + ipAddr.getHostAddress()
+								+ ", nodeid = " + nodeID
+								+ ", primaryIfIndex = " + primaryIfIndex
+								+ ", isSnmpPrimary = " + isSnmpPrimary
+								+ ", SNMPversion = "
+								+ (snmpv2Supported ? "SNMPv2" : "SNMPv1"));
+			}
 
-            /*
-             * Prepare & execute the SQL statement for retrieving the SNMP
-             * version of node
-             */
-            try {
-                stmt = dbConn.prepareStatement(SQL_CHECK_SNMPV2);
-                stmt.setInt(1, nodeID);
-                ResultSet rs = stmt.executeQuery();
-                if (rs.next()) {
-                    rs.getInt(1);
-                    snmpv2Supported = true;
-                } else {
-                    snmpv2Supported = false;
-                }
-                rs.close();
-            } catch (SQLException sqle) {
-                log.debug("initialize: SQL exception!!", sqle);
-                throw new RuntimeException("SQL exception while attempting "
-                        + "to retrieve snmp version information");
-            } finally {
-                try {
-                    stmt.close();
-                } catch (Exception e) {
-                    log.info("initialize: an error occured while closing "
-                            + "an SQL statement", e);
-                }
-            }
+			/*
+			 * Build object list for each interface Prepare & execute the SQL
+			 * statement to retrieve all ifIndex, ifType, ifName, ifDescr, &
+			 * physAddr values for all valid interfaces for the specified node.
+			 * For each interface retrieved from the database: 1. Determine the
+			 * MIB objects to be collected for the interface as well as the
+			 * corresponding RRD data source list. 2. Create the RRD file to
+			 * hold data retrieved for the interface. 3. Add the interface to
+			 * the interface map for retrieval during the poll.
+			 */
+			Map ifMap = new TreeMap();
 
-            if (log.isDebugEnabled()) {
-                log.debug("initialize: address = " + ipAddr.getHostAddress()
-                        + ", nodeid = " + nodeID + ", primaryIfIndex = "
-                        + primaryIfIndex + ", isSnmpPrimary = "
-                        + isSnmpPrimary + ", SNMPversion = "
-                        + (snmpv2Supported ? "SNMPv2" : "SNMPv1"));
-            }
+			PreparedStatement stmt1 = null;
+			try {
+				stmt = dbConn.prepareStatement(SQL_GET_SNMP_INFO);
+				stmt.setInt(1, nodeID);
+				ResultSet rs = stmt.executeQuery();
 
-            /*
-             * Build object list for each interface Prepare & execute the SQL
-             * statement to retrieve all ifIndex, ifType, ifName, ifDescr, &
-             * physAddr values for all valid interfaces for the specified
-             * node. For each interface retrieved from the database: 1.
-             * Determine the MIB objects to be collected for the interface as
-             * well as the corresponding RRD data source list. 2. Create the
-             * RRD file to hold data retrieved for the interface. 3. Add the
-             * interface to the interface map for retrieval during the poll.
-             */
-            PreparedStatement stmt1 = null;
-            try {
-                stmt = dbConn.prepareStatement(SQL_GET_SNMP_INFO);
-                stmt.setInt(1, nodeID);
-                ResultSet rs = stmt.executeQuery();
+				/*
+				 * The following code does a database lookup on the ipinterface
+				 * table and builds a Map of ifIndex and issnmpprimary values.
+				 * The issnmpprimary value can then be checked to see if SNMP
+				 * collection needs to be done on it.
+				 */
+				stmt1 = dbConn.prepareStatement(SQL_GET_ISSNMPPRIMARY);
+				stmt1.setInt(1, nodeID); // interface address
+				ResultSet rs1 = stmt1.executeQuery();
 
-                /*
-                 * The following code does a database lookup on the
-                 * ipinterface table and builds a Map of ifIndex and
-                 * issnmpprimary values. The issnmpprimary value can then be
-                 * checked to see if SNMP collection needs to be done on it.
-                 */
-                stmt1 = dbConn.prepareStatement(SQL_GET_ISSNMPPRIMARY);
-                stmt1.setInt(1, nodeID); // interface address
-                ResultSet rs1 = stmt1.executeQuery();
+				if (log().isDebugEnabled()) {
+					log().debug(
+							"initialize: Attempting to get issnmpprimary "
+									+ "information for node: " + nodeID);
+				}
 
-                if (log.isDebugEnabled()) {
-                    log.debug("initialize: Attempting to get issnmpprimary "
-                            + "information for node: " + nodeID);
-                }
+				HashMap snmppriMap = new HashMap();
 
-                HashMap snmppriMap = new HashMap();
+				while (rs1.next()) {
+					String snmppriIfIndex = rs1.getString(1);
+					String snmppriCollType = rs1.getString(2);
 
-                while (rs1.next()) {
-                    String snmppriIfIndex = rs1.getString(1);
-                    String snmppriCollType = rs1.getString(2);
+					String currSNMPPriValue = (String) snmppriMap
+							.get(snmppriIfIndex);
 
-                    String currSNMPPriValue = (String) snmppriMap.get(snmppriIfIndex);
+					if (currSNMPPriValue == null) {
+						snmppriMap.put(snmppriIfIndex, snmppriCollType);
+					} else if (currSNMPPriValue.equals("P")) {
+						continue;
+					} else if (currSNMPPriValue.equals("S")
+							&& snmppriCollType.equals("P")) {
+						snmppriMap.put(snmppriIfIndex, snmppriCollType);
+					} else if (currSNMPPriValue.equals("C")
+							&& (snmppriCollType.equals("P") || snmppriCollType
+									.equals("S"))) {
+						snmppriMap.put(snmppriIfIndex, snmppriCollType);
+					} else {
+						snmppriMap.put(snmppriIfIndex, snmppriCollType);
+					}
+				}
+				rs1.close();
 
-                    if (currSNMPPriValue == null) {
-                        snmppriMap.put(snmppriIfIndex, snmppriCollType);
-                    } else if (currSNMPPriValue.equals("P")) {
-                        continue;
-                    } else if (currSNMPPriValue.equals("S")
-                            && snmppriCollType.equals("P")) {
-                        snmppriMap.put(snmppriIfIndex, snmppriCollType);
-                    } else if (currSNMPPriValue.equals("C")
-                            && (snmppriCollType.equals("P") || snmppriCollType.equals("S"))) {
-                        snmppriMap.put(snmppriIfIndex, snmppriCollType);
-                    } else {
-                        snmppriMap.put(snmppriIfIndex, snmppriCollType);
-                    }
-                }
-                rs1.close();
+				while (rs.next()) {
+					// Extract retrieved database values from the result set
+					int index = rs.getInt(1);
+					int type = rs.getInt(2);
+					String name = rs.getString(3);
+					String descr = rs.getString(4);
+					String physAddr = rs.getString(5);
+					if (log().isDebugEnabled()) {
+						log()
+								.debug(
+										"initialize: snmpifindex = " + index
+												+ ", snmpifname = " + name
+												+ ", snmpifdescr = " + descr
+												+ ", snmpphysaddr = -"
+												+ physAddr + "-");
+					}
 
-                while (rs.next()) {
-                    // Extract retrieved database values from the result set
-                    int index = rs.getInt(1);
-                    int type = rs.getInt(2);
-                    String name = rs.getString(3);
-                    String descr = rs.getString(4);
-                    String physAddr = rs.getString(5);
-                    if (log.isDebugEnabled()) {
-                        log.debug("initialize: snmpifindex = " + index
-                                + ", snmpifname = " + name
-                                + ", snmpifdescr = " + descr
-                                + ", snmpphysaddr = -" + physAddr + "-");
-                    }
+					/*
+					 * Determine the label for this interface. The label will be
+					 * used to create the RRD file name which holds SNMP data
+					 * retreived from the remote agent. If available ifName is
+					 * used to generate the label since it is guaranteed to be
+					 * unique. Otherwise ifDescr is used. In either case, all
+					 * non alpha numeric characters are converted to underscores
+					 * to ensure that the resuling string will make a decent
+					 * file name and that RRD won't have any problems using it
+					 */
+					String label = null;
+					if (name != null) {
+						label = AlphaNumeric.parseAndReplace(name, nonAnRepl);
+					} else if (descr != null) {
+						label = AlphaNumeric.parseAndReplace(descr, nonAnRepl);
+					} else {
+						log()
+								.warn(
+										"Interface (ifIndex/nodeId="
+												+ index
+												+ "/"
+												+ nodeID
+												+ ") has no ifName and no "
+												+ "ifDescr...setting to label to 'no_ifLabel'.");
+						label = "no_ifLabel";
+					}
 
-                    /*
-                     * Determine the label for this interface. The label will
-                     * be used to create the RRD file name which holds SNMP
-                     * data retreived from the remote agent. If available
-                     * ifName is used to generate the label since it is
-                     * guaranteed to be unique. Otherwise ifDescr is used. In
-                     * either case, all non alpha numeric characters are
-                     * converted to underscores to ensure that the resuling
-                     * string will make a decent file name and that RRD won't
-                     * have any problems using it
-                     */
-                    String label = null;
-                    if (name != null) {
-                        label = AlphaNumeric.parseAndReplace(name, nonAnRepl);
-                    } else if (descr != null) {
-                        label = AlphaNumeric.parseAndReplace(descr, nonAnRepl);
-                    } else {
-                        log.warn("Interface (ifIndex/nodeId="
-                                + index
-                                + "/"
-                                + nodeID
-                                + ") has no ifName and no "
-                                + "ifDescr...setting to label to 'no_ifLabel'.");
-                        label = "no_ifLabel";
-                    }
+					/*
+					 * In order to assure the uniqueness of the RRD file names
+					 * we now append the MAC/physical address to the end of
+					 * label if it is available.
+					 */
+					if (physAddr != null) {
+						physAddr = AlphaNumeric.parseAndTrim(physAddr);
+						if (physAddr.length() == 12) {
+							label = label + "-" + physAddr;
+						} else {
+							if (log().isDebugEnabled()) {
+								log().debug(
+										"initialize: physical address len "
+												+ "is NOT 12, physAddr="
+												+ physAddr);
+							}
+						}
+					}
 
-                    /*
-                     * In order to assure the uniqueness of the RRD file names
-                     * we now append the MAC/physical address to the end of
-                     * label if it is available.
-                     */
-                    if (physAddr != null) {
-                        physAddr = AlphaNumeric.parseAndTrim(physAddr);
-                        if (physAddr.length() == 12) {
-                            label = label + "-" + physAddr;
-                        } else {
-                            if (log.isDebugEnabled()) {
-                                log.debug("initialize: physical address len "
-                                        + "is NOT 12, physAddr=" + physAddr);
-                            }
-                        }
-                    }
+					if (log().isDebugEnabled()) {
+						log().debug("initialize: ifLabel = '" + label + "'");
+					}
 
-                    if (log.isDebugEnabled()) {
-                        log.debug("initialize: ifLabel = '" + label + "'");
-                    }
+					// Create new IfInfo object
 
-                    // Create new IfInfo object
+					String collType = (String) snmppriMap.get(rs.getString(1));
 
-                    String collType = (String) snmppriMap.get(rs.getString(1));
+					IfInfo ifInfo = new IfInfo(index, type, label, collType);
 
-                    IfInfo ifInfo = new IfInfo(index, type, label, collType);
+					if (index == primaryIfIndex) {
+						ifInfo.setIsPrimary(true);
+					} else {
+						ifInfo.setIsPrimary(false);
+					}
 
-                    if (index == primaryIfIndex) {
-                        ifInfo.setIsPrimary(true);
-                    } else {
-                        ifInfo.setIsPrimary(false);
-                    }
+					/*
+					 * Retrieve list of mib objects to be collected from the
+					 * remote agent for this interface.
+					 */
+					oidList = DataCollectionConfigFactory.getInstance()
+							.getMibObjectList(collectionName, sysoid,
+									ipAddr.getHostAddress(), type);
 
-                    /*
-                     * Retrieve list of mib objects to be collected from the
-                     * remote agent for this interface.
-                     */
-                    oidList = DataCollectionConfigFactory.getInstance().getMibObjectList(
-                                                                                         collectionName,
-                                                                                         sysoid,
-                                                                                         ipAddr.getHostAddress(),
-                                                                                         type);
+					/*
+					 * Now build a list of RRD data source objects from the list
+					 * of mib objects
+					 */
+					dsList = buildDataSourceList(collectionName, oidList);
 
-                    /*
-                     * Now build a list of RRD data source objects from the
-                     * list of mib objects
-                     */
-                    dsList = buildDataSourceList(collectionName, oidList);
+					// Set MIB object and data source lists in IfInfo object
+					ifInfo.setOidList(oidList);
+					ifInfo.setDsList(dsList);
 
-                    // Set MIB object and data source lists in IfInfo object
-                    ifInfo.setOidList(oidList);
-                    ifInfo.setDsList(dsList);
+					/*
+					 * Add the new IfInfo object to the interface map keyed by
+					 * interface index
+					 */
+					ifMap.put(new Integer(index), ifInfo);
+				}
+				rs.close();
+			} catch (SQLException sqle) {
+				log().debug("initialize: SQL exception!!", sqle);
+				throw new RuntimeException("SQL exception while attempting "
+						+ "to retrieve snmp interface info");
+			} catch (NullPointerException npe) {
+				/*
+				 * Thrown by ResultSet.getString() if database query did not
+				 * return anything
+				 */
+				log().debug("initialize: NullPointerException", npe);
+				throw new RuntimeException("NullPointerException while "
+						+ "attempting to retrieve snmp interface info");
+			} finally {
+				try {
+					stmt.close();
+				} catch (Exception e) {
+					log().info(
+							"initialize: an error occured trying to close "
+									+ "an SQL statement", e);
+				}
+			}
 
-                    /*
-                     * Add the new IfInfo object to the interface map keyed by
-                     * interface index
-                     */
-                    ifMap.put(new Integer(index), ifInfo);
-                }
-                rs.close();
-            } catch (SQLException sqle) {
-                log.debug("initialize: SQL exception!!", sqle);
-                throw new RuntimeException("SQL exception while attempting "
-                        + "to retrieve snmp interface info");
-            } catch (NullPointerException npe) {
-                /*
-                 * Thrown by ResultSet.getString() if database query did not
-                 * return anything
-                 */
-                log.debug("initialize: NullPointerException", npe);
-                throw new RuntimeException("NullPointerException while "
-                        + "attempting to retrieve snmp interface info");
-            } finally {
-                try {
-                    stmt.close();
-                } catch (Exception e) {
-                    log.info("initialize: an error occured trying to close "
-                            + "an SQL statement", e);
-                }
-            }
+			/*
+			 * Verify that we did find at least one eligible interface for the
+			 * node.
+			 */
+			if (ifMap.size() < 1) {
+				throw new RuntimeException("Failed to retrieve any eligible "
+						+ "interfaces for node " + nodeID
+						+ " from the database.");
+			}
 
-            /*
-             * Verify that we did find at least one eligible interface for the
-             * node.
-             */
-            if (ifMap.size() < 1) {
-                throw new RuntimeException("Failed to retrieve any eligible "
-                        + "interfaces for node " + nodeID
-                        + " from the database.");
-            }
+			// Add the ifMap object as an attribute of the interface
+			iface.setAttribute(IF_MAP_KEY, ifMap);
 
-            // Add the ifMap object as an attribute of the interface
-            iface.setAttribute(IF_MAP_KEY, ifMap);
+			/*
+			 * Verify that there is something to collect from this primary SMP
+			 * interface. If no node objects and no interface objects then throw
+			 * exception
+			 */
+			if (nodeInfo.getOidList().isEmpty()) {
+				boolean hasInterfaceOids = false;
+				Iterator iter = ifMap.values().iterator();
+				while (iter.hasNext() && !hasInterfaceOids) {
+					IfInfo ifInfo = (IfInfo) iter.next();
+					if (!ifInfo.getOidList().isEmpty()) {
+						hasInterfaceOids = true;
+					}
+				}
 
-            /*
-             * Verify that there is something to collect from this primary SMP
-             * interface. If no node objects and no interface objects then
-             * throw exception
-             */
-            if (nodeInfo.getOidList().isEmpty()) {
-                boolean hasInterfaceOids = false;
-                Iterator iter = ifMap.values().iterator();
-                while (iter.hasNext() && !hasInterfaceOids) {
-                    IfInfo ifInfo = (IfInfo) iter.next();
-                    if (!ifInfo.getOidList().isEmpty()) {
-                        hasInterfaceOids = true;
-                    }
-                }
+				if (!hasInterfaceOids) {
+					throw new RuntimeException("collection '" + collectionName
+							+ "' defines nothing to collect for "
+							+ ipAddr.getHostAddress());
+				}
+			}
+		} finally {
+			// Done with the database so close the connection
+			try {
+				dbConn.close();
+			} catch (SQLException sqle) {
+				log().info(
+						"initialize: SQLException while closing database "
+								+ "connection", sqle);
+			}
+		}
 
-                if (!hasInterfaceOids) {
-                    throw new RuntimeException("collection '"
-                            + collectionName
-                            + "' defines nothing to collect for "
-                            + ipAddr.getHostAddress());
-                }
-            }
-        } finally {
-            // Done with the database so close the connection
-            try {
-                dbConn.close();
-            } catch (SQLException sqle) {
-                log.info("initialize: SQLException while closing database "
-                        + "connection", sqle);
-            }
-        }
+		if (log().isDebugEnabled()) {
+			log().debug(
+					"initialize: address = " + ipAddr.getHostAddress()
+							+ ", nodeID = " + nodeID + ", ifIndex = "
+							+ primaryIfIndex + ", sysoid = " + sysoid);
+		}
 
-        if (log.isDebugEnabled()) {
-            log.debug("initialize: address = " + ipAddr.getHostAddress()
-                    + ", nodeID = " + nodeID + ", ifIndex = "
-                    + primaryIfIndex + ", sysoid = " + sysoid);
-        }
-
-        // Instantiate new SnmpPeer object for this interface
-        if (log.isDebugEnabled()) {
-            log.debug("initialize: initialization completed for "
-                    + ipAddr.getHostAddress());
-        }
-        return;
-    }
+		// Instantiate new SnmpPeer object for this interface
+		if (log().isDebugEnabled()) {
+			log().debug(
+					"initialize: initialization completed for "
+							+ ipAddr.getHostAddress());
+		}
+		return;
+	}
 
