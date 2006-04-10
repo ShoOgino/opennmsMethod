@@ -1,73 +1,74 @@
     /**
-     * Responsible for performing all necessary initialization for the specified
-     * interface in preparation for data collection.
+     * Responsible for performing all necessary initialization for the
+     * specified interface in preparation for data collection.
      * 
      * @param iface
      *            Network interface to be prepped for collection.
      * @param parameters
      *            Key/value pairs associated with the package to which the
      *            interface belongs..
-     *  
      */
 
     public void initialize(NetworkInterface iface, Map parameters) {
-        Category    log    = ThreadCategory.getInstance(getClass());
+        Category log = ThreadCategory.getInstance(getClass());
         InetAddress ipAddr = (InetAddress) iface.getAddress();
-        
+
         log.debug("initialize: " + m_rrdPath);
         if (m_rrdPath == null) {
             initRRD();
         }
-        
-        if (log.isDebugEnabled())
-            log.debug("initialize: InetAddress=" + ipAddr.getHostAddress());
-        
-        // Retrieve the name of the JMX data collector
-        String collectionName = ParameterMap.getKeyedString(parameters,"collection", serviceName);
 
-        if (log.isDebugEnabled())
+        if (log.isDebugEnabled()) {
+            log.debug("initialize: InetAddress=" + ipAddr.getHostAddress());
+        }
+
+        // Retrieve the name of the JMX data collector
+        String collectionName = ParameterMap.getKeyedString(parameters,
+                                                            "collection",
+                                                            serviceName);
+
+        if (log.isDebugEnabled()) {
             log.debug("initialize: collectionName=" + collectionName);
+        }
         java.sql.Connection dbConn = null;
         try {
             dbConn = DatabaseConnectionFactory.getInstance().getConnection();
-        } catch (SQLException sqlE) {
-            if (log.isEnabledFor(Priority.ERROR))
-                log.error("initialize: Failed getting connection to the database.",sqlE);
-            throw new UndeclaredThrowableException(sqlE);
+        } catch (SQLException e) {
+            log.error("initialize: Failed getting connection to the database.",
+                      e);
+            throw new UndeclaredThrowableException(e);
         }
 
         int nodeID = -1;
 
-        // Prepare & execute the SQL statement to get the 'nodeid' from the
-        // ipInterface table 'nodeid' will be used to retrieve the node's
-        // system object id from the node table.
-        // In addition to nodeid, the interface's ifIndex
-        // fields are also retrieved.
-        //
-
+        /*
+         * Prepare & execute the SQL statement to get the 'nodeid' from the
+         * ipInterface table 'nodeid' will be used to retrieve the node's
+         * system object id from the node table.
+         * In addition to nodeid, the interface's ifIndex
+         * fields are also retrieved.
+         */
         PreparedStatement stmt = null;
 
         try {
-
             stmt = dbConn.prepareStatement(SQL_GET_NODEID);
             stmt.setString(1, ipAddr.getHostAddress()); // interface address
             ResultSet rs = stmt.executeQuery();
 
             if (rs.next()) {
                 nodeID = rs.getInt(1);
-                if (rs.wasNull())
+                if (rs.wasNull()) {
                     nodeID = -1;
+                }
             } else {
                 nodeID = -1;
             }
             rs.close();
-
-        } catch (SQLException sqle) {
-            if (log.isDebugEnabled())
-                log.debug("initialize: SQL exception!!", sqle);
-            throw new RuntimeException(
-                    "SQL exception while attempting to retrieve node id for interface "
-                            + ipAddr.getHostAddress());
+        } catch (SQLException e) {
+            log.error("initialize: SQL exception!!", e);
+            throw new RuntimeException("SQL exception while attempting to "
+                                       + "retrieve node id for interface "
+                                       + ipAddr.getHostAddress());
         } finally {
             try {
                 stmt.close();
@@ -78,28 +79,34 @@
         }
 
         JMXNodeInfo nodeInfo = new JMXNodeInfo(nodeID);
-        log.debug("nodeInfo: " + ipAddr.getHostAddress() + " " + nodeID + " " + iface);
+        log.debug("nodeInfo: " + ipAddr.getHostAddress() + " " + nodeID + " "
+                  + iface);
 
-        // Retrieve list of MBean objects to be collected from the
-        // remote agent which are to be stored in the node-level RRD file.
-        // These objects pertain to the node itself not any individual
-        // interfaces.
-        Map attrMap = JMXDataCollectionConfigFactory.getInstance().getAttributeMap(collectionName, serviceName, ipAddr.getHostAddress());
+        /*
+         * Retrieve list of MBean objects to be collected from the
+         * remote agent which are to be stored in the node-level RRD file.
+         * These objects pertain to the node itself not any individual
+         * interfaces.
+         */
+        Map attrMap =JMXDataCollectionConfigFactory.getInstance().getAttributeMap(
+                                                                                   collectionName,
+                                                                                   serviceName,
+                                                                                   ipAddr.getHostAddress());
         nodeInfo.setAttributeMap(attrMap);
-       
+
         HashMap dsList = buildDataSourceList(collectionName, attrMap);
         nodeInfo.setDsMap(dsList);
-        nodeInfo.setMBeans(JMXDataCollectionConfigFactory.getInstance().getMBeanInfo(collectionName));
+        nodeInfo.setMBeans(JMXDataCollectionConfigFactory.getInstance().getMBeanInfo(
+                                                                                     collectionName));
 
         // Add the JMXNodeInfo object as an attribute of the interface
-        //
         iface.setAttribute(NODE_INFO_KEY, nodeInfo);
         iface.setAttribute("collectionName", collectionName);
-        
+
         File repos = new File(m_rrdPath + "/" + nodeID + "/" + collectionName);
         if (!repos.exists()) {
             repos.mkdir();
         }
-        
+
     }
 

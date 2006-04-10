@@ -11,98 +11,120 @@
      */
 
     public int collect(NetworkInterface iface, EventProxy eproxy, Map map) {
-        Category    log            = ThreadCategory.getInstance(getClass());
-        InetAddress ipaddr         = (InetAddress) iface.getAddress();
-        String      collectionName = (String) iface.getAttribute("collectionName");
-        JMXNodeInfo nodeInfo       = (JMXNodeInfo) iface.getAttribute(NODE_INFO_KEY);
-        HashMap     mbeans         = nodeInfo.getMBeans();
-        String      collDir        = serviceName;
-        
+        Category log = ThreadCategory.getInstance(getClass());
+        InetAddress ipaddr = (InetAddress) iface.getAddress();
+        String collectionName = (String) iface.getAttribute("collectionName");
+        JMXNodeInfo nodeInfo = (JMXNodeInfo) iface.getAttribute(NODE_INFO_KEY);
+        HashMap mbeans = nodeInfo.getMBeans();
+        String collDir = serviceName;
+
         ConnectionWrapper connection = null;
 
-        log.debug("collect " + ipaddr.getHostAddress() + " " + nodeInfo.getNodeId() + " " + m_rrdPath);
+        log.debug("collect " + ipaddr.getHostAddress() + " "
+                + nodeInfo.getNodeId() + " " + m_rrdPath);
 
         try {
+            int retry = ParameterMap.getKeyedInteger(map, "retry", 3);
+            String port = ParameterMap.getKeyedString(map, "port", null);
+            String friendlyName = ParameterMap.getKeyedString(map,
+                                                              "friendly-name",
+                                                              port);
 
-            String rrdPath      = ParameterMap.getKeyedString( map, "rrdRepository",  null);
-            int    retry        = ParameterMap.getKeyedInteger(map, "retry",          3);
-            String port         = ParameterMap.getKeyedString( map, "port",           null);
-            String friendlyName = ParameterMap.getKeyedString( map, "friendly-name",  port);
-            
             connection = getMBeanServerConnection(map, ipaddr);
-            
+
             if (connection == null) {
                 return COLLECTION_FAILED;
             }
-            
+
             MBeanServerConnection mbeanServer = connection.getMBeanServer();
-            
-//            int serviceStatus = COLLECTION_FAILED;
-            
+
+            // int serviceStatus = COLLECTION_FAILED;
+
             if (useFriendlyName) {
                 collDir = friendlyName;
             }
 
             for (int attempts = 0; attempts <= retry; attempts++) {
                 try {
-
                     /*
                      * Iterate over the mbeans, for each object name perform a
                      * getAttributes, the update the RRD.
                      */
 
                     for (Iterator iter = mbeans.values().iterator(); iter.hasNext();) {
-                        BeanInfo beanInfo    = (BeanInfo) iter.next();
-                        String   objectName  = beanInfo.getObjectName();
-                        String   excludeList = beanInfo.getExcludes();
-                        
+                        BeanInfo beanInfo = (BeanInfo) iter.next();
+                        String objectName = beanInfo.getObjectName();
+                        String excludeList = beanInfo.getExcludes();
+
                         String[] attrNames = beanInfo.getAttributeNames();
-                        
+
                         if (objectName.indexOf("*") == -1) {
-                            log.debug(serviceName + " Collector - getAttributes: " + objectName + " #attributes: " + attrNames.length);
- 
+                            log.debug(serviceName
+                                    + " Collector - getAttributes: "
+                                    + objectName + " #attributes: "
+                                    + attrNames.length);
+
                             try {
                                 ObjectName oName = new ObjectName(objectName);
                                 if (mbeanServer.isRegistered(oName)) {
-                                   AttributeList attrList = (AttributeList) mbeanServer.getAttributes(oName,attrNames);
-                                   updateRRDs(objectName, collectionName, iface, attrList, collDir, null, null);
+                                    AttributeList attrList = (AttributeList)
+                                        mbeanServer.getAttributes(oName,
+                                                                  attrNames);
+                                    updateRRDs(objectName, collectionName,
+                                               iface, attrList, collDir,
+                                               null, null);
                                 }
-                            } catch (InstanceNotFoundException e2) {
-                                log.error("Unable to retrieve attributes from " + objectName);
+                            } catch (InstanceNotFoundException e) {
+                                log.error("Unable to retrieve attributes from "
+                                        + objectName, e);
                             }
-                        }
-                        else {
-                        	/*
-                        	 * This section is for ObjectNames that use the '*' wildcard
-                        	 */
-                            Set mbeanSet = mbeanServer.queryNames(new ObjectName(objectName),null);
-                            for (Iterator objectNameIter = mbeanSet.iterator(); objectNameIter.hasNext();) {
-                                ObjectName oName = (ObjectName)objectNameIter.next();
-                                log.debug(serviceName + " Collector - getAttributesWC: " + oName + " #attributes: " + attrNames.length + " " + beanInfo.getKeyAlias());
-  
+                        } else {
+                            /*
+                             * This section is for ObjectNames that use the
+                             * '*' wildcard
+                             */
+                            Set mbeanSet =
+                                mbeanServer.queryNames(new ObjectName(objectName),
+                                                       null);
+                            for (Iterator objectNameIter = mbeanSet.iterator();
+                                 objectNameIter.hasNext(); ) {
+                                ObjectName oName =
+                                    (ObjectName) objectNameIter.next();
+                                if (log.isDebugEnabled()) {
+                                    log.debug(serviceName
+                                              + " Collector - getAttributesWC: "
+                                              + oName + " #attributes: "
+                                              + attrNames.length + " "
+                                              + beanInfo.getKeyAlias());
+                                }
+
                                 try {
                                     if (excludeList == null) {
-                                        /*
-                                         * the exclude list doesn't apply
-                                         */
+                                        // the exclude list doesn't apply
                                         if (mbeanServer.isRegistered(oName)) {
-                                            AttributeList attrList = (AttributeList) mbeanServer.getAttributes(oName, attrNames);
+                                            AttributeList attrList =
+                                                (AttributeList)
+                                                mbeanServer.getAttributes(oName,
+                                                                          attrNames);
                                             updateRRDs(objectName,
-                                            		    collectionName, 
-                                                       iface, 
-                                                       attrList, 
+                                                       collectionName,
+                                                       iface,
+                                                       attrList,
                                                        collDir,
-                                                       oName.getKeyProperty(beanInfo.getKeyField()), 
+                                                       oName.getKeyProperty(beanInfo.getKeyField()),
                                                        beanInfo.getKeyAlias());
                                         }
-                                    }
-                                    else {
+                                    } else {
                                         /*
-                                         * filter out calls if the key field matches an entry in the exclude list
+                                         * filter out calls if the key field
+                                         * matches an entry in the exclude
+                                         * list
                                          */
                                         String keyName = oName.getKeyProperty(beanInfo.getKeyField());
                                         boolean found = false;
-                                        StringTokenizer st = new StringTokenizer(excludeList, ",");
+                                        StringTokenizer st = new StringTokenizer(
+                                                                                 excludeList,
+                                                                                 ",");
                                         while (st.hasMoreTokens()) {
                                             if (keyName.equals(st.nextToken())) {
                                                 found = true;
@@ -111,41 +133,45 @@
                                         }
                                         if (!found) {
                                             if (mbeanServer.isRegistered(oName)) {
-                                                AttributeList attrList = (AttributeList) mbeanServer.getAttributes(oName, attrNames);
+                                                AttributeList attrList =
+                                                    (AttributeList)
+                                                    mbeanServer.getAttributes(oName,
+                                                                              attrNames);
                                                 updateRRDs(objectName,
-                                                		    collectionName, 
-                                                           iface, 
-                                                           attrList, 
+                                                           collectionName,
+                                                           iface,
+                                                           attrList,
                                                            collDir,
-                                                           oName.getKeyProperty(beanInfo.getKeyField()), 
+                                                           oName.getKeyProperty(beanInfo.getKeyField()),
                                                            beanInfo.getKeyAlias());
                                             }
                                         }
                                     }
-                                } catch (InstanceNotFoundException e2) {
-                                    log.error("Error retrieving attributes for " + oName);
+                                } catch (InstanceNotFoundException e) {
+                                    log.error("Error retrieving attributes for "
+                                              + oName, e);
                                 }
                             }
                         }
-                        //serviceStatus = COLLECTION_SUCCEEDED;
+                        // serviceStatus = COLLECTION_SUCCEEDED;
                     }
                     break;
-                }
-                catch (Exception e) {
+                } catch (Exception e) {
                     e.fillInStackTrace();
-                    log.debug(serviceName + " Collector.collect: IOException while collect address: " + iface.getAddress(), e);
+                    log.debug(serviceName
+                              + " Collector.collect: IOException while collect "
+                              + "address: " + iface.getAddress(), e);
                 }
             } // of for
-        } catch (Exception e1) {
-            log.error("Error getting MBeanServer");
-       } finally {
-           if (connection != null) {
-               connection.close();
-           }
-       }
-        //
+        } catch (Exception e) {
+            log.error("Error getting MBeanServer", e);
+        } finally {
+            if (connection != null) {
+                connection.close();
+            }
+        }
+        
         // return the status of the collection
-        //
         return COLLECTION_SUCCEEDED;
     }
 
