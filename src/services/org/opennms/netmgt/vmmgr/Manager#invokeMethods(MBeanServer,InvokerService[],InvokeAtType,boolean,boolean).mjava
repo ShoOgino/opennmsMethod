@@ -1,6 +1,7 @@
     private static List invokeMethods(MBeanServer server,
                                       InvokerService[] invokerServices,
-                                      String at, boolean reverse) {
+                                      InvokeAtType at, boolean reverse,
+                                      boolean failFast) {
         Category log = ThreadCategory.getInstance(Manager.class);
 
         Integer[] serviceIndexes = new Integer[invokerServices.length];
@@ -21,7 +22,12 @@
             
             for (int i = 0; i < serviceIndexes.length; i++) {
                 int j = serviceIndexes[i].intValue();
+                String name = invokerServices[j].getService().getName();
                 if (invokerServices[j].isBadService()) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("pass " + pass + " on service " + name
+                                  + " is bad: not invoking any more methods"); 
+                    }
                     break;
                 }
                 Invoke[] todo = invokerServices[j].getService().getInvoke();
@@ -31,15 +37,30 @@
                         continue;
                     }
                     
+                    Service service = invokerServices[j].getService();
                     ObjectInstance mbean = invokerServices[j].getMbean();
+
+                    if (log.isDebugEnabled()) {
+                        log.debug("pass " + pass + " on service " + name
+                                  + " will invoke method \""
+                                  + todo[k].getMethod() + "\""); 
+                    }
 
                     try {
                         Object result = invoke(server, todo[k], mbean);
-                        resultInfo.add(new InvokerResult(mbean, result, null));
+                        resultInfo.add(new InvokerResult(service, mbean, result,
+                                                         null));
                     } catch (Throwable t) {
-                        resultInfo.add(new InvokerResult(mbean, null, t));
+                        resultInfo.add(new InvokerResult(service, mbean, null,
+                                                         t));
+                        if (failFast) {
+                            return resultInfo;
+                        }
                     }
                 }
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("completed pass " + pass);
             }
         }
         
