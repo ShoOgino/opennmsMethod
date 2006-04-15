@@ -1,65 +1,84 @@
-    public static Authenticator getAuthenticator() {
+    private static Authenticator getAuthenticator() {
         ServiceConfigFactory sfact = null;
         try {
             ServiceConfigFactory.init();
             sfact = ServiceConfigFactory.getInstance();
-        } catch (Exception e) {
-            throw new java.lang.reflect.UndeclaredThrowableException(e);
+        } catch (Throwable t) {
+            throw new UndeclaredThrowableException(t);
         }
 
         // allocate some storage locations
-        //
         Service[] services = sfact.getServices();
 
         Category log = ThreadCategory.getInstance(Manager.class);
 
+        Service service = null;
         for (int i = 0; i < services.length; i++) {
-	    if (!services[i].getName().equals(":Name=HttpAdaptorMgmt")) {
-		continue;
-	    }
+            if (services[i].getName().equals(":Name=HttpAdaptorMgmt")) {
+                service = services[i];
+                break;
+            }
+        }
+        
+        if (service == null) {
+            // Didn't find the service we were looking for
+            return null;
+        }
 
-            org.opennms.netmgt.config.service.Attribute[] attribs =
-		services[i].getAttribute();
+        org.opennms.netmgt.config.service.Attribute[] attribs =
+            service.getAttribute();
 
-            if (attribs == null) {
-		// the AuthenticationMethod is not set, so no authentication
-		return null;
-	    }
+        if (attribs == null) {
+            // the AuthenticationMethod is not set, so no authentication
+            return null;
+        }
 
-	    boolean usingBasic = false;
-	    for (int j = 0; j < attribs.length; j++) {
-		if (attribs[j].getName().equals("AuthenticationMethod")) {
-		    if (!attribs[j].getValue().getContent().equals("basic")) {
-			log.error("AuthenticationMethod is \"" +
-				  attribs[j].getValue() +
-				  "\", but only \"basic\" is " +
-				  "supported");
-			return null;
-		    }
-		    usingBasic = true;
-		    break;
-		}
-	    }
+        boolean usingBasic = false;
+        for (int j = 0; j < attribs.length; j++) {
+            if (attribs[j].getName().equals("AuthenticationMethod")) {
+                if (!attribs[j].getValue().getContent().equals("basic")) {
+                    log.error("AuthenticationMethod is \""
+                              + attribs[j].getValue()
+                              + "\", but only \"basic\" is supported");
+                    return null;
+                }
+                usingBasic = true;
+                break;
+            }
+        }
+            
+        if (!usingBasic) {
+            // AuthenticationMethod is not set to basic, so no authentication
+            return null;
+        }
 
-	    Invoke[] invokes = services[i].getInvoke();
-	    for (int j = 0; invokes != null && j < invokes.length; j++) {
-		if (invokes[j].getMethod().equals("addAuthorization")) {
-		    Argument[] args = invokes[j].getArgument();
-		    if (args != null && args.length == 2 &&
-			args[0].getContent().equals("manager")) {
-			final String username = args[0].getContent();
-			final String password = args[1].getContent();
-			return new Authenticator() {
-				protected PasswordAuthentication
-				    getPasswordAuthentication() {
-				    return new PasswordAuthentication(username,
-								      password.toCharArray());
-				}
-			    };
-		    }
-		}
-	    }
-	}
-	return null;
+        String username = null;
+        String password = null;
+        Invoke[] invokes = service.getInvoke();
+        for (int j = 0; invokes != null && j < invokes.length; j++) {
+            if (invokes[j].getMethod().equals("addAuthorization")) {
+                Argument[] args = invokes[j].getArgument();
+                if (args != null && args.length == 2
+                        && args[0].getContent().equals("manager")) {
+                    username = args[0].getContent();
+                    password = args[1].getContent();
+                    break;
+                }
+            }
+        }
+            
+        if (username == null || password == null) {
+            // Didn't find a username or password
+            return null;
+        }
+            
+        final String username_f = username;
+        final String password_f = password;
+        return new Authenticator() {
+            protected PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(username_f,
+                                                  password_f.toCharArray());
+            }
+        };
     }
 
