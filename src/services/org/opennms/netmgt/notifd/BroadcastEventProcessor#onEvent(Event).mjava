@@ -6,20 +6,50 @@
      *            The event .
      */
     public void onEvent(Event event) {
+        Category log = ThreadCategory.getInstance(getClass());
         if (event == null)
             return;
 
         String status = "off";
+        long nodeid = event.getNodeid();
         try {
             status = getConfigManager().getNotificationStatus();
         } catch (Exception e) {
             ThreadCategory.getInstance(getClass()).error("error getting notifd status, assuming status = 'off' for now: ", e);
         }
 
-        if (status.equals("on")) {
+        boolean isPathOk = true;
+
+        // If this is a nodeDown event, see if the critical path was down
+
+        if (event.getUei().equals(EventConstants.NODE_DOWN_EVENT_UEI)) {
+            String reason = EventUtils.getParm(event, EventConstants.PARM_LOSTSERVICE_REASON);
+            if (reason != null && reason.equals(EventConstants.PARM_VALUE_PATHOUTAGE)) {
+		isPathOk = false;
+		String cip = EventUtils.getParm(event, EventConstants.PARM_CRITICAL_PATH_IP);
+		String csvc = EventUtils.getParm(event, EventConstants.PARM_CRITICAL_PATH_SVC);
+                log.debug("Critical Path " + cip + " " + csvc + " for nodeId " + nodeid + " did not respond. Checking to see if notice would have been sent...");
+                boolean mapsToNotice = false;
+                boolean noticeSupressed = false;
+                Notification[] notifications = null;
+                try {
+                    mapsToNotice = getNotificationManager().hasUei(event.getUei());
+                } catch (Exception e) {
+                }
+                try {
+                    notifications = getNotificationManager().getNotifForEvent(event);
+                } catch (Exception e) {
+                }
+                if (status.equals("on") && mapsToNotice && continueWithNotice(event) && notifications != null) {
+                    noticeSupressed = true;
+                }
+                createPathOutageEvent(nodeid, EventUtils.getParm(event, EventConstants.PARM_NODE_LABEL), cip, csvc, noticeSupressed);
+            }
+        }
+
+        if (status.equals("on") && (isPathOk)) {
             scheduleNoticesForEvent(event);
-        } else {
-            Category log = ThreadCategory.getInstance(getClass());
+        } else if (status.equals("off")) {
             if (log.isDebugEnabled())
                 log.debug("discarding event " + event.getUei() + ", notifd status = " + status);
         }
