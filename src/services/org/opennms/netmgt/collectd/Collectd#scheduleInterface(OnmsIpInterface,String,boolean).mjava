@@ -1,0 +1,58 @@
+	void scheduleInterface(OnmsIpInterface iface, String svcName, boolean existing) {
+        Collection matchingPkgs = m_collectorConfigDao.getSpecificationsForInterface(iface, svcName);
+        
+        for (Iterator it = matchingPkgs.iterator(); it.hasNext();) {
+			CollectionSpecification spec = (CollectionSpecification) it.next();
+			
+            if (existing == false) {
+                /*
+                 * It is possible that both a nodeGainedService and a
+                 * primarySnmpInterfaceChanged event are generated for an
+                 * interface during a rescan. To handle this scenario we must
+                 * verify that the ipAddress/pkg pair identified by this event
+                 * does not already exist in the collectable services list.
+                 */
+                if (alreadyScheduled(iface, spec)) {
+                    if (log().isDebugEnabled()) {
+                        log().debug("scheduleInterface: svc/pkgName "
+                                  + iface + '/' + svcName + "/" + spec.getPackageName()
+                                  + " already in collectable service list, "
+                                  + "skipping.");
+                    }
+                    continue;
+                }
+            }
+
+            try {
+                /*
+                 * Criteria checks have all passed. The interface/service pair
+                 * can be scheduled.
+                 */
+                CollectableService cSvc = null;
+
+                /*
+                 * Create a new SnmpCollector object representing this node,
+                 * interface,
+                 * service and package pairing
+                 */
+                cSvc = new CollectableService(iface, spec);
+
+                // Add new collectable service to the colleable service list.
+                m_collectableServices.add(cSvc);
+
+                // Schedule the collectable service for immediate collection
+                m_scheduler.schedule(cSvc, 0);
+
+                if (log().isDebugEnabled()) {
+                    log().debug("scheduleInterface: " + iface +'/' + svcName + " collection");
+                }
+            } catch (RuntimeException rE) {
+                log().warn("scheduleInterface: Unable to schedule " + iface +'/' + svcName + ", reason: "
+                         + rE.getMessage());
+            } catch (Throwable t) {
+                log().error("scheduleInterface: Uncaught exception, failed to "
+                          + "schedule interface " + iface +'/' + svcName + ".", t);
+            }
+        } // end while more packages exist
+    }
+
