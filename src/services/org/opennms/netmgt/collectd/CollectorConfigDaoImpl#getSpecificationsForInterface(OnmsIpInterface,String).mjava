@@ -2,24 +2,22 @@
 		Collection matchingPkgs = new LinkedList();
 
         CollectdConfigFactory cCfgFactory = CollectdConfigFactory.getInstance();
-        CollectdConfiguration cConfig = getConfig();
-        Enumeration epkgs = cConfig.enumeratePackage();
-        
         
         /*
          * Compare interface/service pair against each collectd package
          * For each match, create new SnmpCollector object and
          * schedule it for collection
          */
-        while (epkgs.hasMoreElements()) {
-            Package pkg = (Package) epkgs.nextElement();
-            CollectionSpecification collectionSpec = new CollectionSpecification(pkg, svcName, getServiceCollector(svcName));
-
+        CollectdConfig config = cCfgFactory.getCollectdConfig();
+        for (Iterator it = config.getPackages().iterator(); it.hasNext();) {
+			CollectdPackage wpkg = (CollectdPackage) it.next();
+			Package pkg = wpkg.getPackage();
+        
             /*
              * Make certain the the current service is in the package
              * and enabled!
              */
-             if (!cCfgFactory.serviceInPackageAndEnabled(svcName, pkg)) {
+             if (!wpkg.serviceInPackageAndEnabled(svcName)) {
                 if (log().isDebugEnabled()) {
                     log().debug("scheduleInterface: address/service: " + iface + '/' + svcName + " not scheduled, service is not "
                               + "enabled or does not exist in package: "
@@ -29,7 +27,7 @@
             }
 
             // Is the interface in the package?
-            if (!cCfgFactory.interfaceInPackage(iface.getIpAddress(), pkg)) {
+            if (!wpkg.interfaceInPackage(iface.getIpAddress())) {
                 if (log().isDebugEnabled()) {
                     log().debug("scheduleInterface: address/service: " + iface + '/' + svcName + " not scheduled, interface "
                               + "does not belong to package: " + pkg.getName());
@@ -37,8 +35,15 @@
                 continue;
             }
             
+            Collection outageCalendars = new LinkedList();
+            Enumeration enumeration = pkg.enumerateOutageCalendar();
+            while (enumeration.hasMoreElements()) {
+				String outageName = (String) enumeration.nextElement();
+				outageCalendars.add(m_scheduledOutagesDao.get(outageName));
+			}
             
-            matchingPkgs.add(collectionSpec);
+            
+            matchingPkgs.add(new CollectionSpecification(pkg, svcName, outageCalendars, getServiceCollector(svcName)));
         }
 		return matchingPkgs;
 	}
