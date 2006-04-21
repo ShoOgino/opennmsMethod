@@ -1,0 +1,154 @@
+	private void getSnmpInfoForInterfaces() {
+		{
+			
+			PreparedStatement stmt = null;
+
+		try {
+			stmt = m_dsConn.prepareStatement(SnmpCollector.SQL_GET_SNMP_INFO);
+			stmt.setInt(1, m_nodeID);
+			ResultSet rs = stmt.executeQuery();
+			
+			addIfaceToSnmpPrimaryMap();
+
+			while (rs.next()) {
+				// Extract retrieved database values from the result set
+				int index = rs.getInt(1);
+				int type = rs.getInt(2);
+				String name = rs.getString(3);
+				String descr = rs.getString(4);
+				String physAddr = rs.getString(5);
+				if (m_collector.log().isDebugEnabled()) {
+					m_collector.log()
+							.debug(
+									"initialize: snmpifindex = " + index
+											+ ", snmpifname = " + name
+											+ ", snmpifdescr = " + descr
+											+ ", snmpphysaddr = -"
+											+ physAddr + "-");
+				}
+
+				/*
+				 * Determine the label for this interface. The label will be
+				 * used to create the RRD file name which holds SNMP data
+				 * retreived from the remote agent. If available ifName is
+				 * used to generate the label since it is guaranteed to be
+				 * unique. Otherwise ifDescr is used. In either case, all
+				 * non alpha numeric characters are converted to underscores
+				 * to ensure that the resuling string will make a decent
+				 * file name and that RRD won't have any problems using it
+				 */
+				String label = null;
+				if (name != null) {
+					label = AlphaNumeric.parseAndReplace(name, SnmpCollector.nonAnRepl);
+				} else if (descr != null) {
+					label = AlphaNumeric.parseAndReplace(descr, SnmpCollector.nonAnRepl);
+				} else {
+					m_collector.log()
+							.warn(
+									"Interface (ifIndex/nodeId="
+											+ index
+											+ "/"
+											+ m_nodeID
+											+ ") has no ifName and no "
+											+ "ifDescr...setting to label to 'no_ifLabel'.");
+					label = "no_ifLabel";
+				}
+
+				/*
+				 * In order to assure the uniqueness of the RRD file names
+				 * we now append the MAC/physical address to the end of
+				 * label if it is available.
+				 */
+				if (physAddr != null) {
+					physAddr = AlphaNumeric.parseAndTrim(physAddr);
+					if (physAddr.length() == 12) {
+						label = label + "-" + physAddr;
+					} else {
+						if (m_collector.log().isDebugEnabled()) {
+							m_collector.log().debug(
+									"initialize: physical address len "
+											+ "is NOT 12, physAddr="
+											+ physAddr);
+						}
+					}
+				}
+
+				if (m_collector.log().isDebugEnabled()) {
+					m_collector.log().debug("initialize: ifLabel = '" + label + "'");
+				}
+
+				// Create new IfInfo object
+
+				String collType = (String) m_snmppriMap.get(rs.getString(1));
+
+				IfInfo ifInfo = new IfInfo(index, type, label, collType);
+
+				if (index == m_primaryIfIndex) {
+					ifInfo.setIsPrimary(true);
+				} else {
+					ifInfo.setIsPrimary(false);
+				}
+
+				/*
+				 * Retrieve list of mib objects to be collected from the
+				 * remote agent for this interface.
+				 */
+				m_oidList = DataCollectionConfigFactory.getInstance()
+						.getMibObjectList(m_collectionName, m_sysoid,
+								m_ipAddr.getHostAddress(), type);
+
+				/*
+				 * Now build a list of RRD data source objects from the list
+				 * of mib objects
+				 */
+				m_dsList = m_collector.buildDataSourceList(m_collectionName, m_oidList);
+
+				// Set MIB object and data source lists in IfInfo object
+				ifInfo.setOidList(m_oidList);
+				ifInfo.setDsList(m_dsList);
+
+				/*
+				 * Add the new IfInfo object to the interface map keyed by
+				 * interface index
+				 */
+				m_ifMap.put(new Integer(index), ifInfo);
+			}
+			rs.close();
+		} catch (SQLException e) {
+			m_collector.log().debug("initialize: SQL exception!!", e);
+			throw new RuntimeException("SQL exception while attempting "
+					+ "to retrieve snmp interface info", e);
+		} catch (NullPointerException e) {
+			/*
+			 * Thrown by ResultSet.getString() if database query did not
+			 * return anything
+			 */
+			m_collector.log().debug("initialize: NullPointerException", e);
+			throw new RuntimeException("NullPointerException while "
+					+ "attempting to retrieve snmp interface info", e);
+		} finally {
+			try {
+				stmt.close();
+			} catch (Exception e) {
+				m_collector.log().info(
+						"initialize: an error occured trying to close "
+								+ "an SQL statement", e);
+			}
+		}
+		}
+
+		/*
+		 * Verify that we did find at least one eligible interface for the
+		 * node.
+		 */
+		if (m_ifMap.size() < 1) {
+			throw new RuntimeException("Failed to retrieve any eligible "
+					+ "interfaces for node " + m_nodeID
+					+ " from the database.");
+		}
+		
+		// Add the ifMap object as an attribute of the interface
+		m_iface.setAttribute(SnmpCollector.IF_MAP_KEY, m_ifMap);
+
+	}
+
