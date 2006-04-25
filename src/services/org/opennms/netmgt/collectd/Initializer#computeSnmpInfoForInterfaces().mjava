@@ -1,119 +1,126 @@
 	private void computeSnmpInfoForInterfaces() {
+		OnmsNode node = new OnmsNode();
+		node.setId(new Integer(m_iface.getNodeId()));
 
 		PreparedStatement stmt = null;
 		try {
 			stmt = m_dsConn.prepareStatement(SnmpCollector.SQL_GET_SNMP_INFO);
-			stmt.setInt(1, getNodeID());
+			stmt.setInt(1, m_iface.getNodeId());
 			ResultSet rs = stmt.executeQuery();
 			try {
 
 				while (rs.next()) {
 					// Extract retrieved database values from the result set
-					int index = rs.getInt(1);
-					int type = rs.getInt(2);
-					String name = rs.getString(3);
-					String descr = rs.getString(4);
-					String physAddr = rs.getString(5);
-					String collType = rs.getString(6);
+					OnmsSnmpInterface snmpIface = new OnmsSnmpInterface();
+					snmpIface.setNode(node);
+					snmpIface.setIfIndex(new Integer(rs.getInt(1)));
+					snmpIface.setIfType(new Integer(rs.getInt(2)));
+					snmpIface.setIfName(rs.getString(3));
+					snmpIface.setIfDescr(rs.getString(4));
+					snmpIface.setPhysAddr(rs.getString(5));
+					String physAddr = snmpIface.getPhysAddr();
+					
+					
+					CollectionType collType = getCollType(snmpIface);
 
-					IfInfo ifInfo = (IfInfo)m_ifMap.get(new Integer(index));
+					IfInfo ifInfo = (IfInfo)m_ifMap.get(new Integer(snmpIface.getIfIndex().intValue()));
 					if (ifInfo != null) {
 						if ("P".equals(collType)) ifInfo.setCollType(collType);
-						continue;
-					}
-
-					if (log().isDebugEnabled()) {
-						log()
-						.debug(
-								"initialize: snmpifindex = " + index
-								+ ", snmpifname = " + name
-								+ ", snmpifdescr = " + descr
-								+ ", snmpphysaddr = -"
-								+ physAddr + "-");
-					}
-
-					/*
-					 * Determine the label for this interface. The label will be
-					 * used to create the RRD file name which holds SNMP data
-					 * retreived from the remote agent. If available ifName is
-					 * used to generate the label since it is guaranteed to be
-					 * unique. Otherwise ifDescr is used. In either case, all
-					 * non alpha numeric characters are converted to underscores
-					 * to ensure that the resuling string will make a decent
-					 * file name and that RRD won't have any problems using it
-					 */
-					String label = null;
-					if (name != null) {
-						label = AlphaNumeric.parseAndReplace(name, SnmpCollector.nonAnRepl);
-					} else if (descr != null) {
-						label = AlphaNumeric.parseAndReplace(descr, SnmpCollector.nonAnRepl);
 					} else {
-						log()
-						.warn(
-								"Interface (ifIndex/nodeId="
-								+ index
-								+ "/"
-								+ getNodeID()
-								+ ") has no ifName and no "
-								+ "ifDescr...setting to label to 'no_ifLabel'.");
-						label = "no_ifLabel";
-					}
 
-					/*
-					 * In order to assure the uniqueness of the RRD file names
-					 * we now append the MAC/physical address to the end of
-					 * label if it is available.
-					 */
-					if (physAddr != null) {
-						physAddr = AlphaNumeric.parseAndTrim(physAddr);
-						if (physAddr.length() == 12) {
-							label = label + "-" + physAddr;
+						if (log().isDebugEnabled()) {
+							log()
+							.debug(
+									"initialize: snmpifindex = " + snmpIface.getIfIndex().intValue()
+									+ ", snmpifname = " + snmpIface.getIfName()
+									+ ", snmpifdescr = " + snmpIface.getIfDescr()
+									+ ", snmpphysaddr = -"
+									+ physAddr + "-");
+						}
+
+						/*
+						 * Determine the label for this interface. The label will be
+						 * used to create the RRD file name which holds SNMP data
+						 * retreived from the remote agent. If available ifName is
+						 * used to generate the label since it is guaranteed to be
+						 * unique. Otherwise ifDescr is used. In either case, all
+						 * non alpha numeric characters are converted to underscores
+						 * to ensure that the resuling string will make a decent
+						 * file name and that RRD won't have any problems using it
+						 */
+						String label = null;
+						if (snmpIface.getIfName() != null) {
+							label = AlphaNumeric.parseAndReplace(snmpIface.getIfName(), SnmpCollector.nonAnRepl);
+						} else if (snmpIface.getIfDescr() != null) {
+							label = AlphaNumeric.parseAndReplace(snmpIface.getIfDescr(), SnmpCollector.nonAnRepl);
 						} else {
-							if (log().isDebugEnabled()) {
-								log().debug(
-										"initialize: physical address len "
-										+ "is NOT 12, physAddr="
-										+ physAddr);
+							log()
+							.warn(
+									"Interface (ifIndex/nodeId="
+									+ snmpIface.getIfIndex().intValue()
+									+ "/"
+									+ m_iface.getNodeId()
+									+ ") has no ifName and no "
+									+ "ifDescr...setting to label to 'no_ifLabel'.");
+							label = "no_ifLabel";
+						}
+
+						/*
+						 * In order to assure the uniqueness of the RRD file names
+						 * we now append the MAC/physical address to the end of
+						 * label if it is available.
+						 */
+						if (physAddr != null) {
+							physAddr = AlphaNumeric.parseAndTrim(physAddr);
+							if (physAddr.length() == 12) {
+								label = label + "-" + physAddr;
+							} else {
+								if (log().isDebugEnabled()) {
+									log().debug(
+											"initialize: physical address len "
+											+ "is NOT 12, physAddr="
+											+ physAddr);
+								}
 							}
 						}
+
+						if (log().isDebugEnabled()) {
+							log().debug("initialize: ifLabel = '" + label + "'");
+						}
+
+						// Create new IfInfo object
+						ifInfo = new IfInfo(snmpIface.getIfIndex().intValue(), snmpIface.getIfType().intValue(), label, collType);
+
+						if (snmpIface.getIfIndex().intValue() == m_iface.getIfIndex()) {
+							ifInfo.setIsPrimary(true);
+						} else {
+							ifInfo.setIsPrimary(false);
+						}
+
+						/*
+						 * Retrieve list of mib objects to be collected from the
+						 * remote agent for this interface.
+						 */
+						List oidList = DataCollectionConfigFactory.getInstance()
+						.getMibObjectList(m_collectionName, m_iface.getSysObjectId(),
+								m_iface.getHostAddress(), snmpIface.getIfType().intValue());
+
+						/*
+						 * Now build a list of RRD data source objects from the list
+						 * of mib objects
+						 */
+						List dsList = DataCollectionConfigFactory.buildDataSourceList(m_collectionName, oidList);
+
+						// Set MIB object and data source lists in IfInfo object
+						ifInfo.setOidList(oidList);
+						ifInfo.setDsList(dsList);
+
+						/*
+						 * Add the new IfInfo object to the interface map keyed by
+						 * interface index
+						 */
+						m_ifMap.put(new Integer(snmpIface.getIfIndex().intValue()), ifInfo);
 					}
-
-					if (log().isDebugEnabled()) {
-						log().debug("initialize: ifLabel = '" + label + "'");
-					}
-
-					// Create new IfInfo object
-					ifInfo = new IfInfo(index, type, label, collType);
-
-					if (index == getPrimaryIfIndex()) {
-						ifInfo.setIsPrimary(true);
-					} else {
-						ifInfo.setIsPrimary(false);
-					}
-
-					/*
-					 * Retrieve list of mib objects to be collected from the
-					 * remote agent for this interface.
-					 */
-					List oidList = DataCollectionConfigFactory.getInstance()
-					.getMibObjectList(m_collectionName, getSysoid(),
-							getHostAddress(), type);
-
-					/*
-					 * Now build a list of RRD data source objects from the list
-					 * of mib objects
-					 */
-					List dsList = DataCollectionConfigFactory.buildDataSourceList(m_collectionName, oidList);
-
-					// Set MIB object and data source lists in IfInfo object
-					ifInfo.setOidList(oidList);
-					ifInfo.setDsList(dsList);
-
-					/*
-					 * Add the new IfInfo object to the interface map keyed by
-					 * interface index
-					 */
-					m_ifMap.put(new Integer(index), ifInfo);
 				}
 			} finally {
 				rs.close();
@@ -146,7 +153,7 @@
 		 */
 		if (m_ifMap.size() < 1) {
 			throw new RuntimeException("Failed to retrieve any eligible "
-					+ "interfaces for node " + getNodeID()
+					+ "interfaces for node " + m_iface.getNodeId()
 					+ " from the database.");
 		}
 
