@@ -1,0 +1,77 @@
+    int execute(CollectionInterface iface, EventProxy eproxy, Map parameters) {
+        try {
+    		// Collect node and interface MIB data from the remote agent
+    
+    		SnmpNodeCollector nodeCollector = null;
+    		// construct the nodeCollector
+    		if (!iface.getNodeOidList().isEmpty()) {
+    			nodeCollector = new SnmpNodeCollector(iface.getInetAddress(), iface.getNodeOidList());
+    		}
+    
+    		IfNumberTracker ifNumber = null;
+    		SnmpIfCollector ifCollector = null;
+    		// construct the ifCollector
+    		if (iface.hasInterfaceOids()) {
+    			ifCollector = new SnmpIfCollector(iface.getInetAddress(), iface.getCombinedInterfaceOids());
+    			ifNumber = new IfNumberTracker();
+    		}
+    
+    		collectData(iface, ifNumber, nodeCollector, ifCollector);
+    
+            if (iface.hasInterfaceOids()) {
+    			int savedIfCount = iface.getSavedIfCount();
+    
+    			int ifCount = ifNumber.getIfNumber();
+    
+    			iface.setSavedIfCount(ifCount);
+    
+    			log().debug(
+    					"collect: nodeId: " + iface.getNodeId()
+    							+ " interface: " + iface.getHostAddress()
+    							+ " ifCount: " + ifCount + " savedIfCount: "
+    							+ savedIfCount);
+    
+    			/*
+    			 * If saved interface count differs from the newly retreived
+    			 * interface count the following must occur: 1. generate
+    			 * forceRescan event so Capsd will rescan the node, update the
+    			 * database, and generate the appropriate events back to the
+    			 * poller.
+    			 */
+    			if ((savedIfCount != -1) && (ifCount != savedIfCount)) {
+    				if (!isForceRescanInProgress(
+    						iface.getNodeId(),
+    						iface.getHostAddress())) {
+    					log()
+    							.info(
+    									"Number of interfaces on primary SNMP "
+    											+ "interface "
+    											+ iface.getHostAddress()
+    											+ " has changed, generating 'ForceRescan' event.");
+    					generateForceRescanEvent(iface.getHostAddress(),
+    							iface.getNodeId(), eproxy);
+    				}
+    			}
+    		}
+    
+    		// Update RRD with values retrieved in SNMP collection
+    		boolean rrdError = updateRRDs(iface.getCollection(), iface,
+    				nodeCollector, ifCollector, parameters, eproxy);
+    
+    		if (rrdError) {
+    			log().warn(
+    					"collect: RRD error during update for "
+    							+ iface.getHostAddress());
+    		}
+    
+    		// return the status of the collection
+    		return ServiceCollector.COLLECTION_SUCCEEDED;
+    	} catch (CollectionError e) {
+    		return collectionError(e);
+    	} catch (CollectionWarning e) {
+    		return collectionWarning(e);
+    	} catch (Throwable t) {
+    		return unexpected(iface, t);
+    	}
+    }
+
