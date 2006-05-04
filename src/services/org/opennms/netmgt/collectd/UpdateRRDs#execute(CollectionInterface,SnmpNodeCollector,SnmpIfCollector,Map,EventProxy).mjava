@@ -1,0 +1,106 @@
+    void execute(CollectionInterface collectionInterface, SnmpNodeCollector snc, SnmpIfCollector sIfC, Map parms, EventProxy eproxy) {
+        m_iface = collectionInterface;
+        m_nodeCollector = snc;
+        m_IfCollector = sIfC;
+        m_parameters = parms;
+        m_eventProxy = eproxy;
+        
+        /*
+    	 * Write relevant collected SNMP statistics to RRD database First the
+    	 * node level RRD info will be updated. Secondly the interface level RRD
+    	 * info will be updated.
+    	 */
+    
+        // Node data
+        storeNodeData();
+    
+    	m_forceRescan = false;
+        m_rescanPending = false;
+
+        if (m_IfCollector != null) {
+            
+    		logIfAliasConfig();
+    
+            // get the snmpIfAliases
+            if (m_iface.isForceRescanInProgress()) {
+                m_rescanPending = true;
+            }
+    
+    		/*
+    		 * Retrieve list of SNMP collector entries generated for the remote
+    		 * node's interfaces.
+    		 */
+    		List snmpCollectorEntries = m_IfCollector.getEntries();
+            if (snmpCollectorEntries.size() == 0) {
+    			log().warn(
+    					"updateRRDs: No data retrieved for the interface "
+    							+ m_iface.getInetAddress().getHostAddress());
+    		}
+    
+    		// Iterate over the SNMP collector entries
+    		Iterator iter = snmpCollectorEntries.iterator();
+    		while (iter.hasNext()) {
+    			SNMPCollectorEntry ifEntry = (SNMPCollectorEntry) iter.next();
+    
+    			// get the ifAlias if one exists
+    			String aliasVal = getCurrentIfAliasSendingEventsIfNecessary(ifEntry);
+    
+    
+                /*
+                 * Use ifIndex to lookup the IfInfo object from the interface
+                 * map.
+                 */
+                IfInfo ifInfo = (IfInfo) m_iface.getIfMap().get(new Integer(ifEntry.getIfIndex().intValue()));
+                if (ifInfo == null) {
+                    // no data needed for this interface
+                    continue;
+                }
+    
+                validateDsList(ifInfo);
+
+                if (notScheduledForCollection(ifEntry, ifInfo) && !forceStoreByAlias(aliasVal)) {
+                    logSkip(ifEntry, ifInfo);
+                    continue;
+                }
+
+    			if (notScheduledForCollection(ifEntry, ifInfo) && forceStoreByAlias(aliasVal)) {
+                	logStore(ifEntry, ifInfo);
+                }
+                
+    			/*
+    			 * Iterate over the interface datasource list and issue RRD
+    			 * update commands to update each datasource which has a
+    			 * corresponding value in the collected SNMP data.
+    			 */
+    			Iterator i = ifInfo.getDsList().iterator();
+    			while (i.hasNext()) {
+    				DataSource ds = (DataSource) i.next();
+    
+    				try {
+    					String dsVal = ds.getRRDValue(ifEntry);
+    
+    					// Build RRD update command
+    					if (dsVal == null) {
+    						logNoDataRetrieved(ifEntry, ds);
+    					} else {
+    						if (shouldStoreByNode(ifEntry, ifInfo)) {
+                                storeByNode(ifEntry, ifInfo, ds, dsVal);
+    						}
+    						if (shouldStoreByAlias()) {
+    							storeByAlias(ifEntry, aliasVal, ds, dsVal);
+    						}
+    
+    					}
+    				} catch (IllegalArgumentException e) {
+    					logUpdateFailed(ifEntry, ds, e);
+    				}
+    
+    			} // end while(more datasources)
+    		} // end while(more SNMP collector entries)
+    	} // end if(ifCollector != null)
+    
+    	if (m_forceRescan) {
+    		m_iface.sendForceRescanEvent(m_eventProxy);
+    	}
+    }
+
