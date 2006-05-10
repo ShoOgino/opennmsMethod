@@ -1,5 +1,5 @@
     private void saveInterfaceData() {
-        if (getIfCollector() != null) {
+        if (m_agent.getIfCollector() != null) {
             
     		logIfAliasConfig();
     
@@ -7,42 +7,25 @@
     		 * Retrieve list of SNMP collector entries generated for the remote
     		 * node's interfaces.
     		 */
-            if (!getIfCollector().hasData()) {
+            if (!m_agent.getIfCollector().hasData()) {
     			log().warn("updateRRDs: No data retrieved for the agent at " + m_agent.getHostAddress());
     		}
             
+            putEntriesInIfInfos();
             
-    		// Iterate over the SNMP collector entries
-    		Iterator iter = getIfCollector().getEntries().iterator();
-    		while (iter.hasNext()) {
-    			SNMPCollectorEntry ifEntry = (SNMPCollectorEntry) iter.next();
+            for (Iterator iter = m_agent.getIfInfos().iterator(); iter.hasNext();) {
+                IfInfo ifInfo = (IfInfo) iter.next();
+                
+    			SNMPCollectorEntry ifEntry = ifInfo.getEntry();
 
-                int ifIndex = ifEntry.getIfIndex().intValue();
-                /*
-                 * Use ifIndex to lookup the IfInfo object from the interface
-                 * map.
-                 */
-                IfInfo ifInfo = m_agent.getIfInfo(ifIndex);
-                if (ifInfo == null) {
-                    m_forceRescanState.rescanIndicated();
-                    continue;
-                }
+                ifInfo.checkForChangedIfAlias(m_forceRescanState);
     
-                // TODO: This will send rescans for entries that have no IfInfo... so moving below IfInfo may fail to catch all the cases
-                // However... since we send an event if ifNumber changed maybe we don't need these?
-                if (currentAliasIsOutOfDate(ifEntry)) {
-                    m_forceRescanState.rescanIndicated();
-                    logForceRescan(ifEntry);
-                }
-    
-                validateAttrList(ifInfo);
-
-                if (notScheduledForCollection(ifEntry, ifInfo) && !forceStoreByAlias(getAliasDirName(ifEntry))) {
+                if ((!ifInfo.isScheduledForCollection()) && !forceStoreByAlias(ifInfo.getAliasDir(getIfAliasComment()))) {
                     logSkip(ifEntry, ifInfo);
                     continue;
                 }
 
-    			if (notScheduledForCollection(ifEntry, ifInfo) && forceStoreByAlias(getAliasDirName(ifEntry))) {
+    			if ((!ifInfo.isScheduledForCollection()) && forceStoreByAlias(ifInfo.getAliasDir(getIfAliasComment()))) {
                 	logStore(ifEntry, ifInfo);
                 }
                 
@@ -54,26 +37,22 @@
     			Iterator i = ifInfo.getAttributeList().iterator();
     			while (i.hasNext()) {
                     CollectionAttribute attr = (CollectionAttribute)i.next();
-    				DataSource ds = attr.getDs();
-    
     				try {
-    					String dsVal = ds.getRRDValue(ifEntry);
-    
-    					// Build RRD update command
-    					if (dsVal == null) {
-    						logNoDataRetrieved(ifEntry, ds);
-    					} else {
-    						if (shouldStoreByNode(ifEntry, ifInfo)) {
-                                storeByNode(ifEntry, ifInfo, ds, dsVal);
-    						}
-    						if (shouldStoreByAlias()) {
-    							storeByAlias(ifEntry, getAliasDirName(ifEntry), ds, dsVal);
-    						}
-    
-    					}
-    				} catch (IllegalArgumentException e) {
-    					logUpdateFailed(ifEntry, ds, e);
-    				}
+                    	// Build RRD update command
+                    	if (attr.getDs().getRRDValue(ifEntry) == null) {
+                    		logNoDataRetrieved(ifEntry, attr.getDs());
+                    	} else {
+                    		if (shouldStoreByNode(ifEntry, ifInfo)) {
+                                storeByNode(ifEntry, ifInfo, attr.getDs(), attr.getDs().getRRDValue(ifEntry));
+                    		}
+                    		if (shouldStoreByAlias(ifEntry, ifInfo)) {
+                    			storeByAlias(ifEntry, ifInfo.getAliasDir(getIfAliasComment()), attr.getDs(), attr.getDs().getRRDValue(ifEntry));
+                    		}
+                    
+                    	}
+                    } catch (IllegalArgumentException e) {
+                    	logUpdateFailed(ifEntry, attr.getDs(), e);
+                    }
     
     			} // end while(more datasources)
     		} // end while(more SNMP collector entries)
