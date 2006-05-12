@@ -10,21 +10,29 @@
 	 *            belongs.
 	 */
 	public int collect(CollectionAgent agent, EventProxy eventProxy, Map parameters) {
-        ForceRescanState forceRescanState = new ForceRescanState(agent, eventProxy);
-        ServiceParameters params = new ServiceParameters(parameters);
+        final ForceRescanState forceRescanState = new ForceRescanState(agent, eventProxy);
+        final ServiceParameters params = new ServiceParameters(parameters);
        
         try {
         
-            agent.collect();
-            
-            agent.checkForNewInterfaces(forceRescanState);
+            agent.getCollectionSet().collect();
+
+            if (agent.getCollectionSet().rescanNeeded())
+                forceRescanState.rescanIndicated();
             
             // Update RRD with values retrieved in SNMP collection
-            List resources = agent.getResources(forceRescanState, params);
+            params.logIfAliasConfig();
             
-            agent.storeResourceAttributes(getRrdBaseDir(), params, resources);
+            agent.getCollectionSet().visit(new ResourceVisitor() {
+
+                public void visitResource(CollectionResource resource) {
+                    if (resource.shouldPersist(params)) {
+                        resource.storeAttributes(getRrdBaseDir());
+                    }
+                }
+                
+            });
             
-        
         	// return the status of the collection
         	return ServiceCollector.COLLECTION_SUCCEEDED;
         } catch (CollectionError e) {
