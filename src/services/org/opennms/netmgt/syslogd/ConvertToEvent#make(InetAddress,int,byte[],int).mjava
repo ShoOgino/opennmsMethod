@@ -1,0 +1,218 @@
+    /**
+     * Constructs a new event encapsulation instance based upon the information
+     * passed to the method. The passed byte array is decoded into a string
+     * using the <tt>US-ASCII</tt> character encoding.
+     * 
+     * @param addr
+     *            The remote agent's address.
+     * @param port
+     *            The remote agent's port
+     * @param data
+     *            The XML data in US-ASCII encoding.
+     * @param len
+     *            The length of the XML data in the buffer.
+     * 
+     * @throws java.io.UnsupportedEncodingException
+     *             Thrown if the data buffer cannot be decoded using the
+     *             US-ASCII encoding.
+     */
+    static ConvertToEvent make(InetAddress addr, int port, byte[] data, int len) throws UnsupportedEncodingException {
+        
+        ConvertToEvent e = new ConvertToEvent();
+       
+        e.m_sender = addr;
+        e.m_port = port;
+        e.m_eventXML = new String(data, 0, len, "US-ASCII");
+        e.m_ackEvents = new ArrayList(16);
+        e.m_log = null;
+        
+       
+        m_logPrefix = org.opennms.netmgt.syslogd.Syslogd.LOG4J_CATEGORY;
+        ThreadCategory.setPrefix(m_logPrefix);       
+        ThreadCategory.setPrefix(LOG4J_CATEGORY);
+        Category log = ThreadCategory.getInstance();
+        
+        log.debug("In the make part of UdpReceivedSyslog " + e.toString());
+        
+        
+        
+        // Build a basic event out of the syslog message
+        
+        Event event = new Event();
+        event.setSource("syslogd");
+        
+        
+        // Set nodeId
+        
+        long nodeId = SyslogdIPMgr.getNodeId(addr.toString().replaceAll("/",""));
+        //log.debug("Nodeid via SyslogdIPMgr " + SyslogdIPMgr.getNodeId(addr.toString().replaceAll("/","")));
+        
+        if (nodeId != -1)
+            event.setNodeid(nodeId);
+        
+        
+
+        // Set event host
+        //
+        try {
+            event.setHost(InetAddress.getLocalHost().getHostName());
+        } catch (UnknownHostException uhE) {
+            event.setHost("unresolved.host");
+            log.warn("Failed to resolve local hostname", uhE);
+        }
+        
+        
+        event.setInterface(addr.toString().replaceAll("/",""));
+        
+        
+        event.setTime(org.opennms.netmgt.EventConstants.formatToString(new java.util.Date()));
+        Logmsg logmsg = new Logmsg();
+        logmsg.setDest("logndisplay");
+        
+        String message = new String(data, 0, len, "US-ASCII");
+        
+        //log.debug("The parsed message... " + message );
+        
+        int lbIdx = message.indexOf('<');
+        int rbIdx = message.indexOf('>');
+
+        if (lbIdx < 0 || rbIdx < 0 || lbIdx >= (rbIdx - 1)) {
+            log.debug("BAD MSG {" + message + "}");
+            
+        }
+
+        int priCode = 0;
+        String priStr = message.substring(lbIdx + 1, rbIdx);
+
+        try {
+            priCode = Integer.parseInt(priStr);
+        } catch (NumberFormatException ex) {
+            log.debug("ERROR Bad priority code '" + priStr + "'");
+            
+        }
+
+        int facility = SyslogDefs.extractFacility(priCode);
+        int priority = SyslogDefs.extractPriority(priCode);
+        
+        String priorityTxt = SyslogDefs.getPriorityName(priority);
+        event.setSeverity(priorityTxt);
+        
+        event.setUei("uei.opennms.org/syslogd/message" + priorityTxt);
+
+        // message = message.substring(rbIdx + 1, (message.length() - 1));
+
+        message = message.substring(rbIdx + 1, (message.length()));
+
+        //
+        // Check to see if msg looks non-standard.
+        // In this case, it means that there is not a standard
+        // date in the front of the message text.
+        //
+        boolean stdMsg = true;
+
+        if (message.length() < 16) {
+            stdMsg = false;
+        } else if (message.charAt(3) != ' ' || message.charAt(6) != ' '
+                || message.charAt(9) != ':' || message.charAt(12) != ':'
+                || message.charAt(15) != ' ') {
+            stdMsg = false;
+        }
+
+        String timestamp;
+
+        if (!stdMsg) {
+            try {
+                timestamp = SyslogTimeStamp.getInstance().format(new Date());
+            } catch (IllegalArgumentException ex) {
+                log.debug("ERROR INTERNAL DATE ERROR!");
+                timestamp = "";
+            }
+        } else {
+            timestamp = message.substring(0, 15);
+            message = message.substring(16);
+        }
+
+        lbIdx = message.indexOf('[');
+        rbIdx = message.indexOf(']');
+        int colonIdx = message.indexOf(':');
+        int spaceIdx = message.indexOf(' ');
+
+        int processId = 0;
+        String processName = "";
+        String processIdStr = "";
+
+        if (lbIdx < (rbIdx - 1) && colonIdx == (rbIdx + 1)
+                && spaceIdx == (colonIdx + 1)) {
+            processName = message.substring(0, lbIdx);
+            processIdStr = message.substring(lbIdx + 1, rbIdx);
+            message = message.substring(colonIdx + 2);
+
+            try {
+                processId = Integer.parseInt(processIdStr);
+            } catch (NumberFormatException ex) {
+                log.debug("ERROR Bad process id '" + processIdStr + "'");
+                processId = 0;
+            }
+        } else if (lbIdx < 0 && rbIdx < 0 && colonIdx > 0
+                && spaceIdx == (colonIdx + 1)) {
+            processName = message.substring(0, colonIdx);
+            message = message.substring(colonIdx + 2);
+        }
+        
+        //log.debug(processName +"," + processId + " " + timestamp + " " + message);
+      
+        
+        //Using parms provides configurability.
+        logmsg.setContent(message );
+        event.setLogmsg(logmsg);
+        
+//      Add appropriate parms
+        Parms eventParms = new Parms();
+        Parm eventParm = null;
+        Value parmValue = null;
+
+        eventParm = new Parm();
+        eventParm.setParmName("syslogmessage");
+        parmValue = new Value();
+        parmValue.setContent((message));
+        eventParm.setValue(parmValue);
+        eventParms.addParm(eventParm);
+        
+        eventParm = new Parm();
+        eventParm.setParmName("severity");
+        parmValue = new Value();
+        parmValue.setContent("" + priorityTxt);
+        eventParm.setValue(parmValue);
+        eventParms.addParm(eventParm);
+        
+        eventParm = new Parm();
+        eventParm.setParmName("timestamp");
+        parmValue = new Value();
+        parmValue.setContent(timestamp);
+        eventParm.setValue(parmValue);
+        eventParms.addParm(eventParm);
+        
+        eventParm = new Parm();
+        eventParm.setParmName("process");
+        parmValue = new Value();
+        parmValue.setContent(processName);
+        eventParm.setValue(parmValue);
+        eventParms.addParm(eventParm);
+        
+        eventParm = new Parm();
+        eventParm.setParmName("processid");
+        parmValue = new Value();
+        parmValue.setContent("" + processId);
+        eventParm.setValue(parmValue);
+        eventParms.addParm(eventParm);
+        
+        
+        //Good thing(tm)
+        event.setParms(eventParms);
+
+        
+        //log.debug("Returning from SyslogToEvent " + event.toString());
+        e.m_event = event;
+        return e;
+    }
+
