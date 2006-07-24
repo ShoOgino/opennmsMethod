@@ -1,30 +1,41 @@
-	public void testPollMonitoredService() {
+	public void testPollMonitoredService() throws EventProxyException {
 		
-		final int expectedResultId = 7;
+		final int expectedResultId = m_pollStore.getExpectedId();
 
 		// anticipate a call to the dao save with a pollResult
-		m_pollResultDao.save(isA(PollResult.class));
-		
-		// make sure that we update the id property of the passed in result
+		m_demandPollDao.save(isA(DemandPoll.class));
 		expectLastCall().andAnswer(new IAnswer<Object>() {
 
 			public Object answer() throws Throwable {
-				PollResult result = (PollResult)getCurrentArguments()[0];
-				result.setId(expectedResultId);
+				DemandPoll poll = (DemandPoll)getCurrentArguments()[0];
+				m_pollStore.save(poll);
 				return null;
 			}
 			
 		});
 		
-		m_pollerAPI.poll(1, "192.168.1.1", 1, 3, expectedResultId);
-		
-		replay(m_pollResultDao);
-		replay(m_pollerAPI);
-		
-		PollResult result = m_demandPollService.pollMonitoredService(1, "192.168.1.1", 1, 3);
+		OnmsServiceType svcType = new OnmsServiceType();
+		svcType.setId(3);
+		svcType.setName("HTTP");
+		OnmsNode node = new OnmsNode();
+		node.setId(1);
+		OnmsIpInterface iface = new OnmsIpInterface("192.168.1.1", node);
+		iface.setIfIndex(1);
+		OnmsMonitoredService monSvc = new OnmsMonitoredService(iface, svcType);
 
-		verify(m_pollResultDao);
-		verify(m_pollerAPI);
+		expect(m_monitoredServiceDao.get(1, "192.168.1.1", 1, 3)).andReturn(monSvc);
+
+		m_pollerService.poll(monSvc, expectedResultId);
+		
+		replay(m_demandPollDao);
+		replay(m_monitoredServiceDao);
+		replay(m_pollerService);
+		
+		DemandPoll result = m_demandPollService.pollMonitoredService(1, "192.168.1.1", 1, 3);
+
+		verify(m_demandPollDao);
+		verify(m_monitoredServiceDao);
+		verify(m_pollerService);
 
 		assertNotNull("Null is an invalid response from pollMonitoredService", result);
 		assertEquals("Expected Id to be set by dao", expectedResultId, result.getId());
