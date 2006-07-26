@@ -1,0 +1,66 @@
+	public synchronized void unschedule(InetAddress ipAddr)
+			throws UnknownHostException {
+		Category log = ThreadCategory.getInstance(getClass());
+
+		if (log.isDebugEnabled()) {
+			log.debug("unschedule: Removing Ready Runnable(s) with ip "
+					+ ipAddr.getHostAddress());
+		}
+
+		boolean done = false;
+		synchronized(m_queues) {
+		  Iterator iter = m_queues.keySet().iterator();
+		  while (iter.hasNext() && !done) {
+
+			Long key = (Long) iter.next();
+			PeekableFifoQueue in = (PeekableFifoQueue) m_queues.get(key);
+			
+			if (in.isEmpty()) {
+				continue;
+			}
+			ReadyRunnable readyRun = null;
+			int maxLoops = in.size();
+
+			boolean first = true;
+			do {
+				try {
+					readyRun = (ReadyRunnable) in.remove();
+					if (in.size() == maxLoops && first) {
+						maxLoops++;
+					}
+					first = false;
+					if (readyRun != null && readyRun.getTarget().equals(ipAddr)) {
+						if (log.isDebugEnabled()) {
+							log
+									.debug("unschedule: removing found ready runnable "
+											+ readyRun + " at interval " + key);
+						}
+
+						// Pop the interface/readyRunnable from the
+						// queue for execution.
+						//
+						m_scheduled--;
+						done = true;
+					} else {
+						in.add(readyRun);
+					}
+				} catch (InterruptedException ie) {
+					if (log.isInfoEnabled())
+						log.info(
+								"unschedule: failed to remove ready runnable instance "
+										+ ipAddr.getHostAddress()
+										+ " from scheduler", ie);
+					Thread.currentThread().interrupt();
+				} catch (FifoQueueException ex) {
+					if (log.isInfoEnabled())
+						log.info(
+								"unschedule: failed to remove ready runnable instance "
+										+ ipAddr.getHostName()
+										+ " from scheduler", ex);
+					throw new UndeclaredThrowableException(ex);
+				}
+			} while ( --maxLoops > 0) ; 
+		  }
+		}
+	}
+

@@ -1,0 +1,85 @@
+	public synchronized ReadyRunnable getReadyRunnable(InetAddress ipAddr) {
+		Category log = ThreadCategory.getInstance(getClass());
+
+		if (log.isDebugEnabled()) {
+			log.debug("getReadyRunnable: Retriving Ready Runnable for Ip "
+					+ ipAddr.getHostAddress());
+		}
+
+		ReadyRunnable rr = null;
+		boolean done = false;
+		synchronized (m_queues) {
+			// get an iterator so that we can cycle
+			// through the queue elements.
+			//
+			Iterator iter = m_queues.keySet().iterator();
+			while (iter.hasNext() && !done) {
+				// Peak for Runnable objects until
+				// there are no more ready runnables
+				//
+				// Also, only go through each queue once!
+				// if we didn't add a count then it would
+				// be possible to starve other queues.
+				//
+				Long key = (Long) iter.next();
+				PeekableFifoQueue in = (PeekableFifoQueue) m_queues.get(key);
+				if (in.isEmpty()) {
+					continue;
+				}
+
+				int maxLoops = in.size();
+				ReadyRunnable readyRun = null;
+				boolean first = true;
+				do {
+					try {
+						readyRun = (ReadyRunnable) in.remove();
+						if (in.size() == maxLoops && first) {
+							maxLoops++;
+						}
+						first = false;
+						if (readyRun != null
+								&& readyRun.getTarget().equals(ipAddr)) {
+							if (log.isDebugEnabled()) {
+								log
+										.debug("getReadyRunnable: found ready runnable "
+												+ readyRun);
+							}
+							rr = readyRun;
+							done = true;
+						}
+						in.add(readyRun);
+					} catch (InterruptedException ie) {
+						if (log.isInfoEnabled())
+							log.info(
+									"getReadyRunnable: failed to get ready runnable instance "
+											+ ipAddr.getHostAddress()
+											+ " from scheduler", ie);
+						Thread.currentThread().interrupt();
+					} catch (FifoQueueException ex) {
+						if (log.isInfoEnabled())
+							log.info(
+									"getReadyRunnable: failed to get ready runnable instance "
+											+ ipAddr.getHostAddress()
+											+ " from scheduler", ex);
+						throw new UndeclaredThrowableException(ex);
+					} catch (UnknownHostException he) {
+						if (log.isInfoEnabled())
+							log.info(
+									"getReadyRunnable: failed to get ready runnable instance "
+											+ ipAddr.getHostAddress()
+											+ " from scheduler", he);
+						throw new UndeclaredThrowableException(he);
+					}
+
+				} while (--maxLoops > 0) ;
+			}
+		}
+
+		if (rr == null) {
+		if (log.isInfoEnabled())
+			log.info("getReadyRunnable: ready runnable instance "
+					+ ipAddr.getHostAddress() + " not found on scheduler");
+		}
+		return rr;
+	}
+

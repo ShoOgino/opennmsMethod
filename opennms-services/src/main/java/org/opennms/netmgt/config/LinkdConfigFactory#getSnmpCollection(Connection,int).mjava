@@ -1,0 +1,67 @@
+	public SnmpCollection getSnmpCollection(Connection dbConn, int nodeid)
+			throws SQLException, UnknownHostException {
+
+		Category log = ThreadCategory.getInstance(getClass());
+
+		try {
+			if (!classNameLoaded)
+				getClassNames();
+		} catch (Throwable t) {
+			log.error("getSnmpCollection: cannot find vlan hash class " + t);
+		}
+
+		SnmpCollection coll = null;
+
+		/**
+		 * Query to select info for specific node
+		 */
+		String SQL_SELECT_SNMP_NODE = "SELECT nodesysoid, ipaddr FROM node "
+				+ "LEFT JOIN ipinterface ON node.nodeid = ipinterface.nodeid "
+				+ "WHERE node.nodeid = ? AND nodetype = 'A' AND issnmpprimary = 'P'";
+
+		PreparedStatement stmt = dbConn.prepareStatement(SQL_SELECT_SNMP_NODE);
+		stmt.setInt(1, nodeid);
+		if (log.isDebugEnabled())
+			log.debug("getSnmpCollection: SQL statement = " + stmt.toString());
+
+		ResultSet rs = stmt.executeQuery();
+
+		while (rs.next()) {
+			String sysoid = rs.getString("nodesysoid");
+			if (sysoid == null)
+				sysoid = "-1";
+			String ipaddr = rs.getString("ipaddr");
+			if (log.isDebugEnabled())
+				log.debug("getSnmpCollection: found node element: nodeid "
+						+ nodeid + " ipaddr " + ipaddr + " sysoid " + sysoid);
+
+			coll = new SnmpCollection(SnmpPeerFactory.getInstance().getAgentConfig(
+					InetAddress.getByName(ipaddr)));
+
+			try {
+				if (hasClassName(sysoid)) {
+					coll.setVlanClass(getClassName(sysoid));
+					if (log.isDebugEnabled())
+						log
+								.debug("getSnmpCollection: found class to get Vlans: "
+										+ coll.getVlanClass());
+				} else {
+					if (log.isDebugEnabled())
+						log
+								.debug("getSnmpCollection: no class found to get Vlans");
+				}
+			} catch (Throwable t) {
+				if (log.isEnabledFor(Priority.ERROR))
+					log
+							.error("getSnmpCollection: Failed to load vlan classes from linkd configuration file "
+									+ t);
+			}
+
+		}
+		rs.close();
+		stmt.close();
+
+		return coll;
+
+	}
+

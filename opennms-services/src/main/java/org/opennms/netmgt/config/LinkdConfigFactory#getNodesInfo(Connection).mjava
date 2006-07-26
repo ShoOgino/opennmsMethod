@@ -1,0 +1,69 @@
+	private void getNodesInfo(Connection dbConn) throws SQLException,
+			UnknownHostException {
+
+		Category log = ThreadCategory.getInstance(LinkdConfigFactory.class);
+
+		snmpprimaryip2nodes.clear();
+		snmpprimaryip2colls.clear();
+
+		try {
+			if (!classNameLoaded)
+				getClassNames();
+		} catch (Throwable t) {
+			log.error("getNodesInfo: cannot find vlan hash class " + t);
+		}
+
+		PreparedStatement ps = dbConn.prepareStatement(SQL_SELECT_SNMP_NODES);
+
+		ResultSet rs = ps.executeQuery();
+		if (log.isDebugEnabled())
+			log
+					.debug("getNodesInfo: searching snmp primary ip nodes with query: \" "
+							+ SQL_SELECT_SNMP_NODES + "\"");
+
+		while (rs.next()) {
+			int nodeid = rs.getInt("nodeid");
+			String ipaddr = rs.getString("ipaddr");
+			String sysoid = rs.getString("nodesysoid");
+			if (sysoid == null)
+				sysoid = "-1";
+			if (log.isDebugEnabled())
+				log.debug("getNodesInfo: found node element: nodeid " + nodeid
+						+ " ipaddr " + ipaddr + " sysoid " + sysoid);
+
+			LinkableNode node = new LinkableNode(nodeid, ipaddr);
+			snmpprimaryip2nodes.put(ipaddr, node);
+
+			SnmpCollection coll = new SnmpCollection(SnmpPeerFactory
+					.getInstance().getAgentConfig(InetAddress.getByName(ipaddr)));
+
+			try {
+				if (hasClassName(sysoid)) {
+					coll.setVlanClass(getClassName(sysoid));
+					if (log.isDebugEnabled())
+						log.debug("getNodesInfo: found class to get Vlans: "
+								+ coll.getVlanClass());
+				} else {
+					if (log.isDebugEnabled())
+						log.debug("getNodesInfo: no class found to get Vlans");
+				}
+			} catch (Throwable t) {
+				if (log.isEnabledFor(Priority.ERROR))
+					log
+							.error("getNodesInfo: Failed to load vlan classes from linkd configuration file "
+									+ t);
+			}
+			snmpprimaryip2colls.put(ipaddr, coll);
+
+		}
+
+		rs.close();
+		ps.close();
+
+		if (log.isDebugEnabled())
+			log.debug("getNodesInfo: found " + snmpprimaryip2nodes.size()
+
+			+ " snmp primary ip nodes");
+		hashLoaded = true;
+	}
+

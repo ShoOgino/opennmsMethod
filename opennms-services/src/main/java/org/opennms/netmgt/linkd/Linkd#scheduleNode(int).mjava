@@ -1,0 +1,96 @@
+	void scheduleNode(int nid) throws UnknownHostException, Throwable {
+
+		Category log = ThreadCategory.getInstance();
+		java.sql.Connection dbConn = null;
+		SnmpCollection coll = null;
+		
+		try {
+			dbConn = DataSourceFactory.getInstance().getConnection();
+			if (log.isDebugEnabled()) {
+				log.debug("scheduleNode: Loading node " + nid
+						+ " from database");
+			}
+			try {
+				coll = LinkdConfigFactory.getInstance().getSnmpCollection(
+						dbConn, nid);
+			} catch (UnknownHostException h) {
+				if (log.isEnabledFor(Priority.WARN))
+					log
+							.warn("scheduleNode: Failed to get Linkable node from LinkdConfigFactory"
+									+ h);
+			}
+		} catch (SQLException sqlE) {
+			log
+					.fatal(
+							"scheduleNode: SQL Exception while syncing node object with database information.",
+							sqlE);
+			throw new UndeclaredThrowableException(sqlE);
+		} catch (Throwable t) {
+			log
+					.fatal(
+							"scheduleNode: Unknown error while syncing node object with database information.",
+							t);
+			throw new UndeclaredThrowableException(t);
+		} finally {
+			try {
+				if (dbConn != null) {
+					dbConn.close();
+				}
+			} catch (SQLException e) {
+				log
+						.error(
+								"scheduleNode: SQL Exception while syncing node object with database information.",
+								e);
+			}
+		}
+
+		InetAddress ipAddr = coll.getSnmpIpPrimary();
+		String ip = ipAddr.getHostAddress();
+		LinkableNode node = new LinkableNode(nid,ip);
+
+		// work on snmpprimary
+		synchronized (snmpprimaryip2nodes) {
+			if (snmpprimaryip2nodes.containsKey(ip)) {
+				LinkableNode oldNode = (LinkableNode) snmpprimaryip2nodes
+						.get(ip);
+
+				// first of all set status to D on linkd tables for old node if
+				// different from new
+				if (node.getNodeId() != oldNode.getNodeId()) {
+					DbEventWriter dbwriter = new DbEventWriter(oldNode.getNodeId(),
+							DbEventWriter.ACTION_DELETE);
+					dbwriter.run();
+				}
+			}
+			snmpprimaryip2nodes.put(ip, node);
+		}
+
+		synchronized (coll) {
+			if (coll.getScheduler() == null) {
+				coll.setScheduler(m_scheduler);
+			}
+			coll.setPollInterval(m_snmp_poll_interval);
+			coll.setInitialSleepTime(0);
+			coll.schedule();
+		}
+			
+		if (!scheduledDiscoveryLink) {
+			DiscoveryLink discoveryLink = new DiscoveryLink();
+
+			if (log.isDebugEnabled())
+				log
+						.debug("scheduleNode: scheduling Discovery Link");
+			synchronized (discoveryLink) {
+				if (discoveryLink.getScheduler() == null) {
+					discoveryLink.setScheduler(m_scheduler);
+				}
+				discoveryLink.setSnmpPollInterval(m_snmp_poll_interval);
+				discoveryLink.setDiscoveryInterval(m_discovery_link_interval);
+				discoveryLink.setInitialSleepTime(0);
+			}
+			discoveryLink.schedule();
+			scheduledDiscoveryLink = true;
+		}
+
+	}
+

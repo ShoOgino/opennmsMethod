@@ -1,0 +1,227 @@
+	public synchronized void init() {
+
+		ThreadCategory.setPrefix(LOG4J_CATEGORY);
+		Category log = ThreadCategory.getInstance();
+
+		if (log.isEnabledFor(Priority.INFO))
+			log
+					.info("init: Category Level Set to "
+							+ log.getLevel().toString());
+
+		// Initialize the Capsd configuration factory.
+		//
+		try {
+			CapsdConfigFactory.reload();
+		} catch (MarshalException ex) {
+			log.error("Failed to load Capsd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		} catch (ValidationException ex) {
+			log.error("Failed to load Capsd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		} catch (IOException ex) {
+			log.error("Failed to load Capsd configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+
+		// Initialize the Linkd configuration factory.
+		//
+		try {
+			LinkdConfigFactory.init();
+		} catch (ClassNotFoundException ex) {
+			log.error("init: Failed to load linkd configuration file ", ex);
+			return;
+		} catch (MarshalException ex) {
+			log.error("init: Failed to load linkd configuration file ", ex);
+			return;
+		} catch (ValidationException ex) {
+			log.error("init: Failed to load linkd configuration file ", ex);
+			return;
+		} catch (IOException ex) {
+			log.error("init: Failed to load linkd configuration file ", ex);
+			return;
+		}
+
+		snmpprimaryip2nodes = new HashMap();
+
+		
+		// Initialize the SNMP Peer Factory
+		//
+		try {
+			SnmpPeerFactory.reload();
+		} catch (MarshalException ex) {
+			log.error("Failed to load SNMP configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		} catch (ValidationException ex) {
+			log.error("Failed to load SNMP configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		} catch (IOException ex) {
+			log.error("Failed to load SNMP configuration", ex);
+			throw new UndeclaredThrowableException(ex);
+		}
+
+		// Initialize the Database configuration factory
+		//
+        // Initialize the Database configuration factory
+        try {
+            DataSourceFactory.init();
+        } catch (IOException ie) {
+            log.fatal("IOException loading database config", ie);
+            throw new UndeclaredThrowableException(ie);
+        } catch (MarshalException me) {
+            log.fatal("Marshall Exception loading database config", me);
+            throw new UndeclaredThrowableException(me);
+        } catch (ValidationException ve) {
+            log.fatal("Validation Exception loading database config", ve);
+            throw new UndeclaredThrowableException(ve);
+        } catch (ClassNotFoundException ce) {
+            log.fatal("Class lookup failure loading database config", ce);
+            throw new UndeclaredThrowableException(ce);
+        } catch (PropertyVetoException pve) {
+            log.fatal("Property veto failure loading database config", pve);
+            throw new UndeclaredThrowableException(pve);
+        } catch (SQLException sqle) {
+            log.fatal("SQL exception loading database config", sqle);
+            throw new UndeclaredThrowableException(sqle);
+        }
+
+
+		try {
+			m_initial_sleep_time = LinkdConfigFactory.getInstance()
+					.getInitialSleepTime();
+		} catch (Throwable t) {
+			log
+					.error("init: Failed to load Initial Sleep Time from linkd configuration file "
+							+ t);
+		}
+
+		try {
+			m_snmp_poll_interval = LinkdConfigFactory.getInstance()
+					.getSnmpPollInterval();
+		} catch (Throwable t) {
+			log
+					.error("init: Failed to load Snmp Poll Interval from linkd configuration file "
+							+ t);
+		}
+
+		try {
+			m_discovery_link_interval = LinkdConfigFactory.getInstance()
+					.getDiscoveryLinkInterval();
+		} catch (Throwable t) {
+			log
+					.error("init: Failed to load Discovery Link Interval from linkd configuration file "
+							+ t);
+		}
+
+		java.sql.Connection dbConn = null;
+		SnmpCollection[] snmpcolls = null;
+		try {
+			dbConn = DataSourceFactory.getInstance().getConnection();
+			if (log.isDebugEnabled()) {
+				log
+						.debug("init: Loading nodes from database using LinkdConfigFactory");
+			}
+			snmpprimaryip2nodes = LinkdConfigFactory.getInstance()
+						.getLinkableNodes(dbConn);
+			snmpcolls = (SnmpCollection[]) LinkdConfigFactory.getInstance().getSnmpColls(dbConn).values().toArray(new SnmpCollection[0]);
+			LinkdConfigFactory.getInstance().updateDeletedNodes(dbConn);
+		} catch (SQLException sqlE) {
+			log
+					.fatal(
+							"SQL Exception while syncing node object with database information.",
+							sqlE);
+			throw new UndeclaredThrowableException(sqlE);
+		} catch (Throwable t) {
+			log
+					.fatal(
+							"Unknown error while syncing node object with database information.",
+							t);
+			throw new UndeclaredThrowableException(t);
+		} finally {
+			try {
+				if (dbConn != null) {
+					dbConn.close();
+				}
+			} catch (Exception e) {
+			}
+		}
+
+		// Create a scheduler
+		//
+		try {
+			if (log.isDebugEnabled())
+				log.debug("init: Creating link scheduler");
+
+			m_scheduler = new Scheduler("Linkd", LinkdConfigFactory
+					.getInstance().getThreads());
+		} catch (RuntimeException e) {
+			log.fatal("init: Failed to create linkd scheduler", e);
+			throw e;
+		} catch (Throwable t) {
+			log
+					.error("init: Failed to load threads from linkd configuration file "
+							+ t);
+		}
+
+		// Schedule the snmp data collection on nodes
+		//
+
+		if (log.isDebugEnabled())
+			log.debug("init: scheduling "
+					+ snmpprimaryip2nodes.size() + " Snmp Collections ");
+
+		SnmpCollection snmpCollector = null;
+
+		if (snmpcolls.length != 0) {
+			for (int i = 0; i < snmpcolls.length; i++) {
+				snmpCollector = snmpcolls[i];
+				log.debug("init: scheduling Snmp Collection for ip "
+						+ snmpCollector.getSnmpIpPrimary().getHostAddress());
+				synchronized (snmpCollector) {
+					if (snmpCollector.getScheduler() == null) {
+						snmpCollector.setScheduler(m_scheduler);
+					}
+					snmpCollector.setPollInterval(m_snmp_poll_interval);
+					snmpCollector.setInitialSleepTime(m_initial_sleep_time);
+					m_initial_sleep_time = m_initial_sleep_time	+ 5000;
+				}
+				snmpCollector.schedule();
+			}
+			// Schedule the discovery link on nodes
+			//
+			DiscoveryLink discoveryLink = new DiscoveryLink();
+			if (log.isDebugEnabled())
+				log
+						.debug("init: scheduling Discovery Link");
+
+			synchronized (discoveryLink) {
+				if (discoveryLink.getScheduler() == null) {
+					discoveryLink.setScheduler(m_scheduler);
+				}
+				discoveryLink.setSnmpPollInterval(m_snmp_poll_interval);
+				discoveryLink.setDiscoveryInterval(m_discovery_link_interval);
+				discoveryLink.setInitialSleepTime(m_initial_sleep_time);
+			}
+			discoveryLink.schedule();
+			scheduledDiscoveryLink = true;
+		}
+
+		// Create an event receiver.
+		//
+		try {
+			if (log.isDebugEnabled()) {
+				log.debug("init: Creating event broadcast event receiver");
+			}
+
+			m_receiver = new LinkdEventProcessor(this);
+		} catch (Throwable t) {
+			log.error(
+					"init: Failed to initialized the broadcast event receiver",
+					t);
+			throw new UndeclaredThrowableException(t);
+		}
+
+		if (log.isEnabledFor(Priority.INFO))
+			log.info("init: LINKD CONFIGURATION INITIALIZED");
+
+	}
+

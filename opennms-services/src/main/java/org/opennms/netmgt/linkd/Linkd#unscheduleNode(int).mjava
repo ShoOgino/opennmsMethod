@@ -1,0 +1,100 @@
+	void unscheduleNode(int nid) throws UnknownHostException, Throwable {
+
+		Category log = ThreadCategory.getInstance();
+		boolean passed = false;
+		if (log.isDebugEnabled())
+			log.debug("unscheduleNode: deleting snmp collection for node "
+					+ nid);
+
+		InetAddress ipAddr = null;
+		synchronized (snmpprimaryip2nodes) {
+			Iterator it = snmpprimaryip2nodes.values().iterator();
+			while (it.hasNext()) {
+				LinkableNode node = (LinkableNode) it.next();
+				if (node.getNodeId() == nid) {
+					snmpprimaryip2nodes.remove(node.getSnmpPrimaryIpAddr());
+					if (log.isDebugEnabled())
+						log
+								.debug("unscheduleNode: removed linkable node from snmp collection for node "
+										+ nid);
+					ipAddr = InetAddress.getByName(node.getSnmpPrimaryIpAddr());
+					passed = true;
+					break;
+				}
+			}
+		}
+
+		if (!passed) {
+			if (log.isDebugEnabled())
+				log
+						.debug("unscheduleNode: linkable node not found on snmp collection for node "
+								+ nid);
+			java.sql.Connection dbConn = null;
+
+			try {
+				dbConn = DataSourceFactory.getInstance()
+						.getConnection();
+				if (log.isDebugEnabled()) {
+					log.debug("unscheduleNode: Loading node " + nid
+							+ " from database");
+				}
+				try {
+					ipAddr = LinkdConfigFactory.getInstance().getSnmpPrimaryIp(
+							dbConn, nid);
+				} catch (UnknownHostException h) {
+					if (log.isEnabledFor(Priority.WARN))
+						log
+								.warn("unscheduleNode: Failed to get Linkable node from LinkdConfigFactory"
+										+ h);
+				}
+			} catch (SQLException sqlE) {
+				log
+						.fatal(
+								"unscheduleNode: SQL Exception while syncing node object with database information.",
+								sqlE);
+				throw new UndeclaredThrowableException(sqlE);
+			} catch (Throwable t) {
+				log
+						.fatal(
+								"unscheduleNode: Unknown error while syncing node object with database information.",
+								t);
+				throw new UndeclaredThrowableException(t);
+			} finally {
+				try {
+					if (dbConn != null) {
+						dbConn.close();
+					}
+				} catch (SQLException e) {
+					log
+							.error(
+									"unscheduleNode: SQL Exception while syncing node object with database information.",
+									e);
+				}
+			}
+		}
+
+		// test if ipaddress is null
+		// get readyrunnuble and operate on it
+		if (ipAddr != null) {
+			ReadyRunnable rr = m_scheduler.getReadyRunnable(ipAddr);
+			if (rr != null) {
+				rr.unschedule();
+			} else {
+				if (log.isEnabledFor(Priority.INFO))
+					log
+							.info("unscheduleNode: Failed to get Ready Runnable for ipaddress " + ipAddr.getHostAddress() 
+									+ " with nodeid "
+									+ nid);
+				
+			}
+		} else {
+			if (log.isEnabledFor(Priority.WARN))
+				log
+						.warn("unscheduleNode: Failed to get ipaddress for node "
+								+ nid);
+		}
+
+		DbEventWriter dbwriter = new DbEventWriter(nid, DbEventWriter.ACTION_DELETE);
+		dbwriter.run();
+	}
+
