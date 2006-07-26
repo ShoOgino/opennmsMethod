@@ -1,0 +1,76 @@
+	void wakeUpNode(int nid) throws UnknownHostException, Throwable {
+
+		Category log = ThreadCategory.getInstance();
+		java.sql.Connection dbConn = null;
+		InetAddress ipAddr = null;
+		
+		try {
+			dbConn = DataSourceFactory.getInstance().getConnection();
+			if (log.isDebugEnabled()) {
+				log.debug("wakeUpNode: Loading node " + nid
+						+ " from database");
+			}
+			try {
+				ipAddr = LinkdConfigFactory.getInstance().getSnmpPrimaryIp(
+						dbConn, nid);
+			} catch (UnknownHostException h) {
+				if (log.isEnabledFor(Priority.WARN))
+					log
+							.warn("wakeUpNode: Failed to get Linkable node from LinkdConfigFactory"
+									+ h);
+			}
+		} catch (SQLException sqlE) {
+			log
+					.fatal(
+							"wakeUpNode: SQL Exception while syncing node object with database information.",
+							sqlE);
+			throw new UndeclaredThrowableException(sqlE);
+		} catch (Throwable t) {
+			log
+					.fatal(
+							"wakeUpNode: Unknown error while syncing node object with database information.",
+							t);
+			throw new UndeclaredThrowableException(t);
+		} finally {
+			try {
+				if (dbConn != null) {
+					dbConn.close();
+				}
+			} catch (SQLException e) {
+				log
+						.error(
+								"wakeUpNode: SQL Exception while syncing node object with database information.",
+								e);
+			}
+		}
+
+		String ip = ipAddr.getHostAddress();
+		LinkableNode node = new LinkableNode(nid,ip);
+
+		// work on snmpprimary
+		synchronized (snmpprimaryip2nodes) {
+			if (snmpprimaryip2nodes.containsKey(ip)) {
+				LinkableNode oldNode = (LinkableNode) snmpprimaryip2nodes
+						.get(ip);
+
+				// first of all set status to D on linkd tables for old node if
+				// different from new
+				if (node.getNodeId() != oldNode.getNodeId()) {
+					DbEventWriter dbwriter = new DbEventWriter(oldNode.getNodeId(),
+							DbEventWriter.ACTION_DELETE);
+					dbwriter.run();
+				}
+			}
+			snmpprimaryip2nodes.put(ip, node);
+		}
+
+		// work on snmpcollection
+		ReadyRunnable rr = m_scheduler.getReadyRunnable(ipAddr);
+
+		if (rr == null) {
+			scheduleNode(nid);
+		} else {
+			rr.wakeUp();
+		}
+	}
+

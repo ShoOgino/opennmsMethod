@@ -1,0 +1,80 @@
+	public synchronized ReadyRunnable getReadyRunnable(InetAddress ipAddr,
+			long interval) {
+		Category log = ThreadCategory.getInstance(getClass());
+
+		if (log.isDebugEnabled()) {
+			log.debug("getReadyRunnable: Retriving Ready Runnable for Ip "
+					+ ipAddr.getHostAddress() + " at interval " + interval);
+		}
+
+		Long key = new Long(interval);
+		if (!m_queues.containsKey(key)) {
+			if (log.isDebugEnabled())
+				log.debug("getReadyRunnable: interval queue did not exist, exit");
+			return null;
+		}
+
+		ReadyRunnable rr = null;
+		synchronized (m_queues) {
+			PeekableFifoQueue in = (PeekableFifoQueue) m_queues.get(key);
+			if (in.isEmpty()) {
+				if (log.isDebugEnabled())
+					log
+							.debug("getReadyRunnable: queue is Empty");
+				return rr;
+			}
+			
+			int maxLoops = in.size();
+			ReadyRunnable readyRun = null;
+			boolean first = true;
+			do {
+				try {
+					readyRun = (ReadyRunnable) in.remove();
+					if (in.size() == maxLoops && first) {
+						maxLoops++;
+					}
+					first = false;
+					if (readyRun != null
+							&& readyRun.getTarget().equals(ipAddr)) {
+						if (log.isDebugEnabled()) {
+							log
+									.debug("getReadyRunnable: found ready runnable "
+											+ readyRun);
+						}
+						rr = readyRun;
+					}
+					in.add(readyRun);
+				} catch (InterruptedException ie) {
+					if (log.isInfoEnabled())
+						log.info(
+								"getReadyRunnable: failed to get ready runnable instance "
+										+ ipAddr.getHostAddress()
+										+ " from scheduler", ie);
+					Thread.currentThread().interrupt();
+				} catch (FifoQueueException ex) {
+					if (log.isInfoEnabled())
+						log.info(
+								"getReadyRunnable: failed to get ready runnable instance "
+										+ ipAddr.getHostAddress()
+										+ " from scheduler", ex);
+					throw new UndeclaredThrowableException(ex);
+				} catch (UnknownHostException he) {
+					if (log.isInfoEnabled())
+						log.info(
+								"getReadyRunnable: failed to get ready runnable instance "
+										+ ipAddr.getHostAddress()
+										+ " from scheduler", he);
+					throw new UndeclaredThrowableException(he);
+				}
+
+			} while (--maxLoops > 0) ;
+		}
+
+		if (rr == null) {
+		if (log.isInfoEnabled())
+			log.info("getReadyRunnable: ready runnable instance "
+					+ ipAddr.getHostAddress() + " not found on scheduler");
+		}
+		return rr;
+	}
+
