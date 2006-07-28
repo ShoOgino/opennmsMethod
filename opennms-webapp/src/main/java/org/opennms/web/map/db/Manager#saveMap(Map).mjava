@@ -1,0 +1,86 @@
+    public synchronized void saveMap(Map m) throws SQLException {
+        if (!isStartedSession())
+            throw new IllegalStateException("Call startSession() first.");
+        
+        final String sqlGetCurrentTimestamp = "SELECT CURRENT_TIMESTAMP";
+        final String sqlGetMapNxtId = "SELECT nextval('mapnxtid')";
+        final String sqlInsertQuery = "INSERT INTO map (mapid, mapname, mapbackground, mapowner, mapcreatetime, mapaccess, userlastmodifies, lastmodifiedtime, mapscale, mapxoffset, mapyoffset, maptype, mapwidth, mapheight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        final String sqlUpdateQuery = "UPDATE map SET mapname = ?, mapbackground = ?, mapowner = ?, mapaccess = ?, userlastmodifies = ?, lastmodifiedtime = ?, mapscale = ?, mapxoffset = ?, mapyoffset = ?, maptype = ? , mapwidth = ?, mapheight = ? WHERE mapid = ?";
+        Timestamp currentTimestamp = null;
+        int nxtid = 0;
+        
+        int count = -1;
+        
+        try {
+            Statement stmtCT = connection.createStatement();
+            ResultSet rs = stmtCT.executeQuery(sqlGetCurrentTimestamp);
+            if (rs.next()) {
+                currentTimestamp = rs.getTimestamp(1);
+                PreparedStatement statement;
+                if (m.isNew()) {
+                    Statement stmtID = connection.createStatement();
+                    ResultSet rsStmt = stmtID.executeQuery(sqlGetMapNxtId);
+                    if (rsStmt.next()) {
+                        nxtid = rsStmt.getInt(1);
+                    }
+                    rsStmt.close();
+                    stmtID.close();
+                    
+                    statement = connection.prepareStatement(sqlInsertQuery);
+                    statement.setInt(1, nxtid);
+                    statement.setString(2, m.getName());
+                    statement.setString(3, m.getBackground());
+                    statement.setString(4, m.getOwner());
+                    statement.setTimestamp(5, currentTimestamp);
+                    statement.setString(6, m.getAccessMode());
+                    statement.setString(7, m.getUserLastModifies());
+                    statement.setTimestamp(8, currentTimestamp);
+                    statement.setDouble(9, m.getScale());
+                    statement.setInt(10, m.getOffsetX());
+                    statement.setInt(11, m.getOffsetY());
+                    statement.setString(12, m.getType());
+                    statement.setInt(13,m.getWidth());
+                    statement.setInt(14,m.getHeight());
+                } else {
+                    statement = connection.prepareStatement(sqlUpdateQuery);
+                    statement.setString(1, m.getName());
+                    statement.setString(2, m.getBackground());
+                    statement.setString(3, m.getOwner());
+                    statement.setString(4, m.getAccessMode());
+                    statement.setString(5, m.getUserLastModifies());
+                    statement.setTimestamp(6, currentTimestamp);
+                    statement.setDouble(7, m.getScale());
+                    statement.setInt(8, m.getOffsetX());
+                    statement.setInt(9, m.getOffsetY());
+                    statement.setString(10, m.getType());
+                    statement.setInt(11,m.getWidth());
+                    statement.setInt(12,m.getHeight());
+                    statement.setInt(13, m.getId());
+                }
+                count = statement.executeUpdate();
+
+                statement.close();
+            }
+            rs.close();
+            stmtCT.close();
+        } catch (SQLException ex) {
+            try {
+                connection.rollback();
+                Vault.releaseDbConnection(connection);
+            } catch (SQLException eex) {
+                throw eex;
+            }
+            throw ex;
+        }
+        
+        if (count == 0)
+            throw new SQLException("Called saveMap() on deleted map;");        
+        
+        if (m.isNew()) {
+            m.setId(nxtid);
+            m.setCreateTime(currentTimestamp);
+            m.setAsNew(false);
+        }
+        m.setLastModifiedTime(currentTimestamp);
+    }
+

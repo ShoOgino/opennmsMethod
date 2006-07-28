@@ -1,0 +1,145 @@
+    /**
+     * 
+     * @param mapElements the elements to refresh
+     * @param returnChangedElem return only element changed
+     * @return List of VElement
+     * @throws MapsException
+     * @throws SQLException
+     */
+    public List refreshElements(VElement[] mapElements, boolean returnChangedElem) throws MapsException, SQLException {
+    	
+    	String LOG4J_CATEGORY = "OpenNMS.Map";
+    	Category log;
+
+		ThreadCategory.setPrefix(LOG4J_CATEGORY);
+		log = ThreadCategory.getInstance(this.getClass());
+		List elems = new ArrayList();
+
+        if (mapElements == null || mapElements.length == 0){
+			log.warn("refreshElements: method called with null or empty input");
+			return elems;
+        }
+
+        CategoryModel cModel;
+        log.debug("Instantiating CModel");
+        try {
+            cModel = CategoryModel.getInstance();
+        } catch (Exception e) {
+        	throw new MapsException(e);
+        }
+        log.debug("CModel instantiated.");
+        log.debug("Getting outaged elems.");
+        Iterator ite = Factory.getOutagedVElems().iterator();
+        log.debug("Outaged elems obtained.");
+        java.util.Map outagedNodes = new HashMap();
+		float severity = 0;
+		while (ite.hasNext()) {
+			ElementInfo outagelem = (ElementInfo) ite.next();
+			int outageStatus = getStatus(outagelem.getUei());
+			int outageSeverity = getSeverity(EventUtil.getSeverityLabel(outagelem.getSeverity()));
+
+			if (log.isInfoEnabled())
+				log.info("refreshElements: parsing outaged node with nodeid: " + outagelem.getId());
+			OutageInfo oi = (OutageInfo)outagedNodes.get(new Integer(outagelem.getId())); 
+
+			if (oi != null) {
+
+				if (oi.getStatus() > outageStatus) oi.setStatus(outageStatus);
+				oi.setSeverity((oi.getSeverity()+outageSeverity)/2);
+			} else {
+				int curStatus = outageStatus;
+				float curSeverity = outageSeverity;
+				oi = new OutageInfo(outagelem.getId(),curStatus,curSeverity);
+			}
+			outagedNodes.put(new Integer(outagelem.getId()),oi);
+    		if (log.isDebugEnabled()) 
+    			log.debug("refreshElements: node status/severity " + outageStatus + "/" + outageSeverity);
+		}
+
+		int status = defaultStatusId;
+		VElement ve = null;
+		Set nodeIds = new TreeSet();
+		for(int i=0;i<mapElements.length;i++){
+			if(mapElements[i].isNode()){
+				nodeIds.add(new Integer(mapElements[i].getId()));
+			}else{
+				nodeIds.addAll(getNodeidsOnElement(mapElements[i]));
+			}
+		}
+		
+		java.util.Map availsMap = null;
+		if (availEnabled) {
+			log.debug("Getting avails for nodes of map ("+nodeIds.size()+" nodes)");
+			availsMap = cModel.getNodeAvailability(nodeIds);
+			log.debug("Avails obtained");
+		}
+		Connection conn = Vault.getDbConnection();
+    	for(int i=0;i<mapElements.length;i++){
+    		ve = (VElement) mapElements[i].clone();
+    		if (log.isDebugEnabled()) 
+    			log.debug("refreshElements: parsing VElement ID " + ve.getId()+ve.getType());
+
+    		double elementAvail =100.0;
+			int elementStatus = defaultStatusId;
+   			float elementSeverity = defaultSeverityId;
+ 
+    		// get status and severity
+			// status is worse
+			// severity is medium value among severities
+   			if (ve.isNode()) {
+   				if (availEnabled) {
+   					elementAvail =((Double) availsMap.get(new Integer(ve.getId()))).doubleValue();
+   				} else {
+   					elementAvail = defaultEnableFalseAvail.getMin();
+   				}
+   				
+    			OutageInfo oi = (OutageInfo) outagedNodes.get(new Integer(ve.getId()));
+				if (oi != null) {
+   					elementStatus = oi.getStatus();
+   					elementSeverity= oi.getSeverity();
+   	    			// get avalaibility
+   				} 
+     		} else {
+   				Set nodesonve = getNodeidsOnElement(ve);
+   	    		if (nodesonve != null && nodesonve.size()> 0) {
+   	    			if (availEnabled) {
+   	    				log.debug("Getting avails for Map-Node");
+   	   	    			elementAvail = getNodeAvailability(nodesonve,availsMap);
+   	   	    		log.debug("Avails for Map-Node obtained" );
+   	    			} else {
+   	   					elementAvail = defaultEnableFalseAvail.getMin();
+   	   				}
+   	    			
+   	    			ite = nodesonve.iterator();
+   	    			int sev = 0; 
+   	    			while (ite.hasNext()) {
+   	   					OutageInfo oi = (OutageInfo) outagedNodes.get((Integer)(ite.next()));
+   	    				if (oi != null) {
+   	    					if (oi.getStatus() < elementStatus) elementStatus= oi.getStatus();
+	   	   					sev += oi.getSeverity();
+   	    				} else {
+   	    	    			sev += defaultSeverityId; 
+   	    				}
+   	    			}
+   	    			elementSeverity = sev/nodesonve.size();
+   	    		}
+       		}
+
+   			if (log.isDebugEnabled()) 
+    			log.debug("refreshElements: element avail/status/severity " + elementAvail + "/" + elementStatus + "/" + elementSeverity);
+
+    		ve.setRtc(elementAvail);
+			ve.setStatus(elementStatus);
+			ve.setSeverity(new BigDecimal(elementSeverity+1/2).intValue());
+			//got the label
+			ve.setLabel(getLabel(ve,conn));
+
+			if (!returnChangedElem || (returnChangedElem && !ve.equalsIgnorePosition(mapElements[i]))){
+				log.debug("Adding element "+ve.getId());
+				elems.add(ve);
+			}
+    	}
+    	Vault.releaseDbConnection(conn);
+        return elems;
+    }
+
