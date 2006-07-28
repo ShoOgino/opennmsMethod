@@ -1,0 +1,55 @@
+    /**
+     * <p>
+     * Set admin interface status to value.
+     * </p>
+     * 
+     * @param ifindex
+     *            interface index to set
+     * @param value
+     *            desired interface status value
+     * 
+     * @return The status of interface after operation
+     * @throws SnmpBadConversionException
+     *             Throw if returned code is not an integer
+     */
+    public boolean setIfAdmin(int ifindex, int value) throws SQLException,
+            SnmpBadConversionException, IllegalArgumentException {
+        int status = NULL;
+
+        if (value != UP && value != DOWN)
+            throw new IllegalArgumentException("Value not valid");
+        
+        boolean returnValue = false;
+        SnmpResponseHandler handler = new SnmpResponseHandler();
+        SnmpPduPacket out = new SnmpPduRequest(SnmpPduPacket.SET,
+                new SnmpVarBind[] { new SnmpVarBind(new SnmpObjectId(
+                        snmpObjectId + "." + ifindex), new SnmpInt32(value)) });
+
+        synchronized (handler) {
+            m_session.send(out, handler);
+            try {
+                handler.wait((long) (m_snmpPeer.getRetries() + 1)
+                        * (long) m_snmpPeer.getTimeout());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        if (handler.getResult() != null) {
+            String ifCountStr = handler.getResult().getValue().toString();
+            try {
+                status = Integer.parseInt(ifCountStr);
+            } catch (NumberFormatException nfE) {
+                throw new SnmpBadConversionException(
+                        "Retrieval of interface admin status failed for "
+                                + m_snmpPeer.getPeer().getHostAddress());
+            }
+        }
+        returnValue = (status == value);
+
+        if (returnValue)
+            setIfAdminStatusInDB(ifindex, value);
+
+        return (returnValue);
+    }
+
