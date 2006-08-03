@@ -1,5 +1,67 @@
-	public String getTableFromSQL(String table) throws Exception {
-		return getXFromSQL(table, "(?i)\\bcreate table\\s+['\"]?(\\S+)['\"]?"
-				+ "\\s+\\((.+?)\\);", 1, 2, "table");
+	public Table getTableFromSQL(String tableName) throws Exception {
+		Table table = new Table();
+		
+		LinkedList<Column> columns = new LinkedList<Column>();
+		LinkedList<Constraint> constraints = new LinkedList<Constraint>();
+
+		boolean parens = false;
+		StringBuffer accumulator = new StringBuffer();
+
+		String create = getTableCreateFromSQL(tableName);
+		for (int i = 0; i <= create.length(); i++) {
+			char c = ' ';
+
+			if (i < create.length()) {
+				c = create.charAt(i);
+
+				if (c == '(' || c == ')') {
+					parens = (c == '(');
+					accumulator.append(c);
+					continue;
+				}
+			}
+
+			if (((c == ',') && !parens) || i == create.length()) {
+				String a = accumulator.toString().trim();
+
+				if (a.toLowerCase().startsWith("constraint ")) {
+					Constraint constraint = new Constraint(tableName, a);
+					List<String> constraintColumns = constraint.getColumns();
+					if (constraintColumns.size() == 0) {
+						throw new IllegalStateException("constraint with no constrained columns");
+					}
+
+					for (String constrainedName : constraintColumns) {
+						Column constrained = findColumn(columns, constrainedName);
+						if (constrained == null) {
+							throw new Exception("constraint " + constraint.getName()
+									+ " references column \"" + constrainedName
+									+ "\", which is not a column in the table "
+									+ tableName);
+						}
+					}
+					constraints.add(constraint);
+				} else {
+					Column column = new Column();
+					try {
+						column.parse(accumulator.toString());
+						columns.add(column);
+					} catch (Exception e) {
+						throw new Exception("Could not parse table " + table + ".  Chained: " + e.getMessage(), e);
+					}
+				}
+
+				accumulator = new StringBuffer();
+			} else {
+				accumulator.append(c);
+			}
+		}
+		
+		table.setName(tableName);
+		table.setColumns(columns);
+		table.setConstraints(constraints);
+		table.setNotNullOnPrimaryKeyColumns();
+		
+		return table;
 	}
 
