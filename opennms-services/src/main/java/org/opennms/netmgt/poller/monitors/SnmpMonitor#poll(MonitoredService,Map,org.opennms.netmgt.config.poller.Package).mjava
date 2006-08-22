@@ -15,14 +15,10 @@
      * @exception RuntimeException
      *                Thrown for any uncrecoverable errors.
      */
-    public int checkStatus(MonitoredService svc, Map parameters, org.opennms.netmgt.config.poller.Package pkg) {
+    public PollStatus poll(MonitoredService svc, Map parameters, org.opennms.netmgt.config.poller.Package pkg) {
         NetworkInterface iface = svc.getNetInterface();
 
-        // Log4j category
-        //
-        Category log = ThreadCategory.getInstance(getClass());
-
-        int status = ServiceMonitor.SERVICE_UNAVAILABLE;
+        PollStatus status = PollStatus.unavailable();
         InetAddress ipaddr = (InetAddress) iface.getAddress();
 
         // Retrieve this interface's SNMP peer object
@@ -46,36 +42,32 @@
         agentConfig.setRetries(retries);
         agentConfig.setPort(port);
 
-        if (log.isDebugEnabled())
-            log.debug("poll: service= SNMP address= " + agentConfig);
+        if (log().isDebugEnabled())
+            log().debug("poll: service= SNMP address= " + agentConfig);
 
         // Establish SNMP session with interface
         //
         try {
-            if (log.isDebugEnabled()) {
-                log.debug("SnmpMonitor.poll: SnmpAgentConfig address: " +agentConfig);
+            if (log().isDebugEnabled()) {
+                log().debug("SnmpMonitor.poll: SnmpAgentConfig address: " +agentConfig);
             }
             SnmpObjId snmpObjectId = new SnmpObjId(oid);
             
             SnmpValue result = SnmpUtils.get(agentConfig, snmpObjectId);
 
             if (result != null) {
-                log.debug("poll: SNMP poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + oid + " value=" + result);
-                status = (meetsCriteria(result, operator, operand) ? ServiceMonitor.SERVICE_AVAILABLE : ServiceMonitor.SERVICE_UNAVAILABLE);
+                log().debug("poll: SNMP poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + oid + " value=" + result);
+                status = (meetsCriteria(result, operator, operand) ? PollStatus.available() : PollStatus.unavailable());
             } else {
-                log.debug("poll: SNMP poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + oid);
-                status = ServiceMonitor.SERVICE_UNAVAILABLE;
+            	status = logDown(Level.DEBUG, "SNMP poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + oid);
             }
             
         } catch (NumberFormatException e) {
-            log.error("Number operator used on a non-number " + e.getMessage());
-            status = ServiceMonitor.SERVICE_UNAVAILABLE;
+        	status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
         } catch (IllegalArgumentException e) {
-            log.error("Invalid Snmp Criteria: " + e.getMessage());
-            status = ServiceMonitor.SERVICE_UNAVAILABLE;
+        	status = logDown(Level.ERROR, "Invalid Snmp Criteria: " + e.getMessage());
         } catch (Throwable t) {
-            log.warn("poll: Unexpected exception during SNMP poll of interface " + ipaddr.getHostAddress(), t);
-            status = ServiceMonitor.SERVICE_UNAVAILABLE;
+        	status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + ipaddr.getHostAddress(), t);
         }
 
         return status;
