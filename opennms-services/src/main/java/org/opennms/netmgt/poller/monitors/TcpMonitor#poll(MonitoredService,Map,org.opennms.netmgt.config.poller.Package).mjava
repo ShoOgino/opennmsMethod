@@ -18,13 +18,12 @@
      * @throws java.lang.RuntimeException
      *             Thrown if the interface experiences errors during the poll.
      */
-    public int checkStatus(MonitoredService svc, Map parameters, org.opennms.netmgt.config.poller.Package pkg) {
+    public PollStatus poll(MonitoredService svc, Map parameters, org.opennms.netmgt.config.poller.Package pkg) {
         NetworkInterface iface = svc.getNetInterface();
 
         //
         // Process parameters
         //
-        Category log = ThreadCategory.getInstance(getClass());
 
         //
         // Get interface address from NetworkInterface
@@ -38,7 +37,7 @@
         String dsName = ParameterMap.getKeyedString(parameters, "ds-name", null);
 
         if (rrdPath == null) {
-            log.info("poll: RRD repository not specified in parameters, latency data will not be stored.");
+            log().info("poll: RRD repository not specified in parameters, latency data will not be stored.");
         }
         if (dsName == null) {
             dsName = DEFAULT_DSNAME;
@@ -48,7 +47,7 @@
         //
         int port = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
         if (port == DEFAULT_PORT) {
-            throw new RuntimeException("SshMonitor: required parameter 'port' is not present in supplied properties.");
+            throw new RuntimeException("TcpMonitor: required parameter 'port' is not present in supplied properties.");
         }
 
         // BannerMatch
@@ -59,15 +58,15 @@
         //
         InetAddress ipv4Addr = (InetAddress) iface.getAddress();
 
-        if (log.isDebugEnabled())
-            log.debug("poll: address = " + ipv4Addr.getHostAddress() + ", port = " + port + ", timeout = " + timeout + ", retry = " + retry);
+        if (log().isDebugEnabled())
+            log().debug("poll: address = " + ipv4Addr.getHostAddress() + ", port = " + port + ", timeout = " + timeout + ", retry = " + retry);
 
         // Give it a whirl
         //
-        int serviceStatus = SERVICE_UNAVAILABLE;
+        PollStatus serviceStatus = PollStatus.unavailable();
         long responseTime = -1;
 
-        for (int attempts = 0; attempts <= retry && serviceStatus != SERVICE_AVAILABLE; attempts++) {
+        for (int attempts = 0; attempts <= retry && !serviceStatus.isAvailable(); attempts++) {
             Socket socket = null;
             try {
                 //
@@ -78,13 +77,21 @@
                 socket = new Socket();
                 socket.connect(new InetSocketAddress(ipv4Addr, port), timeout);
                 socket.setSoTimeout(timeout);
-                log.debug("SshMonitor: connected to host: " + ipv4Addr + " on port: " + port);
+                log().debug("TcpMonitor: connected to host: " + ipv4Addr + " on port: " + port);
 
                 // We're connected, so upgrade status to unresponsive
-                serviceStatus = SERVICE_UNRESPONSIVE;
+                serviceStatus = PollStatus.unresponsive();
 
-                if (strBannerMatch == null || strBannerMatch.equals("*")) {
-                    serviceStatus = SERVICE_AVAILABLE;
+                if (strBannerMatch == null || strBannerMatch.length() == 0 || strBannerMatch.equals("*")) {
+                    serviceStatus = PollStatus.available(System.currentTimeMillis()-sentTime);
+                    // Store response time in RRD
+                    if (responseTime >= 0 && rrdPath != null) {
+                        try {
+                            this.updateRRD(rrdPath, ipv4Addr, dsName, responseTime, pkg);
+                        } catch (RuntimeException rex) {
+                            log().debug("There was a problem writing the RRD:" + rex);
+                        }
+                    }
                     break;
                 }
 
@@ -99,53 +106,32 @@
 
                 if (response == null)
                     continue;
-                if (log.isDebugEnabled()) {
-                    log.debug("poll: banner = " + response);
-                    log.debug("poll: responseTime= " + responseTime + "ms");
+                if (log().isDebugEnabled()) {
+                    log().debug("poll: banner = " + response);
+                    log().debug("poll: responseTime= " + responseTime + "ms");
                 }
 
                 if (response.indexOf(strBannerMatch) > -1) {
-                    serviceStatus = SERVICE_AVAILABLE;
-                    // send the identifier string
-                    //
-                    String cmd = "SSH-1.99-OpenNMS_1.1\r\n";
-                    socket.getOutputStream().write(cmd.getBytes());
-                    // get the response code.
-                    //
-                    response = null;
-                    try {
-                        response = rdr.readLine();
-                    } catch (IOException e) {
-                    }
-
+                    serviceStatus = PollStatus.available(responseTime);
                     // Store response time in RRD
                     if (responseTime >= 0 && rrdPath != null) {
                         try {
                             this.updateRRD(rrdPath, ipv4Addr, dsName, responseTime, pkg);
                         } catch (RuntimeException rex) {
-                            log.debug("There was a problem writing the RRD:" + rex);
+                            log().debug("There was a problem writing the RRD:" + rex);
                         }
                     }
                 } else
-                    serviceStatus = SERVICE_UNAVAILABLE;
+                    serviceStatus = PollStatus.unavailable("Banner: '"+response+"' does not contain match string '"+strBannerMatch+"'");
             } catch (NoRouteToHostException e) {
-                e.fillInStackTrace();
-                if (log.isEnabledFor(Priority.WARN))
-                    log.warn("poll: No route to host exception for address " + ipv4Addr.getHostAddress(), e);
+            	serviceStatus = logDown(Level.WARN, "No route to host exception for address " + ipv4Addr.getHostAddress(), e);
                 break; // Break out of for(;;)
             } catch (InterruptedIOException e) {
-                log.debug("SshMonitor: did not connect to host within timeout: " + timeout + " attempt: " + attempts);
+            	serviceStatus = logDown(Level.DEBUG, "did not connect to host within timeout: " + timeout + " attempt: " + attempts);
             } catch (ConnectException e) {
-                // Connection refused. Continue to retry.
-                //
-                e.fillInStackTrace();
-                if (log.isDebugEnabled())
-                    log.debug("poll: Connection exception for address: " + ipv4Addr, e);
+            	serviceStatus = logDown(Level.DEBUG, "Connection exception for address: " + ipv4Addr, e);
             } catch (IOException e) {
-                // Ignore
-                e.fillInStackTrace();
-                if (log.isDebugEnabled())
-                    log.debug("poll: IOException while polling address: " + ipv4Addr, e);
+            	serviceStatus = logDown(Level.DEBUG, "IOException while polling address: " + ipv4Addr, e);
             } finally {
                 try {
                     // Close the socket
@@ -153,8 +139,8 @@
                         socket.close();
                 } catch (IOException e) {
                     e.fillInStackTrace();
-                    if (log.isDebugEnabled())
-                        log.debug("poll: Error closing socket.", e);
+                    if (log().isDebugEnabled())
+                        log().debug("poll: Error closing socket.", e);
                 }
             }
         }

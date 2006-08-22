@@ -1,18 +1,17 @@
     /* (non-Javadoc)
      * @see org.opennms.netmgt.poller.monitors.ServiceMonitor#poll(org.opennms.netmgt.poller.monitors.NetworkInterface, java.util.Map, org.opennms.netmgt.config.poller.Package)
      */
-    public int checkStatus(MonitoredService svc, Map map, Package pkg) {
+    public PollStatus poll(MonitoredService svc, Map map, Package pkg) {
         NetworkInterface iface = svc.getNetInterface();
 
 
-        Category       log           = ThreadCategory.getInstance(getClass());
         /*
          * TODO: Use it or loose it.
          * Commented out because it is not currently used in this monitor
          */
         //boolean        res           = false;
         //InitialContext ctx           = null;
-        int            serviceStatus = ServiceMonitor.SERVICE_UNAVAILABLE;
+        PollStatus     serviceStatus = PollStatus.unavailable();
         String         dsName        = null;
         InetAddress    ipv4Addr      = (InetAddress)iface.getAddress();
         
@@ -26,7 +25,7 @@
                    dsName    = ParameterMap.getKeyedString(map,  "ds-name",          "jmx");
 
             long t0 = 0;
-            for (int attempts=0; attempts <= retry && serviceStatus != ServiceMonitor.SERVICE_AVAILABLE; attempts++)    {
+            for (int attempts=0; attempts <= retry && !serviceStatus.isAvailable(); attempts++)    {
                 /*
                  * TODO: Use it or loose it.
                  * Commented out because it is not currently used in this monitor
@@ -44,10 +43,11 @@
                           */
                          //Integer result = connection.getMBeanServer().getMBeanCount();
                          connection.getMBeanServer().getMBeanCount();
-                         serviceStatus = ServiceMonitor.SERVICE_AVAILABLE;
                        
                          long responseTime = System.currentTimeMillis() - t0;
-                        
+
+                         serviceStatus = PollStatus.available(responseTime);
+
                          if (responseTime >= 0 && rrdPath != null) {
                              this.updateRRD(rrdPath, ipv4Addr, dsName, responseTime, pkg);
                          }
@@ -56,12 +56,12 @@
                      break;
                 }      
                 catch(Exception e) {
-                    log.debug(dsName + "poll: IOException while polling address: " + ipv4Addr);
+                	serviceStatus = logDown(Level.DEBUG, dsName+": IOException while polling address: " + ipv4Addr);
                     break;
                 }
             }  // of for
          } catch (Exception e) {
-            log.debug(dsName + " Monitor - failed! " + ipv4Addr.getHostAddress());
+         	serviceStatus = logDown(Level.DEBUG, dsName+" Monitor - failed! " + ipv4Addr.getHostAddress());
         } finally {
             if (connection != null) {
                 connection.close();
