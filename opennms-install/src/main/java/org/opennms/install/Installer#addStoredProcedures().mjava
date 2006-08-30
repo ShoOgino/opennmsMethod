@@ -5,8 +5,8 @@
 
         FileFilter sqlFilter = new FileFilter() {
             public boolean accept(File pathname) {
-                return (pathname.getName().startsWith("get") && pathname.getName().endsWith(
-                                                                                            ".sql"));
+                return (pathname.getName().startsWith("get") && pathname.getName().endsWith(".sql"))
+                     || pathname.getName().endsWith("Trigger.sql");
             }
         };
 
@@ -37,35 +37,60 @@
             r.close();
 
             Matcher m = Pattern.compile(
-                                        "(?is)\\bCREATE FUNCTION\\s+"
-                                                + "(\\w+)\\s*\\((.+?)\\)\\s+"
+                                        "(?is)\\b(CREATE(?: OR REPLACE)? FUNCTION\\s+"
+                                                + "(\\w+)\\s*\\((.*?)\\)\\s+"
                                                 + "RETURNS\\s+(\\S+)\\s+AS\\s+"
-                                                + "(.+? language ['\"]?\\w+['\"]?);").matcher(
+                                                + "(.+? language ['\"]?\\w+['\"]?);)").matcher(
                                                                                               create.toString());
 
             if (!m.find()) {
-                throw new Exception("Could match \"" + m.pattern().pattern()
+                throw new Exception("Couldn't match \"" + m.pattern().pattern()
                         + "\" in string \"" + create + "\"");
             }
-            String function = m.group(1);
-            String columns = m.group(2);
-            String returns = m.group(3);
-            // String rest = m.group(4);
+            String createSql = m.group(1);
+            String function = m.group(2);
+            String columns = m.group(3);
+            String returns = m.group(4);
+            // String rest = m.group(5);
 
             if (functionExists(function, columns, returns)) {
                 if (m_force) {
                     st.execute("DROP FUNCTION " + function + "(" + columns
                             + ")");
-                    st.execute(create.toString());
+                    st.execute(createSql);
                     m_out.print("OK (dropped and re-added)");
                 } else {
                     m_out.print("EXISTS");
                 }
             } else {
-                st.execute(create.toString());
+                st.execute(createSql);
                 m_out.print("OK");
             }
+
+            Pattern p = Pattern.compile("(?i)"
+                                        + "(CREATE TRIGGER (\\S+)\\s+"
+                                        + "BEFORE INSERT OR UPDATE\\s+"
+                                        + "ON (\\S+) FOR EACH ROW\\s+"
+                                        + "EXECUTE PROCEDURE (\\S+)\\(\\));");
+            m = p.matcher(create.toString());
+            if (m.find()) {
+                String triggerSql = m.group(1);
+                String triggerName = m.group(2);
+                String triggerTable = m.group(3);
+                String triggerProc = m.group(4);
+                
+                m_out.print("    - checking trigger '" + triggerName + "' ...");
+                
+                if (triggerExists(triggerName, triggerTable, triggerProc)) {
+                    m_out.println("EXISTS");
+                } else {
+                    st.execute(triggerSql);
+                    m_out.println("ADDED");
+                }
+            }
+
         }
         m_out.println("");
+        
     }
 
