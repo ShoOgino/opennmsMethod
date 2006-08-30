@@ -1,13 +1,31 @@
-    protected PlatformTransactionManager setUp(DB db, boolean createDb) throws IOException {
-
-        DataSource dataSource;
+    protected PlatformTransactionManager setUp(DB db, boolean createDb) throws Exception {
+    	m_createDb = createDb;
         if (isUsePool()) {
-            dataSource = db.getPoolingDataSource();
+            m_dataSource = db.getPoolingDataSource();
         } else {
-            dataSource = db.getDataSource();
+            m_dataSource = db.getDataSource();
         }
-        setLsfb(new LocalSessionFactoryBean());
-        getLsfb().setDataSource(dataSource);
+        
+        Class[] annotatedClasses = {
+        	OnmsDistPoller.class,
+        	OnmsNode.class,
+        	OnmsAssetRecord.class,
+        	OnmsIpInterface.class,
+        	OnmsSnmpInterface.class,
+        	OnmsMonitoredService.class,
+        	OnmsCategory.class,
+        	OnmsServiceType.class
+        };
+        
+        String[] annotatedPackages = {
+        		"com.opennms.netmgt.model"
+        };
+        
+        AnnotationSessionFactoryBean sfb = new AnnotationSessionFactoryBean();
+        sfb.setAnnotatedClasses(annotatedClasses);
+        sfb.setAnnotatedPackages(annotatedPackages);
+		setLsfb(sfb);
+        getLsfb().setDataSource(m_dataSource);
         Properties props = new Properties();
         props.put("hibernate.dialect", db.getHibernateDialect());
         props.put("hibernate.show_sql", "true");
@@ -18,9 +36,9 @@
         props.put("hibernate.c3p0.timeout", "1800");
         props.put("hibernate.pool_size", "0");
         
-        //props.put("hibernate.format_sql", "true");
+        props.put("hibernate.format_sql", "true");
         //props.put("hibernate.cache.use_query_cache", "true");
-        //props.put("hibernate.jdbc.batch_size", "0");
+        props.put("hibernate.jdbc.batch_size", "0");
         //props.put("hibernate.hbm2ddl.auto", "create-drop");
         getLsfb().setHibernateProperties(props);
         Resource modelDir = new ClassPathResource("org/opennms/netmgt/model");
@@ -34,10 +52,37 @@
         
         setFactory((SessionFactory)getLsfb().getObject());
         
-        if (createDb) {
-            //m_lsfb.createDatabaseSchema();
-            getLsfb().updateDatabaseSchema();
+//        if (createDb) {
+//            //m_lsfb.createDatabaseSchema();
+//            getLsfb().updateDatabaseSchema();
+//        }
+        
+       if (createDb) {
+        	
+        	Resource resource = new ClassPathResource("create.sql");
+        	File createSql = resource.getFile();
+        	
+            String cmd = System.getProperty("psql.command", "psql") ;
+            System.err.println("psql.command = "+cmd);
+            cmd = cmd+" test -U opennms -f "+createSql.getAbsolutePath();
+
+            System.err.println("Executing: "+cmd);
+            Process p = Runtime.getRuntime().exec(cmd);
+            ReaderEater inputEater = new ReaderEater(new BufferedReader(new InputStreamReader(p.getInputStream())));
+            ReaderEater errorEater = new ReaderEater(new BufferedReader(new InputStreamReader(p.getErrorStream())));
+            inputEater.start();
+            errorEater.start();
+            p.waitFor();
+            inputEater.getReader().close();
+            errorEater.getReader().close();
+            
+            System.err.println("Got an exitValue of "+p.exitValue());
+            p.destroy();
         }
+        
+        // initialize the JDBC DAOs until we get them all converted
+        Cache.registerFactories(m_dataSource);
+
     
         HibernateTransactionManager m_transMgr = new HibernateTransactionManager();
         m_transMgr.setSessionFactory(getFactory());
