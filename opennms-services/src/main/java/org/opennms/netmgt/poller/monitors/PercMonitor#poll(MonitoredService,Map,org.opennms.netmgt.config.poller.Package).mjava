@@ -1,0 +1,126 @@
+    /**
+     * <P>
+     * The poll() method is responsible for polling the specified address for
+     * SNMP service availability.
+     * </P>
+     * @param parameters
+     *            The package parameters (timeout, retry, etc...) to be used for
+     *            this poll.
+     * @param iface
+     *            The network interface to test the service on.
+     * 
+     * @return The availability of the interface and if a transition event
+     *         should be supressed.
+     * 
+     * @exception RuntimeException
+     *                Thrown for any uncrecoverable errors.
+     */
+    public PollStatus poll(MonitoredService svc, Map parameters, org.opennms.netmgt.config.poller.Package pkg) {
+        NetworkInterface iface = svc.getNetInterface();
+
+        PollStatus status = PollStatus.unavailable();
+        InetAddress ipaddr = (InetAddress) iface.getAddress();
+
+        // Retrieve this interface's SNMP peer object
+        //
+        SnmpAgentConfig agentConfig = (SnmpAgentConfig) iface.getAttribute(SNMP_AGENTCONFIG_KEY);
+        if (agentConfig == null)
+            throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
+
+        // Get configuration parameters
+        //
+        int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout());
+        int retries = ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries());
+        int port = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
+
+        // set timeout and retries on SNMP peer object
+        //
+        agentConfig.setTimeout(timeout);
+        agentConfig.setRetries(retries);
+        agentConfig.setPort(port);
+
+        if (log().isDebugEnabled())
+            log().debug("poll: service= SNMP address= " + agentConfig);
+
+        // Establish SNMP session with interface
+        //
+        try {
+            if (log().isDebugEnabled()) {
+                log().debug("PercMonitor.poll: SnmpAgentConfig address: " +agentConfig);
+            }
+            SnmpObjId snmpObjectId = new SnmpObjId(PHYSICAL_BASE_OID);
+
+        // First walk the physical OID Tree and check the returned values 
+
+	    Map<SnmpInstId, SnmpValue> results = SnmpUtils.getOidValues(agentConfig, "percPoller", snmpObjectId);
+
+	    if(results.size() == 0) {
+		log().debug("SNMP poll failed: no results, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId);
+		return status;
+	    }
+
+           for (Map.Entry<SnmpInstId, SnmpValue> e : results.entrySet()) { 
+
+                    log().debug("poll: SNMPwalk poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
+
+		// Test each value returned to make sure it doesn't equal 4
+		// 				   1=>'ready',
+		//                                 3=>'online',
+		//                                 4=>'failed',
+		//                                 5=>'rebuild',
+		//                                 6=>'hotspare',
+		//                                 20=>'nondisk'
+
+                    if (meetsCriteria(e.getValue(), "!=", "4")) {
+                        status = PollStatus.available();
+                    } else {
+            	        status = logDown(Level.DEBUG, "SNMP physical poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
+		        return status;
+                    }
+            }
+
+	    // If we get here, that means all of the physical drives returned a value not equal to "4"
+	    // Now we need to check logical drives
+
+            SnmpObjId snmpLogObjectId = new SnmpObjId(LOGICAL_BASE_OID);
+
+            // Next walk the physical OID Tree and check the returned values 
+
+	    Map<SnmpInstId, SnmpValue> lresults = SnmpUtils.getOidValues(agentConfig, "percPoller", snmpLogObjectId);
+
+	    if(lresults.size() == 0) {
+		log().debug("SNMP poll failed: no logical results, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId);
+		return status;
+	    }
+
+            for (Map.Entry<SnmpInstId, SnmpValue> e : lresults.entrySet()) { 
+
+                    log().debug("poll: SNMPwalk poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
+
+		// Test each value returned to make sure it equals 2
+		//                0=>'offline',
+                //                1=>'degraded',
+                //                2=>'optimal',
+                //                3=>'initialize',
+                //                4=>'checkconsistency'
+
+                    if (meetsCriteria(e.getValue(), "=", "2")) {
+                        status = PollStatus.available();
+                    } else {
+            	        status = logDown(Level.DEBUG, "SNMP physical poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
+		        return status;
+                    }
+            }
+
+            
+        } catch (NumberFormatException e) {
+        	status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+        	status = logDown(Level.ERROR, "Invalid Snmp Criteria: " + e.getMessage());
+        } catch (Throwable t) {
+        	status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + ipaddr.getHostAddress(), t);
+        }
+
+        return status;
+    }
+
