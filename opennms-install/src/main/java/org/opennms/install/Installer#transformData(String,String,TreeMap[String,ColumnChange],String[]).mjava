@@ -10,13 +10,12 @@
             String[] oldColumnNames) throws SQLException, ParseException,
             Exception {
         Statement st = m_dbconnection.createStatement();
-        Iterator j;
         int i;
 
         st.setFetchSize(s_fetch_size);
 
-        String[] columns = columnChanges.keySet().toArray(new String[0]);
-        String[] questionMarks = new String[columns.length];
+//        String[] columns = columnChanges.keySet().toArray(new String[0]);
+//        String[] questionMarks = new String[columns.length];
 
         for (i = 0; i < oldColumnNames.length; i++) {
             ColumnChange c = columnChanges.get(oldColumnNames[i]);
@@ -24,13 +23,28 @@
                 c.setSelectIndex(i + 1);
             }
         }
+        
+        LinkedList<String> insertColumns = new LinkedList<String>();
+        LinkedList<String> questionMarks = new LinkedList<String>();
+        for (ColumnChange c : columnChanges.values()) {
+            c.setColumnType(c.getColumn().getColumnSqlType());
+            
+            ColumnChangeReplacement r = c.getColumnReplacement();
+            if (r == null || r.addColumnIfColumnIsNew()) {
+                insertColumns.add(c.getColumn().getName());
+                questionMarks.add("?");
+                c.setPrepareIndex(questionMarks.size());
+            }
+        }
 
+        /*
         for (i = 0; i < columns.length; i++) {
             questionMarks[i] = "?";
             ColumnChange c = columnChanges.get(columns[i]);
             c.setPrepareIndex(i + 1);
             c.setColumnType(((Column) c.getColumn()).getColumnSqlType());
         }
+        */
 
         /*
          * Pull everything in from the old table and filter it to update the
@@ -59,34 +73,37 @@
         }
         select = m_dbconnection.prepareStatement(dbcmd);
         select.setFetchSize(s_fetch_size);
-        // error = "Unable to prepare select from temp";
 
-        dbcmd = "INSERT INTO " + table + " (" + join(", ", columns)
+        dbcmd = "INSERT INTO " + table + " (" + join(", ", insertColumns)
                 + ") values (" + join(", ", questionMarks) + ")";
         if (m_debug) {
             m_out.println("    - performing insert: " + dbcmd);
         }
         insert = m_dbconnection.prepareStatement(dbcmd);
-        // error = "Unable to prepare insert into " + table);
 
         rs = select.executeQuery();
         m_dbconnection.setAutoCommit(false);
 
-        String name;
-        ColumnChange change;
+//        ColumnChange change;
         Object obj;
-        SimpleDateFormat dateParser = new SimpleDateFormat(
-                                                           "dd-MMM-yyyy HH:mm:ss");
-        SimpleDateFormat dateFormatter = new SimpleDateFormat(
-                                                              "yyyy-MM-dd HH:mm:ss");
+        SimpleDateFormat dateParser = new SimpleDateFormat("dd-MMM-yyyy HH:mm:ss");
+        SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         char spin[] = { '/', '-', '\\', '|' };
 
         int current_row = 0;
 
         while (rs.next()) {
-            for (j = columnChanges.keySet().iterator(); j.hasNext();) {
-                name = (String) j.next();
-                change = (ColumnChange) columnChanges.get(name);
+            /*
+            for (String name : columnChanges.keySet()) {
+                ColumnChange change = columnChanges.get(name);
+                */
+            for (ColumnChange change : columnChanges.values()) {
+                String name = change.getColumn().getName();
+                
+                if (change.hasColumnReplacement()
+                        && !change.getColumnReplacement().addColumnIfColumnIsNew()) {
+                    continue;
+                }
 
                 if (change.getSelectIndex() > 0) {
                     obj = rs.getObject(change.getSelectIndex());
@@ -103,19 +120,10 @@
                     obj = null;
                 }
 
-                /*
-                if (table.equals("outages") && name.equals("outageid")) {
-                    obj = new Integer(current_row + 1);
-                }
-                if (table.equals("usersnotified") && name.equals("id")) {
-                    obj = new Integer(current_row + 1);
-                }
-                */
-                if (obj == null && change.isNullReplace()) {
-                    obj = change.getNullReplace();
-                    if (obj instanceof ColumnChangeReplacement) {
-                        obj = ((ColumnChangeReplacement) obj).getColumnReplacement(rs, columnChanges);
-                    }
+                if (obj == null && change.hasColumnReplacement()) {
+                    ColumnChangeReplacement replacement =
+                        change.getColumnReplacement();
+                    obj = replacement.getColumnReplacement(rs, columnChanges);
                     if (m_debug) {
                         m_out.println("      - " + name
                                 + " was NULL but is a "

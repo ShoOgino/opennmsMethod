@@ -1,9 +1,11 @@
-    public void testSetOutagesSvcRegainedEventIdOnUpgrade() throws Exception {
+    public void XXXtestSetOutageIdOnUpgrade() throws Exception {
         if (!isDBTestEnabled()) {
             return;
         }
-        
+
         m_installer.createSequences();
+        m_installer.updatePlPgsql();
+        m_installer.addStoredProcedures();
 
         addTableFromSQL("distpoller");
         addTableFromSQL("node");
@@ -12,23 +14,30 @@
         addTableFromSQL("service");
         addTableFromSQL("ifservices");
         addTableFromSQL("events");
-        addTableFromSQL("outages");
+        addTableFromSQLWithReplacements("outages", new String[][] {
+                new String[] { "outageID\\s+integer not null,", "" },
+                new String[] {
+                        "constraint pk_outageID primary key \\(outageID\\),",
+                        "" } }, true);
 
         executeSQL("INSERT INTO node (nodeId, nodeCreateTime) VALUES ( 1, now() )");
         executeSQL("INSERT INTO ipInterface (nodeId, ipAddr, ifIndex) VALUES ( 1, '1.2.3.4', null )");
         executeSQL("INSERT INTO service (serviceID, serviceName) VALUES ( 1, 'COFFEE-READY' )");
         executeSQL("INSERT INTO ifServices (id, nodeID, ipAddr, ifIndex, serviceID, ipInterfaceId) VALUES ( 1, 1, '1.2.3.4', null, 1, 1 )");
 
-        executeSQL("INSERT INTO outages ( outageID, nodeId, ipAddr, ifLostService, serviceId, ifServiceId ) "
-                   + "VALUES ( 1, 1, '1.2.3.4', now(), 1, 1 )");
+        executeSQL("INSERT INTO outages (nodeId, ipAddr, ifLostService, serviceId, ifServiceId ) "
+                + "VALUES ( 1, '1.2.3.4', now(), 1, 1 )");
+
+        m_installer.updatePlPgsql();
+        m_installer.addStoredProcedures();
 
         m_installer.createTables();
-        
+
         Statement st = m_installer.m_dbconnection.createStatement();
-        ResultSet rs = st.executeQuery("SELECT svcregainedeventid from outages");
+        ResultSet rs = st.executeQuery("SELECT outageid from outages");
         int count = 0;
-        while (rs.next()) {
-            assertEquals("expected outages svcregainedeventid", 0, rs.getInt(1));
+        for (int expected = 1; rs.next(); expected++) {
+            assertEquals("expected outages outageid", expected, rs.getInt(1));
             count++;
         }
         assertEquals("expected column count", 1, count);

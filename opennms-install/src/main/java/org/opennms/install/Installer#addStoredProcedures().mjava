@@ -1,4 +1,6 @@
     public void addStoredProcedures() throws Exception {
+        m_triggerDao = new TriggerDao();
+
         Statement st = m_dbconnection.createStatement();
 
         m_out.print("- adding stored procedures... ");
@@ -27,7 +29,8 @@
                     continue;
                 }
 
-                if (line.toLowerCase().startsWith("drop function")) {
+                if (line.toLowerCase().startsWith("drop function")
+                    || line.toLowerCase().startsWith("drop trigger")) {
                     drop.add(line);
                 } else {
                     create.append(line);
@@ -35,17 +38,29 @@
                 }
             }
             r.close();
+            
+            /*
+             * Find the trigger first, because if there is a trigger that
+             * uses this stored procedure on this table, we'll need to drop
+             * it first.
+             */
+            Trigger t = Trigger.findTriggerInString(create.toString());
+            if (t != null) {
+                m_triggerDao.add(t);
+            }
 
-            Matcher m = Pattern.compile(
-                                        "(?is)\\b(CREATE(?: OR REPLACE)? FUNCTION\\s+"
+            Matcher m = Pattern.compile("(?is)\\b(CREATE(?: OR REPLACE)? FUNCTION\\s+"
                                                 + "(\\w+)\\s*\\((.*?)\\)\\s+"
                                                 + "RETURNS\\s+(\\S+)\\s+AS\\s+"
                                                 + "(.+? language ['\"]?\\w+['\"]?);)").matcher(
                                                                                               create.toString());
 
             if (!m.find()) {
-                throw new Exception("Couldn't match \"" + m.pattern().pattern()
-                        + "\" in string \"" + create + "\"");
+                throw new Exception("For stored procedure in file '"
+                                    + list[i].getName()
+                                    + "' couldn't match \""
+                                    + m.pattern().pattern()
+                                    + "\" in string \"" + create + "\"");
             }
             String createSql = m.group(1);
             String function = m.group(2);
@@ -53,44 +68,20 @@
             String returns = m.group(4);
             // String rest = m.group(5);
 
+            
             if (functionExists(function, columns, returns)) {
-                if (m_force) {
-                    st.execute("DROP FUNCTION " + function + "(" + columns
-                            + ")");
-                    st.execute(createSql);
-                    m_out.print("OK (dropped and re-added)");
-                } else {
-                    m_out.print("EXISTS");
+                if (t != null && t.isOnDatabase(m_dbconnection)) {
+                    t.removeFromDatabase(m_dbconnection);
+                    
                 }
+                st.execute("DROP FUNCTION " + function + "(" + columns + ")");
+                st.execute(createSql);
+                m_out.print("OK (dropped and re-added)");
             } else {
                 st.execute(createSql);
                 m_out.print("OK");
             }
-
-            Pattern p = Pattern.compile("(?i)"
-                                        + "(CREATE TRIGGER (\\S+)\\s+"
-                                        + "BEFORE INSERT OR UPDATE\\s+"
-                                        + "ON (\\S+) FOR EACH ROW\\s+"
-                                        + "EXECUTE PROCEDURE (\\S+)\\(\\));");
-            m = p.matcher(create.toString());
-            if (m.find()) {
-                String triggerSql = m.group(1);
-                String triggerName = m.group(2);
-                String triggerTable = m.group(3);
-                String triggerProc = m.group(4);
-                
-                m_out.print("    - checking trigger '" + triggerName + "' ...");
-                
-                if (triggerExists(triggerName, triggerTable, triggerProc)) {
-                    m_out.println("EXISTS");
-                } else {
-                    st.execute(triggerSql);
-                    m_out.println("ADDED");
-                }
-            }
-
         }
         m_out.println("");
-        
     }
 
