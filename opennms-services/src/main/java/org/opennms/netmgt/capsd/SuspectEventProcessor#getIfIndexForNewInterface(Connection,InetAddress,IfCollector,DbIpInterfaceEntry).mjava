@@ -1,0 +1,52 @@
+    private int getIfIndexForNewInterface(Connection dbc, InetAddress ifaddr,
+            IfCollector collector, DbIpInterfaceEntry ipIfEntry)
+            throws SQLException {
+        if (!collector.hasSnmpCollection()) {
+            return -1;
+        }
+
+        Category log = ThreadCategory.getInstance(getClass());
+        IfSnmpCollector snmpc = collector.getSnmpCollector();
+
+        int ifIndex = -1;
+
+        /*
+         * Just set primary state to not eligible for now. The primary SNMP
+         * interface won't be selected until after all interfaces have been
+         * inserted into the database. This is because the interface must
+         * already be in the database for filter rule evaluation to succeed.
+         */
+        ipIfEntry.setPrimaryState(DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE);
+
+        if (snmpc.hasIpAddrTable()
+                && (ifIndex = snmpc.getIfIndex(ifaddr)) != -1) {
+            if (snmpc.hasIfTable()) {
+                int status = snmpc.getAdminStatus(ifIndex);
+                if (status != -1) {
+                    ipIfEntry.setStatus(status);
+                }
+            }
+        } else {
+            /*
+             * Address does not have a valid ifIndex associated with it Assume
+             * there is no ipAddrTable and set ifIndex equal to
+             * CapsdConfigFactory.LAME_SNMP_HOST_IFINDEX
+             */
+            ifIndex = CapsdConfigFactory.LAME_SNMP_HOST_IFINDEX;
+            if (log.isDebugEnabled()) {
+                log.debug("SuspectEventProcessor: no valid ifIndex for "
+                        + ifaddr + " Assume this is a lame SNMP host");
+            }
+        }
+        if (ifIndex != -1) {
+            if (log.isDebugEnabled()) {
+                log.debug("SuspectEventProcessor: setting ifindex for "
+                        + ifaddr + " to " + ifIndex);
+            }
+            ipIfEntry.setIfIndex(ifIndex);
+        }
+        ipIfEntry.store(dbc);
+
+        return ifIndex;
+    }
+

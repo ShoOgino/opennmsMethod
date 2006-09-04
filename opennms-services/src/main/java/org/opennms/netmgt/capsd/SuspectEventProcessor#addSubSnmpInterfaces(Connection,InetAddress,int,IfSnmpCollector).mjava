@@ -1,0 +1,135 @@
+    private boolean addSubSnmpInterfaces(Connection dbc, InetAddress ifaddr,
+            int nodeId, IfSnmpCollector snmpc)
+            throws SQLException {
+        if (!snmpc.hasIfTable()) {
+            return false;
+        }
+
+        Category log = ThreadCategory.getInstance(getClass());
+        
+        boolean addedSnmpInterfaceEntry = false;
+
+        List<IfTableEntry> ifTableEntries = snmpc.getIfTable().getEntries();
+        for (IfTableEntry ifte : ifTableEntries) {
+            // index
+            Integer sint = ifte.getIfIndex();
+            if (sint == null) {
+                continue;
+            }
+            int xifIndex = sint.intValue();
+
+            /*
+             * address WARNING: IfSnmpCollector.getIfAddressAndMask() ONLY
+             * returns the FIRST IP address and mask for a given interface as
+             * specified in the ipAddrTable.
+             */
+            InetAddress[] aaddrs = null;
+            if (snmpc.hasIpAddrTable()) {
+                aaddrs = snmpc.getIfAddressAndMask(sint.intValue());
+            }
+            if (aaddrs == null) {
+                /*
+                 * Must be non-IP interface, set ifAddress to
+                 * '0.0.0.0' and mask to null
+                 */
+                aaddrs = new InetAddress[2];
+                try {
+                    aaddrs[0] = InetAddress.getByName("0.0.0.0");
+                } catch (UnknownHostException e) {
+                    continue;
+                }
+                aaddrs[1] = null;
+            }
+
+            // Retrieve ifType so we can check for loopback
+            sint = ifte.getIfType();
+            // FIXME: What if sint is null?
+            int ifType = sint.intValue();
+
+            // Skip loopback interfaces
+            if (aaddrs[0].getHostAddress().startsWith("127.")) {
+                continue;
+            }
+
+            DbSnmpInterfaceEntry snmpEntry =
+                DbSnmpInterfaceEntry.create(nodeId, xifIndex);
+
+            // IP address
+            snmpEntry.setIfAddress(aaddrs[0]);
+            if (aaddrs[0].equals(ifaddr)) {
+                addedSnmpInterfaceEntry = true;
+            }
+
+            // netmask
+            if (aaddrs[1] != null) {
+                snmpEntry.setNetmask(aaddrs[1]);
+            }
+
+            // description
+            String str = ifte.getIfDescr();
+            if (log.isDebugEnabled()) {
+                log.debug("SuspectEventProcessor: "
+                        + aaddrs[0].getHostAddress() + " has ifDescription: "
+                        + str);
+            }
+            if (str != null && str.length() > 0) {
+                snmpEntry.setDescription(str);
+            }
+
+            // physical address
+            String physAddr = ifte.getPhysAddr();
+
+            if (log.isDebugEnabled()) {
+                log.debug("SuspectEventProcessor: "
+                        + aaddrs[0].getHostAddress()
+                        + " has physical address: -" + physAddr + "-");
+            }
+
+            if (physAddr != null && physAddr.length() == 12) {
+                snmpEntry.setPhysicalAddress(physAddr);
+            }
+
+            // type
+            snmpEntry.setType(ifType);
+
+            // speed
+            Long uint = ifte.getIfSpeed();
+            if (uint == null) {
+                snmpEntry.setSpeed(0);
+            } else {
+                snmpEntry.setSpeed(uint.longValue());
+            }
+
+            // admin status
+            sint = ifte.getIfAdminStatus();
+            if (sint == null) {
+                snmpEntry.setAdminStatus(0);
+            } else {
+                snmpEntry.setAdminStatus(sint.intValue());
+            }
+
+            // oper status
+            sint = ifte.getIfOperStatus();
+            if (sint == null) {
+                snmpEntry.setOperationalStatus(0);
+            } else {
+                snmpEntry.setOperationalStatus(sint.intValue());
+            }
+
+            // name (from interface extensions table)
+            String ifName = snmpc.getIfName(xifIndex);
+            if (ifName != null && ifName.length() > 0) {
+                snmpEntry.setName(ifName);
+            }
+
+            // alias (from interface extensions table)
+            String ifAlias = snmpc.getIfAlias(xifIndex);
+            if (ifAlias != null && ifAlias.length() > 0) {
+                snmpEntry.setAlias(ifAlias);
+            }
+
+            snmpEntry.store(dbc);
+        }
+        return addedSnmpInterfaceEntry;
+    }
+
