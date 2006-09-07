@@ -17,7 +17,11 @@
 
         DbIpInterfaceEntry[] dbInterfaces = getInterfaces(dbNodeEntry);
         
-        if (dbInterfaces == null) return;
+        if (dbInterfaces == null) {
+            log.debug("no interfaces found in the database to rescan for node: "
+                      + m_scheduledNode.getNodeId());
+            return;
+        }
 
         // this indicates whether or not we found an iface the responds to snmp
         boolean doesSnmp = true;
@@ -27,14 +31,19 @@
         List prevAddrList = null;
         boolean snmpcAgree = false;
         boolean gotSnmpc = false;
-        Map collectorMap = new HashMap();
-        Map nonSnmpCollectorMap = new HashMap();
+        Map<String, IfCollector> collectorMap =
+            new HashMap<String, IfCollector>();
+        Map<String, IfCollector> nonSnmpCollectorMap =
+            new HashMap<String, IfCollector>();
         Set probedAddrs = new HashSet();
 
         boolean gotSnmpCollection = false;
-        DbIpInterfaceEntry oldPrimarySnmpInterface = DbNodeEntry.getPrimarySnmpInterface(dbInterfaces);
+        DbIpInterfaceEntry oldPrimarySnmpInterface =
+            DbNodeEntry.getPrimarySnmpInterface(dbInterfaces);
         if (oldPrimarySnmpInterface != null) {
-            gotSnmpCollection = scanPrimarySnmpInterface(log, oldPrimarySnmpInterface, collectorMap, probedAddrs);
+            gotSnmpCollection =
+                scanPrimarySnmpInterface(log, oldPrimarySnmpInterface,
+                                         collectorMap, probedAddrs);
         }
 
         if (!gotSnmpCollection) {
@@ -49,28 +58,35 @@
                  * collect the information from the interface.
                  * NOTE: skip '127.*.*.*' and '0.0.0.0' addresses.
                  */
-                if (ifaddr.getHostAddress().startsWith("127") || ifaddr.getHostAddress().equals("0.0.0.0")) {
+                if (ifaddr.getHostAddress().startsWith("127")
+                        || ifaddr.getHostAddress().equals("0.0.0.0")) {
                     continue;
                 }
 
                 if (log.isDebugEnabled()) {
-                    log.debug("running collection for " + ifaddr.getHostAddress());
+                    log.debug("running collection for "
+                              + ifaddr.getHostAddress());
                 }
 
-                IfCollector collector = new IfCollector(ifaddr, true, probedAddrs);
+                IfCollector collector = new IfCollector(ifaddr, true,
+                                                        probedAddrs);
                 collector.run();
 
                 IfSnmpCollector snmpc = collector.getSnmpCollector();
                 if (snmpc != null) {
                     gotSnmpc = true;
                 }
-                if (snmpc != null && snmpc.hasIpAddrTable() && snmpc.getIfIndex(snmpc.getCollectorTargetAddress()) != -1) {
+                if (snmpc != null && snmpc.hasIpAddrTable()
+                        && snmpc.getIfIndex(snmpc.getCollectorTargetAddress()) != -1) {
                     if (areDbInterfacesInSnmpCollection(dbInterfaces, snmpc)) {
                         collectorMap.put(ifaddr.getHostAddress(), collector);
                         gotSnmpCollection = true;
                         if (log.isDebugEnabled()) {
-                            log.debug("SNMP data collected via " + ifaddr.getHostAddress());
-                            log.debug("Adding " + ifaddr.getHostAddress() + " to collectorMap for node: " + m_scheduledNode.getNodeId());
+                            log.debug("SNMP data collected via "
+                                      + ifaddr.getHostAddress());
+                            log.debug("Adding " + ifaddr.getHostAddress()
+                                      + " to collectorMap for node: "
+                                      + m_scheduledNode.getNodeId());
                         }
                         snmpcAgree = false;
                         break;
@@ -78,18 +94,24 @@
                         snmpcAgree = true;
                         collectorMap.put(ifaddr.getHostAddress(), collector);
                         ipAddTable = snmpc.getIpAddrTable();
-                        prevAddrList = IpAddrTable.getIpAddresses(ipAddTable.getEntries());
+                        prevAddrList =
+                            IpAddrTable.getIpAddresses(ipAddTable.getEntries());
                         prevSnmpc = snmpc;
                         if (log.isDebugEnabled()) {
-                            log.debug("SNMP data collected via " + ifaddr.getHostAddress() + " does not agree with database. Tentatively adding to the collectorMap and continuing");
+                            log.debug("SNMP data collected via "
+                                      + ifaddr.getHostAddress()
+                                      + " does not agree with database.  "
+                                      + "Tentatively adding to the "
+                                      + "collectorMap and continuing");
                             Iterator h = prevAddrList.iterator();
                             while (h.hasNext()) {
-                                log.debug("IP address in list = " +h.next());
+                                log.debug("IP address in list = " + h.next());
                             }
                         }
                     } else if (ipAddTable != null && snmpcAgree == true) {
                         ipAddTable = snmpc.getIpAddrTable();
-                        List addrList = IpAddrTable.getIpAddresses(ipAddTable.getEntries());
+                        List addrList =
+                            IpAddrTable.getIpAddresses(ipAddTable.getEntries());
                         boolean listMatch = true;
                         String jstring = null;
                         String kstring = null;
@@ -119,21 +141,30 @@
                         if (listMatch) {
                             log.debug("Current and previous address lists match");
                         } else {
-                            log.debug("Current and previous address lists DO NOT match");
+                            log.debug("Current and previous address lists "
+                                      + "DO NOT match");
                             snmpcAgree = false;
                         }
                         collector.deleteSnmpCollector();
                     }
                     if (snmpcAgree == false) {
                         if (log.isDebugEnabled()) {
-                            log.debug("SNMP data collected via " + ifaddr.getHostAddress() + " does not agree with database or with other interface(s) on this node.");
+                            log.debug("SNMP data collected via "
+                                      + ifaddr.getHostAddress()
+                                      + " does not agree with database or with "
+                                      + "other interface(s) on this node.");
                         }
                     }
                 } else {
-                    // Build a non-SNMP collectorMap, skipping 127.*.*.* and 0.0.0.0
+                    /*
+                     * Build a non-SNMP collectorMap, skipping 127.*.*.*
+                     * and 0.0.0.0
+                     */
                     nonSnmpCollectorMap.put(ifaddr.getHostAddress(), collector);
                     if (log.isDebugEnabled()) {
-                        log.debug("Adding " + ifaddr.getHostAddress() + " to nonSnmpCollectorMap for node: " + m_scheduledNode.getNodeId());
+                        log.debug("Adding " + ifaddr.getHostAddress()
+                                  + " to nonSnmpCollectorMap for node: "
+                                  + m_scheduledNode.getNodeId());
                     }
                 }
             }
@@ -151,15 +182,20 @@
             if (nonSnmpCollectorMap.size() == 1 && gotSnmpc) {
                 doesSnmp = true;
                 if (log.isDebugEnabled()) {
-                    log.debug("node " + m_scheduledNode.getNodeId() + " appears to be a lame SNMP host... Proceeding");
+                    log.debug("node " + m_scheduledNode.getNodeId()
+                              + " appears to be a lame SNMP host... "
+                              + "Proceeding");
                 }
             } else {
                 doesSnmp = false;
                 if (log.isDebugEnabled()) {
                     if (gotSnmpc == false) {
-                        log.debug("Could not collect SNMP data for node: " + m_scheduledNode.getNodeId());
+                        log.debug("Could not collect SNMP data for node: "
+                                  + m_scheduledNode.getNodeId());
                     } else {
-                        log.debug("Not using SNMP data for node: " + m_scheduledNode.getNodeId() + ". Collection does not agree with database.");
+                        log.debug("Not using SNMP data for node: "
+                                  + m_scheduledNode.getNodeId() + ".  "
+                                  + "Collection does not agree with database.");
                     }
                 }
             }
@@ -171,7 +207,11 @@
              * May want to create an event here
              */
             if (log.isDebugEnabled()) {
-                log.debug("SNMP collection for node: " + m_scheduledNode.getNodeId() + " does not agree with database, but there is no conflict among the interfaces on this node which respond to SNMP. Proceeding...");
+                log.debug("SNMP collection for node: "
+                          + m_scheduledNode.getNodeId()
+                          + " does not agree with database, but there is no "
+                          + "conflict among the interfaces on this node which "
+                          + "respond to SNMP. Proceeding...");
             }
             createSnmpConflictsWithDbEvent(dbNodeEntry);
         }
@@ -189,9 +229,11 @@
              * The SuspectEventProcessor class is also synchronizing on this
              * lock prior to performing database inserts or updates.
              */
-            log.debug("Waiting for capsd dbLock to process "+m_scheduledNode.getNodeId());
+            log.debug("Waiting for capsd dbLock to process "
+                      + m_scheduledNode.getNodeId());
             synchronized (Capsd.getDbSyncLock()) {
-                log.debug("Got capsd dbLock. processing "+m_scheduledNode.getNodeId());
+                log.debug("Got capsd dbLock. processing "
+                          + m_scheduledNode.getNodeId());
                 // Get database connection
                 dbc = DataSourceFactory.getInstance().getConnection();
 
@@ -205,22 +247,26 @@
                 if (!isNodeDeleted(dbc, m_scheduledNode.getNodeId())) {
                     // Update interface information
                     now = new Date();
-                    updateInterfaces(dbc, now, dbNodeEntry, collectorMap, doesSnmp);
+                    updateInterfaces(dbc, now, dbNodeEntry, collectorMap,
+                                     doesSnmp);
                     
                     if (doesSnmp) {
                         InetAddress oldPriIf = null;
-                        if(oldPrimarySnmpInterface != null) {
+                        if (oldPrimarySnmpInterface != null) {
                             oldPriIf = oldPrimarySnmpInterface.getIfAddress();
                         }
-                        InetAddress newSnmpPrimaryIf = updatePrimarySnmpInterface(dbc, dbNodeEntry, collectorMap, oldPriIf);
+                        InetAddress newSnmpPrimaryIf =
+                            updatePrimarySnmpInterface(dbc, dbNodeEntry,
+                                                       collectorMap, oldPriIf);
 
-                        DbNodeEntry updatedNodeEntry = updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf, dbInterfaces, collectorMap);
+                        DbNodeEntry updatedNodeEntry =
+                            updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf,
+                                       dbInterfaces, collectorMap);
                     }
                     updateCompleted = true;
 		    createRescanCompletedEvent(dbNodeEntry);
                 }
             }
-
         } catch (Throwable t) {
             log.error("Error updating records", t);
         } finally {
@@ -237,12 +283,12 @@
         // Send events associcatd with the rescan
         if (updateCompleted) {
             // Send all events created during rescan process to eventd
-            Iterator iter = m_eventList.iterator();
-            while (iter.hasNext()) {
+            for (Event event : m_eventList) {
                 try {
-                    EventIpcManagerFactory.getIpcManager().sendNow((Event) iter.next());
+                    EventIpcManagerFactory.getIpcManager().sendNow(event);
                 } catch (Throwable t) {
-                    log.warn("run: unexpected throwable exception caught during send to middleware", t);
+                    log.warn("run: unexpected throwable exception caught "
+                             + "while sending event", t);
                 }
             }
         }
@@ -252,7 +298,9 @@
         m_scheduledNode.setScheduled(false);
 
         if (log.isDebugEnabled()) {
-            log.debug((m_forceRescan ? "Forced r" : "R") + "escan for node w/ nodeid " + m_scheduledNode.getNodeId() + " completed.");
+            log.debug((m_forceRescan ? "Forced r" : "R") + "escan "
+                      + "for node w/ nodeid " + m_scheduledNode.getNodeId()
+                      + " completed.");
         }
-    } // end run
+    }
 

@@ -1,0 +1,154 @@
+    /**
+     * This method is responsible for updating the ipinterface table entry for a
+     * specific interface.
+     * 
+     * @param dbc
+     *            Database Connection.
+     * @param now
+     *            Date/time to be associated with the update.
+     * @param node
+     *            Node entry for the node being rescanned.
+     * @param dbIpIfEntry
+     *            interface entry of the updating interface.
+     * @param snmpc
+     *            SNMP collector or null if SNMP not supported.
+     * @param isNewIpEntry
+     *            if dbIpIfEntry is a new entry.
+     * @param isReparented
+     *            if dbIpIfEntry is reparented.
+     * @param doesSnmp
+     *            if node supports SNMP.
+     * 
+     * @throws SQLException
+     *             if there is a problem updating the ipinterface table.
+     */
+    private void updateInterfaceInfo(Connection dbc, Date now, DbNodeEntry node,
+            DbIpInterfaceEntry dbIpIfEntry, DbIpInterfaceEntry currIpIfEntry,
+            boolean isNewIpEntry, boolean isReparented)
+    throws SQLException {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        PollerConfig pollerCfgFactory = PollerConfigFactory.getInstance();
+
+        InetAddress ifaddr = dbIpIfEntry.getIfAddress();
+
+        /*
+         * Clone the existing database entry so we have access to the values
+         * of the database fields associated with the interface in the event
+         * that something has changed.
+         */
+        DbIpInterfaceEntry originalIpIfEntry =
+            DbIpInterfaceEntry.clone(dbIpIfEntry);
+
+        // Update any fields which have changed
+        dbIpIfEntry.setLastPoll(now);
+        dbIpIfEntry.updateHostname(currIpIfEntry.getHostname());
+        dbIpIfEntry.updateManagedState(currIpIfEntry.getManagedState());
+        dbIpIfEntry.updateStatus(currIpIfEntry.getStatus());
+        dbIpIfEntry.updatePrimaryState(currIpIfEntry.getPrimaryState());
+        /*
+         * XXX Note: the ifIndex will not be updated if updateIfIndex(-1)
+         * is called.  In other words, an ifIndex of a value other than -1
+         * (non-null in the database) will never change to -1 (which is null
+         * in the database) by calling updateIfIndex.  setIfIndex does work,
+         * however if m_useIfIndexAsKey is set in the DbIpInterfaceEntry,
+         * no entries (or at least not the right entry) will be updated
+         * because the WHERE clause for the UPDATE will be referring to the
+         * *new* ifIndex.
+         */
+        dbIpIfEntry.updateIfIndex(currIpIfEntry.getIfIndex());
+
+        /*
+         * Set event flags
+         * NOTE: Must set these flags prior to call to
+         * DbIpInterfaceEntry.store()
+         * method which will cause the change map to be cleared.
+         */
+        boolean ifIndexChangedFlag = false;
+        boolean ipHostnameChangedFlag = false;
+
+        if (dbIpIfEntry.hasIfIndexChanged()) {
+            ifIndexChangedFlag = true;
+        }
+
+        if (dbIpIfEntry.hasHostnameChanged()) {
+            ipHostnameChangedFlag = true;
+        }
+
+        // Update the database
+        dbIpIfEntry.store(dbc);
+
+        /*
+         * If the interface was not already in the database under
+         * the node being rescanned or some other node send a
+         * nodeGainedInterface event.
+         */
+        if (isNewIpEntry && !isReparented) {
+            createNodeGainedInterfaceEvent(dbIpIfEntry);
+        }
+
+        // InterfaceIndexChanged event
+        if (log.isDebugEnabled()) {
+            log.debug("updateInterfaceInfo: ifIndex changed: "
+                      + ifIndexChangedFlag);
+        }
+        if (ifIndexChangedFlag) {
+            createInterfaceIndexChangedEvent(dbIpIfEntry, originalIpIfEntry);
+            m_ifIndexOnNodeChangedFlag = true;
+        }
+
+        // IPHostNameChanged event
+        if (log.isDebugEnabled()) {
+            log.debug("updateInterfaceInfo: hostname changed: "
+                      + ipHostnameChangedFlag);
+        }
+        if (ipHostnameChangedFlag) {
+            createIpHostNameChangedEvent(dbIpIfEntry, originalIpIfEntry);
+        }
+        
+        if (isNewIpEntry) {
+            /*
+             * If it's new, the packageIpListMap needs to be rebuilt,
+             * polling status rechecked, and ismanaged updated if necessary
+             */
+            boolean ipToBePolled = false;
+            log.debug("updateInterfaceInfo: rebuilding PackageIpListMap for "
+                      + "new interface " + ifaddr.getHostAddress());
+            PollerConfigFactory.getInstance().rebuildPackageIpListMap();
+            org.opennms.netmgt.config.poller.Package ipPkg =
+                pollerCfgFactory.getFirstPackageMatch(ifaddr.getHostAddress());
+            if (ipPkg != null) {
+                ipToBePolled = true;
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("updateInterfaceInfo: interface "
+                          + ifaddr.getHostAddress() + " to be polled: "
+                          + ipToBePolled);
+            }
+            if (ipToBePolled) {
+                PreparedStatement stmt =
+                    dbc.prepareStatement(SQL_DB_UPDATE_ISMANAGED);
+                stmt.setString(1, new String(new char[] { DbIpInterfaceEntry.STATE_MANAGED }));
+                stmt.setInt(2, dbIpIfEntry.getNodeId());
+                stmt.setString(3, ifaddr.getHostAddress());
+                try {
+                    stmt.executeUpdate();
+                    if (log.isDebugEnabled()) {
+                        log.debug("updateInterfaceInfo: updated managed state "
+                                  + "for new interface "
+                                  + ifaddr.getHostAddress() + " on node "
+                                  + dbIpIfEntry.getNodeId() + " to managed");
+                    }
+                } catch (SQLException e) {
+                    throw e;
+                } finally {
+                    try {
+                        stmt.close();
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                }
+            }
+        }
+    }
+
