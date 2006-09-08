@@ -1,0 +1,83 @@
+    public void testIfServicesNonUniqueKeys() throws Exception {
+        if (!isDBTestEnabled()) {
+            return;
+        }
+
+        m_installer.createSequences();
+        m_installer.updatePlPgsql();
+        m_installer.addStoredProcedures();
+
+        addTableFromSQL("distpoller");
+        addTableFromSQL("node");
+        addTableFromSQL("snmpinterface");
+        addTableFromSQL("ipinterface");
+        addTableFromSQL("events");
+        addTableFromSQL("service");
+        addTableFromSQL("ifservices");
+        executeSQL("drop index ifservices_nodeid_ipaddr_svc_unique");
+        
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 1, now() )");
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 2, now() )");
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 3, now() )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 1 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 2 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 1 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 2 )");
+        
+        // These aren't dups because their ipaddr = 0.0.0.0
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 1 )");
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 2 )");
+
+        // dups with ifIndex = null (which we don't care about)
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 2, '1.1.1.1', null )");
+        //executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+        //         + "VALUES ( 2, '1.1.1.1', null )");
+        
+        // dups with ifIndex != null (which we also don't care about)
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 1 )");
+        //executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+        //           + "VALUES ( 3, '1.1.1.1', 2 )");
+
+        executeSQL("INSERT INTO service ( serviceID, serviceName ) "
+                   + "VALUES ( 1, 'COFFEE-READY' )");
+        executeSQL("INSERT INTO service ( serviceID, serviceName ) "
+                   + "VALUES ( 2, 'TEA-READY' )");
+        executeSQL("INSERT INTO service ( serviceID, serviceName ) "
+                   + "VALUES ( 3, 'SODA-ICE-COLD' )");
+        
+        
+//        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 1, '0.0.0.0', 1, 1 )");
+        
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 2, '1.1.1.1', null, 1 )");
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 2, '1.1.1.1', null, 2 )");
+        
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 2, '1.1.1.1', null, 3 )");
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 2, '1.1.1.1', null, 3 )");
+        
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 3, '1.1.1.1', null, 3 )");
+        executeSQL("INSERT INTO ifServices ( nodeID, ipAddr, ifIndex, serviceID ) VALUES ( 3, '1.1.1.1', -100, 3 )");
+
+
+        
+        ThrowableAnticipator ta = new ThrowableAnticipator();
+        ta.anticipate(new Exception("Unique index 'ifservices_nodeid_ipaddr_svc_unique' cannot be added to table 'ifservices' because 4 rows are not unique.  See the install guide for details on how to correct this problem.  You can use the following SQL to see which rows are not unique:\n"
+                                    + "SELECT * FROM ifservices WHERE ( nodeID, ipAddr, serviceId ) IN ( SELECT nodeID, ipAddr, serviceId FROM ifservices GROUP BY nodeID, ipAddr, serviceId HAVING count(nodeID) > 1 ORDER BY nodeID, ipAddr, serviceId ) ORDER BY nodeID, ipAddr, serviceId"));
+        try {
+            m_installer.checkIndexUniqueness();
+        } catch (Throwable t) {
+            ta.throwableReceived(t);
+        }
+        ta.verifyAnticipated();
+    }
+
