@@ -33,6 +33,8 @@
         agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout()));
         agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries()));
         agentConfig.setPort(ParameterMap.getKeyedInteger(parameters, "port", agentConfig.getPort()));
+        
+        String arrayNumber = ParameterMap.getKeyedString(parameters,"array","0.0");
 
         if (log().isDebugEnabled()) log().debug("poll: service= SNMP address= " + agentConfig);
 
@@ -42,69 +44,49 @@
             if (log().isDebugEnabled()) {
                 log().debug("PercMonitor.poll: SnmpAgentConfig address: " +agentConfig);
             }
-            SnmpObjId snmpObjectId = new SnmpObjId(PHYSICAL_BASE_OID);
+            SnmpObjId snmpObjectId = new SnmpObjId(LOGICAL_BASE_OID + "." + arrayNumber);
 
             // First walk the physical OID Tree and check the returned values 
 
-            Map<SnmpInstId, SnmpValue> results = SnmpUtils.getOidValues(agentConfig, "percPoller", snmpObjectId);
-
-            if(results.size() == 0) {
-                log().debug("SNMP poll failed: no physical results, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId);
-                return status;
+            String returnValue = new String(); 
+          
+            SnmpValue value = SnmpUtils.get(agentConfig,snmpObjectId);
+            
+            if (value.toInt()!=2){
+            	log().debug("PercMonitor.poll: Bad Disk Found");
+            	returnValue = "log vol(" + arrayNumber + ") degraded"; // XXX should degraded be the virtualDiskState ?
+            	// array is bad
+            	// lets find out which disks are bad in the array
+            	
+            	// first we need to fetch the arrayPosition table.
+            	SnmpObjId arrayPositionSnmpObject = new SnmpObjId(ARRAY_POSITION_BASE_OID);
+            	SnmpObjId diskStatesSnmpObject = new SnmpObjId(PHYSICAL_BASE_OID); 
+            	
+            	Map<SnmpInstId,SnmpValue> arrayDisks = SnmpUtils.getOidValues(agentConfig, "PercMonitor", arrayPositionSnmpObject);
+            	Map<SnmpInstId,SnmpValue> diskStates = SnmpUtils.getOidValues(agentConfig, "PercMonitor", diskStatesSnmpObject);
+            	
+            	for (Map.Entry<SnmpInstId, SnmpValue> disk: arrayDisks.entrySet()) {
+            		
+            		if (disk.getValue().toString().contains("A" + arrayNumber.toString() + "-")) {
+            			// this is a member of the array
+            			
+            			if ( diskStates.get(disk.getKey()).toInt() !=3 ){
+            				// this is bad disk.
+            				
+            				returnValue  += "phy drv(" + disk.getKey().toString() + ")";
+            				
+            			}
+            			
+            		}
+            
+            		return PollStatus.unavailable(returnValue);
+            	}
+            	
+            	
             }
-
-            for (Map.Entry<SnmpInstId, SnmpValue> e : results.entrySet()) { 
-
-                log().debug("poll: SNMPwalk poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
-
-                // Test each value returned to make sure it doesn't equal 4
-                // 				   1=>'ready',
-                //                                 3=>'online',
-                //                                 4=>'failed',
-                //                                 5=>'rebuild',
-                //                                 6=>'hotspare',
-                //                                 20=>'nondisk'
-
-                if (meetsCriteria(e.getValue(), "!=", "4")) {
-                    status = PollStatus.available();
-                } else {
-                    status = logDown(Level.DEBUG, "SNMP physical poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + snmpObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
-                    return status;
-                }
-            }
-
-            // If we get here, that means all of the physical drives returned a value not equal to "4"
-            // Now we need to check logical drives
-
-            SnmpObjId snmpLogObjectId = new SnmpObjId(LOGICAL_BASE_OID);
-
-            // Next walk the physical OID Tree and check the returned values 
-
-            Map<SnmpInstId, SnmpValue> lresults = SnmpUtils.getOidValues(agentConfig, "percPoller", snmpLogObjectId);
-
-            if(lresults.size() == 0) {
-                log().debug("SNMP poll failed: no logical results, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId);
-                return status;
-            }
-
-            for (Map.Entry<SnmpInstId, SnmpValue> e : lresults.entrySet()) { 
-
-                log().debug("poll: SNMPwalk poll succeeded, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
-
-                // Test each value returned to make sure it equals 2
-                //                0=>'offline',
-                //                1=>'degraded',
-                //                2=>'optimal',
-                //                3=>'initialize',
-                //                4=>'checkconsistency'
-
-                if (meetsCriteria(e.getValue(), "=", "2")) {
-                    status = PollStatus.available();
-                } else {
-                    status = logDown(Level.DEBUG, "SNMP logical poll failed, addr=" + ipaddr.getHostAddress() + " oid=" + snmpLogObjectId + " instance=" + e.getKey() + " value=" + e.getValue());
-                    return status;
-                }
-            }
+        
+            status = PollStatus.available();
+            
 
         } catch (NumberFormatException e) {
             status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
