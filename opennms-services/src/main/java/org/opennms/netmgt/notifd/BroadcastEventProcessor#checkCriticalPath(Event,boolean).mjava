@@ -1,0 +1,41 @@
+    /**
+     * @author <a href="mailto:billayers@opennms.org">Bill Ayers</a>
+     * @param event
+     * @param notifsOn
+     * @return boolean representing whether event is not relative to a critical path
+     */
+    private boolean checkCriticalPath(Event event, boolean notifsOn) {
+        boolean isPathOk = true;
+        long nodeid = event.getNodeid();
+
+        try {
+            // If this is a nodeDown event, see if the critical path was down
+            if (event.getUei().equals(EventConstants.NODE_DOWN_EVENT_UEI)) {
+                String reason = EventUtils.getParm(event, EventConstants.PARM_LOSTSERVICE_REASON);
+                if (reason != null && reason.equals(EventConstants.PARM_VALUE_PATHOUTAGE)) {
+                    isPathOk = false;
+                    String cip = EventUtils.getParm(event, EventConstants.PARM_CRITICAL_PATH_IP);
+                    String csvc = EventUtils.getParm(event, EventConstants.PARM_CRITICAL_PATH_SVC);
+                    log().debug("Critical Path " + cip + " " + csvc + " for nodeId " + nodeid + " did not respond. Checking to see if notice would have been sent...");
+                    boolean mapsToNotice = false;
+                    boolean noticeSupressed = false;
+                    Notification[] notifications = null;
+                    mapsToNotice = getNotificationManager().hasUei(event.getUei());
+                    notifications = getNotificationManager().getNotifForEvent(event);
+
+                    if (notifsOn && mapsToNotice && continueWithNotice(event) && notifications != null) {
+                        noticeSupressed = true;
+                    }
+                    createPathOutageEvent(nodeid, EventUtils.getParm(event, EventConstants.PARM_NODE_LABEL), cip, csvc, noticeSupressed);
+                }
+            }
+        } catch (MarshalException e) {
+            log().error("onEvent: problem marshalling configuration", e);
+        } catch (ValidationException e) {
+            log().error("onEvent: problem validating marsharled configuraion", e);
+        } catch (IOException e) {
+            log().error("onEvent: IO problem marshalling configuration", e);
+        }
+        return isPathOk;
+    }
+
