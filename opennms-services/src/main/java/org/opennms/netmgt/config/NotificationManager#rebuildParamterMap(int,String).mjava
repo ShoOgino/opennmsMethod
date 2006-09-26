@@ -1,20 +1,38 @@
     /**
      * @param notifId
      */
-    public Map rebuildParamterMap(int notifId, final String resolutionPrefix) throws Exception {
-        final Map parmMap = new HashMap();
+    public Map<String, String> rebuildParamterMap(int notifId, final String resolutionPrefix) throws Exception {
+        final Map<String, String> parmMap = new HashMap<String, String>();
         Querier querier = new Querier(m_dbConnectionFactory, "select notifications.*, service.* from notifications left outer join service on notifications.serviceID = service.serviceID  where notifyId = ?") {
             public void processRow(ResultSet rs) throws SQLException {
-                parmMap.put(NotificationManager.PARAM_TEXT_MSG, resolutionPrefix+rs.getObject("textMsg"));
-                parmMap.put(NotificationManager.PARAM_NUM_MSG, rs.getObject("numericMsg"));
-                parmMap.put(NotificationManager.PARAM_SUBJECT, resolutionPrefix+rs.getObject("subject"));
-                parmMap.put(NotificationManager.PARAM_NODE, rs.getObject("nodeID").toString());
-                parmMap.put(NotificationManager.PARAM_INTERFACE, rs.getObject("interfaceID"));
-                parmMap.put(NotificationManager.PARAM_SERVICE, rs.getObject("serviceName"));
-                parmMap.put("noticeid", rs.getObject("notifyID").toString());
-                parmMap.put("eventID", rs.getObject("eventID").toString());
-                parmMap.put("eventUEI", rs.getObject("eventUEI"));
-
+                
+                /*
+                 * Note, getString on results is valid for any SQL data type except the new SQL types:
+                 *    Blog, Clob, Array, Struct, Ref
+                 * of which we have none in this table so this row processor is using getString
+                 * to correctly align with annotated types in the map.
+                 */
+                parmMap.put(NotificationManager.PARAM_TEXT_MSG, resolutionPrefix+rs.getString("textMsg"));
+                parmMap.put(NotificationManager.PARAM_NUM_MSG, rs.getString("numericMsg"));
+                parmMap.put(NotificationManager.PARAM_SUBJECT, resolutionPrefix+rs.getString("subject"));
+                parmMap.put(NotificationManager.PARAM_NODE, rs.getString("nodeID"));
+                parmMap.put(NotificationManager.PARAM_INTERFACE, rs.getString("interfaceID"));
+                parmMap.put(NotificationManager.PARAM_SERVICE, rs.getString("serviceName"));
+                parmMap.put("noticeid", rs.getString("notifyID"));
+                parmMap.put("eventID", rs.getString("eventID"));
+                parmMap.put("eventUEI", rs.getString("eventUEI"));
+                
+                Notification notification = null;
+                try {
+                    notification = getNotification(rs.getObject("notifConfigName").toString());
+                } catch (MarshalException e) {
+                } catch (ValidationException e) {
+                } catch (IOException e) {
+                }
+                
+                if (notification != null) {
+                    addNotificationParams(parmMap, notification);
+                }
             }
         };
         querier.execute(new Integer(notifId));
