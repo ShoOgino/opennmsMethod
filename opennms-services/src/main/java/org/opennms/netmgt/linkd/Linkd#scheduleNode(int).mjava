@@ -2,6 +2,7 @@
 
 		Category log = ThreadCategory.getInstance();
 		java.sql.Connection dbConn = null;
+		
 		SnmpCollection coll = null;
 		
 		try {
@@ -14,7 +15,6 @@
 				coll = LinkdConfigFactory.getInstance().getSnmpCollection(
 						dbConn, nid);
 			} catch (UnknownHostException h) {
-				if (log.isEnabledFor(Priority.WARN))
 					log
 							.warn("scheduleNode: Failed to get Linkable node from LinkdConfigFactory"
 									+ h);
@@ -51,6 +51,7 @@
 		// work on snmpprimary
 		synchronized (snmpprimaryip2nodes) {
 			if (snmpprimaryip2nodes.containsKey(ip)) {
+				if (log.isDebugEnabled()) log.debug("Node collection exists: skipping schedule, performing DB cleaning");
 				LinkableNode oldNode = (LinkableNode) snmpprimaryip2nodes
 						.get(ip);
 
@@ -61,19 +62,20 @@
 							DbEventWriter.ACTION_DELETE);
 					dbwriter.run();
 				}
-			}
+			} else {
+				if (log.isDebugEnabled()) log.debug("Node collection does not exists: scheduling");
+				synchronized (coll) {
+					if (coll.getScheduler() == null) {
+						coll.setScheduler(m_scheduler);
+					}
+					coll.setPollInterval(m_snmp_poll_interval);
+					coll.setInitialSleepTime(0);
+					coll.schedule();
+				}
+			}	
 			snmpprimaryip2nodes.put(ip, node);
 		}
 
-		synchronized (coll) {
-			if (coll.getScheduler() == null) {
-				coll.setScheduler(m_scheduler);
-			}
-			coll.setPollInterval(m_snmp_poll_interval);
-			coll.setInitialSleepTime(0);
-			coll.schedule();
-		}
-			
 		if (!scheduledDiscoveryLink) {
 			DiscoveryLink discoveryLink = new DiscoveryLink();
 
