@@ -145,6 +145,7 @@
 
 		if (m_snmpcoll.hasRouteTable()) {
 			java.util.List<RouterInterface> routeInterfaces = new java.util.ArrayList<RouterInterface>();
+			
 			ite = m_snmpcoll.getIpRouteTable().getEntries()
 					.iterator();
 			if (log.isDebugEnabled())
@@ -166,6 +167,12 @@
                 
 				int ifindex = ent.getInt32(IpRouteTableEntry.IP_ROUTE_IFINDEX);
                 log.debug("storeSnmpCollection: ifindex is: "+ (ifindex < 1 ? "less than 1" : ifindex)+"; IP_ROUTE_IFINDEX: "+IpRouteTableEntry.IP_ROUTE_IFINDEX);
+
+                if (ifindex < 0) {
+					log.warn("store: NNot valid ifindex" + ifindex 
+							+ " Skipping...");
+					continue;
+				}
                 
 				int routemetric1 = ent.getInt32(IpRouteTableEntry.IP_ROUTE_METRIC1);
                 log.debug("storeSnmpCollection: routemetric1 is: "+ (routemetric1 < 1 ? "less than 1" : routemetric1)+"; IP_ROUTE_METRIC1: "+IpRouteTableEntry.IP_ROUTE_METRIC1);
@@ -192,23 +199,37 @@
                 
 
 				// info used for Discovery Link
-				RouterInterface routeIface = new RouterInterface(ifindex);
-				routeIface.setMetric(routemetric1);
-				routeIface.setNextHop(nexthop);
 				
 				
-				int nodeParentId = getNodeidFromIp(dbConn,nexthop);
-				
-				if (nodeParentId == -1) {
+				RouterInterface routeIface = null;
+				routeIface = getNodeidMaskFromIp(dbConn,nexthop);
+
+				// if target node is not snmp node try to save info
+				if (routeIface == null) {
+					routeIface = getNodeFromIp(dbConn, nexthop);
+				}
+					
+				if (routeIface == null) {
 					//TODO here is a good point for autodiscovery
-					log.warn("store: No nodeid found for next hop " + nexthop 
+					log.warn("store: No nodeid found for next hop ip" + nexthop 
 							+ " Skipping ip route interface add to Linkable Snmp Node");
+					// try to find it in ipinterface
 				} else {
-					
-					routeIface.setNodeparentid(nodeParentId);
-					routeIface.setSnmpiftype(getSnmpIfType(dbConn, nodeid, ifindex));
-					
+					int snmpiftype = -2;
+					if (ifindex > 0) snmpiftype = getSnmpIfType(dbConn, nodeid, ifindex);
+
+					// no processing ethernet type
+					if (log.isDebugEnabled())
+						log.debug("store: interface has snmpiftype "
+									+ snmpiftype + " . Adding to DiscoverLink ");
+
+					routeIface.setSnmpiftype(snmpiftype);
+					routeIface.setIfindex(ifindex);
+					routeIface.setMetric(routemetric1);
+					routeIface.setNextHop(nexthop);
+						
 					routeInterfaces.add(routeIface);
+
 				}
 
 				// save info to DB
