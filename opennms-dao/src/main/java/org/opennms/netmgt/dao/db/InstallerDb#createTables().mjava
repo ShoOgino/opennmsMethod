@@ -1,0 +1,85 @@
+    public void createTables() throws Exception {
+        Statement st = getConnection().createStatement();
+        ResultSet rs;
+
+        m_out.println("- creating tables...");
+
+        for (String tableName : getTableNames()) {
+            if (m_force) {
+                tableName = tableName.toLowerCase();
+
+                String create = getTableCreateFromSQL(tableName);
+
+                boolean remove;
+
+                rs = st.executeQuery("SELECT relname FROM pg_class "
+                        + "WHERE relname = '" + tableName + "'");
+
+                remove = rs.next();
+
+                m_out.print("  - removing old table... ");
+                if (remove) {
+                    st.execute("DROP TABLE " + tableName + " CASCADE");
+                    m_out.println("REMOVED");
+                } else {
+                    m_out.println("CLEAN");
+                }
+
+                m_out.print("  - creating table \"" + tableName + "\"... ");
+                st.execute("CREATE TABLE " + tableName + " (" + create + ")");
+                m_out.println("CREATED");
+
+                addIndexesForTable(tableName);
+                addTriggersForTable(tableName);
+
+                /*
+                m_out.print("  - giving \"" + m_user + "\" permissions on \""
+                        + tableName + "\"... ");
+                st.execute("GRANT ALL ON " + tableName + " TO " + m_user);
+                m_out.println("GRANTED");
+                 */
+            } else {
+                m_out.println("  - checking table \"" + tableName + "\"... ");
+
+                tableName = tableName.toLowerCase();
+
+                Table newTable = getTableFromSQL(tableName);
+                Table oldTable = getTableFromDB(tableName);
+
+                if (newTable.equals(oldTable)) {
+                    addIndexesForTable(tableName);
+                    addTriggersForTable(tableName);
+                    m_out.println("  - checking table \"" + tableName
+                                  + "\"... UPTODATE");
+                } else {
+                    if (oldTable == null) {
+                        String create = getTableCreateFromSQL(tableName);
+                        String createSql = "CREATE TABLE " + tableName + " ("
+                            + create + ")"; 
+                        st.execute(createSql);
+                        
+                        addIndexesForTable(tableName);
+                        addTriggersForTable(tableName);
+                        /*
+                        st.execute("GRANT ALL ON " + tableName + " TO "
+                                + m_user);
+                                */
+                        m_out.println("  - checking table \"" + tableName
+                                      + "\"... CREATED");
+                    } else {
+                        try {
+                            changeTable(tableName, oldTable, newTable);
+                        } catch (Exception e) {
+                            throw new Exception("Error changing table '"
+                                                + tableName
+                                                + "'.  Nested exception: "
+                                                + e.getMessage(), e);
+                        }
+                    }
+                }
+            }
+        }
+
+        m_out.println("- creating tables... DONE");
+    }
+

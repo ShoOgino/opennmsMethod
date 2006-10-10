@@ -1,0 +1,65 @@
+    public void checkConstraint(Constraint constraint) throws Exception {
+        String name = constraint.getName();
+        String table = constraint.getTable();
+        List<String> columns = constraint.getColumns();
+        String ftable = constraint.getForeignTable();
+        List<String> fcolumns = constraint.getForeignColumns();
+
+        if (!tableExists(table)) {
+            // The constrained table does not exist
+            return;
+        }
+        for (String column : columns) {
+            if (!tableColumnExists(table, column)) {
+                // This constrained column does not exist
+                return;
+            }
+        }
+
+        // XXX Not sure if it's okay to leave this out
+        /*
+         * if (table.equals("usersNotified") && column.equals("id")) { //
+         * m_out.print("Skipping usersNotified.id"); continue; }
+         */
+
+//        String partialQuery = "FROM " + table + " WHERE "
+//                + getForeignConstraintWhere(table, columns, ftable, fcolumns);
+        
+        String partialQuery = getJoinForRowsThatFailConstraint(table, columns, ftable, fcolumns);
+        
+
+        Statement st = getConnection().createStatement();
+        ResultSet rs;
+        String query = "SELECT count(*) " + partialQuery; 
+        try {
+            rs = st.executeQuery(query);
+        } catch (SQLException e) {
+            throw new Exception("Failed to execute query '" + query + "'.  "
+                                + "Nested exception: " + e.getMessage(), e);
+        }
+
+        rs.next();
+        int count = rs.getInt(1);
+        rs.close();
+
+        if (count != 0) {
+            rs = st.executeQuery("SELECT count(*) FROM " + table);
+            rs.next();
+            int total = rs.getInt(1);
+            rs.close();
+            st.close();
+
+            throw new Exception("Table " + table + " contains " + count
+                    + " rows " + "(out of " + total
+                    + ") that violate new constraint " + name + ".  "
+                    + "See the install guide for details "
+                    + "on how to correct this problem.  You can execute this "
+                    + "SQL query to see a list of the rows that violate the "
+                    + "constraint:\n"
+                    + "SELECT * " + partialQuery);
+        }
+
+        st.close();
+
+    }
+

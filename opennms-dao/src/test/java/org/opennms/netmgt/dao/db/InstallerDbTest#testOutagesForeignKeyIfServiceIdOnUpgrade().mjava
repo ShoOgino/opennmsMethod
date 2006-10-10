@@ -1,0 +1,70 @@
+    public void testOutagesForeignKeyIfServiceIdOnUpgrade() throws Exception {
+        getInstallerDb().createSequences();
+        getInstallerDb().updatePlPgsql();
+        getInstallerDb().addStoredProcedures();
+
+        addTableFromSQL("distPoller");
+        addTableFromSQL("node");
+        addTableFromSQL("snmpinterface");
+        addTableFromSQL("ipinterface");
+
+        /*
+         * // No ID column addTableFromSQLWithReplacements("ipinterface", new
+         * String[][] { new String[] { "(?i)id\\s+integer default
+         * nextval\\('opennmsNxtId'\\) not null,", "" }, new String[] {
+         * "(?i)constraint ipinterface_pkey primary key \\(id\\),", "" } });
+         */
+
+        addTableFromSQL("events");
+
+        addTableFromSQL("service");
+
+        // No ID column
+        addTableFromSQLWithReplacements("ifservices",
+                                        new String[][] {
+                                                new String[] {
+                                                        "(?i)id\\s+integer default nextval\\('opennmsNxtId'\\) not null,",
+                                                        "" },
+                                                new String[] {
+                                                        "(?i)constraint ifServices_pkey primary key \\(id\\),",
+                                                        "" } });
+
+        // No ifServiceId column
+        addTableFromSQLWithReplacements(
+                                        "outages",
+                                        new String[][] {
+                                                new String[] {
+                                                        "(?i)ifServiceId\\s+INTEGER not null,",
+                                                        "" },
+                                                new String[] {
+                                                        "(?i),\\s+CONSTRAINT ifServices_fkey2 FOREIGN KEY \\(ifServiceId\\) REFERENCES ifServices \\(id\\) ON DELETE CASCADE",
+                                                        "" } }, false);
+
+        executeSQL("INSERT INTO node (nodeId, nodeCreateTime) VALUES ( 1, now() )");
+        executeSQL("INSERT INTO snmpInterface (id, nodeId, ipAddr, snmpIfIndex) VALUES ( 1, 1, '1.2.3.4', 1 )");
+        executeSQL("INSERT INTO ipInterface (id, nodeId, ipAddr, ifIndex, snmpInterfaceId ) VALUES ( 1, 1, '1.2.3.4', 1, 1 )");
+        executeSQL("INSERT INTO service (serviceID, serviceName) VALUES ( 1, 'COFFEE-READY' )");
+        executeSQL("INSERT INTO ifServices (nodeID, ipAddr, ifIndex, serviceID, ipInterfaceId) VALUES ( 1, '1.2.3.4', 1, 1, 1)");
+        executeSQL("INSERT INTO outages (outageId, nodeId, ipAddr, ifLostService, serviceID ) "
+                + "VALUES ( nextval('outageNxtId'), 1, '1.2.3.4', now(), 1 )");
+
+        getInstallerDb().createTables();
+
+        Statement st = m_connection.createStatement();
+        ResultSet rs = st.executeQuery("SELECT id from ifServices");
+        int count = 0;
+        for (int expected = 1; rs.next(); expected++) {
+            assertEquals("ifServices id", expected, rs.getInt(1));
+            count++;
+        }
+        assertEquals("column count", 1, count);
+
+        rs = st.executeQuery("SELECT ifServiceId from outages");
+        count = 0;
+        for (int expected = 1; rs.next(); expected++) {
+            assertEquals("outages ifServiceId", expected, rs.getInt(1));
+            count++;
+        }
+        assertEquals("expected column count", 1, count);
+    }
+

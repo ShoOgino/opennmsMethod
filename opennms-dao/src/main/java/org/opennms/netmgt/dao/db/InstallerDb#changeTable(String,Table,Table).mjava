@@ -1,0 +1,181 @@
+    public void changeTable(String table, Table oldTable, Table newTable)
+            throws Exception {
+        List<Column> oldColumns = oldTable.getColumns();
+        List<Column> newColumns = newTable.getColumns();
+
+        Statement st = getConnection().createStatement();
+        TreeMap<String, ColumnChange> columnChanges = new TreeMap<String, ColumnChange>();
+        String[] oldColumnNames = new String[oldColumns.size()];
+
+        int i;
+
+        if (hasTableChanged(table)) {
+            return;
+        }
+        
+        tableChanged(table);
+
+        m_out.println("  - checking table \"" + table
+                      + "\"... SCHEMA DOES NOT MATCH");
+
+        m_out.println("    - differences:");
+        for (Constraint newConstraint : newTable.getConstraints()) {
+            m_out.println("new constraint: " + newConstraint.getTable()
+                    + ": " + newConstraint);
+        }
+        for (Constraint oldConstraint : oldTable.getConstraints()) {
+            m_out.println("old constraint: " + oldConstraint.getTable()
+                    + ": " + oldConstraint);
+        }
+
+        /*
+         * XXX This doesn't check for old column rows that don't exist
+         * in newColumns.
+         */
+        for (Column newColumn : newColumns) {
+            Column oldColumn = findColumn(oldColumns, newColumn.getName());
+
+            if (oldColumn == null || !newColumn.equals(oldColumn)) {
+                m_out.println("      - column \"" + newColumn.getName()
+                        + "\" is different");
+                if (m_debug) {
+                    m_out.println("        - old column: "
+                            + ((oldColumn == null) ? "null"
+                                                  : oldColumn.toString()));
+                    m_out.println("        - new column: " + newColumn);
+                }
+            }
+
+            if (!columnChanges.containsKey(newColumn.getName())) {
+                columnChanges.put(newColumn.getName(), new ColumnChange());
+            }
+
+            ColumnChange columnChange = (ColumnChange) columnChanges.get(newColumn.getName());
+            columnChange.setColumn(newColumn);
+
+            /*
+             * If the new column has a NOT NULL constraint, set a null replace
+             * value for the column. Throw an exception if it is possible for
+             * null data to be inserted into the new column. This would happen
+             * if there is not a null replacement and the column either didn't
+             * exist before or it did NOT have the NOT NULL constraint before.
+             */
+            if (m_columnReplacements.containsKey(table + "." + newColumn.getName())) {
+                columnChange.setColumnReplacement(m_columnReplacements.get(table + "." + newColumn.getName()));
+            }
+            if (newColumn.isNotNull() && columnChange.getColumnReplacement() == null) {
+                if (oldColumn == null) {
+                    String message = "Column " + newColumn.getName()
+                            + " in new table has NOT NULL "
+                            + "constraint, however this column "
+                            + "did not exist before and there is "
+                            + "no change replacement for this column";
+                    if (m_ignore_notnull) {
+                        m_out.println(message + ".  Ignoring due to '-N'");
+                    } else {
+                        throw new Exception(message);
+                    }
+                } else if (!oldColumn.isNotNull()) {
+                    String message = "Column " + newColumn.getName()
+                            + " in new table has NOT NULL "
+                            + "constraint, however this column "
+                            + "did not have the NOT NULL "
+                            + "constraint before and there is "
+                            + "no change replacement for this column";
+                    if (m_ignore_notnull) {
+                        m_out.println(message + ".  Ignoring due to '-N'");
+                    } else {
+                        throw new Exception(message);
+                    }
+                }
+            }
+        }
+
+        i = 0;
+        for (Column oldColumn : oldColumns) {
+            oldColumnNames[i] = oldColumn.getName();
+
+            if (columnChanges.containsKey(oldColumn.getName())) {
+                ColumnChange columnChange = (ColumnChange) columnChanges.get(oldColumn.getName());
+                Column newColumn = (Column) columnChange.getColumn();
+                if (newColumn.getType().indexOf("timestamp") != -1) {
+                    columnChange.setUpgradeTimestamp(true);
+                }
+            } else {
+                m_out.println("      * WARNING: column \""
+                        + oldColumn.getName() + "\" exists in the "
+                        + "database but is not in the new schema.  "
+                        + "REMOVING COLUMN");
+            }
+            
+            i++;
+        }
+
+        String tmpTable = table + "_old_" + System.currentTimeMillis();
+
+        try {
+            if (tableExists(tmpTable)) {
+                st.execute("DROP TABLE " + tmpTable + " CASCADE");
+            }
+
+            m_out.print("    - creating temporary table... ");
+            st.execute("CREATE TABLE " + tmpTable + " AS SELECT "
+                       + StringUtils.arrayToDelimitedString(oldColumnNames, ", ")
+                       + " FROM " + table);
+            m_out.println("done");
+
+            st.execute("DROP TABLE " + table + " CASCADE");
+
+            m_out.print("    - creating new '" + table + "' table... ");
+            st.execute("CREATE TABLE " + table + "("
+                    + getTableCreateFromSQL(table) + ")");
+            m_out.println("done");
+            
+            addIndexesForTable(table);
+            addTriggersForTable(table);
+
+            transformData(table, tmpTable, columnChanges, oldColumnNames);
+
+//            st.execute("GRANT ALL ON " + table + " TO " + m_user);
+
+            m_out.print("    - optimizing table " + table + "... ");
+            st.execute("VACUUM ANALYZE " + table);
+            m_out.println("DONE");
+        } catch (Exception e) {
+            if (m_no_revert) {
+                m_out.println("FAILED!  Not reverting due to '-R' being "
+                        + "passed.  Old data in " + tmpTable);
+                throw e;
+            }
+
+            try {
+                getConnection().rollback();
+                getConnection().setAutoCommit(true);
+
+                if (tableExists(table)) {
+                    st.execute("DROP TABLE " + table + " CASCADE");
+                }
+                st.execute("CREATE TABLE " + table + " AS SELECT "
+                           + StringUtils.arrayToDelimitedString(oldColumnNames, ", ")
+                           + " FROM " + tmpTable);
+                st.execute("DROP TABLE " + tmpTable);
+            } catch (SQLException se) {
+                throw new Exception("Got SQLException while trying to "
+                        + "revert table changes due to original " + "error: "
+                        + e + "\n" + "SQLException while reverting table: "
+                        + se, e);
+            }
+            m_out.println("FAILED!  Old data restored, however indexes and "
+                    + "constraints on this table were not re-added");
+            throw e;
+        }
+
+        // We don't care if dropping the tmp table fails since we've
+        // completed copying it, so it's outside of the try/catch block above.
+        st.execute("DROP TABLE " + tmpTable);
+
+
+        m_out.println("  - checking table \"" + table
+                      + "\"... COMPLETED UPDATING TABLE");
+    }
+

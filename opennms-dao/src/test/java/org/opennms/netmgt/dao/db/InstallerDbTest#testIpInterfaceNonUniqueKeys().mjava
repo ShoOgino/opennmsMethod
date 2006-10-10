@@ -1,0 +1,70 @@
+    public void testIpInterfaceNonUniqueKeys() throws Exception {
+        getInstallerDb().createSequences();
+        getInstallerDb().updatePlPgsql();
+        getInstallerDb().addStoredProcedures();
+
+        addTableFromSQL("distpoller");
+        addTableFromSQL("node");
+        addTableFromSQL("snmpinterface");
+        addTableFromSQL("ipinterface");
+        executeSQL("drop index ipinterface_nodeid_ipaddr_notzero_idx");
+        
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 1, now() )");
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 2, now() )");
+        executeSQL("INSERT INTO node ( nodeId, nodeCreateTime ) "
+                   + "VALUES ( 3, now() )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 1 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 2 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 1 )");
+        executeSQL("INSERT INTO snmpInterface ( nodeID, ipAddr, snmpIfIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 2 )");
+        
+        // These aren't dups because their ipaddr = 0.0.0.0
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 1 )");
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 1, '0.0.0.0', 2 )");
+
+        // dups with ifIndex = null (which we don't care about)
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 2, '1.1.1.1', null )");
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 2, '1.1.1.1', null )");
+        
+        // dups with ifIndex != null (which we also don't care about)
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 1 )");
+        executeSQL("INSERT INTO ipInterface ( nodeID, ipAddr, ifIndex ) "
+                   + "VALUES ( 3, '1.1.1.1', 2 )");
+
+        
+        ThrowableAnticipator ta = new ThrowableAnticipator();
+        ta.anticipate(new Exception("Unique index "
+                                    + "'ipinterface_nodeid_ipaddr_notzero_idx' "
+                                    + "cannot be added to table "
+                                    + "'ipInterface' because 4 rows are not "
+                                    + "unique.  See the install guide for "
+                                    + "details on how to correct this "
+                                    + "problem.  You can use the following SQL "
+                                    + "to see which rows are not unique:\n"
+                                    + "SELECT * FROM ipInterface WHERE ( "
+                                    + "nodeID, ipAddr ) IN ( SELECT nodeID, "
+                                    + "ipAddr FROM ipInterface GROUP BY "
+                                    + "nodeID, ipAddr HAVING count(nodeID) > 1 "
+                                    + "AND ( ipAddr != '0.0.0.0' ) ORDER BY "
+                                    + "nodeID, ipAddr ) ORDER BY nodeID, "
+                                    + "ipAddr"));
+        try {
+            getInstallerDb().checkIndexUniqueness();
+        } catch (Throwable t) {
+            ta.throwableReceived(t);
+        }
+        ta.verifyAnticipated();
+
+    }
+
