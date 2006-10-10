@@ -1,0 +1,63 @@
+    public String fixConstraint(Constraint constraint, boolean removeRows)
+            throws Exception {
+        String table = constraint.getTable();
+        List<String> columns = constraint.getColumns();
+        String ftable = constraint.getForeignTable();
+        List<String> fcolumns = constraint.getForeignColumns();
+
+        if (!tableExists(table)) {
+            throw new Exception("Constraint " + constraint.getName()
+                    + " is on table " + table + ", but table does "
+                    + "not exist (so fixing this constraint does "
+                    + "nothing).");
+        }
+
+        for (String column : columns) {
+            if (!tableColumnExists(table, column)) {
+                throw new Exception("Constraint " + constraint.getName()
+                                    + " constrains column " + column
+                                    + " of table " + table
+                                    + ", but column does "
+                                    + "not exist (so fixing this constraint "
+                                    + "does nothing).");
+            }
+        }
+
+//        String where = getForeignConstraintWhere(table, columns, ftable,
+//                                                 fcolumns);
+        
+        String tuple = "";
+        for(int i = 0; i < columns.size(); i++) {
+                if (i != 0) {
+                        tuple += ", ";
+                }
+                tuple += table+'.'+columns.get(i);
+        }
+        
+        String where = "( "+ tuple + ") IN ( SELECT " + tuple + " " +
+                getJoinForRowsThatFailConstraint(table, columns, ftable, fcolumns) +")";
+
+        String query;
+        String change_text;
+
+        if (removeRows) {
+            query = "DELETE FROM " + table + " WHERE " + where;
+            change_text = "DELETED";
+        } else {
+            List<String> sets = new ArrayList<String>(columns.size());
+            for (String column : columns) {
+                sets.add(column + " = NULL");
+            }
+            
+            query = "UPDATE " + table + " SET "
+                + StringUtils.collectionToDelimitedString(sets, ", ") + " "
+                + "WHERE " + where;
+            change_text = "UPDATED";
+        }
+
+        Statement st = getConnection().createStatement();
+        int num = st.executeUpdate(query);
+
+        return change_text + " " + num + (num == 1 ? " ROW" : " ROWS");
+    }
+

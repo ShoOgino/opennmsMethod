@@ -9,16 +9,24 @@
             throw new Exception("Nothing to do.\n" + m_required_options
                     + "\nUse '-h' for help.");
         }
+        
+        DataSource adminDataSource =
+            new SimpleDataSource(m_pg_driver, m_pg_url + "template1",
+                                    m_pg_user, m_pg_pass);
+        m_installerDb.setAdminDataSource(adminDataSource);
+        DataSource opennmsDataSource =
+            new SimpleDataSource(m_pg_driver, m_pg_url + m_installerDb.getDatabaseName(),
+                                    m_pg_user, m_pg_pass);
+        m_installerDb.setDataSource(opennmsDataSource);
 
-        // Don't bother checking the Java version. Leave it up to runjava.
-        // checkJava();
+        m_installerDb.addColumnReplacements();
+
         // XXX Check Tomcat version?
 
         if (m_update_database || m_update_iplike || m_update_unicode
                 || m_do_inserts || m_fix_constraint) {
-            databaseConnect("template1");
-            databaseCheckVersion();
-            databaseCheckLanguage();
+            m_installerDb.databaseCheckVersion();
+            m_installerDb.databaseCheckLanguage();
         }
 
         printDiagnostics();
@@ -31,61 +39,54 @@
         }
 
         if (m_update_database || m_fix_constraint) {
-            readTables();
+            m_installerDb.readTables();
         }
 
         if (m_update_database) {
             // XXX Check and optionally modify pg_hba.conf
 
-            if (!databaseUserExists()) {
-                databaseAddUser();
+            if (!m_installerDb.databaseUserExists()) {
+                m_installerDb.databaseAddUser();
             }
-            if (!databaseDBExists()) {
-                databaseAddDB();
+            if (!m_installerDb.databaseDBExists()) {
+                m_installerDb.databaseAddDB();
             }
-        }
-
-        if (m_update_database || m_update_iplike || m_update_unicode
-                || m_do_inserts || m_fix_constraint) {
-            databaseDisconnect();
-
-            databaseConnect(m_database);
         }
 
         if (m_fix_constraint) {
-            fixConstraint();
+            m_installerDb.fixConstraint(m_fix_constraint_name,
+                                        m_fix_constraint_remove_rows);
         }
 
         if (m_update_database) {
-            checkOldTables();
+            m_installerDb.checkOldTables();
             if (!m_skip_constraints) {
-                checkConstraints();
-                checkIndexUniqueness();
+                m_installerDb.checkConstraints();
+                m_installerDb.checkIndexUniqueness();
             }
-            createSequences();
+            m_installerDb.createSequences();
 
-            // XXX should we be using createFunctions and createLanguages
-            // instead?
-            updatePlPgsql();
+            // should we be using createFunctions and createLanguages instead?
+            m_installerDb.updatePlPgsql();
 
-            // XXX should we be using createFunctions instead?
-            addStoredProcedures();
+            // should we be using createFunctions instead?
+            m_installerDb.addStoredProcedures();
 
-            createTables();
+            m_installerDb.createTables();
             //createIndexes();
             // createFunctions(m_cfunctions); // Unused, not in create.sql
             // createLanguages(); // Unused, not in create.sql
             // createFunctions(m_functions); // Unused, not in create.sql
 
-            fixData();
+            m_installerDb.fixData();
         }
 
         if (m_do_inserts) {
-            insertData();
+            m_installerDb.insertData();
         }
 
         if (m_update_unicode) {
-            checkUnicode();
+            m_installerDb.checkUnicode();
         }
 
         if (m_install_webapp) {
@@ -97,19 +98,20 @@
         }
 
         if (m_update_iplike) {
-            updateIplike();
+            m_installerDb.updateIplike();
         }
 
         if (m_update_database || m_update_iplike || m_update_unicode
                 || m_do_inserts) {
-            databaseDisconnect();
+            m_installerDb.closeConnection();
+            m_installerDb.closeAdminConnection();
         }
 
         if (m_update_database) {
             createConfiguredFile();
         }
 
-        System.out.println();
-        System.out.println("Installer completed successfully!");
+        m_out.println();
+        m_out.println("Installer completed successfully!");
     }
 
