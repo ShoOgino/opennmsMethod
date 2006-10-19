@@ -1,0 +1,65 @@
+	public static void doReport(String startYear, String startMonth,
+			String startDate) {
+
+		ThreadCategory.setPrefix(LOG4J_CATEGORY);
+		Category log = ThreadCategory.getInstance(AvailabilityReport.class);
+		ClassPathResource resource = new ClassPathResource("META-INF/opennms/applicationContext-reporting.xml");
+		BeanFactory bf = new XmlBeanFactory(resource);
+	
+		// properties required for calculating the availability data and
+		// marshalling to XML
+
+		String logoURL = System.getProperty("image");
+		String categoryName = System.getProperty("catName");
+		if (categoryName == null || categoryName.equals(""))
+			categoryName = "all";
+
+		String monthFormat = System.getProperty("monthFormat");
+
+		if (monthFormat == null || monthFormat.equals("")
+				|| monthFormat.equals("classic")) {
+			calculator = (AvailabilityCalculator) bf.getBean("classicAvailabilityCalculator");
+		} else {
+			calculator = (AvailabilityCalculator) bf.getBean("calendarAvailabilityCalculator");
+		}
+
+		calculator.setCalendar(new GregorianCalendar());
+		calculator.setCategoryName(categoryName);
+		calculator.setLogoURL(logoURL);
+		calculator.setStartMonth(startMonth);
+		calculator.setStartDate(startDate);
+		calculator.setStartYear(startYear);
+
+		String format = System.getProperty("format");
+		
+		if (format == null || format.equals(SVG_FORMAT)) {
+			log.debug("report will be rendered as PDF with embedded SVG");
+			renderer = (ReportRenderer) bf.getBean("svgReportRenderer");
+			//renderer.setOutputFileName("svg-" + categoryName + "-adhoc.pdf");
+			calculator.setReportFormat(SVG_FORMAT);
+		} else if (format.equals(PDF_FORMAT)) {
+			log.debug("report will be rendered as PDF");
+			renderer = (ReportRenderer) bf.getBean("pdfReportRenderer");
+			//renderer.setOutputFileName(categoryName + "-adhoc.pdf");
+			calculator.setReportFormat(PDF_FORMAT);
+		} else {
+			log.debug("report will be rendered as html");
+			renderer = (ReportRenderer) bf.getBean("htmlReportRenderer");
+			//renderer.setOutputFileName(categoryName + "-adhoc.html");
+			calculator.setReportFormat(HTML_FORMAT);
+		}
+
+		try {
+			//String xmlFileName = categoryName + "-adhoc.xml";
+			calculator.calculate();
+			//calculator.setOutputFileName(xmlFileName);
+			calculator.writeXML();
+			//renderer.setInputFileName(xmlFileName);
+			renderer.render();
+		} catch (AvailabilityCalculationException ce) {
+			log.fatal("Unable to calculate report data ", ce);
+		} catch (ReportRenderException re) {
+			log.fatal("Unable to render report ", re);
+		}
+	}
+
