@@ -7,39 +7,33 @@
      *   - HostConfiguration class is not created here because the library
      *     builds it when a URI is defined.
      *     
-     * @param uriDef
-     * @param parameters
-     * @throws HttpException
-     * @throws IOException
+     * @param collectionSet
+     * @throws HttpCollectorException
      */
-    private void doCollection(final InetAddress address, Uri uriDef, Map<String, String> parameters) throws HttpCollectorException {
+    private void doCollection(final HttpCollectionSet collectionSet) throws HttpCollectorException {
 
         HttpClient client = null;
         HttpMethod method = null;
         
         try {
-            client = new HttpClient(buildParams(uriDef, parameters));
-            method = buildHttpMethod(address, uriDef);
+            client = new HttpClient(buildParams(collectionSet));
+            method = buildHttpMethod(collectionSet);
             client.executeMethod(method);
-            List<HttpCollectionAttribute> butes = processResponse(method.getResponseBodyAsString(), uriDef);
+            List<HttpCollectionAttribute> butes = processResponse(method.getResponseBodyAsString(), collectionSet);
             
             if (butes.isEmpty()) {
                 throw new HttpCollectorException("No attributes specified were found: ",client);
             }
-            
-            // FIXME: get the real collectionName
-            RrdRepository rrdRepository = HttpCollectionConfigFactory.getInstance().getRrdRepository("collectionName");
-            
-            // FIXME: get the real nodeId
-            final int nodeId = 1;
+            String collectionName = collectionSet.getParameters().get("http-collection");
+            RrdRepository rrdRepository = HttpCollectionConfigFactory.getInstance().getRrdRepository(collectionName);
             ResourceIdentifier resource = new ResourceIdentifier() {
 
                 public String getOwnerName() {
-                    return address.getHostAddress();
+                    return collectionSet.getAgent().getHostAddress();
                 }
 
                 public File getResourceDir(RrdRepository repository) {
-                    return new File(repository.getRrdBaseDir(), Integer.toString(nodeId));
+                    return new File(repository.getRrdBaseDir(), Integer.toString(collectionSet.getAgent().getNodeId()));
                 }
                 
             };
@@ -47,10 +41,10 @@
             for (HttpCollectionAttribute attribute : butes) {
                 PersistOperationBuilder builder = new PersistOperationBuilder(rrdRepository, resource, attribute.getName());
                 builder.declareAttribute(attribute);
+                log().debug("doCollection: setting attribute: "+attribute);
                 builder.setAttributeValue(attribute, attribute.getValue());
                 builder.commit();
             }
-            
         } catch (URIException e) {
             throw new HttpCollectorException("Error building HttpClient URI", client);
         } catch (HttpException e) {
@@ -62,6 +56,5 @@
         } finally {
             method.releaseConnection();
         }
-        
     }
 
