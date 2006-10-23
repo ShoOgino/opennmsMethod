@@ -6,20 +6,77 @@
      */
     public void doGet(HttpServletRequest request, HttpServletResponse response)
 	    throws ServletException, IOException {
-        String type = request.getParameter("type");
+        String typeName = request.getParameter("type");
+        String resourceTypeName = request.getParameter("resourceType");
+        String adhoc = request.getParameter("adhoc");
+        
+        String[] requiredParameters = {
+                "type",
+                "resourceType"
+        };
 
-        if (type == null) {
-	    returnErrorImage(response, s_missingParamsPath);
-            return;
+        if (typeName == null) {
+            throw new MissingParameterException("type", requiredParameters);
+//          returnErrorImage(response, s_missingParamsPath);
+//            return;
+        }
+        if (resourceTypeName == null) {
+            throw new MissingParameterException("resourceType", requiredParameters);
+//          returnErrorImage(response, s_missingParamsPath);
+//            return;
         }
 
-	GraphTypeConfig config = getGraphConfig(type);
+        PrefabGraphType type = m_prefabGraphDao.findByName(typeName);
+        if (type == null) {
+            throw new IllegalArgumentException("graph type \"" + typeName + "\" is not valid");
+        }
+        
+        GraphModel model = findGraphModelByName(type.getName());
+
+        GraphResourceType resourceType =
+            model.getResourceTypeByName(resourceTypeName);
 
 	String command;
-	if (isTypeAdHoc(type)) {
-	    command = getCommandAdhoc(config, request, response);
+	if ("true".equals(adhoc)) {
+            String[] adhocRequiredParameters = {
+                    "node or domain",
+                    "resource"
+            };
+            String nodeIdString = request.getParameter("node");
+            String domain = request.getParameter("domain");
+            if (nodeIdString == null && domain == null) {
+                throw new MissingParameterException("node or domain",
+                                                    adhocRequiredParameters);
+            }
+            
+            int nodeId = -1;
+            if (nodeIdString != null) {
+                nodeId = Integer.parseInt(nodeIdString);
+            }
+
+            String resourceName = request.getParameter("resource");
+            if (resourceName == null) {
+                throw new MissingParameterException("resource",
+                                                    adhocRequiredParameters);
+            }
+            
+            AdhocGraphType adhocType = m_prefabGraphDao.findAdhocByName(typeName);
+            
+            GraphResource resource;
+            String resourceParent;
+            if (nodeId != -1) {
+                resource = model.getResourceForNodeResourceResourceType(nodeId, resourceName, resourceTypeName);
+                resourceParent = Integer.toString(nodeId);
+            } else {
+                resource = model.getResourceForDomainResourceResourceType(domain, resourceName, resourceTypeName);
+                resourceParent = domain;
+            }
+	    command = getCommandAdhoc(adhocType, resourceParent,
+                                      resourceType, resource,
+                                      request, response);
 	} else {
-	    command = getCommandNonAdhoc(config, request, response);
+	    command = getCommandNonAdhoc(type, resourceType,
+                                         request, response);
 	}
 
 	if (command == null) {
@@ -27,7 +84,8 @@
             return;
         }
 
-        File workDir = config.getWorkDir();
+        File workDir = resourceType.getRrdDirectory();
+
         InputStream tempIn = null;
         try {
             log("Executing RRD command in this directory: " + workDir);
@@ -41,7 +99,7 @@
 	}
 
         if (tempIn != null) {
-            response.setContentType(config.getMimeType());
+            response.setContentType(type.getOutputMimeType());
 
             StreamUtils.streamToStream(tempIn, response.getOutputStream());
 
