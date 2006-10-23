@@ -1,0 +1,49 @@
+    public List<GraphResource> getResourcesForNode(int nodeId) {
+        final String preparedSelect = "SELECT DISTINCT "
+            + "monitors.definitionname, monitors.id, ipinterface.ipaddr "
+            + "FROM location_specific_status_changes changes, "
+            + "location_monitors monitors, ifservices, ipinterface "
+            + "WHERE changes.locationmonitorid = monitors.id "
+            + "AND changes.ifserviceid = ifservices.id "
+            + "AND ifservices.ipinterfaceid = ipinterface.id "
+            + "AND ipinterface.nodeid = ?";
+        
+        LinkedList<GraphResource> resources = new LinkedList<GraphResource>();
+
+        try {
+            Connection conn = Vault.getDbConnection();
+
+            try {
+                PreparedStatement stmt = conn.prepareStatement(preparedSelect);
+                stmt.setInt(1, nodeId);
+                ResultSet rs = stmt.executeQuery();
+
+                while (rs.next()) {
+                    String definitionName = rs.getString("definitionname");
+                    int id = rs.getInt("id");
+                    String ipAddr = rs.getString("ipaddr");
+                    
+                    File iface = getInterfaceDirectory(definitionName, id,
+                                                       ipAddr);
+                    
+                    if (iface.isDirectory()) {
+                        resources.add(createResource(definitionName, id,
+                                                     ipAddr));
+                    }
+                }
+                rs.close();
+                stmt.close();
+            } finally {
+                Vault.releaseDbConnection(conn);
+            }
+        } catch (SQLException e) {
+            SQLErrorCodeSQLExceptionTranslator translator =
+                new SQLErrorCodeSQLExceptionTranslator();
+            throw translator.translate("Getting list of interfaces from the "
+                                       + "database for " + nodeId, null, e);
+
+        }
+        
+        return resources;
+    }
+
