@@ -1,0 +1,96 @@
+    public DistributedStatusHistoryModel createHistoryModel(
+            String locationName, String monitorId, String applicationName,
+            String timeSpan, String previousLocationName) {
+        List<String> errors = new LinkedList<String>();
+        
+        List<OnmsMonitoringLocationDefinition> locationDefinitions =
+            m_locationMonitorDao.findAllMonitoringLocationDefinitions();
+
+        List<RelativeTimePeriod> periods =
+            Arrays.asList(RelativeTimePeriod.getDefaultPeriods());
+
+        Collection<OnmsApplication> applications = m_applicationDao.findAll();
+        List<OnmsApplication> sortedApplications =
+            new ArrayList<OnmsApplication>(applications);
+        Collections.sort(sortedApplications,
+                         new Comparator<OnmsApplication>(){
+            public int compare(OnmsApplication o1, OnmsApplication o2) {
+                return o1.getName().compareTo(o2.getName());
+            }
+        });
+
+        OnmsMonitoringLocationDefinition location;
+        if (locationName == null) {
+            location = locationDefinitions.get(0);
+        } else {
+            location = m_locationMonitorDao.findMonitoringLocationDefinition(locationName);
+            if (location == null) {
+                errors.add("Could not find location definition '" + locationName + "'");
+                location = locationDefinitions.get(0);
+            }
+        }
+        
+        int monitorIdInt = -1;
+        
+        if (monitorId != null && monitorId.length() > 0) {
+            try {
+                monitorIdInt = Integer.parseInt(monitorId);
+            } catch (NumberFormatException e) {
+                errors.add("Monitor ID '" + monitorId + "' is not an integer");
+            }
+        }
+
+        OnmsApplication application;
+        if (applicationName == null) {
+            application = sortedApplications.get(0);
+        } else {
+            application = m_applicationDao.findByName(applicationName);
+            if (application == null) {
+                errors.add("Could not find application '" + applicationName + "'");
+                application = sortedApplications.get(0);
+            }
+        }
+        
+        Collection<OnmsLocationMonitor> monitors = m_locationMonitorDao.findByLocationDefinition(location);
+        List<OnmsLocationMonitor> sortedMonitors = new LinkedList<OnmsLocationMonitor>(monitors);
+        Collections.sort(sortedMonitors, new Comparator<OnmsLocationMonitor>() {
+            public int compare(OnmsLocationMonitor o1, OnmsLocationMonitor o2) {
+                int diff = o1.getDefinitionName().compareTo(o2.getDefinitionName());
+                if (diff != 0) {
+                    return diff;
+                }
+
+                return o1.getId().compareTo(o2.getId());
+            }
+        });
+        
+        OnmsLocationMonitor monitor = null;
+        if (monitorIdInt != -1
+                && location.getName().equals(previousLocationName)) {
+            for (OnmsLocationMonitor m : sortedMonitors) {
+                if (m.getId().equals(monitorIdInt)) {
+                    monitor = m;
+                    break;
+                }
+            }
+            
+            if (monitor == null) {
+                // XXX should I do anything?
+            }
+        }
+        
+        if (monitor == null) {
+            monitor = sortedMonitors.get(0);
+        }
+        
+        RelativeTimePeriod period = RelativeTimePeriod.getPeriodByIdOrDefault(timeSpan);
+
+        return new DistributedStatusHistoryModel(locationDefinitions,
+                                                 sortedApplications,
+                                                 sortedMonitors,
+                                                 periods,
+                                                 location, application,
+                                                 monitor, period,
+                                                 errors);
+    }
+
