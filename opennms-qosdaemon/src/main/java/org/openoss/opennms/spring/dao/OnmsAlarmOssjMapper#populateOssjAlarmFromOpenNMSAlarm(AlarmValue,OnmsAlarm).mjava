@@ -1,0 +1,266 @@
+	/**
+	 * This method maps OpenNMS alarm to an OSS/J alarms and adds additional information
+	 * @param _openNMSalarm data to use to populate the OSS/J alarm
+	 * @param alarmValueSpecification AlarmValue object to be populated - Invariant (Specifcation) values should be already populated
+	 * @rerun the _av OSS/J AlarmValue populated with opennms data
+	 */
+	public  AlarmValue populateOssjAlarmFromOpenNMSAlarm(AlarmValue alarmValueSpecification, OnmsAlarm _openNMSalarm) throws IllegalArgumentException, UnsupportedAttributeException {
+		Logger log = getLog();
+		String logheader="\t\t"+this.getClass().getSimpleName()+"populateOssjAlarmFromOpenNMSAlarm():";
+
+		//Node node = null;
+		OnmsNode node = null;
+
+		// Asset asset = null;
+		OnmsAssetRecord asset = null;
+
+		boolean isQoSDrxAlarm=false; // true if alarm is received from Qosdrx
+
+
+		if (log.isDebugEnabled()) log.debug(logheader+": Populating alarm");
+
+		// test to see if opennms alarm already has type and instance information set. If yes then it has most likely
+		// come from Qosdrx. 
+		if ((_openNMSalarm.getManagedObjectInstance()!=null) && (_openNMSalarm.getManagedObjectType()!=null)
+				&& (!_openNMSalarm.getManagedObjectInstance().equals("")) && (!_openNMSalarm.getManagedObjectType().equals(""))){
+			isQoSDrxAlarm=true;			
+			if (log.isDebugEnabled()) log.debug(logheader+": isQoSDrxAlarm TRUE - because OpenNMS alarm has ManagedObjectInstance and ManagedObjectType");
+		} else {
+			isQoSDrxAlarm=false;
+			if (log.isDebugEnabled()) log.debug(logheader+": isQoSDrxAlarm FALSE - because OpenNMS alarm NOT POPULATED ManagedObjectInstance and ManagedObjectType");
+		}
+
+
+		try {
+			// If the alarm has both an acknowledge time and an acknowledge user
+			// then the alarm has been acknowledged. Set the corrsponding parameters
+			// in the OSS/J alarm
+			if((null != _openNMSalarm.getAlarmAckTime() ) && ( null!= _openNMSalarm.getAlarmAckUser() ) )
+			{
+				alarmValueSpecification.setAckUserId(_openNMSalarm.getAlarmAckUser());
+				// OnmsAlarm can contain java.sql.Timestamp - convert to Date
+				alarmValueSpecification.setAckTime(new Date(_openNMSalarm.getAlarmAckTime().getTime()));
+				alarmValueSpecification.setAlarmAckState(AlarmAckState.ACKNOWLEDGED);
+			}
+			else
+			{
+				alarmValueSpecification.setAlarmAckState(AlarmAckState.UNACKNOWLEDGED);
+			}
+
+			// if the alarm is cleared, then set the alarm cleared time
+			// to that of the lasteventtime as this must be the time
+			// the clear occured.
+			if(_openNMSalarm.getSeverity() == org.opennms.web.alarm.Alarm.CLEARED_SEVERITY) {
+				// OnmsAlarm can contain java.sql.Timestamp - convert to Date
+				alarmValueSpecification.setAlarmClearedTime(new Date(_openNMSalarm.getLastEventTime().getTime()));
+			}
+			else {
+				alarmValueSpecification.setAlarmClearedTime(null);
+			}
+
+			// Set the alarmRaisedTime to the FirstEventTime of the OpenNMS
+			// alarm. Set the alarm changed time to the last event time.
+			// OnmsAlarm can contain java.sql.Timestamp - convert to Date
+			if(null != _openNMSalarm.getFirstEventTime() ){
+				alarmValueSpecification.setAlarmRaisedTime(new Date(_openNMSalarm.getFirstEventTime().getTime()));
+			}
+			if(null != _openNMSalarm.getLastEventTime() ) {
+				alarmValueSpecification.setAlarmChangedTime(new Date(_openNMSalarm.getLastEventTime().getTime()));
+			}
+
+
+		} catch (Exception e ){
+			log.error(logheader+": Problem getting ACK time information", e);
+		}
+
+
+		String _uei_no_html ="NOT_SET";
+		try{
+			String uei = _openNMSalarm.getUei();
+			if (null != uei) {
+				matcher = p.matcher(uei);
+				_uei_no_html = matcher.replaceAll(" "); // remove any HTML tags from uei
+			}
+			alarmValueSpecification.setAlarmType((_openNMSalarm.getX733AlarmType()==null) ? javax.oss.fm.monitor.AlarmType.EQUIPMENT_ALARM :  _openNMSalarm.getX733AlarmType());
+		} catch (Exception e) {
+			log.error(logheader+": Problem getting  X733AlarmType or Uei", e);
+		}
+
+		// Get some local node information as to where the alarm came from
+		// This includes, what type of managed element the node is
+		// and what its node id and label are.*/
+		String mftr = "NOT_SET";
+		String modelNo = "NOT_SET";
+		String assetserno = "NOT_SET";
+		String nodelabel = "NOT_SET";
+		String alarmIP = "NOT_SET";
+		String managedObjectType = "NOT_SET";
+		String managedObjectInstance =  "NOT_SET"; 
+		String assetManagedObjectType = "NOT_SET";
+		String assetManagedObjectInstance =  "NOT_SET"; 
+
+		String assetDescription =  "NOT_SET";
+		String assetAddress2 =  "NOT_SET";
+
+		if (!isQoSDrxAlarm ) { // if is locally generated alarm
+			try
+			{
+				node=ossDao.findNodeByID(_openNMSalarm.getNode().getId());
+
+				asset =node.getAssetRecord();
+
+				alarmIP = _openNMSalarm.getIpAddr();
+				if (node != null) {
+					nodelabel = node.getLabel();
+				}
+				if (asset != null) {
+					if (asset.getManufacturer()!= null) mftr = asset.getManufacturer();
+					if (asset.getModelNumber()!= null) modelNo = asset.getModelNumber();
+					if (asset.getSerialNumber()!= null) assetserno = asset.getSerialNumber();
+					if (asset.getDescription()!= null) assetDescription = asset.getDescription();  // TODO was used for managed object class as is 128 char long
+					if (asset.getAddress2()!= null) assetAddress2 = asset.getAddress2();        // TODO was used for managed object instance - as is 256 char long string
+					if (asset.getManagedObjectInstance()!= null) assetManagedObjectInstance = asset.getManagedObjectInstance();
+					if (asset.getManagedObjectType()!= null) assetManagedObjectType = asset.getManagedObjectType();
+				}
+
+				managedObjectInstance= assetManagedObjectInstance;
+				managedObjectType = assetManagedObjectType;
+
+				if (log.isDebugEnabled()) log.debug(logheader+": isQoSDrxAlarm=FALSE  OpenNMS type and instance not set. Using from Node Asset record: ManagedObjectInstance: "
+						+ managedObjectInstance +" ManagedObjectType:"+managedObjectType);
+			}
+			catch(Exception ex) {
+				log.error(logheader+": Problem getting node and asset information", ex);
+			}
+		} else { // is a received alarm
+			try {
+				managedObjectInstance= _openNMSalarm.getManagedObjectInstance();
+				managedObjectType =_openNMSalarm.getManagedObjectType();
+
+				if (log.isDebugEnabled()) log.debug(logheader+": isQoSDrxAlarm=TRUE  OpenNMS type and instance set. Using from OnmsAlarm: ManagedObjectInstance: "
+						+ managedObjectInstance +" ManagedObjectType:"+managedObjectType);
+			} 
+			catch(Exception ex)	{
+				log.error(logheader+": Problem managedObjectInstance or managedObjectType", ex);
+			}
+
+		}
+
+		alarmValueSpecification.setManagedObjectClass(managedObjectType);
+		if (log.isDebugEnabled()) log.debug(logheader+": _av.setManagedObjectClass set to: "+ managedObjectType);
+
+		alarmValueSpecification.setManagedObjectInstance(managedObjectInstance);
+		if (log.isDebugEnabled()) log.debug(logheader+": _av.setManagedObjectInstance set to: "+ managedObjectInstance);
+
+		// set severity and probable cause
+		try {			
+			alarmValueSpecification.setPerceivedSeverity(onmsSeverityToOssjSeverity(_openNMSalarm.getSeverity()));
+
+//			alarmValueSpecification.setProbableCause((short)-1); // OSS/J set to -1  then text contains description
+			alarmValueSpecification.setProbableCause((short)_openNMSalarm.getX733ProbableCause());
+
+		}
+		catch (Exception e) {
+			log.error(logheader+": Problem getting severity or probable cause: ", e );
+		}
+
+		if (!isQoSDrxAlarm ) { // if is a locally generated alarm
+
+			try {		
+				String _opinstr = _openNMSalarm.getOperInstruct();
+				if (null != _opinstr) {
+					matcher = p.matcher(_opinstr);
+					_opinstr = matcher.replaceAll(" "); // remove all HTML tags from operator instructions
+				}
+				else _opinstr = "NOT_SET";
+				alarmValueSpecification.setProposedRepairActions(_opinstr);
+
+				String _logmsg = _openNMSalarm.getLogMsg();
+				if (null != _logmsg ) {
+					matcher = p.matcher(_logmsg );
+					_logmsg  = matcher.replaceAll(" "); // remove all HTML tags from operator instructions
+				}
+				else _logmsg = "NOT_SET";
+
+				String _description = _openNMSalarm.getDescription();
+				if (null != _description ) {
+					matcher = p.matcher(_description );
+					_description  = matcher.replaceAll(" "); // remove all HTML tags from description
+				}
+				else _description = "NOT_SET";
+
+				// using manufacturers own definition of specific problem here ( OSS/J )
+				alarmValueSpecification.setSpecificProblem( _logmsg );
+				Integer alarmid= _openNMSalarm.getId();
+				Integer counter= _openNMSalarm.getCounter();
+				String reductionkey= _openNMSalarm.getReductionKey();
+				Integer nodeid= _openNMSalarm.getNode().getId();
+				String onmsnodelabel= _openNMSalarm.getNode().getLabel();
+				String ipaddress= _openNMSalarm.getIpAddr();
+				String x733AlarmType= _openNMSalarm.getX733AlarmType();
+				String x733ProbableCause;
+				try {
+					x733ProbableCause= OOSSProbableCause.getStringforEnum((short) _openNMSalarm.getX733ProbableCause());
+				}catch (Exception e){
+					x733ProbableCause="X733 Probable Cause Incorrectly Defined";
+				}
+
+				alarmValueSpecification.setAdditionalText(
+						"<alarmid>"  + alarmid + "</alarmid>" + "\n            " +
+						"<logmsg>"+ _logmsg +"</logmsg>"+   "\n            " +
+						"<uei>" + 	_uei_no_html + "<uei>" +  "\n            " +
+						"<x733AlarmType>"  + x733AlarmType + "</x733AlarmType>" + "\n            " +
+						"<x733ProbableCause>"  + x733ProbableCause + "</x733ProbableCause>" + "\n            " +
+						"<counter>" + counter + "</counter>" +  "\n            " +
+						"<reductionkey>" + reductionkey + "</reductionkey>" +  "\n            " +
+						"<nodeid>" + nodeid + "</nodeid>" +  "\n            " +
+						"<nodelabel>" + onmsnodelabel + "</nodelabel>" +  "\n            " +
+						"<ipaddress>" + ipaddress + "</ipaddress>" +   "\n            " +
+						"<description>"+ _description +"</description>" +  "\n            " +
+						"<opinstr>" + _opinstr + "</opinstr>" + "\n            " +
+						"<asset.managedobjectinstance>" + assetManagedObjectInstance + "</asset.managedobjectinstance>" + "\n            "+              //TODO - was used for object instance
+						"<asset.managedobjecttype>" + assetManagedObjectType + "</asset.managedobjecttype>" + "\n            "+ 
+						"<asset.address2>" + assetAddress2 + "</asset.address2>" + "\n            "+  //TODO - was used for object instance
+						"<asset.description>" + assetDescription + "</asset.description>" + "\n");    //TODO - was used for object instancetype
+
+			} catch (Exception e){
+				log.error(logheader+": Problem setting description, logmessage or operator instrctions: ", e );
+			}
+
+		} else { // is a received alarm 
+			try {		
+				String _opinstr = _openNMSalarm.getOperInstruct();
+				if (null == _opinstr) _opinstr = "NOT_SET";
+				alarmValueSpecification.setProposedRepairActions(_opinstr);
+
+				String _logmsg = _openNMSalarm.getLogMsg();
+				if (null == _logmsg ) _logmsg = "NOT_SET";
+				// using manufacturers own definition of specific problem here ( OSS/J )
+				alarmValueSpecification.setSpecificProblem( _logmsg );
+
+				String _description = _openNMSalarm.getDescription();
+				if (null == _description ) _description = "NOT_SET";
+				alarmValueSpecification.setAdditionalText(_description);
+
+			} catch (Exception e){
+				log.error(logheader+": Problem setting description, logmessage or operator instrctions: ", e );
+			}
+		}
+
+		// TODO replacement method to populate the alarm key
+		try {
+			//populate alarm key
+			//TODO was AlarmKey ak = new OOSSAlarmKey(Integer.toString(_openNMSalarm.getId()));
+			AlarmKey ak= alarmValueSpecification.getAlarmKey();
+			ak.setAlarmPrimaryKey(Integer.toString(_openNMSalarm.getId()));
+			ak.setPrimaryKey(ak.getAlarmPrimaryKey());
+		}
+		catch (Exception e) {
+			log.error(logheader+": Problem setting AlarmKey: ", e );
+		}
+
+		if (log.isDebugEnabled()) log.debug(logheader+": Alarm Populated");
+
+		return alarmValueSpecification;
+	} // end populateAlarm()
+

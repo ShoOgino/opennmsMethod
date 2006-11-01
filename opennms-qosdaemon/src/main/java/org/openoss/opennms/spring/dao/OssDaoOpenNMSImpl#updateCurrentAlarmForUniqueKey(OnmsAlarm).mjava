@@ -1,0 +1,68 @@
+	/**
+	 * Updates Current alarm in OpenNMS database with a new alarmID as an AlarmType= 'raise' ( type 1 ) alarm.
+	 * Adds the alarm to the local Current Alarm Alarm list alarmCacheByID with the new alarmID only if
+	 * the alarm is NOT (Acknowledged AND Cleared).  
+	 * @param alarm - alarm to add. 
+	 * 
+	 * @return added alarm with new alarmID from OpenNMS Database
+	 * 
+	 * @throws If alarm AlarmID not null throws <code>IllegalArgumentException</code>.
+	 * If alarm type not type 1  throws <code>IllegalArgumentException</code>.
+	 * If ApplicationDN()==null or "" or OssPrimaryKey()==null or "", throws <code>IllegalArgumentException</code>.
+	 * 
+	 * Note any new locally generated OpenNMS alarms will have ApplictionDN or OssPrimaryKey ==null or "" and so are ignored
+	 */
+	public synchronized OnmsAlarm updateCurrentAlarmForUniqueKey(final OnmsAlarm alarm){
+		Logger log = getLog();	
+
+		if ((alarm==null)||(alarm.getId()==null)) 
+			throw new IllegalArgumentException("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey(): Illegal value: alarm==null or alarmID==null");
+		if ((alarm.getAlarmType()!=1)) 
+			throw new IllegalArgumentException("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey(): Illegal value: alarm.getAlarmType() not 'raise' alarm type '1'");
+		if ((alarm.getApplicationDN()==null)||(alarm.getApplicationDN().equals(""))) 
+			throw new IllegalArgumentException("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey(): Illegal value: alarm ApplicationDN null or empty ");
+		if ((alarm.getOssPrimaryKey()==null)||(alarm.getOssPrimaryKey().equals(""))) 
+			throw new IllegalArgumentException("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey(): Illegal value: alarm OssPrimaryKey null or empty");
+
+		String uniqueKey=alarm.getApplicationDN()+alarm.getOssPrimaryKey();
+
+		OnmsAlarm updateAlarm=getCurrentAlarmForUniqueKey(alarm.getApplicationDN() , alarm.getOssPrimaryKey());
+		if (updateAlarm!=null){ // if alarm in database then update alarm in OpenNMS
+
+			alarm.setId(updateAlarm.getId());
+			try { // if alarm in database then update alarm in OpenNMS
+				if (log.isDebugEnabled()) log.debug("\tOssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey: alarm to update in database"+ alarmToStringBrief(alarm));
+
+				transTemplate.execute(new TransactionCallback() {
+					public Object doInTransaction(TransactionStatus status) {
+						_alarmDao.update(alarm);
+						return null;
+					}
+				});	
+			
+				alarmCacheByID.put(new Integer (alarm.getId()), alarm); // update local cache
+				alarmCacheByUniqueKey.put(uniqueKey, alarm);
+
+			} catch (Exception ex){
+				log.error("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey():Error updating alarm in database:",ex);
+				return null;
+			}		
+		} 
+		else { // if alarm not in database throw error
+			throw new IllegalArgumentException("OssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey(): Illegal value: alarm not found in Current Alarm list: ApplicationDN:"+alarm.getApplicationDN()+" OssPrimaryKey:"+alarm.getOssPrimaryKey());
+		}
+
+		if (log.isDebugEnabled()) log.debug("\tOssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey: Sending Updated alarm list Updated alarm"+ alarmToStringBrief(alarm));
+
+		// force send of updated alarm list
+		try{
+			if (log.isDebugEnabled()) log.debug("\tOssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey: Sending Updated alarm list to QoSD");
+			sendAlarms();
+		} 	catch ( Exception e ){
+			// ignore this exception as Qosd may not be running
+			if (log.isDebugEnabled()) log.debug("\tOssDaoOpenNMSImpl().updateCurrentAlarmForUniqueKey: problem sending alarm to  QoSD:" + e);
+		}
+
+		return alarm;
+	}
+

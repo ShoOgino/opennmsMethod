@@ -1,0 +1,96 @@
+	/**
+	 * Update the node cache from the OpenNMS database
+	 * This must be run at least once to ensure that node data is available
+	 * Not Thread Safe - only to be called from within the synchronised methods
+	 */
+	private void localUpdateNodeCaches(){
+		Logger log = getLog();	
+		try{
+			nodeCacheByID=new Hashtable<Integer,OnmsNode>();
+			nodeCacheByLabel=new Hashtable<String,OnmsNode>();
+			nodeCacheByUniqueID=new Hashtable<String,OnmsNode>();	
+
+			if (log.isDebugEnabled()) log.debug("\tOssDaoOpenNMSImpl().updateNodeCaches - Updating Node Caches :");
+
+			Collection<OnmsNode> c = _nodeDao.findAll();
+			OnmsNode[] nodelist= (OnmsNode[]) c.toArray(new OnmsNode[c.size()]);
+			for (int i=0; i<nodelist.length; i++){
+				OnmsNode node=(OnmsNode)nodelist[i];
+				try {
+					// update node by ID cache
+					this.nodeCacheByID.put((Integer)node.getId(), node);
+
+					// update node by Label cache
+					if (node.getLabel()!=null) {
+						if (nodeCacheByLabel.get((String)node.getLabel())!=null){
+							log.info("\tOssDaoOpenNMSImpl().updateNodeCaches WARNING node.getId():"+node.getId()+" Node Label:"+node.getId()+" is duplicated");
+						} else {
+							nodeCacheByLabel.put((String)node.getLabel(), node);
+						}
+					} else {
+						log.info("\tOssDaoOpenNMSImpl().updateNodeCaches WARNING node.getId():"+node.getId()+" Node Label is Not putting node in nodeCacheByLabel");
+					}
+
+					// update node by Unique ID -managedObjectInstance+ManagedObjectType 
+					OnmsAssetRecord assetRecord = node.getAssetRecord();
+					if (assetRecord==null) {
+						log.info("\tOssDaoOpenNMSImpl().updateNodeCaches WARNING node.getId():"+node.getId()+" assetRecord is NULL. Not putting node in nodeCacheByUniqueID");
+						continue;
+					} else
+						if ((assetRecord.getManagedObjectInstance()==null) || (assetRecord.getManagedObjectType()==null)){
+							log.info("\tOssDaoOpenNMSImpl().updateNodeCaches WARNING node.getId():"+node.getId()+" ManagedObjectInstance and/or ManagedObjectType are NULL. Not putting node in nodeCacheByUniqueID");
+							continue;
+						} else {
+							String uniqueid=assetRecord.getManagedObjectInstance()+assetRecord.getManagedObjectType();
+							if (nodeCacheByUniqueID.get((String)uniqueid)!=null){
+								log.info("\tOssDaoOpenNMSImpl().updateNodeCaches WARNING node.getId():"+node.getId()+
+										"Unique ID is duplicated. Unique ID = ManagedObjectInstance:"+assetRecord.getManagedObjectInstance()+"+ ManagedObjectType:"+assetRecord.getManagedObjectType());
+							} else {
+								nodeCacheByUniqueID.put(uniqueid, node);
+							}
+						}
+
+				} catch (Exception ex){
+					log.error("\tOssDaoOpenNMSImpl().updateNodeCaches Error updating node caches: ERROR : ", ex);
+				}	
+			}
+			if (log.isDebugEnabled()) {
+				log.debug("\tOssDaoOpenNMSImpl().updateNodeCaches - Updated nodeCacheByID : contents :");
+				try {
+					Enumeration nodeIDs = nodeCacheByID.keys();
+					while(nodeIDs.hasMoreElements())	{
+						Integer id=(Integer)nodeIDs.nextElement();
+						OnmsNode node =(OnmsNode)nodeCacheByID.get(id);
+						log.debug("\t\tKey: Node ID:"+id+"\tNodeLabel:"+node.getLabel());
+					}
+				}catch ( Exception e){
+					log.error("\tOssDaoOpenNMSImpl().updateNodeCaches: Problem listing nodeCacheByLabel contents Error:",e);
+				}
+				log.debug("\tOssDaoOpenNMSImpl().updateNodeCaches - Updated nodeCacheByLabel : contents :");
+				try {
+					Enumeration nodelabels = nodeCacheByLabel.keys();
+					while(nodelabels.hasMoreElements())	{
+						String label=(String)nodelabels.nextElement();
+						OnmsNode node =(OnmsNode)nodeCacheByLabel.get(label);
+						log.debug("\t\tKey: Label:"+label+"\tNodeID:"+node.getId());
+					}
+				}catch ( Exception e){
+					log.error("\tOssDaoOpenNMSImpl().updateNodeCaches: Problem listing nodeCacheByLabel contents. Error:",e);
+				}
+				try {
+					log.debug("\tOssDaoOpenNMSImpl().updateNodeCaches - Updated nodeCacheByUniqueID : contents :");
+					Enumeration uniqueids = nodeCacheByUniqueID.keys();
+					while(uniqueids.hasMoreElements())	{
+						String uniqueID=(String)uniqueids.nextElement();
+						OnmsNode node =(OnmsNode)nodeCacheByUniqueID.get(uniqueID);
+						log.debug("\t\tKey: uniqueID:"+uniqueID+"\tNodeID:"+node.getId());
+					}
+				}catch ( Exception e){
+					log.error("\tOssDaoOpenNMSImpl().updateNodeCaches: Problem listing nodeCacheByUniqueID contents Error:",e);
+				}
+			}
+		} catch (Exception ex){
+			log.error("\tOssDaoOpenNMSImpl().updateNodeCaches ERROR : ", ex);
+		}
+	}
+
