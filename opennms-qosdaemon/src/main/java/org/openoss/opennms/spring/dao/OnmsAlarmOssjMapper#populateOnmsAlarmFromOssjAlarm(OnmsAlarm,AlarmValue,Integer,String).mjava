@@ -1,0 +1,189 @@
+	/**
+	 * This method maps an OSS/J AlarmValue to OpenNMS alarm 
+	 * @param onmsAlarm OnmsAlarm object to be populated 
+	 * 
+	 * @param av OSS/J AlarmValue data to use to populate OnmsAlarm
+	 * 
+	 * @param almUpdateBehaviour - determines how to treat the node name of the new alarm must be of value;
+	 * <code>USE_TYPE_INSTANCE</code> - populate nodeID with node having same asset type and instance data as alarm
+	 * or <code>SPECIFY_OUTSTATION</code> -  populate nodeID with node having same nodeLabel as defaultUpdateNodeLabel
+	 *
+	 * @param defaultUpdateNodeLabel name of node to be updated if almUpdateBehaviour==SPECIFY_OUTSTATION
+	 * 
+	 * @return the OnmsAlarm populaed with OSS/J NotifyNewAlarmEvent data
+	 */
+	public  OnmsAlarm populateOnmsAlarmFromOssjAlarm(OnmsAlarm onmsAlarm, AlarmValue alarmValue, Integer almUpdateBehaviour, String defaultUpdateNodeLabel  )throws IllegalArgumentException, UnsupportedAttributeException {
+		Logger log = getLog();
+		String logheader="\t\t"+this.getClass().getSimpleName()+"populateOnmsAlarmFromOssjAlarm():";
+
+		try{
+			String ossPrimaryKey=alarmValue.getAlarmKey().getAlarmPrimaryKey();
+			String applicationDN=alarmValue.getAlarmKey().getApplicationDN();
+			if (log.isDebugEnabled()) 
+				log.debug(logheader+" - AlarmPrimaryKey: "
+						+ ossPrimaryKey +" ApplictionDN: " + applicationDN +" alarmRaisedTime: " + alarmValue.getAlarmRaisedTime());
+			if ((applicationDN==null)||(applicationDN.equals("")) 
+					|| (ossPrimaryKey==null)||(ossPrimaryKey.equals(""))) {
+				log.error(logheader+" ApplicatioDN or PrimaryKey not set");
+			} else {
+				if (log.isDebugEnabled()) 
+					log.debug(logheader+": trying to find existing alarm using getCurrentAlarmForUniqueKey");
+
+				onmsAlarm = ossDao.getCurrentAlarmForUniqueKey(applicationDN, ossPrimaryKey);
+				if (onmsAlarm!=null) { // already an alarm with this unique id - log error
+					log.error(logheader+" Alarm Already exists with this Unique ID");
+				} else {
+					onmsAlarm=new OnmsAlarm();
+
+					onmsAlarm.setUei(ossjAlarmTypeToUei(alarmValue.getAlarmType()));
+					onmsAlarm.setX733AlarmType((alarmValue.getAlarmType()==null) ? "" : alarmValue.getAlarmType());
+					onmsAlarm.setX733ProbableCause(alarmValue.getProbableCause());
+
+					onmsAlarm.setTTicketState(new Integer(0)); // needed?
+					onmsAlarm.setTTicketId(""); // needed?
+					onmsAlarm.setQosAlarmState("");
+					onmsAlarm.setSuppressedUser(""); // needed?
+					onmsAlarm.setSuppressedUntil(new Date()); // needed?
+					onmsAlarm.setSuppressedTime(new Date()); // needed?
+
+					Integer onmsseverity;
+					try{
+						onmsseverity= ossjSeveritytoOnmsSeverity(alarmValue.getPerceivedSeverity());
+					} catch (IllegalArgumentException iae){
+						log.error(logheader+" problem setting severity used default:'WARNING'. Exception:"+ iae);
+						onmsseverity=new Integer(org.opennms.web.alarm.Alarm.WARNING_SEVERITY);
+					}
+					onmsAlarm.setSeverity(onmsseverity); 
+
+					OnmsServiceType service= new OnmsServiceType();
+					service.setId(new Integer(-1));
+					onmsAlarm.setServiceType(new OnmsServiceType()); // needed?
+
+
+					onmsAlarm.setReductionKey(":managedObjectInstance:"+alarmValue.getManagedObjectInstance()+
+							":managedObjectType:"+alarmValue.getManagedObjectClass()+
+							":ossPrimaryKey:-"+ossPrimaryKey+
+							":applicationDN:-"+applicationDN); // must be unique because of alarm_reductionkey_idx
+
+					onmsAlarm.setOssPrimaryKey(ossPrimaryKey);
+					onmsAlarm.setOperInstruct(alarmValue.getProposedRepairActions()); 
+
+					// defaultvalue if search fails - will update node with ID 1
+					OnmsNode node = new OnmsNode() ; // TODO remove ossDao.makeExtendedOnmsNode(); 
+					node.setId(new Integer(1));  // node id cannot be null
+					onmsAlarm.setNode(node); // 
+
+					if (almUpdateBehaviour==null) {
+						log.error(logheader+": This receiver's alarmUpdateBehaviour is not set: defaulting to update nodeID:1");
+					}
+					else {
+						if (log.isDebugEnabled()) 
+							log.debug(logheader+" alarmUpdateBehaviour:"+almUpdateBehaviour+" "+getAlarmUpdateBehaviourForInt(almUpdateBehaviour));
+
+						if (almUpdateBehaviour.equals(SPECIFY_OUTSTATION)) {
+							// this will look for first match of node label to callingAer.getName()
+							// and set node id to this value.
+
+							if (log.isDebugEnabled()) 
+								log.debug(logheader+" SPECIFY_OUTSTATION looking for node with nodelabel:"+defaultUpdateNodeLabel);
+							try {
+								// TODO temp remove ?
+								try {
+									node =ossDao.findNodeByLabel(defaultUpdateNodeLabel);
+								} catch (Exception ex){
+									log.error(logheader+" alarmUpdateBehaviour.equals(USE_TYPE_INSTANCE) Problem looking up Node "+ex);
+								}
+
+								if (node!=null) {
+									if (log.isDebugEnabled()) 
+										log.debug(logheader+" alarmUpdateBehaviour.equals(SPECIFY_OUTSTATION):"
+												+"NODE FOUND for this name:"+defaultUpdateNodeLabel+" setting node id to NodeLabel:"+node.getLabel()+" NodeID:"+node.getId());
+									onmsAlarm.setNode(node); // maps into FIRST instance of node with the same managedObjectInstance and managedObjectType
+								} else {
+									log.error(logheader+" alarmUpdateBehaviour.equals(SPECIFY_OUTSTATION):"
+											+"NODE NOT FOUND for this name:"+defaultUpdateNodeLabel+" setting node id to default NodeID: 1");
+									node=new OnmsNode() ; // TODO remove ossDao.makeExtendedOnmsNode(); 
+									node.setId(new Integer(1));  // node id cannot be null
+									onmsAlarm.setNode(node); // 
+								}
+							} catch (Exception ex){
+								log.error(logheader+" alarmUpdateBehaviour.equals(USE_TYPE_INSTANCE) Problem looking up Node for alarm Set to default nodeID:1"+ex);
+							}
+
+						} 
+						else if (almUpdateBehaviour.equals(USE_TYPE_INSTANCE)){
+							// this will look for first match of node Managed object Instance and Managed Object type
+							// and set node id to this value. 
+							String managedObjectType=alarmValue.getManagedObjectClass();
+							String managedObjectInstance=alarmValue.getManagedObjectInstance();
+
+							if (log.isDebugEnabled()) 
+								log.debug(logheader+" USE_TYPE_INSTANCE looking for node with managedObjectType:"+managedObjectType+" managedObjectInstance:"+managedObjectInstance);
+							try {
+								node =ossDao.findNodeByInstanceAndType(managedObjectInstance, managedObjectType);
+
+								if (node!=null) {
+									if (log.isDebugEnabled()) 
+										log.debug(logheader+" alarmUpdateBehaviour.equals(USE_TYPE_INSTANCE):"
+												+"NODE FOUND for this RX Name:"+defaultUpdateNodeLabel+" setting node id to NodeLabel:"+node.getLabel()+" NodeID:"+node.getId());
+									onmsAlarm.setNode(node); // maps into FIRST instance of node with the same managedObjectInstance and managedObjectType
+								} else {
+									log.error(logheader+" alarmUpdateBehaviour.equals(USE_TYPE_INSTANCE):"
+											+"NODE NOT FOUND for this managedObjectType:"+managedObjectType+" managedObjectInstance:"+managedObjectInstance+" setting node id to default NodeID: 1");
+									node=new OnmsNode() ; // TODO remove ossDao.makeExtendedOnmsNode();
+									node.setId(new Integer(1));  // node id cannot be null
+									onmsAlarm.setNode(node); // 
+								}
+							} catch (Exception ex){
+								log.error(logheader+" alarmUpdateBehaviour.equals(USE_TYPE_INSTANCE) Problem looking up Node for alarm Set to default nodeID:1"+ex);
+							}
+						}		
+						else {
+							log.error(logheader+" Invalid value for alarmUpdateBehaviour:"+almUpdateBehaviour+" "+getAlarmUpdateBehaviourForInt(almUpdateBehaviour)+" defaulting to update nodeID:1");
+						}
+					}
+
+
+					onmsAlarm.setMouseOverText(""); // needed?
+					onmsAlarm.setManagedObjectType(alarmValue.getManagedObjectClass());
+					onmsAlarm.setManagedObjectInstance(alarmValue.getManagedObjectInstance());
+					onmsAlarm.setLogMsg(alarmValue.getSpecificProblem());
+
+					// NOTE - this has no effect here as .setLastEvent nulls value
+					// alarm.setLastEventTime(nnae.getEventTime());
+
+//					TODO REMOVED - DO NOT CREATE EVENT WITH HIBERNATE AlarmDAo
+//					OnmsEvent event= new OnmsEvent();
+//					//event.setId(new Integer(1));  // This is NOT set since unique constraint in alarms table on Events table
+//					onmsAlarm.setLastEvent(event); 
+
+					onmsAlarm.setIpAddr("localhost"); // needed?
+					onmsAlarm.setId(null); // set null as updating alarm
+					onmsAlarm.setFirstEventTime(alarmValue.getAlarmRaisedTime());
+					onmsAlarm.setLastEventTime(alarmValue.getAlarmChangedTime());
+
+//					TODO removed - do create distpoller with hibernate dao	
+//					onmsAlarm.setDistPoller(new OnmsDistPoller("undefined","localhost")); //simple constructor
+					onmsAlarm.setDistPoller(distPollerDao.get("localhost"));
+
+
+					onmsAlarm.setDescription(alarmValue.getAdditionalText()); //TODO need Qosd Not to generate this if remote
+					onmsAlarm.setCounter(new Integer(1));
+					onmsAlarm.setClearUei("");
+					onmsAlarm.setApplicationDN(applicationDN);
+					onmsAlarm.setAlarmType(new Integer(1)); // set to raise alarm
+					//alarm.setAlarmAckUser(arg0);
+					//alarm.setAlarmAckTime(arg0);
+
+					if (log.isDebugEnabled()) log.debug(logheader+": Creating Alarm: " );
+
+				}
+			}
+		}
+		catch(Exception e){
+			log.error(logheader+" Error : ", e);
+		}
+		return onmsAlarm;
+
+	}
+

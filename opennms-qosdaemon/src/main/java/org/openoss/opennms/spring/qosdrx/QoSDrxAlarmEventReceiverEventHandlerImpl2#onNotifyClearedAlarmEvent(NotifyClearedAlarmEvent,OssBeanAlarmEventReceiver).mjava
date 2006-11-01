@@ -1,0 +1,93 @@
+	public void onNotifyClearedAlarmEvent(NotifyClearedAlarmEvent nclae, OssBeanAlarmEventReceiver callingAer) {
+		//	Get a reference to the QoSD logger instance assigned by OpenNMS
+		Logger log = getLog();	
+		String logheader="RX:"+callingAer.getName()+":"+this.getClass().getSimpleName()+".onNotifyClearedAlarmEvent(): ";
+
+		if (log.isDebugEnabled()) log.debug(logheader+"\n    Statistics:" +callingAer.getRuntimeStatistics());
+		if (!initialised ){
+			log.error(logheader+"event handler not initialised. init() must be called by receiver before handling any events");
+			return;
+		}
+		// BUSINESS LOGIC
+
+		try{
+
+			OnmsAlarm alarm=null;
+			String ossPrimaryKey=nclae.getAlarmKey().getAlarmPrimaryKey();
+			String applicationDN=nclae.getAlarmKey().getApplicationDN();
+			if (log.isDebugEnabled()) 
+				log.debug(logheader+": Received an onNotifyClearedAlarmEvent() - AlarmPrimaryKey: "
+						+ ossPrimaryKey +" ApplictionDN: " + applicationDN +" eventtime: " + nclae.getEventTime());
+			if ((applicationDN==null)||(applicationDN.equals("")) 
+					|| (ossPrimaryKey==null)||(ossPrimaryKey.equals(""))) {
+				log.error(logheader+" ApplicatioDN or PrimaryKey not set");
+			} else {
+				if (log.isDebugEnabled()) 
+					log.debug(logheader+": trying to find existing alarm using getCurrentAlarmForUniqueKey");
+
+				alarm = ossDao.getCurrentAlarmForUniqueKey(applicationDN, ossPrimaryKey);
+				if (alarm==null) { // no alarm with this unique id - log error
+					log.info(logheader+"WARNING Alarm does not exist with this Unique ID:- AlarmPrimaryKey: "
+							+ ossPrimaryKey +" ApplictionDN: " + applicationDN);
+				} else {
+					if (log.isDebugEnabled()) 
+						log.debug(logheader+": found alarm alarmID:"+alarm.getId());
+
+					//alarm.setUei(arg0);
+					//alarm.setTTicketState(arg0);
+					//alarm.setTTicketId(arg0);
+					//alarm.setSuppressedUser(arg0);
+					//alarm.setSuppressedUntil(arg0);
+					//alarm.setSuppressedTime(arg0);
+					alarm.setSeverity(org.opennms.web.alarm.Alarm.CLEARED_SEVERITY);  //TODO need mapping for severity
+					//alarm.setServiceType(arg0);
+					//alarm.setReductionKey(arg0);
+					//alarm.setOssPrimaryKey(arg0);
+					//alarm.setOperInstruct(arg0);
+					//alarm.setNode(arg0); // TODO mapping to node if in database
+					//alarm.setMouseOverText(arg0);
+					//alarm.setManagedObjectType(nclae.getManagedObjectClass()); // TODO check if changed
+					//alarm.setManagedObjectInstance(nclae.getManagedObjectInstance()); //TODO check if changed
+					//alarm.setLogMsg(arg0);
+					
+//TODO REMOVED - DO NOT CREATE EVENT WITH HIBERNATE AlarmDAo
+//					OnmsEvent event= new OnmsEvent();
+//					//event.setId(new Integer(1));  // This is NOT set since unique constraint in alarms table on Events table
+//					alarm.setLastEvent(event);
+
+					//alarm.setIpAddr(arg0);
+					//alarm.setId(arg0); // do not change as updating alarm
+					//alarm.setFirstEventTime(arg0);
+					alarm.setLastEventTime(nclae.getEventTime()); // must be after .setLastEvent!!!
+					//alarm.setDistPoller(arg0);
+					//alarm.setDescription(arg0); 
+					//alarm.setCounter(arg0);
+					//alarm.setClearUei(arg0);
+					//alarm.setApplicationDN(arg0);
+					//alarm.setAlarmType(arg0); 
+					alarm.setAlarmAckUser("ossjclearevent"); //TODO CLEARING ALARMS ON RECEIPT OF CLEAR - NOT WAITING FOR ACK
+					alarm.setAlarmAckTime(new Date());
+
+					try {
+						if (log.isDebugEnabled()) {
+							log.debug(logheader+": Alarm before update:"+ ossDao.alarmToString(alarm));
+						}
+						if (log.isDebugEnabled()) log.debug(logheader+": Updating Alarm using ossDao.updateCurrentAlarmForUniqueKey" );
+						OnmsAlarm updatedAlarm = ossDao.updateCurrentAlarmForUniqueKey(alarm);
+						if (log.isDebugEnabled()) {
+							log.debug(logheader+": Updated alarm:"
+									+ ossDao.alarmToString(updatedAlarm));
+						}
+					}
+					catch ( Exception ex ) {
+						log.error(logheader+": problem clearing new alarm AlarmPrimaryKey: "
+								+ ossPrimaryKey +" ApplictionDN: " + applicationDN+": "+ ex);
+					}
+				}
+			}
+		}
+		catch(Exception e){
+			log.error(logheader+" Error : ", e);
+		}
+	}
+
