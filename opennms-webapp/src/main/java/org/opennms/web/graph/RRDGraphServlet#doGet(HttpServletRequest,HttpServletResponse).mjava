@@ -6,104 +6,28 @@
      */
     public void doGet(HttpServletRequest request, HttpServletResponse response)
 	    throws ServletException, IOException {
-        String typeName = request.getParameter("type");
-        String resourceTypeName = request.getParameter("resourceType");
-        String adhoc = request.getParameter("adhoc");
+        String debugString = request.getParameter("debugGraph");
         
-        String[] requiredParameters = {
-                "type",
-                "resourceType"
-        };
-
-        if (typeName == null) {
-            throw new MissingParameterException("type", requiredParameters);
-//          returnErrorImage(response, s_missingParamsPath);
-//            return;
-        }
-        if (resourceTypeName == null) {
-            throw new MissingParameterException("resourceType", requiredParameters);
-//          returnErrorImage(response, s_missingParamsPath);
-//            return;
-        }
-
-        PrefabGraphType type = m_prefabGraphDao.findByName(typeName);
-        if (type == null) {
-            throw new IllegalArgumentException("graph type \"" + typeName + "\" is not valid");
+        boolean debug = (debugString != null);
+        
+        if (debug && !request.isUserInRole(Authentication.ADMIN_ROLE)) {
+            throw new ServletException("The 'debugGraph' parameter was set, "
+                                       + "however it can only be used by "
+                                       + "users with administrator "
+                                       + "privileges");
         }
         
-        GraphModel model = findGraphModelByName(type.getName());
-
-        GraphResourceType resourceType =
-            model.getResourceTypeByName(resourceTypeName);
-
-	String command;
-	if ("true".equals(adhoc)) {
-            String[] adhocRequiredParameters = {
-                    "node or domain",
-                    "resource"
-            };
-            String nodeIdString = request.getParameter("node");
-            String domain = request.getParameter("domain");
-            if (nodeIdString == null && domain == null) {
-                throw new MissingParameterException("node or domain",
-                                                    adhocRequiredParameters);
-            }
-            
-            int nodeId = -1;
-            if (nodeIdString != null) {
-                nodeId = Integer.parseInt(nodeIdString);
-            }
-
-            String resourceName = request.getParameter("resource");
-            if (resourceName == null) {
-                throw new MissingParameterException("resource",
-                                                    adhocRequiredParameters);
-            }
-            
-            AdhocGraphType adhocType = m_prefabGraphDao.findAdhocByName(typeName);
-            
-            GraphResource resource;
-            String resourceParent;
-            if (nodeId != -1) {
-                resource = model.getResourceForNodeResourceResourceType(nodeId, resourceName, resourceTypeName);
-                resourceParent = Integer.toString(nodeId);
-            } else {
-                resource = model.getResourceForDomainResourceResourceType(domain, resourceName, resourceTypeName);
-                resourceParent = domain;
-            }
-	    command = getCommandAdhoc(adhocType, resourceParent,
-                                      resourceType, resource,
-                                      request, response);
-	} else {
-	    command = getCommandNonAdhoc(type, resourceType,
-                                         request, response);
-	}
-
-	if (command == null) {
-	    returnErrorImage(response, s_missingParamsPath);
-            return;
-        }
-
-        File workDir = resourceType.getRrdDirectory();
-
-        InputStream tempIn = null;
         try {
-            log("Executing RRD command in this directory: " + workDir);
-            log(command);
-
-            tempIn = RrdUtils.createGraph(command, workDir);
-        } catch (RrdException e) {
-            log("Read from stderr: " + e.getMessage());
-	    returnErrorImage(response, s_rrdError);
-	    return;
-	}
-
-        if (tempIn != null) {
-            response.setContentType(type.getOutputMimeType());
-
-            StreamUtils.streamToStream(tempIn, response.getOutputStream());
-
-            tempIn.close();
+            doGetWork(request, response, debug);
+        } catch (MissingParameterException e) {
+            if (debug) {
+                // TODO should we log anything?
+                throw e;
+            } else {
+                returnErrorImage(response, s_missingParamsPath);
+                return;
+            }
         }
+        
     }
 
