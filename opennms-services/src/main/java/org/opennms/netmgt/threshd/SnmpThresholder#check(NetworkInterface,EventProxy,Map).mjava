@@ -9,36 +9,21 @@
      *            Key/value pairs from the package to which the interface
      *            belongs.
      */
-    public int check(NetworkInterface iface, EventProxy eproxy, Map parameters) {
-		Category log = log();;
-
-        int thresholdingStatus = THRESHOLDING_UNKNOWN;
-        InetAddress primary = (InetAddress) iface.getAddress();
+    public int check(NetworkInterface netIface, EventProxy eproxy, Map parms) {
+        
+        SnmpThresholdInterface snmpIface = SnmpThresholdInterface.get(netIface);
+        SnmpThresholdConfiguration thresholdConfiguration = SnmpThresholdConfiguration.get(netIface, parms);
 
         // Get configuration parameters
         //
-        String groupName = ParameterMap.getKeyedString(parameters, "thresholding-group", "default");
-        int interval = ParameterMap.getKeyedInteger(parameters, "interval", DEFAULT_INTERVAL);
-        int range = ParameterMap.getKeyedInteger(parameters, "range", DEFAULT_RANGE);
-
-        if (log.isDebugEnabled())
-        	log.debug("check: service= " + SERVICE_NAME + " address= " + primary.getHostAddress() + " thresholding-group=" + groupName + " interval=" + interval + "ms range=" + range + " mS");
+        if (log().isDebugEnabled())
+        	log().debug("check: service= " + SERVICE_NAME + " address= " + snmpIface.getIpAddress() + " thresholding-group=" + thresholdConfiguration.getSnmpParameters().getGroupName() + " interval=" + thresholdConfiguration.getSnmpParameters().getInterval() + "ms range=" + thresholdConfiguration.getSnmpParameters().getRange() + " mS");
 
         // RRD Repository attribute
         //
-        String repository = (String) iface.getAttribute(RRD_REPOSITORY_KEY);
-        if (log.isDebugEnabled())
-            log.debug("check: rrd repository=" + repository);
+        if (log().isDebugEnabled())
+            log().debug("check: rrd repository=" + thresholdConfiguration.getRrdRepository());
 
-        // Nodeid attribute
-        //
-        Integer nodeId = (Integer) iface.getAttribute(NODE_ID_KEY);
-
-        // node and interface ThresholdEntity map attributes
-        //
-        Map nodeMap = (Map) iface.getAttribute(NODE_THRESHOLD_MAP_KEY);
-        Map baseIfMap = (Map) iface.getAttribute(BASE_IF_THRESHOLD_MAP_KEY);
-        Map allIfMap = (Map) iface.getAttribute(ALL_IF_THRESHOLD_MAP_KEY);
 
         // -----------------------------------------------------------
         // 
@@ -47,10 +32,10 @@
         // -----------------------------------------------------------
 
         // Get File object representing the node directory
-        File nodeDirectory = new File(repository + File.separator + nodeId.toString());
+        File nodeDirectory = new File(thresholdConfiguration.getRrdRepository(), snmpIface.getNodeId().toString());
         if (!RrdFileConstants.isValidRRDNodeDir(nodeDirectory)) {
-            log.info("Node directory for " + nodeId + "/" + primary.getHostAddress() + " does not exist or is not a valid RRD node directory.");
-            log.info("Threshold checking failed for primary SNMP interface " + primary.getHostAddress());
+            log().info("Node directory for " + snmpIface.getNodeId() + "/" + snmpIface.getIpAddress() + " does not exist or is not a valid RRD node directory.");
+            log().info("Threshold checking failed for primary SNMP interface " + snmpIface.getIpAddress());
             return THRESHOLDING_FAILED;
         }
 
@@ -62,9 +47,9 @@
         Date dateStamp = new Date();
 
         try {
-        	checkNodeDir(nodeDirectory, nodeId, primary, interval, range, dateStamp, nodeMap, events);
+        	checkNodeDir(nodeDirectory, snmpIface.getNodeId(), snmpIface.getInetAddress(), thresholdConfiguration.getSnmpParameters().getInterval(), thresholdConfiguration.getSnmpParameters().getRange(), dateStamp, thresholdConfiguration.getNodeMap(), events);
         } catch (IllegalArgumentException e) {
-            log.info("check: Threshold checking failed for primary SNMP interface " + primary.getHostAddress(), e);
+            log().info("check: Threshold checking failed for primary SNMP interface " + snmpIface.getIpAddress(), e);
             return THRESHOLDING_FAILED;
         }
 
@@ -83,9 +68,9 @@
             for (int i = 0; i < files.length; i++) {
                 try {
                     // Found interface directory...
-                    checkIfDir(files[i], nodeId, primary, interval, range, dateStamp, baseIfMap, allIfMap, events);
+                    checkIfDir(files[i], snmpIface.getNodeId(), snmpIface.getInetAddress(), thresholdConfiguration.getSnmpParameters().getInterval(), thresholdConfiguration.getSnmpParameters().getRange(), dateStamp, thresholdConfiguration.getBaseInterfaceMap(), snmpIface.getAllInterfaceMap(), events);
                 } catch (IllegalArgumentException e) {
-                    log.info("check: Threshold checking failed for primary SNMP interface " + primary.getHostAddress(), e);
+                    log().info("check: Threshold checking failed for primary SNMP interface " + snmpIface.getIpAddress(), e);
                     return THRESHOLDING_FAILED;
                 }
             }
@@ -99,7 +84,7 @@
                 eventLog.setEvents(events);
                 eproxy.send(eventLog);
             } catch (EventProxyException e) {
-                log.info("check: Failed sending threshold events via event proxy...", e);
+                log().info("check: Failed sending threshold events via event proxy...", e);
                 return THRESHOLDING_FAILED;
             }
         }
