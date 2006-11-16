@@ -3,30 +3,31 @@
      * 
      * @param directory
      *            RRD repository directory
-     * @param nodeId
-     *            Node identifier
-     * @param primary
-     *            Primary SNMP interface address
+     * @param snmpIface TODO
+     * @param thresholdConfiguration TODO
+     * @param date
+     *            Source for timestamp to be used for all generated events
+     * @param events
+     *            Castor events object containing any events to be generated as
+     *            a result of threshold checking.
      * @param interval
      *            Configured thresholding interval
      * @param range
      *            Time interval before last possible PDP is considered
      *            "out of date"
-     * @param date
-     *            Source for timestamp to be used for all generated events
      * @param thresholdMap
      *            Map of node level ThresholdEntity objects keyed by datasource
      *            name.
-     * @param events
-     *            Castor events object containing any events to be generated as
-     *            a result of threshold checking.
-     * 
+     * @param nodeId
+     *            Node identifier
+     * @param primary
+     *            Primary SNMP interface address
      * @throws IllegalArgumentException
      *             if path parameter is not a directory.
      */
-    private void checkNodeDir(File directory, Integer nodeId, InetAddress primary, int interval, int range, Date date, Map thresholdMap, Events events) throws IllegalArgumentException {
+    private void checkNodeDir(File directory, SnmpThresholdInterface snmpIface, SnmpThresholdConfiguration thresholdConfiguration, Date date, Events events) throws IllegalArgumentException {
         // Sanity Check
-        if (directory == null || nodeId == null || primary == null || date == null || thresholdMap == null || events == null) {
+        if (directory == null || snmpIface.getNodeId() == null || snmpIface.getInetAddress() == null || date == null || thresholdConfiguration.getNodeMap() == null || events == null) {
             throw new IllegalArgumentException("Null parameters not permitted.");
         }
 
@@ -51,7 +52,7 @@
             // Lookup the ThresholdEntity object corresponding
             // to this datasource.
             //
-            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(datasource);
+            ThresholdEntity threshold = (ThresholdEntity) thresholdConfiguration.getNodeMap().get(datasource);
             if (threshold != null) {
 
                 // Get the value to use for the ds-label from this threshold
@@ -62,11 +63,11 @@
                         stringProps.load(new FileInputStream(propertiesFile));
                         dsLabelValue = stringProps.getProperty(threshold.getDatasourceLabel());
                 } catch (FileNotFoundException e) {
-                        log().debug ("Label: No strings.properties file found for node id: " + nodeId + " looking here: " + propertiesFile);
+                        log().debug ("Label: No strings.properties file found for node id: " + snmpIface.getNodeId() + " looking here: " + propertiesFile);
                 } catch (NullPointerException e) {
-                        log().debug ("Label: No data source label for node id: " + nodeId );
+                        log().debug ("Label: No data source label for node id: " + snmpIface.getNodeId() );
                 } catch (java.io.IOException e) {
-                        log().debug ("Label: I/O exception when looking for strings.properties file for node id: "+ nodeId + " looking here: " + propertiesFile);
+                        log().debug ("Label: I/O exception when looking for strings.properties file for node id: "+ snmpIface.getNodeId() + " looking here: " + propertiesFile);
                 }
 
 
@@ -76,14 +77,14 @@
                 Double dsValue = null;
 		
                 try {
-                	if (range != 0) {
+                	if (thresholdConfiguration.getRange() != 0) {
                 		if (log().isDebugEnabled())
-                            log().debug("checking values within " + range + " mS of last possible PDP");
-                		dsValue = RrdUtils.fetchLastValueInRange(files[i].getAbsolutePath(), interval, range);
+                            log().debug("checking values within " + thresholdConfiguration.getRange() + " mS of last possible PDP");
+                		dsValue = RrdUtils.fetchLastValueInRange(files[i].getAbsolutePath(), thresholdConfiguration.getInterval(), thresholdConfiguration.getRange());
                 	} else {
                 		if (log().isDebugEnabled())
                             log().debug("checking value of last possible PDP only");
-                		dsValue = RrdUtils.fetchLastValue(files[i].getAbsolutePath(), interval);
+                		dsValue = RrdUtils.fetchLastValue(files[i].getAbsolutePath(), thresholdConfiguration.getInterval());
                 	}
                 } catch (NumberFormatException nfe) {
                     log().warn("Unable to convert retrieved value for datasource '" + datasource + "' to a double, skipping evaluation.");
@@ -101,19 +102,19 @@
                     int result = threshold.evaluate(dsValue.doubleValue());
                     if (result != ThresholdEntity.NONE_TRIGGERED) {
                         if (result == ThresholdEntity.HIGH_AND_LOW_TRIGGERED || result == ThresholdEntity.HIGH_TRIGGERED) {
-                            events.addEvent(createEvent(nodeId, primary, null, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_EVENT_UEI, date, dsLabelValue));
+                            events.addEvent(createEvent(snmpIface.getNodeId(), snmpIface.getInetAddress(), null, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_EVENT_UEI, date, dsLabelValue));
                         }
 
                         if (result == ThresholdEntity.HIGH_AND_LOW_TRIGGERED || result == ThresholdEntity.LOW_TRIGGERED) {
-                            events.addEvent(createEvent(nodeId, primary, null, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_EVENT_UEI, date, dsLabelValue));
+                            events.addEvent(createEvent(snmpIface.getNodeId(), snmpIface.getInetAddress(), null, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_EVENT_UEI, date, dsLabelValue));
                         }
 
                         if (result == ThresholdEntity.HIGH_AND_LOW_REARMED || result == ThresholdEntity.HIGH_REARMED) {
-                            events.addEvent(createEvent(nodeId, primary, null, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_REARM_EVENT_UEI, date, dsLabelValue));
+                            events.addEvent(createEvent(snmpIface.getNodeId(), snmpIface.getInetAddress(), null, dsValue.doubleValue(), threshold.getHighThreshold(), EventConstants.HIGH_THRESHOLD_REARM_EVENT_UEI, date, dsLabelValue));
                         }
 
                         if (result == ThresholdEntity.HIGH_AND_LOW_REARMED || result == ThresholdEntity.LOW_REARMED) {
-                            events.addEvent(createEvent(nodeId, primary, null, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_REARM_EVENT_UEI, date, dsLabelValue));
+                            events.addEvent(createEvent(snmpIface.getNodeId(), snmpIface.getInetAddress(), null, dsValue.doubleValue(), threshold.getLowThreshold(), EventConstants.LOW_THRESHOLD_REARM_EVENT_UEI, date, dsLabelValue));
                         }
                     }
                 }
