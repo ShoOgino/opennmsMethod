@@ -14,114 +14,21 @@
         
         SnmpThresholdInterface snmpIface = SnmpThresholdInterface.get(netIface);
         SnmpThresholdConfiguration thresholdConfiguration = SnmpThresholdConfiguration.get(netIface, parms);
-        SnmpThresholderState thresholderState = SnmpThresholderState.get(netIface, parms);
         
         if (!snmpIface.isIPV4())
             throw new RuntimeException("Unsupported interface type, only TYPE_IPV4 currently supported");
-
-        // Now create an empty map which will hold interface level
-        // ThresholdEntity objects for each of the node's interfaces.
-        // This map will be keyed by the interface's iflabel and will
-        // contain as a value a map of ThresholdEntity objects keyed
-        // by datasource name.
-        //
-        thresholderState.setAllInterfaceMap(new HashMap<String, Map<String, ThresholdEntity>>());
-
-        // Get database connection in order to retrieve the nodeid and
-        // ifIndex from the database for this interface.
-        //
-        java.sql.Connection dbConn = null;
-        try {
-            dbConn = DataSourceFactory.getInstance().getConnection();
-        } catch (SQLException sqlE) {
-            log().error("initialize: Failed getting connection to the database.", sqlE);
-            throw new UndeclaredThrowableException(sqlE);
-        }
-
-        int nodeId = -1;
-        int primaryIfIndex = -1;
-        char isSnmpPrimary = DbIpInterfaceEntry.SNMP_NOT_ELIGIBLE;
-
-        // All database calls wrapped in try/finally block so we make
-        // certain that the connection will be closed when we are
-        // finished.
-        //
-        try {
-            // Prepare & execute the SQL statement to get the 'nodeid',
-            // 'ifIndex' and 'isSnmpPrimary' fields from the ipInterface table.
-            //
-            PreparedStatement stmt = null;
-            try {
-                stmt = dbConn.prepareStatement(SQL_GET_NODEID);
-                stmt.setString(1, snmpIface.getIpAddress()); // interface address
-                ResultSet rs = stmt.executeQuery();
-                if (rs.next()) {
-                    nodeId = rs.getInt(1);
-                    if (rs.wasNull())
-                        nodeId = -1;
-                    primaryIfIndex = rs.getInt(2);
-                    if (rs.wasNull())
-                        primaryIfIndex = -1;
-                    String str = rs.getString(3);
-                    if (str != null)
-                        isSnmpPrimary = str.charAt(0);
-                }
-                rs.close();
-            } catch (SQLException sqle) {
-                log().debug("initialize: SQL exception!!", sqle);
-                throw new RuntimeException("SQL exception while attempting to retrieve node id for interface " + snmpIface.getIpAddress());
-            } finally {
-                try {
-                    stmt.close();
-                } catch (Exception e) {
-                    // Ignore
-                }
-            }
-
-            if (log().isDebugEnabled())
-                log().debug("initialize: db retrieval info: nodeid = " + nodeId + ", address = " + snmpIface.getIpAddress() + ", ifIndex = " + primaryIfIndex + ", isSnmpPrimary = " + isSnmpPrimary);
-
-            // RuntimeException is thrown if any of the following are true:
-            // - node id is invalid
-            // - primaryIfIndex is invalid
-            // - Interface is not the primary SNMP interface for the node
-            //
-            if (nodeId == -1)
-                throw new RuntimeException("Unable to retrieve node id for interface " + snmpIface.getIpAddress());
-
-            if (primaryIfIndex == -1)
-                // allow this for nodes without ipAddrTables
-                // throw new RuntimeException("Unable to retrieve ifIndex for interface " + ipAddr.getHostAddress());
-                if (log().isDebugEnabled())
-                    log().debug("initialize: db retrieval info: node " + nodeId + " does not have a legitimate primaryIfIndex. Assume node does not supply ipAddrTable and continue...");
-
-            if (isSnmpPrimary != DbIpInterfaceEntry.SNMP_PRIMARY)
-                throw new RuntimeException("Interface " + snmpIface.getIpAddress() + " is not the primary SNMP interface for nodeid " + nodeId);
-        } finally {
-            // Done with the database so close the connection
-            try {
-                dbConn.close();
-            } catch (SQLException sqle) {
-                log().info("initialize: SQLException while closing database connection", sqle);
-            }
-        }
-
-        // Add nodeId as an attribute of the interface for retrieval
-        // by the check() method.
-        //
-        snmpIface.setNodeId(nodeId);
 
         // Debug
         //
         if (log().isDebugEnabled()) {
             log().debug("initialize: dumping node thresholds defined for " + snmpIface.getIpAddress() + "/" + thresholdConfiguration.getGroupName() + ":");
-            Iterator iter = thresholdConfiguration.getNodeMap().values().iterator();
+            Iterator iter = thresholdConfiguration.getNodeResourceType().getThresholdMap().values().iterator();
             while (iter.hasNext()) {
                 log().debug((ThresholdEntity) iter.next());
             }
 
             log().debug("initialize: dumping interface thresholds defined for " + snmpIface.getIpAddress() + "/" + thresholdConfiguration.getGroupName() + ":");
-            iter = thresholdConfiguration.getBaseInterfaceMap().values().iterator();
+            iter = thresholdConfiguration.getIfResourceType().getThresholdMap().values().iterator();
             while (iter.hasNext()) {
                 log().debug((ThresholdEntity) iter.next());
             }
