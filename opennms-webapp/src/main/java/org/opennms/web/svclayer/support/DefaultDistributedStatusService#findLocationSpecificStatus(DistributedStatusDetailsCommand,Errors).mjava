@@ -1,10 +1,13 @@
-    protected List<OnmsLocationSpecificStatus> findLocationSpecificStatus(String locationName, String applicationName) {
+    protected List<OnmsLocationSpecificStatus> findLocationSpecificStatus(DistributedStatusDetailsCommand command, Errors errors) {
+        String locationName = command.getLocation();
+        String applicationName = command.getApplication();
+
         if (locationName == null) {
-            throw new IllegalArgumentException("locationName cannot be null");
+            throw new IllegalArgumentException("location cannot be null");
         }
         
         if (applicationName == null) {
-            throw new IllegalArgumentException("applicationLabel cannot be null");
+            throw new IllegalArgumentException("application cannot be null");
         }
         
         OnmsMonitoringLocationDefinition location =
@@ -27,9 +30,11 @@
             m_locationMonitorDao.findByLocationDefinition(location);
         
         if (locationMonitors.size() == 0) {
-            throw new IllegalArgumentException("No location monitors have "
-                                               + "registered for location \""
-                                               + location.getName() + "\"");
+            errors.reject("location.no-monitors",
+                          new Object[] { applicationName, locationName },
+                          "No location monitors have registered for this "
+                          + "application and location");
+            return null;
         }
         
         List<OnmsLocationMonitor> sortedLocationMonitors =
@@ -44,18 +49,10 @@
             }
             
         });
-
-        Package pkg = m_pollerConfig.getPackage(location.getPollingPackageName());
-
-        ServiceSelector selector =
-            m_pollerConfig.getServiceSelectorForPackage(pkg);
         
         Collection<OnmsMonitoredService> services =
-            m_monitoredServiceDao.findMatchingServices(selector);
-        
-        Collection<OnmsMonitoredService> applicationServices =
             m_monitoredServiceDao.findByApplication(application);
-        services.retainAll(applicationServices);
+
 
         List<OnmsLocationSpecificStatus> status = new LinkedList<OnmsLocationSpecificStatus>();
         
@@ -77,15 +74,11 @@
                                                                      
         for (OnmsMonitoredService service : sortedServices) {
             for (OnmsLocationMonitor locationMonitor : sortedLocationMonitors) {
-                if (locationMonitor == null) {
-                    status.add(new OnmsLocationSpecificStatus(locationMonitor, service, PollStatus.unknown("Distributed poller has never reported for this location")));
+                OnmsLocationSpecificStatus currentStatus = m_locationMonitorDao.getMostRecentStatusChange(locationMonitor, service);
+                if (currentStatus == null) {
+                    status.add(new OnmsLocationSpecificStatus(locationMonitor, service, PollStatus.unknown("No status recorded for this service from this location")));
                 } else {
-                    OnmsLocationSpecificStatus currentStatus = m_locationMonitorDao.getMostRecentStatusChange(locationMonitor, service);
-                    if (currentStatus == null) {
-                        status.add(new OnmsLocationSpecificStatus(locationMonitor, service, PollStatus.unknown("No status recorded for this service from this location")));
-                    } else {
-                        status.add(currentStatus);
-                    }
+                    status.add(currentStatus);
                 }
             }
         }
