@@ -1,37 +1,46 @@
     protected void onInit() {
-
-        m_noticeQueues = new HashMap();
-        m_queueHandlers = new HashMap();
-        m_eventReader = null;
-		try {
-
+        m_noticeQueues = new HashMap<String, NoticeQueue>();
+        m_queueHandlers = new HashMap<String, NotifdQueueHandler>();
+        m_eventReader = new BroadcastEventProcessor();
+        
+        try {
             log().info("Notification status = " + getConfigManager().getNotificationStatus());
 
             Queue queues[] = getConfigManager().getConfiguration().getQueue();
-            for (int i = 0; i < queues.length; i++) {
+            for (Queue queue : queues) {
                 NoticeQueue curQueue = new NoticeQueue();
 
-                Class handlerClass = Class.forName(queues[i].getHandlerClass().getName());
+                Class handlerClass = Class.forName(queue.getHandlerClass().getName());
                 NotifdQueueHandler handlerQueue = (NotifdQueueHandler) handlerClass.newInstance();
 
-                handlerQueue.setQueueID(queues[i].getQueueId());
+                handlerQueue.setQueueID(queue.getQueueId());
                 handlerQueue.setNoticeQueue(curQueue);
-                handlerQueue.setInterval(queues[i].getInterval());
+                handlerQueue.setInterval(queue.getInterval());
 
-                m_noticeQueues.put(queues[i].getQueueId(), curQueue);
-                m_queueHandlers.put(queues[i].getQueueId(), handlerQueue);
+                m_noticeQueues.put(queue.getQueueId(), curQueue);
+                m_queueHandlers.put(queue.getQueueId(), handlerQueue);
             }
         } catch (Throwable t) {
-            log().warn("start: Failed to load notifd queue handlers.", t);
+            log().error("start: Failed to load notifd queue handlers.", t);
+            throw new UndeclaredThrowableException(t);
         }
+        
+        m_eventReader.setDestinationPathManager(getDestinationPathManager());
+        m_eventReader.setEventManager(getEventManager());
+        m_eventReader.setGroupManager(getGroupManager());
+        m_eventReader.setNoticeQueues(m_noticeQueues);
+        m_eventReader.setNotifdConfigManager(getConfigManager());
+        m_eventReader.setNotificationCommandManager(getNotificationCommandManager());
+        m_eventReader.setNotificationManager(getNotificationManager());
+        m_eventReader.setPollOutagesConfigManager(getPollOutagesConfigManager());
+        m_eventReader.setUserManager(getUserManager());
 
         // start the event reader
-        //
         try {
-            m_eventReader = new BroadcastEventProcessor(this, m_noticeQueues);
-        } catch (Exception ex) {
-            log().error("Failed to setup event receiver", ex);
-            throw new UndeclaredThrowableException(ex);
+            m_eventReader.init();
+        } catch (Exception e) {
+            log().error("Failed to setup event receiver", e);
+            throw new UndeclaredThrowableException(e);
         }
     }
 
