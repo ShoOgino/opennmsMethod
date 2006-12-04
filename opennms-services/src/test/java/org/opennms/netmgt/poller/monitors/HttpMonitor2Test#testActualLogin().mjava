@@ -1,0 +1,75 @@
+	public void testActualLogin() throws Exception {
+    	
+        HttpClientParams params = new HttpClientParams();
+        
+        //version
+        params.setVersion(new HttpVersion(1, 1));
+        
+        //timeout
+        params.setSoTimeout(3000);
+        
+        // FIXME: what happens on timeout? how do we know that happened?
+        
+        
+        HttpClient client = new HttpClient(params);
+        
+        String scheme = "http";
+        String userinfo = "demo:demo";
+        String host = "demo.opennms.com";
+        int port = 8080;
+        String path = "/opennms";
+        String query = null;
+        String fragment = null;
+        
+        URI uri = new URI(scheme, userinfo, host, port, path, query, fragment);
+        
+        client.getHostConfiguration().setHost(uri);
+        client.getParams().setCookiePolicy(CookiePolicy.BROWSER_COMPATIBILITY);
+        
+        GetMethod authGet = new GetMethod(path);
+        authGet.setFollowRedirects(true);
+        
+        client.executeMethod(authGet);
+        
+        assertEquals("Response is 200", 200, authGet.getStatusCode());
+        assertTrue("Redirected to login page", authGet.getResponseBodyAsString().indexOf("j_acegi_security_check") > 0);
+        
+        CookieSpec spec = CookiePolicy.getDefaultSpec();
+        boolean secure = false;
+        Cookie[] cookies = spec.match(host, port, path, secure , client.getState().getCookies());
+
+        assertTrue("Got cookies", cookies.length > 0);
+        authGet.releaseConnection();
+        
+        PostMethod post = new PostMethod(path+"/j_acegi_security_check");
+        
+        
+        NameValuePair action = new NameValuePair("action", "j_acegi_security_check");
+        NameValuePair url = new NameValuePair("ulr", "j_acegi_security_check");
+        NameValuePair user = new NameValuePair("j_username", "demo");
+        NameValuePair password = new NameValuePair("j_password", "demo");
+        
+        post.setRequestBody(new NameValuePair[] {action, url, user, password});
+        client.executeMethod(post);
+        
+        System.err.println("Login form post: "+post.getStatusLine());
+        
+        Cookie[] logonCookies = spec.match(host, port, path, secure, client.getState().getCookies());
+        assertTrue("Got logon cookies", logonCookies.length > 0);
+        
+        int statusCode = post.getStatusCode();
+        
+        Header header = post.getResponseHeader("Location");
+        if (statusCode == HttpStatus.SC_MOVED_TEMPORARILY ||
+                statusCode == HttpStatus.SC_MOVED_PERMANENTLY ||
+                statusCode == HttpStatus.SC_SEE_OTHER || 
+                statusCode == HttpStatus.SC_TEMPORARY_REDIRECT) {
+            String newUri = header.getValue();
+            GetMethod redirect = new GetMethod(newUri);
+            client.executeMethod(redirect);
+            redirect.releaseConnection();
+        }
+
+        post.releaseConnection();
+    }
+
