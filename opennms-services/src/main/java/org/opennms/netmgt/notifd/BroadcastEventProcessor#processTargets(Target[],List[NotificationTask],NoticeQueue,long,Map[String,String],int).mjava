@@ -1,0 +1,52 @@
+    /**
+     * 
+     */
+    private void processTargets(Target[] targets, List<NotificationTask> targetSiblings, NoticeQueue noticeQueue, long startTime, Map<String, String> params, int noticeId) throws IOException, MarshalException, ValidationException {
+        for (int i = 0; i < targets.length; i++) {
+            String interval = (targets[i].getInterval() == null ? "0s" : targets[i].getInterval());
+
+            String targetName = targets[i].getName();
+            String autoNotify = targets[i].getAutoNotify();
+            if(autoNotify != null) {
+                if(autoNotify.equalsIgnoreCase("on")) {
+                    autoNotify = "Y";
+                } else if(autoNotify.equalsIgnoreCase("off")) {
+                    autoNotify = "N";
+                } else {
+                    autoNotify = "C";
+                }
+            } else {
+                autoNotify = "C";
+            }
+            if (log().isDebugEnabled()) {
+                log().debug("Processing target " + targetName + ":" + interval);
+            }
+            
+            NotificationTask[] tasks = null;
+            
+            if (getGroupManager().hasGroup((targetName))) {
+                tasks = makeGroupTasks(startTime, params, noticeId, targetName, targets[i].getCommand(), targetSiblings, autoNotify, TimeConverter.convertToMillis(interval));
+            } else if (getUserManager().hasRole(targetName)) {
+                tasks = makeRoleTasks(startTime, params, noticeId, targetName, targets[i].getCommand(), targetSiblings, autoNotify, TimeConverter.convertToMillis(interval));
+            } else if (getUserManager().hasUser(targetName)) {
+                NotificationTask[] userTasks = { makeUserTask(startTime, params, noticeId, targetName, targets[i].getCommand(), targetSiblings, autoNotify) };
+                tasks = userTasks;
+            } else if (targetName.indexOf("@") > -1) {
+                NotificationTask[] emailTasks = { makeEmailTask(startTime, params, noticeId, targetName, targets[i].getCommand(), targetSiblings, autoNotify) };
+                tasks = emailTasks;
+            }
+             
+            if (tasks != null) {
+                for (int index = 0; index < tasks.length; index++) {
+                    NotificationTask task = tasks[index];
+                    if (task != null) {
+                        noticeQueue.putItem(task.getSendTime(), task);
+                        targetSiblings.add(task);
+                    }
+                }
+            } else {
+                log().warn("Unrecognized target '" + targetName + "' contained in destinationPaths.xml. Please check the configuration.");
+            }
+        }
+    }
+

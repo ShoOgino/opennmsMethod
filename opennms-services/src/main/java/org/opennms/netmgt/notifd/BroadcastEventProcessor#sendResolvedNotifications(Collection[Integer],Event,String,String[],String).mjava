@@ -1,0 +1,56 @@
+    private void sendResolvedNotifications(Collection<Integer> notifIDs, Event event, String acknowledge, 
+            String[] match, String resolutionPrefix) throws Exception {
+        for (int notifId : notifIDs) {
+            boolean wa = false;
+            if(notifId < 0) {
+                notifId *= -1;
+                wa = true;
+                if (log().isDebugEnabled()) {
+                    log().debug("Conditional autoNotify for notifId " + notifId);
+                }
+            }
+            final boolean wasAcked = wa;
+            final Map<String, String> parmMap = rebuildParameterMap(notifId, resolutionPrefix);
+            
+            NotificationManager.expandMapValues(parmMap, 
+                    getNotificationManager().getEvent(Integer.parseInt(parmMap.get("eventID"))));
+            
+            String queueID = getNotificationManager().getQueueForNotification(notifId);
+
+            final Map<String, List<String>> userNotifications = new HashMap<String, List<String>>();
+            RowProcessor ackNotifProcessor = new RowProcessor() {
+                public void processRow(ResultSet rs) throws SQLException {
+                    String userID = rs.getString("userID");
+                    String contactInfo = rs.getString("contactinfo");
+                    String autoNotifyChar = rs.getString("autonotify");
+                    if(userID.equals("email-address")) {
+                        userID = contactInfo;
+                    }
+                    String cmd = rs.getString("media");
+                    if(autoNotifyChar == null) {
+                        autoNotifyChar = "C";
+                    }
+                    if(autoNotifyChar.equals("Y") || (autoNotifyChar.equals("C") && !wasAcked)) {
+                        List<String> cmdList = (List<String>) userNotifications.get(userID);
+                        if (cmdList == null) {
+                            cmdList = new ArrayList<String>();
+                            userNotifications.put(userID, cmdList);
+                        }
+                        cmdList.add(cmd);
+                    }
+                }
+            };
+            getNotificationManager().forEachUserNotification(notifId, ackNotifProcessor);
+
+            for (String userID : userNotifications.keySet()) {
+                List<String> cmdList = userNotifications.get(userID);
+                String[] cmds = cmdList.toArray(new String[cmdList.size()]);
+                if (log().isDebugEnabled()) {
+                    log().debug("Sending " + resolutionPrefix + " notification to userID = " + userID + " for notice ID " + notifId);
+                }
+                sendResolvedNotificationsToUser(queueID, userID, cmds, parmMap);
+            }
+
+        }
+    }
+
