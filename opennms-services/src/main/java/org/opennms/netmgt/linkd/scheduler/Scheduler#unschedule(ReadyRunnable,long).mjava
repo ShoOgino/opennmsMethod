@@ -1,0 +1,76 @@
+	/**
+	 * This method is used to unschedule a ready runnable in the system. The
+	 * interval is used as the key for determining which queue to remove the
+	 * runnable.
+	 * 
+	 * @param interval
+	 *            The queue to add the runnable to.
+	 * @param runnable
+	 *            The element to remove.
+	 * 
+	 */
+
+	public synchronized void unschedule(ReadyRunnable runnable, long interval) {
+		Category log = ThreadCategory.getInstance(getClass());
+		
+		if (log.isDebugEnabled()) {
+			log.debug("unschedule: Removing " + runnable.getInfo() + " at interval " + interval);
+		}
+		Long key = new Long(interval);
+		synchronized(m_queues) {
+			if (!m_queues.containsKey(key)) {
+				if (log.isDebugEnabled())
+					log.debug("unschedule: interval queue did not exist, exit");
+				return;
+			}
+			
+			PeekableFifoQueue in = m_queues.get(key);
+			if (in.isEmpty()) {
+				if (log.isDebugEnabled())
+					log.debug("unschedule: interval queue is empty, exit");
+				return;
+			}
+			
+			ReadyRunnable readyRun = null;
+			int maxLoops = in.size();
+			boolean first = true;
+			do {
+				try {
+					readyRun = (ReadyRunnable) in.remove();
+					if (in.size() == maxLoops && first) {
+						maxLoops++;
+					}
+					first = false;
+					if (readyRun != null && readyRun.equals(runnable)) {
+						if (log.isDebugEnabled()) {
+							log
+									.debug("unschedule: removing found "
+											+ readyRun.getInfo());
+						}
+			
+						// Pop the interface/readyRunnable from the
+						// queue for execution.
+						//
+						m_scheduled--;
+					} else {
+						in.add(readyRun);
+					}
+				} catch (InterruptedException ie) {
+					if (log.isInfoEnabled())
+						log.info(
+								"unschedule: failed to remove instance "
+										+ runnable.getInfo()
+										+ " from scheduler", ie);
+					Thread.currentThread().interrupt();
+				} catch (FifoQueueException ex) {
+					if (log.isInfoEnabled())
+						log.info(
+								"unschedule: failed to remove instance "
+								+ runnable.getInfo()
+								+ " from scheduler", ex);
+					throw new UndeclaredThrowableException(ex);
+				}
+			} while ( --maxLoops > 0) ; 
+		}
+	}
+
