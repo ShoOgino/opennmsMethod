@@ -16,7 +16,8 @@
      *             US-ASCII encoding.
      */
     static ConvertToEvent make(InetAddress addr, int port, byte[] data,
-            int len) throws UnsupportedEncodingException {
+            int len, String matchPattern, int hostGroup, int messageGroup)
+            throws UnsupportedEncodingException {
 
         ConvertToEvent e = new ConvertToEvent();
 
@@ -128,21 +129,29 @@
             message = message.substring(16);
         }
 
-        // Looking for forwarded messages
-        Pattern bsdForward = Pattern.compile("^Forwarded from (\\d+\\.\\d+\\.\\d+\\.\\d+): (.*)");
+        // These 2 debugs will aid in analyzing the regexpes as syslog seems
+        // to differ alot
+        // depending on implementation or message structure.
+
+        log.debug("Message : " + message);
+        log.debug("Pattern : " + matchPattern);
+
+        Pattern bsdForward = Pattern.compile(matchPattern);
+
         Matcher m = bsdForward.matcher(message);
 
         if ((m = bsdForward.matcher(message)).matches()) {
 
-            nodeId = SyslogdIPMgr.getNodeId(m.group(1).toString().replaceAll(
-                                                                             "/",
-                                                                             ""));
+            nodeId = SyslogdIPMgr.getNodeId(m.group(hostGroup).replaceAll(
+                                                                          "/",
+                                                                          ""));
 
             if (nodeId != -1)
                 event.setNodeid(nodeId);
             // Clean up for further processing....
-            event.setInterface(m.group(1));
-            message = m.group(2);
+            event.setInterface(m.group(hostGroup).replaceAll("/", ""));
+
+            message = m.group(messageGroup);
             log.debug("Forwarded message: " + message);
 
         }
@@ -213,7 +222,7 @@
         parmValue.setContent(processName);
         eventParm.setValue(parmValue);
         eventParms.addParm(eventParm);
-        
+
         eventParm = new Parm();
         eventParm.setParmName("service");
         parmValue = new Value();
