@@ -1,0 +1,37 @@
+    private void processThresholdForInterfaceFile(File directory, SnmpThresholdNetworkInterface snmpIface, Date date, Events events, String ifLabel, Map<String, String> ifDataMap, File file) {
+        Map<String, ThresholdEntity> thresholdMap = snmpIface.getInterfaceThresholdMap(ifLabel);
+
+        SnmpThresholdConfiguration thresholdConfiguration = snmpIface.getThresholdConfiguration();
+        
+        String datasource = stripRrdExtension(file.getName());
+        if (datasource == null) {
+            // Could not find the RRD extension, so skip
+            log().warn("File '" + file.getName() + "' was listed as an RRD file in directory '" + directory.getAbsolutePath() + "' but it does not end with the RRD extension.  Skipping thresholding on this file.");
+            return;
+        }
+
+        ThresholdEntity threshold = thresholdMap.get(datasource);
+        if (threshold == null) {
+            log().info("Did not find a threshold entity object for data source '" + datasource + "'.");
+            return;
+        }
+
+        Double dsValue = getDataSourceValue(thresholdConfiguration, file, datasource);
+        if (dsValue == null) {
+            log().info("Could not get data source value for '" + datasource + "'.  Not evaluating threshold.");
+            return;
+        }
+        
+        List<Event> eventList = threshold.evaluateAndCreateEvents(dsValue, date);
+        if (eventList.size() == 0) {
+            // Nothing ot do, so return
+            return;
+        }
+
+        if (ifDataMap.size() == 0 && ifLabel != null) {
+            populateIfDataMap(ifDataMap, snmpIface, ifLabel);
+        }
+
+        completeEventListAndAddToEvents(events, eventList, snmpIface, ifDataMap, "Unknown");
+    }
+
