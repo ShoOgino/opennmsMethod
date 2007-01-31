@@ -1,37 +1,27 @@
-    public SimpleWebTable createFacilityStatusTable(Date startDate,
-            Date endDate) {
+    public SimpleWebTable createFacilityStatusTable(Date start, Date end) {
+        Assert.notNull(start, "argument start cannot be null");
+        Assert.notNull(end, "argument end cannot be null");
+        if (!start.before(end)) {
+            throw new IllegalArgumentException("start date (" + start + ") must be older than end date (" + end + ")");
+        }
+        
         SimpleWebTable table = new SimpleWebTable();
         
-        List<OnmsMonitoringLocationDefinition> locationDefinitions =
-            m_locationMonitorDao.findAllMonitoringLocationDefinitions();
+        List<OnmsMonitoringLocationDefinition> locationDefinitions = m_locationMonitorDao.findAllMonitoringLocationDefinitions();
 
         Collection<OnmsApplication> applications = m_applicationDao.findAll();
         if (applications.size() == 0) {
             throw new IllegalArgumentException("there are no applications");
         }
         
-        List<OnmsApplication> sortedApplications =
-            new ArrayList<OnmsApplication>(applications);
-        Collections.sort(sortedApplications,
-                         new Comparator<OnmsApplication>(){
-            public int compare(OnmsApplication o1, OnmsApplication o2) {
-                return o1.getName().compareTo(o2.getName());
-            }
-        });
+        List<OnmsApplication> sortedApplications = new ArrayList<OnmsApplication>(applications);
+        Collections.sort(sortedApplications);
         
-        Collection<OnmsLocationSpecificStatus> mostRecentStatuses =
-            m_locationMonitorDao.getAllMostRecentStatusChanges();
-        
-        Collection<OnmsLocationSpecificStatus> statusesWithinPeriod =
-            m_locationMonitorDao.getStatusChangesBetween(startDate, endDate);
-        
-        Collection<OnmsLocationSpecificStatus> statusesBeforePeriod =
-            m_locationMonitorDao.getAllStatusChangesAt(startDate);
-        
-        Collection<OnmsLocationSpecificStatus> statusesPeriod =
-            new HashSet<OnmsLocationSpecificStatus>();
-        statusesPeriod.addAll(statusesBeforePeriod);
-        statusesPeriod.addAll(statusesWithinPeriod);
+        Collection<OnmsLocationSpecificStatus> mostRecentStatuses = m_locationMonitorDao.getAllMostRecentStatusChanges();
+
+        Collection<OnmsLocationSpecificStatus> statusesPeriod = new HashSet<OnmsLocationSpecificStatus>();
+        statusesPeriod.addAll(m_locationMonitorDao.getAllStatusChangesAt(start));
+        statusesPeriod.addAll(m_locationMonitorDao.getStatusChangesBetween(start, end));
         
         table.setTitle("Distributed Poller Status Summary");
         
@@ -50,25 +40,14 @@
             table.addCell(locationDefinition.getName(), "");
             
             for (OnmsApplication application : sortedApplications) {
-                Collection<OnmsMonitoredService> memberServices =
-                    m_monitoredServiceDao.findByApplication(application);
-                String status =
-                    calculateCurrentStatus(monitors,
-                                           memberServices,
-                                           mostRecentStatuses);
+                Collection<OnmsMonitoredService> memberServices = m_monitoredServiceDao.findByApplication(application);
+                String status = calculateCurrentStatus(monitors, memberServices, mostRecentStatuses);
             
-                
-                Set<OnmsLocationSpecificStatus> selectedStatuses =
-                    filterStatus(statusesPeriod, monitors, memberServices);
+                Set<OnmsLocationSpecificStatus> selectedStatuses = filterStatus(statusesPeriod, monitors, memberServices);
                 
                 if (selectedStatuses.size() > 0) {
-                    String percentage =
-                        calculatePercentageUptime(memberServices,
-                                                  selectedStatuses,
-                                                  startDate, endDate);
-                    table.addCell(percentage, status,
-                                  createHistoryPageUrl(locationDefinition,
-                                                       application));
+                    String percentage = calculatePercentageUptime(memberServices, selectedStatuses, start, end);
+                    table.addCell(percentage, status, createHistoryPageUrl(locationDefinition, application));
                 } else {
                     table.addCell("No data", status);
                 }
