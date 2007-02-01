@@ -1,0 +1,61 @@
+    @Override
+    protected ModelAndView handleRequestInternal(HttpServletRequest request, HttpServletResponse reply) throws Exception {
+        Context context = new HttpServletRequestContext(request);
+        LimitFactory limitFactory = new TableLimitFactory(context, "tabledata");
+        Limit limit = new TableLimit(limitFactory);
+
+        CurrentOutageParseResponse.findSelectedOutagesIDs(request,m_outageService);
+
+        Map<String, Object> myModel = new HashMap<String, Object>();
+
+        myModel.put("request", limit.toString());
+
+        myModel.put("all_params", request.getParameterNames().toString());
+        
+        Integer rowstart;
+        Integer rowend;
+        if (limit.getPage() == 1) {
+            // no offset set
+            rowstart = 0;
+            rowend = getDefaultRowsDisplayed();
+
+            context.setRequestAttribute("rowStart", rowstart);
+            context.setRequestAttribute("rowEnd", rowend);
+        } else {
+            //quirky situation... - as we started on 0 (zero)
+            rowstart = ((limit.getPage() * getDefaultRowsDisplayed() +1 ) - getDefaultRowsDisplayed());
+            rowend = getDefaultRowsDisplayed();
+        }
+        
+        myModel.put("rowStart", rowstart);
+        myModel.put("rowEnd", rowend);
+        myModel.put("begin", rowstart);
+        myModel.put("end", rowend);
+
+        String orderProperty;
+        String sortOrder;
+        
+        if (limit.getSort().getProperty() == null) {
+            orderProperty = null;
+            sortOrder = "asc";
+        } else {
+            orderProperty = limit.getSort().getProperty();
+            sortOrder = limit.getSort().getSortOrder();
+        }
+        
+        OnmsCriteria criteria = new OutagesFilteringView().buildCriteria(request);
+        OnmsCriteria countCriteria = new OutagesFilteringView().buildCriteria(request);
+        
+        Integer totalRows = m_outageService.getOutageCount(countCriteria);
+        Collection<OnmsOutage> foundOutages = m_outageService.getOutagesByRange(rowstart, rowend, orderProperty, sortOrder, criteria);
+
+        // Pretty smart to build the collection after any suppressions..... 
+        Collection theTable = m_cview.theTable(foundOutages);
+
+        myModel.put("tabledata", theTable);
+        myModel.put("totalRows", totalRows);
+
+        myModel.put("selected_outages", CurrentOutageParseResponse.findSelectedOutagesIDs(request,m_outageService));
+        return new ModelAndView(getSuccessView(), myModel);
+    }
+
