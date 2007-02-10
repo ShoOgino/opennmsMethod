@@ -1,0 +1,68 @@
+    @Override
+    protected ModelAndView handle(HttpServletRequest request, HttpServletResponse response, Object cmd, BindException errors) throws Exception {
+        NodeListCommand command = (NodeListCommand) cmd;
+
+        Node[] nodes = null;
+        if (command.hasNodename()) {
+            nodes = NetworkElementFactory.getNodesLike(command.getNodename());
+        } else if (command.hasIplike()) {
+            nodes = NetworkElementFactory.getNodesWithIpLike(command.getIplike());
+        } else if (command.hasService()) {
+            nodes = NetworkElementFactory.getNodesWithService(command.getService());
+        } else if (command.hasMaclike()) {
+            nodes = NetworkElementFactory.getNodesWithPhysAddr(command.getMaclike());
+        } else if (command.hasIfAlias()) {
+            nodes = NetworkElementFactory.getNodesWithIfAlias(command.getIfAlias());
+        } else if (command.hasCategory1() && command.hasCategory2()) {
+            nodes = NetworkElementFactory.getNodesWithCategories(m_transactionTemplate, m_nodeDao, m_categoryDao, command.getCategory1(), command.getCategory2(), command.getNodesWithDownAggregateStatus());
+        } else if (command.hasCategory1()) {
+            nodes = NetworkElementFactory.getNodesWithCategories(m_transactionTemplate, m_nodeDao, m_categoryDao, command.getCategory1(), command.getCategory2(), command.getNodesWithDownAggregateStatus());
+        } else if (command.hasStatusViewName() && command.hasStatusSite() && command.hasStatusRowLabel()) {
+            Collection<OnmsNode> onmsNodes;
+            if (command.getNodesWithDownAggregateStatus()) {
+                onmsNodes = m_siteStatusViewService.getAggregateStatus(command.getStatusViewName(), command.getStatusSite(), command.getStatusRowLabel()).getDownNodes();
+            } else {
+                onmsNodes = m_siteStatusViewService.getNodes(command.getStatusViewName(), command.getStatusSite(), command.getStatusRowLabel());
+            }
+            nodes = NetworkElementFactory.convertOnmsNodeCollectionToNodeArray(onmsNodes);
+        } else {
+            nodes = NetworkElementFactory.getAllNodes();
+        }
+
+        if (command.getNodesWithOutages()) {
+            nodes = m_outageModel.filterNodesWithCurrentOutages(nodes);
+        }
+
+        int interfaceCount = 0;
+        List<NodeModel> displayNodes = new LinkedList<NodeModel>();
+        for (Node node : nodes) {
+            List<Interface> displayInterfaces = new LinkedList<Interface>();
+            if (command.getListInterfaces()) {
+                if (command.hasIfAlias()) {
+                    Interface[] interfaces = NetworkElementFactory.getInterfacesWithIfAlias(node.getNodeId(), command.getIfAlias());
+                    for (Interface intf : interfaces) {
+                        if (intf.getSnmpIfAlias() != null && !intf.getSnmpIfAlias().equals("")) {
+                            interfaceCount++;
+
+                            displayInterfaces.add(intf);                    
+                        }
+                    }
+                } else {
+                    Interface[] interfaces = NetworkElementFactory.getActiveInterfacesOnNode(node.getNodeId());
+                    for (Interface intf : interfaces) {
+                        if (!"0.0.0.0".equals(intf.getIpAddress())) { 
+                            interfaceCount++;
+                            displayInterfaces.add(intf);
+                        }
+                    }
+                }
+            }
+            displayNodes.add(new NodeListModel.NodeModel(node, displayInterfaces));
+        }
+
+        NodeListModel model = new NodeListModel(displayNodes, interfaceCount);
+        ModelAndView modelAndView = new ModelAndView(getSuccessView(), "model", model);
+        modelAndView.addObject(getCommandName(), command);
+        return modelAndView;
+    }
+
