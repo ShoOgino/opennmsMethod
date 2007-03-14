@@ -1,33 +1,22 @@
     private void processAction() throws SQLException {
         try {
-            setActionSuccessful(false);
-            
             log().debug("runAutomation: running action(s): "+m_automation.getActionName());
             
             getConn().setAutoCommit(false);
             if (isTriggerInAutomation()) {
-                getTriggerResultSet().beforeFirst();
-                
-                //Loop through the select results
-                while (getTriggerResultSet().next()) {                        
-                    processActionStatement(getActionSQL(), getTriggerResultSet());
-                    /*
-                     * TODO: create new XSD configuration to allow a way to send an event for each action per row.
-                     * Currently, the XSD presents itself as one event per automation.
-                     */
-                }
-                setActionSuccessful(true);
-                sendAutoEvent();
+                m_action.processTriggerResults(getConn(), getTriggerResultSet());
             } else {
-                //No trigger defined, just running the action.
-                if (getTokenCount(getActionSQL()) != 0) {
-                    log().info("runAutomation: not running action: "+m_automation.getActionName()+".  Action contains tokens in an automation ("+m_automation.getName()+") with no trigger.");
-                    setActionSuccessful(false);
+                m_action.execute(getConn());
+            }
+            if (m_action.isSuccessful()) {
+                if (isTriggerInAutomation() && m_actionEvent.forEachResult()) {
+                    m_actionEvent.processTriggerResults(getTriggerResultSet());
                 } else {
-                    processActionStatement(getActionSQL(), getTriggerResultSet());
-                    sendAutoEvent();
-                    setActionSuccessful(true);
+                    m_actionEvent.send();
                 }
+            }
+            if (m_action.isSuccessful()) {
+                m_autoEvent.send();
             }
             getConn().commit();           
         } catch (SQLException e) {
