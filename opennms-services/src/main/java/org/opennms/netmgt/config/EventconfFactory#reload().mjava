@@ -2,36 +2,42 @@
      * 
      */
     public static synchronized void reload() throws IOException, MarshalException, ValidationException {
-        File cfgFile = ConfigFileConstants.getFile(ConfigFileConstants.EVENT_CONF_FILE_NAME);
-        InputStream configIn = new FileInputStream(cfgFile);
+        InputStream configIn = new FileInputStream(m_rootConfigFile);
         Events events = ((Events) Unmarshaller.unmarshal(Events.class, new InputStreamReader(configIn)));
-        Collection eventList = events.getEventCollection();
-        m_events = new ArrayList();
+       
+        m_eventFiles=new HashMap<File, Events>();
+        m_eventFiles.put(m_rootConfigFile, events);
 
-        Iterator i = eventList.iterator();
-        while (i.hasNext()) {
-            m_events.add((Event) i.next());
-        }
-
-        Enumeration e = events.enumerateEventFile();
-        while (e.hasMoreElements()) {
-            String eventfile = (String) e.nextElement();
-            InputStream fileIn = new FileInputStream(eventfile);
+        //Create an array, and add any nested eventfiles defs found, to the end of the array.  
+        //Using the "size" field (rather than an enumeration) means we don't need any funky nesting logic
+        List<String> eventFiles=new ArrayList(events.getEventFileCollection());
+        
+        for(int i=0; i<eventFiles.size(); i++) {
+            String eventFilePath = (String) eventFiles.get(i);
+            File eventFile=new File(eventFilePath);
+            if(!eventFile.isAbsolute()) {
+                //This event file is specified with a relative path.  Get the absolute path relative to the root config file, and use 
+                // that for all later file references
+                File tempFile=new File(m_rootConfigFile.getParent() + File.separator + eventFile.getPath());
+                eventFile=tempFile.getCanonicalFile();
+            }
+            InputStream fileIn = new FileInputStream(eventFile);
             if (fileIn == null) {
-                throw new IOException("Eventconf: Failed to load/locate events file: " + eventfile);
+                throw new IOException("Eventconf: Failed to load/locate events file: " + eventFile);
             }
 
             Reader filerdr = new InputStreamReader(fileIn);
             Events filelevel = null;
             filelevel = (Events) Unmarshaller.unmarshal(Events.class, filerdr);
-            Enumeration efile = filelevel.enumerateEvent();
-            while (efile.hasMoreElements()) {
-                Event event = (Event) efile.nextElement();
-                m_events.add(event);
+            m_eventFiles.put(eventFile, filelevel);
+            
+            //There are nested event-file definitions - load them as well
+            if(filelevel.getEventFileCount()>0) {
+                eventFiles.addAll(filelevel.getEventFileCollection());
             }
         }
 
-        m_global = events.getGlobal();
+        //m_global = events.getGlobal();
 
         initialized = true;
     }
