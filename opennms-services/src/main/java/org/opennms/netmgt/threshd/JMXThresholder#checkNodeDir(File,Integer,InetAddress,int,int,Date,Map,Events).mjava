@@ -34,59 +34,23 @@
         if (log.isDebugEnabled()) {
             log.debug("checkNodeDir: threshold checking node dir: " + directory.getAbsolutePath());
         }
-
-        // Iterate over directory contents and threshold
-        // check any RRD files which represent datasources
-        // in the threshold maps.
-        File[] files = directory.listFiles(RrdFileConstants.RRD_FILENAME_FILTER);
-
-        if (files == null) {
-            return;
-        }
-
-        for (int i = 0; i < files.length; i++) {
-            // File name has format: <datsource><extension>
-            // Must strip off extension portion.
-            String filename = files[i].getName();
-            String datasource = filename.substring(0, filename.indexOf(RrdUtils.getExtension()));
-
-            // Lookup the ThresholdEntity object corresponding
-            // to this datasource.
-            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(datasource);
-            if (threshold != null) {
-                // Use RRD strategy to "fetch" value of the
-                // datasource from the RRD file
-                Double dsValue = null;
-                try {
-                	if (range != 0) {
-                		if (log.isDebugEnabled()) {
-                            log.debug("checking values within " + range + " mS of last possible PDP");
-                        }
-                		dsValue = RrdUtils.fetchLastValueInRange(files[i].getAbsolutePath(), interval, range);
-                	} else {
-                		if (log.isDebugEnabled()) {
-                            log.debug("checking value of last possible PDP only");
-                        }
-                		dsValue = RrdUtils.fetchLastValue(files[i].getAbsolutePath(), interval);
-                	}
-                } catch (NumberFormatException e) {
-                    log.warn("Unable to convert retrieved value for datasource '" + datasource + "' to a double, skipping evaluation.");
-                } catch (RrdException e) {
-                    log.info("An error occurred retriving the last value for datasource '" + datasource + "': " + e, e);
-                }
-                
-                if (dsValue == null || dsValue.isNaN()) {
-                    continue;
-                }
-                
-                List<Event> eventList = threshold.evaluateAndCreateEvents(dsValue, date);
-                if (eventList.size() == 0) {
-                    // Nothing to do, so continue
-                    continue;
-                }
-                
-                completeEventListAndAddToEvents(events, eventList, nodeId, primary, null);
+        
+        for(Object threshKey  :thresholdMap.keySet()) {
+            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(threshKey);
+            Collection<String> requiredDatasources=threshold.getRequiredDatasources();
+            Map<String, Double> values=getThresholdValues(directory, range, interval, requiredDatasources);
+            if(values==null) {
+                continue; //Not all values were available
             }
+            List<Event> eventList = threshold.evaluateAndCreateEvents(values, date);
+            if (eventList.size() == 0) {
+                // Nothing to do, so continue
+                continue;
+            }
+            
+            completeEventListAndAddToEvents(events, eventList, nodeId, primary, null);
         }
+        
+ 
     }
 

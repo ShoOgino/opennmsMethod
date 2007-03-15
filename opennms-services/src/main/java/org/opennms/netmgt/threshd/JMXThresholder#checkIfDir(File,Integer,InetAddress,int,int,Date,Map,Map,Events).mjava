@@ -65,75 +65,31 @@
             Iterator iter = baseIfThresholdMap.values().iterator();
             while (iter.hasNext()) {
                 ThresholdEntity entity = (ThresholdEntity) iter.next();
-                thresholdMap.put(entity.getDatasourceName(), entity.clone());
+                thresholdMap.put(entity.getDataSourceExpression(), entity.clone());
             }
 
             // Add the new threshold map for this interface
             // to the all interfaces map.
             allIfThresholdMap.put(ifLabel, thresholdMap);
         }
-
-        // Iterate over directory contents and threshold
-        // check any RRD files which represent datasources
-        // in the threshold maps.
-        File[] files = directory.listFiles(RrdFileConstants.RRD_FILENAME_FILTER);
-
-        if (files == null || files.length == 0) {
-            if (log().isDebugEnabled()) {
-                log().debug("checkIfDir: no RRD files in dir: " + directory);
-            }
-            return;
-        }
-
+        
         Map<String, String> ifDataMap = new HashMap<String, String>();
-        for (int i = 0; i < files.length; i++) {
-            // File name has format: <datsource><extension>
-            // Must strip off <extension> portion.
-            String filename = files[i].getName();
-            String datasource = filename.substring(0, filename.indexOf(RrdUtils.getExtension()));
-
-            // Lookup the ThresholdEntity object corresponding
-            // to this datasource.
-            if (log().isDebugEnabled()) {
-                log().debug("checkIfDir: looking up datasource: " + datasource);
+        for(Object threshKey  :thresholdMap.keySet()) {
+            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(threshKey);
+            Collection<String> requiredDatasources=threshold.getRequiredDatasources();
+            Map<String, Double> values=getThresholdValues(directory, range, interval, requiredDatasources);
+            if(values==null) {
+                continue; //Not all values were available
             }
-            ThresholdEntity threshold = (ThresholdEntity) thresholdMap.get(datasource);
-            if (threshold != null) {
-                // Use RRD strategy to "fetch" value of the
-                // datasource from the RRD file
-                Double dsValue = null;
-                try {
-                	if (range != 0) {
-                		if (log().isDebugEnabled()) {
-                            log().debug("checking values within " + range + " mS of last possible PDP");
-                        }
-                		dsValue = RrdUtils.fetchLastValueInRange(files[i].getAbsolutePath(), interval, range);
-                	} else {
-                        log().debug("checking value of last possible PDP only");
-                		dsValue = RrdUtils.fetchLastValue(files[i].getAbsolutePath(), interval);
-                	}
-                } catch (NumberFormatException e) {
-                    log().warn("Unable to convert retrieved value for datasource '" + datasource + "' to a double, skipping evaluation.");
-                } catch (RrdException e) {
-                    log().info("An error occurred retriving the last value for datasource '" + datasource + "': " + e, e);
-                }
-
-                if (dsValue == null || dsValue.isNaN()) {
-                    continue;
-                }
-                
-                List<Event> eventList = threshold.evaluateAndCreateEvents(dsValue, date);
-                if (eventList.size() == 0) {
-                    // Nothing to do, so continue
-                    continue;
-                }
-
-                if (ifDataMap.size() == 0 && ifLabel != null) {
-                    populateIfDataMap(nodeId, ifLabel, ifDataMap);
-                }
-                
-                completeEventListAndAddToEvents(events, eventList, nodeId, primary, ifDataMap);
+            List<Event> eventList = threshold.evaluateAndCreateEvents(values, date);
+            if (eventList.size() == 0) {
+                // Nothing to do, so continue
+                continue;
             }
+            if (ifDataMap.size() == 0 && ifLabel != null) {
+                populateIfDataMap(nodeId, ifLabel, ifDataMap);
+            }
+            completeEventListAndAddToEvents(events, eventList, nodeId, primary, ifDataMap);
         }
     }
 

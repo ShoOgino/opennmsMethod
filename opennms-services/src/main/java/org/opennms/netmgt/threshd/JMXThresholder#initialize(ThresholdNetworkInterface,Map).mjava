@@ -48,41 +48,44 @@
         Map nodeMap   = new HashMap();
         Map baseIfMap = new HashMap();
         try {
-            Iterator iter = ThresholdingConfigFactory.getInstance().getThresholds(groupName).iterator();
-            while (iter.hasNext()) {
-                Threshold thresh = (Threshold) iter.next();
-
+            for (Basethresholddef thresh : ThresholdingConfigFactory.getInstance().getThresholds(groupName)) {
                 // See if map entry already exists for this datasource
                 // If not, create a new one.
                 boolean newEntity = false;
                 ThresholdEntity thresholdEntity = null;
-                if (thresh.getDsType().equals("node")) {
-                    thresholdEntity = (ThresholdEntity) nodeMap.get(thresh.getDsName());
-                } else if (thresh.getDsType().equals("if")) {
-                    thresholdEntity = (ThresholdEntity) baseIfMap.get(thresh.getDsName());
-                }
-
-                // Found entry?
-                if (thresholdEntity == null) {
-                    // Nope, create a new one
-                    newEntity = true;
-                    thresholdEntity = new ThresholdEntity();
-                }
-
                 try {
-                    thresholdEntity.addThreshold(thresh);
-                } catch (IllegalStateException e) {
-                    log().warn("Encountered duplicate " + thresh.getType() + " for datasource " + thresh.getDsName(), e);
+                    BaseThresholdDefConfigWrapper wrapper=BaseThresholdDefConfigWrapper.getConfigWrapper(thresh);
+                    if (wrapper.getDsType().equals("node")) {
+                        thresholdEntity = (ThresholdEntity) nodeMap.get(wrapper.getDatasourceExpression());
+                    } else if (wrapper.getDsType().equals("if")) {
+                        thresholdEntity = (ThresholdEntity) baseIfMap.get(wrapper.getDatasourceExpression());
+                    }
+    
+                    // Found entry?
+                    if (thresholdEntity == null) {
+                        // Nope, create a new one
+                        newEntity = true;
+                        thresholdEntity = new ThresholdEntity();
+                    }
+    
+                    try {
+                        thresholdEntity.addThreshold(wrapper);
+                    } catch (IllegalStateException e) {
+                        log().warn("Encountered duplicate " + thresh.getType() + " for datasource " + wrapper.getDatasourceExpression(), e);
+                    }
+ 
+                    // Add new entity to the map
+                    if (newEntity) {
+                        if (thresh.getDsType().equals("node")) {
+                            nodeMap.put(wrapper.getDatasourceExpression(), thresholdEntity);
+                        } else if (thresh.getDsType().equals("if")) {
+                            baseIfMap.put(wrapper.getDatasourceExpression(), thresholdEntity);
+                        }
+                    }
+                } catch (ThresholdExpressionException e) {
+                    log().warn("Could not parse threshold expression: "+e.getMessage(), e);
                 }
 
-                // Add new entity to the map
-                if (newEntity) {
-                    if (thresh.getDsType().equals("node")) {
-                        nodeMap.put(thresh.getDsName(), thresholdEntity);
-                    } else if (thresh.getDsType().equals("if")) {
-                        baseIfMap.put(thresh.getDsName(), thresholdEntity);
-                    }
-                }
             }
         } catch (IllegalArgumentException e) {
             throw new RuntimeException("Thresholding group '" + groupName + "' does not exist.");
