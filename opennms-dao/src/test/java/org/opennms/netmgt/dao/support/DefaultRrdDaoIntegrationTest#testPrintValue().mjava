@@ -1,0 +1,35 @@
+    public void testPrintValue() throws Exception {
+        long start = System.currentTimeMillis();
+        long end = start + (24 * 60 * 60 * 1000);
+        
+        OnmsResource topResource = new OnmsResource("1", "Node One", new MockResourceType(), new HashSet<OnmsAttribute>(0));
+
+        OnmsAttribute attribute = new RrdGraphAttribute("ifInOctets", "snmp/1/eth0", "ifInOctets.jrb");
+        HashSet<OnmsAttribute> attributeSet = new HashSet<OnmsAttribute>(1);
+        attributeSet.add(attribute);
+        
+        MockResourceType childResourceType = new MockResourceType();
+        OnmsResource childResource = new OnmsResource("eth0", "Interface One: eth0", childResourceType, attributeSet);
+        childResource.setParent(topResource);
+        
+        File snmp = m_fileAnticipator.tempDir(DefaultResourceDao.SNMP_DIRECTORY);
+        File node = m_fileAnticipator.tempDir(snmp, topResource.getName());
+        File intf = m_fileAnticipator.tempDir(node, childResource.getName());
+        
+        RrdDataSource rrdDataSource = new RrdDataSource(attribute.getName(), "GAUGE", 600, "U", "U");
+        Object def = m_rrdStrategy.createDefinition("test", intf.getAbsolutePath(), attribute.getName(), 600, Collections.singletonList(rrdDataSource), Collections.singletonList("RRA:AVERAGE:0.5:1:100"));
+        m_rrdStrategy.createFile(def);
+        File rrdFile = m_fileAnticipator.expecting(intf, attribute.getName() + RrdUtils.getExtension());
+        
+        Object rrdFileObject = m_rrdStrategy.openFile(rrdFile.getAbsolutePath());
+        for (int i = 0; i < 10; i++) {
+            m_rrdStrategy.updateFile(rrdFileObject, "test", (start/1000 + 300*i) + ":1");
+        }
+        m_rrdStrategy.closeFile(rrdFileObject);
+        
+        Double value = m_dao.getPrintValue(childResource.getAttributes().iterator().next(), "AVERAGE", start, end);
+        
+        assertNotNull("value should not be null", value);
+        assertEquals("value", 1.0, value);
+    }
+
