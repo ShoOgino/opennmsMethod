@@ -12,44 +12,38 @@
     public boolean runAutomation() throws SQLException {
         log().debug("runAutomation: "+m_automation.getName()+" running...");
 
-        setTriggerInAutomation(m_trigger.hasTrigger());
-
-        if (isTriggerInAutomation()) {
+        if (hasTrigger()) {
             log().debug("runAutomation: "+m_automation.getName()+" trigger statement is: "+ m_trigger.getTriggerSQL());
         }
             
         log().debug("runAutomation: "+m_automation.getName()+" action statement is: "+m_action.getActionSQL());
 
-        setFields();
-
         log().debug("runAutomation: Executing trigger: "+m_automation.getTriggerName());
-
+        
+        
+        Transaction.begin();
         try {
-            setConn(DataSourceFactory.getInstance().getConnection());
+            log().debug("runAutomation: Processing automation: "+m_automation.getName());
 
-            processTrigger();
+            TriggerResults results = processTrigger();
             
-            if (!m_trigger.isSuccessful()) {
-                return false;
+            boolean success = false;
+            if (results.isSuccessful()) {
+                success = processAction(results);
             }
+            
+			return success;
 
-
-            processAction();
-
-        } catch (SQLException e) {
-            log().warn("runAutomation: Could not execute trigger: "+m_automation.getTriggerName(), e);
+        } catch (Exception e) {
+        	Transaction.rollbackOnly();
+            log().warn("runAutomation: Could not execute automation: "+m_automation.getName(), e);
+            return false;
         } finally {
-            log().debug("runAutomation: Closing trigger resultset.");
-            if (isTriggerInAutomation()) {
-                log().debug("runAutomation: Closing trigger statement.");
-                //Just in case, check for null
-                if (getTriggerResultSet() != null)
-                    getTriggerResultSet().close();
-            }
-            log().debug("runAutomation: Closing database connection.");
-            getConn().close();
+
+            log().debug("runAutomation: Ending processing of automation: "+m_automation.getName());
+            
+            Transaction.end();         
         }
 
-        return m_action.isSuccessful();
     }
 
