@@ -1,0 +1,69 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.capsd.CapsdDbSyncerI#syncServicesTable(java.sql.Connection)
+     */
+    public List<String> syncServicesTable(Connection conn) throws SQLException {
+        log().debug("syncServicesTable: synchronizing services list with the database");
+        
+        List<String> serviceNames;
+    
+        PreparedStatement insStmt = conn.prepareStatement(SVCTBL_ADD_SQL);
+        PreparedStatement nxtStmt = conn.prepareStatement(getNextSvcIdSql());
+        PreparedStatement loadStmt = conn.prepareStatement(SVCTBL_LOAD_SQL);
+        try {
+            // go ahead and load the table first if it can be loaded
+            serviceNames = new ArrayList<String>();
+            ResultSet rs = loadStmt.executeQuery();
+            while (rs.next()) {
+                Integer id = new Integer(rs.getInt(1));
+                String name = rs.getString(2);
+    
+                m_serviceIdToName.put(id, name);
+                m_serviceNameToId.put(name, id);
+                serviceNames.add(name);
+            }
+            rs.close();
+    
+            /*
+             * now iterate over the configured protocols
+             * and make sure that each is represented in the database.
+             */
+            for (String protocol : getCapsdConfig().getConfiguredProtocols()) {
+                log().debug("syncServicesTable: checking protocol '" + protocol + "'.");
+                if (!serviceNames.contains(protocol)) {
+                    log().debug("syncServicesTable: protocol '" + protocol + "' is not in the database... adding.");
+                    
+                    // get the next identifier
+                    rs = nxtStmt.executeQuery();
+                    rs.next();
+                    int id = rs.getInt(1);
+                    rs.close();
+                    
+                    log().debug("syncServicesTable: using id " + id + " for protocol '" + protocol + "'.");
+    
+                    insStmt.setInt(1, id);
+                    insStmt.setString(2, protocol);
+                    insStmt.executeUpdate();
+    
+                    Integer xid = new Integer(id);
+                    m_serviceIdToName.put(xid, protocol);
+                    m_serviceNameToId.put(protocol, xid);
+    
+                    serviceNames.add(protocol);
+                    
+                    log().info("syncServicesTable: added service entry to the database for protocol '" + protocol + "' with id of  " + id);
+                }
+            }
+        } finally {
+            if (insStmt != null) {
+                insStmt.close();
+            }
+            if (nxtStmt != null) {
+                nxtStmt.close();
+            }
+            if (loadStmt != null) {
+                loadStmt.close();
+            }
+        }
+        return serviceNames;
+    }
+

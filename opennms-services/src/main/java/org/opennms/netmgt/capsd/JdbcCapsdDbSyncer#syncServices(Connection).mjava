@@ -1,0 +1,53 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.capsd.CapsdDbSyncerI#syncServices(java.sql.Connection)
+     */
+    public void syncServices(Connection conn) throws SQLException {
+        if (conn == null) {
+            log().error("CapsdConfigFactory.syncServices: Sync failed...must have valid database connection.");
+            return;
+        }
+        
+        List serviceNames = syncServicesTable(conn);
+    
+        PreparedStatement delFromOutagesStmt = null;
+        PreparedStatement delFromIfServicesStmt = null;
+        try { 
+            
+            List protocols = getCapsdConfig().getConfiguredProtocols();
+            
+            /*
+             * now iterate over the services from the 'service' table
+             * and determine if any no longer exist in the list of
+             * configured protocols
+             */
+            Iterator s = serviceNames.iterator();
+            while (s.hasNext()) {
+                String service = (String) s.next();
+                if (!protocols.contains(service)) {
+                    if (log().isDebugEnabled()) {
+                        log().debug("syncServices: service " + service + " exists in the database but not in the Capsd config file.");
+                    }
+    
+                    // Delete 'outage' table entries which refer to the service
+                    Integer id = m_serviceNameToId.get(service);
+    
+                    // Delete 'ifServices' table entries which refer to the
+                    // service
+                    if (log().isDebugEnabled()) {
+                        log().debug("syncServices: deleting all references to service id " + id + " from the IfServices table.");
+                    }
+                    delFromIfServicesStmt = conn.prepareStatement(DELETE_IFSERVICES_SQL);
+                    delFromIfServicesStmt.setInt(1, id.intValue());
+                    delFromIfServicesStmt.executeUpdate();
+                }
+            }
+        } finally {
+            if (delFromOutagesStmt != null) {
+                delFromOutagesStmt.close();
+            }
+            if (delFromIfServicesStmt != null) {
+                delFromIfServicesStmt.close();
+            }
+        }
+    }
+
