@@ -6,96 +6,112 @@
      *            The target to check against.
      */
     public boolean isAddressUnmanaged(InetAddress target) {
-        Category log = ThreadCategory.getInstance(CapsdConfigFactory.class);
-        String temp = m_config.getManagementPolicy();
-        boolean managed_by_default = (temp == null || temp.equalsIgnoreCase("managed"));
+        String managementPolicy = m_config.getManagementPolicy();
+        boolean managedByDefault = (managementPolicy == null || managementPolicy.equalsIgnoreCase("managed"));
     
         boolean found_denial = false;
         boolean found_accept = false;
-        Enumeration e = m_config.enumerateIpManagement();
-        while (e.hasMoreElements() && !found_denial) {
-            IpManagement mgt = (IpManagement) e.nextElement();
-            Enumeration f = mgt.enumerateSpecific();
-            while (f.hasMoreElements()) {
-                String saddr = f.nextElement().toString();
+        List<IpManagement> ipManagements = getIpManagements();
+        Iterator<IpManagement> ipIter = ipManagements.iterator();
+        while (ipIter.hasNext() && !found_denial) {
+            IpManagement mgt = ipIter.next();
+            for (String saddr : getSpecifics(mgt)) {
+                InetAddress addr;
                 try {
-                    InetAddress addr = InetAddress.getByName(saddr);
-                    if (addr.equals(target)) {
-                        if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed"))
-                            found_accept = true;
-                        else
-                            found_denial = true;
-    
-                        break;
+                    addr = InetAddress.getByName(saddr);
+                } catch (UnknownHostException e) {
+                    log().info("Failed to convert specific address '" + saddr + "' to an InetAddress: " + e, e);
+                    continue;
+                }
+                
+                if (addr.equals(target)) {
+                    if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed")) {
+                        found_accept = true;
+                    } else {
+                        found_denial = true;
                     }
-                } catch (UnknownHostException ex) {
-                    log.info("Failed to convert management address " + saddr + " to an InetAddress", ex);
+
+                    break;
                 }
             }
     
             // now check the ranges
-            //
-            f = mgt.enumerateRange();
-            while (!found_denial && f.hasMoreElements()) {
-                Range rng = (Range) f.nextElement();
+            List<Range> ranges = getRanges(mgt);
+            Iterator<Range> rangeIter = ranges.iterator();
+            while (!found_denial && rangeIter.hasNext()) {
+                Range range = rangeIter.next();
+
+                InetAddress saddr;
                 try {
-                    InetAddress saddr = InetAddress.getByName(rng.getBegin());
-                    InetAddress eaddr = InetAddress.getByName(rng.getEnd());
-    
-                    long start = toLong(saddr);
-                    long stop = toLong(eaddr);
-                    long tgt = toLong(target);
-                    if (start <= tgt && tgt <= stop) {
-                        if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed"))
-                            found_accept = true;
-                        else
-                            found_denial = true;
-    
-                        break;
+                    saddr = InetAddress.getByName(range.getBegin());
+                } catch (UnknownHostException e) {
+                    log().info("Failed to convert begin address '" + range.getBegin() + "' to an InetAddress: " + e, e);
+                    continue;
+                }
+
+                InetAddress eaddr;
+                try {
+                    eaddr = InetAddress.getByName(range.getEnd());
+                } catch (UnknownHostException e) {
+                    log().info("Failed to convert end address '" + range.getEnd() + "' to an InetAddress: " + e, e);
+                    continue;
+                }
+
+                long start = toLong(saddr);
+                long stop = toLong(eaddr);
+                long tgt = toLong(target);
+                if (start <= tgt && tgt <= stop) {
+                    if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed")) {
+                        found_accept = true;
+                    } else {
+                        found_denial = true;
                     }
-                } catch (UnknownHostException ex) {
-                    log.info("Failed to convert management addresses (" + rng.getBegin() + ", " + rng.getEnd() + ")", ex);
+
+                    break;
                 }
             }
     
             // now check urls
-            //
-            f = mgt.enumerateIncludeUrl();
+            List<String> includeUrls = getIncludeUrls(mgt);
+            Iterator<String> includeUrlIter = includeUrls.iterator();
             boolean match = false;
-            while (!found_denial && !match && f.hasMoreElements()) {
-                String url = f.nextElement().toString();
+            while (!found_denial && !match && includeUrlIter.hasNext()) {
+                String url = includeUrlIter.next();
     
-                // Retrieve address list from url map
-                List addresses = (List) m_urlMap.get(url);
-    
-                // Iterate over addresses looking for target match
-                Iterator iter = addresses.iterator();
-                while (iter.hasNext()) {
-                    String saddr = (String) iter.next();
+                /*
+                 * Retrieve address list from url map.
+                 * Iterate over addresses looking for target match.
+                 */
+                for (String saddr : m_urlMap.get(url)) {
+                    InetAddress addr;
                     try {
-                        InetAddress addr = InetAddress.getByName(saddr);
-                        if (addr.equals(target)) {
-                            if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed"))
-                                found_accept = true;
-                            else
-                                found_denial = true;
-    
-                            match = true;
-                            break;
+                        addr = InetAddress.getByName(saddr);
+                    } catch (UnknownHostException e) {
+                        log().info("Failed to convert address '" + saddr + "' from include URL '" + url + "' to an InetAddress: " + e, e);
+                        continue;
+                    }
+
+                    if (addr.equals(target)) {
+                        if (mgt.getPolicy() == null || mgt.getPolicy().equalsIgnoreCase("managed")) {
+                            found_accept = true;
+                        } else {
+                            found_denial = true;
                         }
-                    } catch (UnknownHostException ex) {
-                        log.info("Failed to convert management address " + saddr + " to an InetAddress", ex);
+
+                        match = true;
+                        break;
                     }
                 }
             }
     
         }
     
-        boolean result = !managed_by_default;
-        if (found_denial)
+        boolean result = !managedByDefault;
+        if (found_denial) {
             result = true;
-        else if (found_accept)
+        } else if (found_accept) {
             result = false;
+        }
     
         return result;
     }
