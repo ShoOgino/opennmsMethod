@@ -1,77 +1,47 @@
+    @Override
     public void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        HttpSession userSession = request.getSession(false);
+        List<Integer> nodeList = getList(request.getParameterValues("nodeCheck"));
+        List<Integer> nodeDataList = getList(request.getParameterValues("nodeData"));
 
-        // the list of all nodes marked for deletion
-        java.util.List nodeList = getList(request.getParameterValues("nodeCheck"));
-        java.util.List nodeDataList = getList(request.getParameterValues("nodeData"));
+        for (Integer nodeId : nodeDataList) {
+            // Get a list of response time IP address lists
+            List<String> ipAddrs = getIpAddrsForNode(nodeId);
 
-        // get the directories storing the response time and SNMP data
-        this.snmpProps = new java.util.Properties();
-        this.snmpProps.load(new FileInputStream(Vault.getHomeDir() + RRDTOOL_SNMP_GRAPH_PROPERTIES_FILENAME));
-
-        this.snmpRrdDirectory = new File(this.snmpProps.getProperty("command.input.dir"));
-
-        this.rtProps = new java.util.Properties();
-        this.rtProps.load(new FileInputStream(Vault.getHomeDir() + RRDTOOL_RT_GRAPH_PROPERTIES_FILENAME));
-
-        this.rtRrdDirectory = new File(this.rtProps.getProperty("command.input.dir"));
-
-        // delete data directories if desired
-        for (int j = 0; j < nodeDataList.size(); j++) {
             // SNMP RRD directory
-            File nodeDir = new File(this.snmpRrdDirectory, (String) nodeDataList.get(j));
+            File nodeDir = new File(m_snmpRrdDirectory, nodeId.toString());
 
             if (nodeDir.exists() && nodeDir.isDirectory()) {
-                this.log("DEBUG: Attempting to Delete Node Data Directory: " + nodeDir.getAbsolutePath());
-                if (deleteDir(nodeDir))
-                    this.log("DEBUG: Node Data Directory Deleted Successfully");
-            }
-            StringBuffer select = new StringBuffer("SELECT DISTINCT ipaddr FROM ipinterface WHERE nodeid=");
-
-            select.append((String) nodeDataList.get(j));
-
-            try {
-                Connection conn = Vault.getDbConnection();
-                ArrayList intfs = new ArrayList();
-
-                try {
-                    Statement stmt = conn.createStatement();
-                    ResultSet rs = stmt.executeQuery(select.toString());
-
-                    while (rs.next()) {
-                        String ipAddr = rs.getString("ipaddr");
-                        // Response Time RRD directory
-                        File intfDir = new File(this.rtRrdDirectory, ipAddr);
-
-                        if (intfDir.exists() && intfDir.isDirectory()) {
-                            this.log("DEBUG: Attempting to Delete Node Response Time Data Directory: " + intfDir.getAbsolutePath());
-                            if (deleteDir(intfDir))
-                                this.log("DEBUG: Node Response Time Data Directory Deleted Successfully");
-                        }
-                    }
-                    rs.close();
-                    stmt.close();
-                } finally {
-                    Vault.releaseDbConnection(conn);
+                log().debug("Attempting to delete node data directory: " + nodeDir.getAbsolutePath());
+                if (deleteDir(nodeDir)) {
+                    log().info("Node SNMP data directory deleted successfully: " + nodeDir.getAbsolutePath());
+                } else {
+                    log().warn("Node SNMP data directory *not* deleted successfully: " + nodeDir.getAbsolutePath());
                 }
-            } catch (SQLException e) {
-                throw new ServletException("There was a problem with the database connection: " + e.getMessage(), e);
+            }
+            
+            // Response time RRD directories
+            for (String ipAddr : ipAddrs) {
+                File intfDir = new File(m_rtRrdDirectory, ipAddr);
+
+                if (intfDir.exists() && intfDir.isDirectory()) {
+                    log().debug("Attempting to delete node response time data directory: " + intfDir.getAbsolutePath());
+                    if (deleteDir(intfDir)) {
+                        log().info("Node response time data directory deleted successfully: " + intfDir.getAbsolutePath());
+                    } else {
+                        log().warn("Node response time data directory *not* deleted successfully: " + intfDir.getAbsolutePath());
+                    }
+                }
             }
         }
 
-        // Now, Delete the node from the database
-
-        for (int s = 0; s < nodeList.size(); s++) {
-            int nodeid = Integer.parseInt((String) nodeList.get(s));
-            sendDeleteNodeEvent(nodeid);
-
-            this.log("DEBUG: End of Delete of Node Number: " + nodeList.get(s));
-
-        } // end s loop
+        // Now, tell capsd to delete the node from the database
+        for (Integer nodeId : nodeList) {
+            sendDeleteNodeEvent(nodeId);
+            log().debug("End of delete of node " + nodeId);
+        }
 
         // forward the request for proper display
-        RequestDispatcher dispatcher = this.getServletContext().getRequestDispatcher("/admin/deleteNodesFinish.jsp");
+        RequestDispatcher dispatcher = getServletContext().getRequestDispatcher("/admin/deleteNodesFinish.jsp");
         dispatcher.forward(request, response);
-
     }
 
