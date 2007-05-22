@@ -18,51 +18,49 @@
             ThreadCategory.setPrefix(m_log4jPrefix);
             m_status = RUNNING;
             while (!m_shutdown) {
-                Object obj = null;
+                Runnable runnable = null;
                 try {
-                    obj = m_delegateQ.remove(500);
-                    if (obj == null)
+                    runnable = m_delegateQ.remove(500);
+                    if (runnable == null) {
                         continue;
-                } catch (InterruptedException ie) {
+                    }
+                } catch (InterruptedException e) {
                     m_status = STOP_PENDING;
                     break; // exit, log?
-                } catch (FifoQueueException fqE) {
+                } catch (FifoQueueException e) {
                     m_status = STOP_PENDING;
                     break; // exit, log?
                 }
 
                 try {
-                    if (obj != null) {
-                        ((Runnable) obj).run();
+                    if (runnable != null) {
+                        runnable.run();
 
-                        // if successful then
-                        // invoke callback to
-                        // process message
-                        //
-                        Object[] list = null;
+                        // If successful, invoke callback to process message
+                        RunnableCompletionListener[] list = null;
                         synchronized (m_completedListeners) {
-                            list = m_completedListeners.toArray();
+                            list = m_completedListeners.toArray(new RunnableCompletionListener[m_completedListeners.size()]);
                         }
-                        for (int i = 0; list != null && i < list.length; i++) {
-                            ((RunnableCompletionListener) list[i]).onRunnableCompletion((Runnable) obj);
+                        for (RunnableCompletionListener listener : list) {
+                            listener.onRunnableCompletion(runnable);
                         }
                     }
                 } catch (Throwable t) {
-                    Category log = ThreadCategory.getInstance(this.getClass());
-                    if (log.isDebugEnabled())
-                        log.debug("run: an unexpected error occured during fiber run, calling error liseners");
+                    log().debug("run: an unexpected error occured during fiber run, calling error liseners");
 
-                    // call a listener to handle errors?
-                    // or should it be logged
-                    //
-                    Object[] list = null;
+                    /*
+                     * call a listener to handle errors?
+                     * or should it be logged
+                     */
+                    RunnableErrorListener[] list = null;
                     synchronized (m_errorListeners) {
-                        list = m_errorListeners.toArray();
+                        list = m_errorListeners.toArray(new RunnableErrorListener[m_errorListeners.size()]);
                     }
-                    if (list.length == 0)
-                        log.error("No error listeners defined for for unexpected error ", t);
-                    for (int i = 0; list != null && i < list.length; i++) {
-                        ((RunnableErrorListener) list[i]).onRunnableError(obj, t);
+                    if (list.length == 0) {
+                        log().error("No error listeners defined for unexpected error: " + t, t);
+                    }
+                    for (RunnableErrorListener listener : list) {
+                        listener.onRunnableError(runnable, t);
                     }
                 }
             }
