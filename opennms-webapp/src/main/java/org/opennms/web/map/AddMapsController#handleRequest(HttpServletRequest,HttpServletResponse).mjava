@@ -1,0 +1,73 @@
+	public ModelAndView handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+		
+		ThreadCategory.setPrefix(MapsConstants.LOG4J_CATEGORY);
+		log = ThreadCategory.getInstance(this.getClass());
+		String action = request.getParameter("action");
+		String elems = request.getParameter("elems");
+		log.debug("Adding Maps; action:"+action+", elems="+elems );
+		
+		BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(response.getOutputStream()));
+		try {
+			if (!manager.isUserAdmin()) {
+				log.warn(request.getRemoteUser() +": Cannot add maps because user role is:" + MapsConstants.ROLE_USER);
+				throw new MapsException(request.getRemoteUser() +": Cannot add maps because user role is:" + MapsConstants.ROLE_USER);
+			}
+			VMap map = manager.openMap();
+			if(log.isDebugEnabled())
+				log.debug("Got map from manager "+map);
+			
+			Integer[] mapids = null;
+			String type = VElement.MAP_TYPE;
+
+			boolean actionfound = false;
+			
+			if (action.equals(MapsConstants.ADDMAPS_ACTION)) {
+				log.debug("Adding maps by id: "+ elems);
+				actionfound = true;
+				String[] smapids = elems.split(",");
+				mapids = new Integer[smapids.length];
+				for (int i = 0; i<smapids.length;i++) {
+					mapids[i] = new Integer(smapids[i]);
+				}
+			}
+			
+			List<VElement> velems = new ArrayList<VElement>();
+			List<VLink> links = new ArrayList<VLink>();
+			// response for addElement
+			List<Integer> mapsWithLoop = new ArrayList<Integer>();
+			if (actionfound) {
+				
+				for (int i = 0; i < mapids.length; i++) {
+					int elemId = mapids[i].intValue();
+					if (map.containsElement(elemId, type)) {
+						log.debug("Action: " + action + " . Map Contains Element: " + elemId+type);
+						continue;
+						
+					}
+					boolean foundLoop = manager.foundLoopOnMaps(map,elemId);
+					
+
+					if(foundLoop)
+						mapsWithLoop.add(elemId);
+					else
+						velems.add(manager.newElement(elemId, type));
+				} // end for
+
+				//get links and add elements to map
+				if (velems != null) {
+					map.addElements(velems);
+					links = manager.getLinks(map.getAllElements());
+				}
+				log.debug("After getting/adding links");
+			} 				
+			bw.write(ResponseAssembler.getAddMapsResponse(action, mapsWithLoop,velems, links));
+		} catch (Exception e) {
+			log.error("Error while adding Maps for action: "+action,e);
+			bw.write(ResponseAssembler.getMapErrorResponse(action));
+		} finally {
+			bw.close();
+		}
+
+		return null;
+	}
+
