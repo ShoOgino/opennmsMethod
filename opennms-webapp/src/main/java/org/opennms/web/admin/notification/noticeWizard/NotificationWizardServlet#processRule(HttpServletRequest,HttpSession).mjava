@@ -1,0 +1,67 @@
+    private String processRule(HttpServletRequest request, HttpSession user) {
+        String ruleString = request.getParameter("newRule");
+        ruleString = toSingleQuote(ruleString);
+        ruleString = stripExtraWhite(ruleString);
+        ruleString = stripServices(ruleString);
+        ruleString = checkParens(ruleString);
+        
+        StringBuffer rule = new StringBuffer(ruleString);
+
+        String services[] = request.getParameterValues("services");
+        if (services != null) {
+            rule.append(" & ").append(" (");
+
+            for (int i = 0; i < services.length; i++) {
+                rule.append("is").append(services[i]);
+                if (i < services.length - 1) {
+                    rule.append(" | ");
+                }
+            }
+
+            rule.append(" )");
+        }
+
+        String notServices[] = request.getParameterValues("notServices");
+        if (notServices != null) {
+            rule.append(" & ").append(" (");
+
+            for (int i = 0; i < notServices.length; i++) {
+                rule.append("!is").append(notServices[i]);
+                if (i < notServices.length - 1) {
+                    rule.append(" & ");
+                }
+            }
+
+            rule.append(" )");
+        }
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("newRule", rule.toString());
+        if (services != null) {
+            params.put("services", services);
+        }
+        if (notServices != null) {
+            params.put("notServices", notServices);
+        }
+
+        // page to redirect to, either validate or skip validation
+        String redirectPage = request.getParameter("nextPage");
+
+        // now lets see if the rule is syntactically valid
+        try {
+            getFilterDao().validateRule(rule.toString());
+        } catch (FilterParseException e) {
+            // page to redirect to if the rule is invalid
+            params.put("mode", "failed");
+            redirectPage = SOURCE_PAGE_RULE;
+        }
+
+        // save the rule if we are bypassing validation
+        if (redirectPage.equals(SOURCE_PAGE_PATH)) {
+            Notification newNotice = (Notification) user.getAttribute("newNotice");
+            newNotice.setRule(rule.toString());
+        }
+
+        return redirectPage + makeQueryString(params);
+    }
+
