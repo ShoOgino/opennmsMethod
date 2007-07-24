@@ -2,285 +2,50 @@
         String sourcePage = request.getParameter("sourcePage");
         HttpSession user = request.getSession(true);
 
-        StringBuffer rule = new StringBuffer("");
-        StringBuffer redirectString = new StringBuffer();
-        
+        /*
+         * FIXME: Why do we do this for every request in doPost instead of
+         * once in init?
+         */
+        try {
+            NotifdConfigFactory.init();
+        } catch (Exception e) {
+            throw new ServletException("Failed to initialize NotifdConfigFactory: " + e, e);
+        }
         try {
             NotificationFactory.init();
         } catch (Exception e) {
-            throw new ServletException("Failed to initialize NotificationFactory:",e);
+            throw new ServletException("Failed to initialize NotificationFactory: " + e, e);
         }
+        
+        String redirect;
 
         if (sourcePage.equals(SOURCE_PAGE_NOTICES)) {
-            String userAction = request.getParameter("userAction");
-
-            if (userAction.equals("delete")) {
-                try {
-                    NotificationFactory.getInstance().removeNotification(request.getParameter("notice"));
-                    redirectString.append(SOURCE_PAGE_NOTICES);
-                } catch (Exception e) {
-                    throw new ServletException("Couldn't save/reload notifications configuration file.", e);
-                }
-            } else if (userAction.equals("edit")) {
-                edit(request, user, redirectString);
-            } else if (userAction.equals("new")) {
-                Notification newNotice = new Notification();
-                newNotice.setRule("IPADDR IPLIKE *.*.*.*");
-                newNotice.setNumericMessage("111-%noticeid%");
-                newNotice.setSubject("Notice #%noticeid%");
-                newNotice.setStatus("off");
-
-                user.setAttribute("newNotice", newNotice);
-
-                redirectString.append(SOURCE_PAGE_UEIS);
-            } else if (userAction.equals("on") || userAction.equals("off")) {
-                try {
-                    NotificationFactory.getInstance().updateStatus(request.getParameter("notice"), userAction);
-                    redirectString.append(SOURCE_PAGE_NOTICES);
-                } catch (Exception e) {
-                    throw new ServletException("Couldn't save/reload notifications configuration file.", e);
-                }
-            }
+            redirect = processNotices(request, user);
         } else if (sourcePage.equals(SOURCE_PAGE_UEIS)) {
-            Notification newNotice = (Notification) user.getAttribute("newNotice");
-            newNotice.setUei(request.getParameter("uei"));
-
-            Map params = new HashMap();
-            rule.append(newNotice.getRule());
-            rule = toSingleQuote(rule);
-            params.put("newRule", rule.toString());
-
-            redirectString.append(SOURCE_PAGE_RULE).append(makeQueryString(params));
+            redirect = processUeis(request, user);
         } else if (sourcePage.equals(SOURCE_PAGE_RULE)) {
-            rule.append(request.getParameter("newRule"));
-            rule = toSingleQuote(rule);
-            rule = stripExtraWhite(rule.toString());
-            rule = stripServices(rule.toString());
-            rule = checkParens(rule);
-
-            String services[] = request.getParameterValues("services");
-            if (services != null) {
-                rule.append(" & ").append(" (");
-
-                for (int i = 0; i < services.length; i++) {
-                    rule.append("is").append(services[i]);
-                    if (i < services.length - 1)
-                        rule.append(" | ");
-                }
-
-                rule.append(" )");
-            }
-
-            String notServices[] = request.getParameterValues("notServices");
-            if (notServices != null) {
-                rule.append(" & ").append(" (");
-
-                for (int i = 0; i < notServices.length; i++) {
-                    rule.append("!is").append(notServices[i]);
-                    if (i < notServices.length - 1)
-                        rule.append(" & ");
-                }
-
-                rule.append(" )");
-            }
-
-            Map params = new HashMap();
-            params.put("newRule", rule.toString());
-            if (services != null) {
-                params.put("services", services);
-            }
-            if (notServices != null) {
-                params.put("notServices", notServices);
-            }
-
-            // page to redirect to, either validate or skip validation
-            String redirectPage = request.getParameter("nextPage");
-
-            // now lets see if the rule is syntactically valid
-            try {
-                FilterDaoFactory.getInstance().validateRule(rule.toString());
-            } catch (FilterParseException e) {
-                // page to redirect to if the rule is invalid
-                params.put("mode", "failed");
-                redirectPage = SOURCE_PAGE_RULE;
-            }
-
-            // save the rule if we are bypassing validation
-            if (redirectPage.equals(SOURCE_PAGE_PATH)) {
-                Notification newNotice = (Notification) user.getAttribute("newNotice");
-                newNotice.setRule(rule.toString());
-            }
-
-            redirectString.append(redirectPage).append(makeQueryString(params));
+            redirect = processRule(request, user);
         } else if (sourcePage.equals(SOURCE_PAGE_VALIDATE)) {
-            String userAction = request.getParameter("userAction");
-
-            if (userAction.equals("rebuild")) {
-                Map params = new HashMap();
-                params.put("newRule", request.getParameter("newRule"));
-                String services[] = request.getParameterValues("services");
-                if (services != null)
-                    params.put("services", services);
-                params.put("mode", "rebuild");
-
-                redirectString.append(SOURCE_PAGE_RULE).append(makeQueryString(params));
-            } else {
-                Notification newNotice = (Notification) user.getAttribute("newNotice");
-                newNotice.setRule(request.getParameter("newRule"));
-
-                redirectString.append(SOURCE_PAGE_PATH);
-            }
+            redirect = processValidate(request, user);
         } else if (sourcePage.equals(SOURCE_PAGE_PATH)) {
-            Notification newNotice = (Notification) user.getAttribute("newNotice");
-            newNotice.setDestinationPath(request.getParameter("path"));
-
-            String description = request.getParameter("description");
-            if (description != null && !description.trim().equals(""))
-                newNotice.setDescription(description);
-            else
-                newNotice.setDescription(null);
-
-            newNotice.setTextMessage(request.getParameter("textMsg"));
-
-            String subject = request.getParameter("subject");
-            if (subject != null && !subject.trim().equals(""))
-                newNotice.setSubject(subject);
-            else
-                newNotice.setSubject(null);
-
-            String numMessage = request.getParameter("numMsg");
-            if (numMessage != null && !numMessage.trim().equals(""))
-                newNotice.setNumericMessage(numMessage);
-            else
-                newNotice.setNumericMessage(null);
-
-            String oldName = newNotice.getName();
-            newNotice.setName(request.getParameter("name"));
-
-            String varbindName=request.getParameter("varbindName");
-            String varbindValue=request.getParameter("varbindValue");
-            
-            Varbind varbind=newNotice.getVarbind();           
-            if(varbindName!=null && !varbindName.trim().equals("") && varbindValue!=null && !varbindValue.trim().equals("")) {
-
-                if(varbind==null) {
-                    varbind=new Varbind();
-                    newNotice.setVarbind(varbind);
-                }
-                varbind.setVbname(varbindName);
-                varbind.setVbvalue(varbindValue);
-            } else {
-                //Must do this to allow clearing out varbind definitions
-                newNotice.setVarbind(null);
-            }
-            
-            try {
-                    // replacing a path with a new name.
-                    NotificationFactory.getInstance().replaceNotification(oldName, newNotice);
-            } catch (Exception e) {
-                throw new ServletException("Couldn't save/reload notification configuration file.", e);
-            }
-            String suppliedReturnPage=(String)user.getAttribute("noticeWizardReturnPage");
-            if(suppliedReturnPage!=null && !suppliedReturnPage.equals("")) {
-                redirectString.append(suppliedReturnPage);
-            } else {
-                redirectString.append(SOURCE_PAGE_NOTICES);
-            }
+            redirect = processPath(request, user);
         } else if (sourcePage.equals(SOURCE_PAGE_PATH_OUTAGE)) {
-            rule.append(request.getParameter("newRule"));
-            rule = toSingleQuote(rule);
-            rule = stripExtraWhite(rule.toString());
-            rule = stripServices(rule.toString());
-            rule = checkParens(rule);
-            String newRule = rule.toString();
-            String redirectPage = SOURCE_PAGE_VALIDATE_PATH_OUTAGE;
-	    String criticalIp = request.getParameter("criticalIp");
-            Map params = new HashMap();
-	    if (newRule != null)
-	      params.put("newRule", newRule);
-	    if (request.getParameter("criticalSvc") != null)
-	      params.put("criticalSvc", request.getParameter("criticalSvc"));
-	    if (request.getParameter("showNodes") != null)
-	      params.put("showNodes", request.getParameter("showNodes"));
-	    if (criticalIp != null && !criticalIp.equals("")) {
-	      params.put("criticalIp", criticalIp);
-              try {
-                FilterDaoFactory.getInstance().validateRule("IPADDR IPLIKE " + criticalIp);
-              } catch (FilterParseException e) {
-                // page to redirect to if the critical IP is invalid
-                params.put("mode", "Critical path IP failed");
-                redirectPage = SOURCE_PAGE_PATH_OUTAGE;
-              }
-            }
-            try {
-                FilterDaoFactory.getInstance().validateRule(newRule);
-            } catch (FilterParseException e) {
-                // page to redirect to if the rule is invalid
-                params.put("mode", "Current rule failed");
-                redirectPage = SOURCE_PAGE_PATH_OUTAGE;
-            }
-            redirectString.append(redirectPage).append(makeQueryString(params));
+            redirect = processPathOutage(request);
         } else if (sourcePage.equals(SOURCE_PAGE_VALIDATE_PATH_OUTAGE)) {
-            String redirectPage = SOURCE_PAGE_NOTIFICATION_INDEX;
-            String userAction = request.getParameter("userAction");
-            String criticalIp = request.getParameter("criticalIp");
-            String criticalSvc = request.getParameter("criticalSvc");
-            String newRule = request.getParameter("newRule");
-            Map params = new HashMap();
-            if (userAction != null && userAction.equals("rebuild")) {
-                params.put("newRule", newRule);
-                params.put("criticalIp", criticalIp);
-                params.put("criticalSvc", criticalSvc);
-	        if (request.getParameter("showNodes") != null)
-	            params.put("showNodes", request.getParameter("showNodes"));
-                redirectPage = SOURCE_PAGE_PATH_OUTAGE;
-            } else {
-                try {
-                    updatePaths(newRule, criticalIp, criticalSvc);
-                } catch (FilterParseException e) {
-                    params.put("mode", "Update failed");
-                    redirectPage = SOURCE_PAGE_PATH_OUTAGE;
-                } catch (SQLException e) {
-                    params.put("mode", "Update failed");
-                    redirectPage = SOURCE_PAGE_PATH_OUTAGE;
-                }
-            }
-            redirectString.append(redirectPage).append(makeQueryString(params));
+            redirect = processValidatePathOutage(request);
         } else if (sourcePage.equals(SOURCE_PAGE_OTHER_WEBUI)) {
-            //We've come from elsewhere in the Web UI page, and will have a UEI.  
-            //If there are existing notices for this UEI, then go to a page listing them allowing editing.  
-            //If there are none, then create a notice, populate the UEI, and go to the buildRule page.
-            String returnPage=request.getParameter("returnPage");
-            user.setAttribute("noticeWizardReturnPage", returnPage);
-            String uei=request.getParameter("uei");
-            try {
-                if(NotificationFactory.getInstance().hasUei(uei)) {
-                    //There are existing notifications for this UEI - goto a listing page
-                    Map params = new HashMap();
-                    params.put("uei", uei);                   
-                    redirectString.append(SOURCE_PAGE_NOTIFS_FOR_UEI).append(makeQueryString(params));
-                } else {
-                    newNotifWithUEI(request, user, redirectString,rule);
-                }
-            } catch (IOException e) {
-                throw new ServletException("IOException while checking if there is an existing notification for UEI "+uei, e);
-            } catch (MarshalException e) {
-                throw new ServletException("Marshalling Exception while checking if there is an existing notification for UEI "+uei, e);
-            } catch (ValidationException e) {
-                throw new ServletException("Validation Exception while checking if there is an existing notification for UEI "+uei, e);
-            } 
+            redirect = processOtherWebUi(request, user); 
         } else if (sourcePage.equals(SOURCE_PAGE_NOTIFS_FOR_UEI)) {
-            String userAction=request.getParameter("userAction");
-            if("edit".equals(userAction)) {
-                edit(request, user, redirectString);
-            } else if ("new".equals(userAction)) {
-                newNotifWithUEI(request, user, redirectString, rule);
-            }
+            redirect = processNotificationsForUei(request, user);
+        } else {
+            // FIXME: What do we do if there is no sourcePage match?
+            redirect = "";
         }
 
-        if (redirectString.toString().equals(""))
+        if (redirect.equals("")) {
             throw new ServletException("no redirect specified for this wizard!");
+        }
 
-        response.sendRedirect(redirectString.toString());
+        response.sendRedirect(redirect);
     }
 
