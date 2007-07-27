@@ -1,46 +1,42 @@
-	void deleteNode(int nid) {
+	void deleteNode(int nodeid) {
 
-		Category log = ThreadCategory.getInstance();
+		if (log().isDebugEnabled())
+			log().debug("deleteNode: deleting LinkableNode for node "
+					+ nodeid);
 
-		SnmpCollection collection = null;
-		if (log.isDebugEnabled())
-			log.debug("deleteNode: deleting LinkableNode for node "
-					+ nid);
+		try {
+			m_queryMgr.update(nodeid, QueryManager.ACTION_DELETE);
+		} catch (SQLException sqlE) {
+			log().error("scheduleNodeCollection: " +
+				"SQL Exception while syncing node object with database information.",sqlE);
+		} 
 		
-		if (nodeid2snmpcollection.containsKey(new Integer(nid))) {
-			collection = (SnmpCollection) nodeid2snmpcollection.get(new Integer(nid));
-		} else log.warn("deleteNode: no snmp collection found for node " + nid);
-			
-		String nodekey = getLinkableNodeKey(nid);
 
-		//test if collectionkey is the same
-		if (nodekey != null) {
-			if (log.isInfoEnabled())
-				log.info("deleteNode: removing linkable node for nodeid " + nid + " key " + nodekey);
-			synchronized (snmpprimaryip2nodes) {
-				snmpprimaryip2nodes.remove(nodekey);
-			}
+		LinkableNode node = removeNode(nodeid);
+
+		if (node == null) {
+			log().warn("deleteNode: node not found: " + nodeid);
 		} else {
-			if (log.isInfoEnabled())
-				log.info("deleteNode: no linkable node found for nodeid " + nid);
-		}
+			Iterator<SnmpCollection> ite = m_linkdConfig.getSnmpCollections(node.getSnmpPrimaryIpAddr(), node.getSysoid()).iterator();
+			if (log().isDebugEnabled())
+				log().debug("deleteNode: get Snmp Collection from Scratch! Iterating on found.");
 
-		if (collection != null) {
-			// a nodeid with the same collection exists so
-			// verify that rr exists if not add
-			// else do nothing
-			ReadyRunnable rr = m_scheduler.getReadyRunnable(collection);
-			if (rr == null) {
-				log.warn("deleteNode: Failed to get " + collection.getInfo() 
-										+ " with nodeid "
-										+ nid);
-			} else {
-				rr.unschedule();
+			while (ite.hasNext()) {
+				ReadyRunnable rr = getReadyRunnable(ite.next());
+				
+				if (rr == null) {
+					log().warn("deleteNode: found null ReadyRunnable");
+					return;
+				} else {
+					rr.unschedule();
+				}	
+
 			}
+			
 		}
 
-		DbEventWriter dbwriter = new DbEventWriter(nid, DbEventWriter.ACTION_DELETE);
-		dbwriter.run();
+		// database changed need reload packageiplist
+		m_linkdConfig.createPackageIpListMap();
 
 	}
 
