@@ -13,10 +13,10 @@
 	 */
 
 	public void run() {
-		Category log = ThreadCategory.getInstance(getClass());
+		
 
 		if (suspendCollection) {
-			log.debug("SnmpCollection.run: address: "
+			log().debug("SnmpCollection.run: address: "
 					+ m_address.getHostAddress() + " Suspended!");
 		} else {
 
@@ -26,8 +26,8 @@
 
 			m_CdpCache = new CdpCacheTable(m_address);
 
-			if (log.isDebugEnabled())
-				log.debug("run: collecting : " + m_agentConfig);
+			if (log().isDebugEnabled())
+				log().debug("run: collecting : " + m_agentConfig);
 
 			SnmpWalker walker = null;
 
@@ -36,7 +36,7 @@
 				try {
 					vlanGetter = Class.forName(m_vlanClass);
 				} catch (ClassNotFoundException e) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class not found " + e);
 				}
 
@@ -45,25 +45,28 @@
 				try {
 					constr = vlanGetter.getConstructor(classes);
 				} catch (NoSuchMethodException e) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class has not such method " + e);
 				} catch (SecurityException s) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class security violation " + s);
 				}
 				Object[] argum = { m_address };
 				try {
 					m_vlanTable = (SnmpTable) constr.newInstance(argum);
 				} catch (InvocationTargetException t) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class Invocation Exception " + t);
 				} catch (InstantiationException i) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class Instantiation Exception " + i);
 				} catch (IllegalAccessException s) {
-					log.error("SnmpCollection.run: " + m_vlanClass
+					log().error("SnmpCollection.run: " + m_vlanClass
 							+ " class Illegal Access Exception " + s);
 				}
+			}
+			
+			if (m_collectVlanTable && m_collectIpRouteTable && m_collectCdpTable) {
 				walker = SnmpUtils
 						.createWalker(
 								m_agentConfig,
@@ -71,12 +74,39 @@
 								new CollectionTracker[] { m_ipNetToMedia,
 										m_ipRoute, m_CdpCache, m_vlanTable });
 
-			} else {
+			} else if (m_collectCdpTable && m_collectIpRouteTable){
 				walker = SnmpUtils.createWalker(m_agentConfig,
 						"ipNetToMediaTable/ipRouteTable/cdpCacheTable",
 						new CollectionTracker[] { m_ipNetToMedia, m_ipRoute,
 								m_CdpCache });
 
+			} else if (m_collectVlanTable && m_collectIpRouteTable) {
+				walker = SnmpUtils.createWalker(m_agentConfig,
+						"ipNetToMediaTable/ipRouteTable/vlanTable",
+						new CollectionTracker[] { m_ipNetToMedia, m_ipRoute,
+								m_vlanTable });
+			} else if (m_collectVlanTable && m_collectCdpTable) {
+				walker = SnmpUtils.createWalker(m_agentConfig,
+					"ipNetToMediaTable/vlanTable/cdpCacheTable",
+					new CollectionTracker[] { m_ipNetToMedia, m_vlanTable,
+							m_CdpCache });
+			} else if (m_collectIpRouteTable){
+				walker = SnmpUtils.createWalker(m_agentConfig,
+						"ipNetToMediaTable/ipRouteTable",
+						new CollectionTracker[] { m_ipNetToMedia, m_ipRoute});
+			} else if (m_collectVlanTable ) {
+				walker = SnmpUtils.createWalker(m_agentConfig,
+						"ipNetToMediaTable/vlanTable",
+						new CollectionTracker[] { m_ipNetToMedia, m_vlanTable });
+			} else if (m_collectCdpTable) {
+				walker = SnmpUtils.createWalker(m_agentConfig,
+					"ipNetToMediaTable/cdpCacheTable",
+					new CollectionTracker[] { m_ipNetToMedia, m_CdpCache });
+
+			}else {
+				walker = SnmpUtils.createWalker(m_agentConfig,
+						"ipNetToMediaTable",
+						new CollectionTracker[] { m_ipNetToMedia});
 			}
 
 			walker.start();
@@ -93,7 +123,7 @@
 				m_CdpCache = null;
 				m_vlanTable = null;
 
-				log.warn("SnmpCollection.run: collection interrupted, exiting",
+				log().warn("SnmpCollection.run: collection interrupted, exiting",
 						e);
 				return;
 			}
@@ -101,24 +131,24 @@
 			// Log any failures
 			//
 			if (!this.hasIpNetToMediaTable())
-				log
+				log()
 						.info("SnmpCollection.run: failed to collect ipNetToMediaTable for "
 								+ m_address.getHostAddress());
 			if (!this.hasRouteTable())
-				log
+				log()
 						.info("SnmpCollection.run: failed to collect ipRouteTable for "
 								+ m_address.getHostAddress());
 			if (!this.hasCdpCacheTable())
-				log
+				log()
 						.info("SnmpCollection.run: failed to collect dpCacheTable for "
 								+ m_address.getHostAddress());
 			if (m_collectVlanTable && !this.hasVlanTable())
-				log.info("SnmpCollection.run: failed to collect Vlan for "
+				log().info("SnmpCollection.run: failed to collect Vlan for "
 						+ m_address.getHostAddress());
 			// Schedule snmp vlan collection
 			// only on VLAN.
 			// If it has not vlan collection no data download is done.
-			SnmpVlanCollection snmpvlancollection = null;
+			
 			Vlan vlan = null;
 
 			if (this.hasVlanTable()) {
@@ -127,24 +157,10 @@
 						&& !m_vlanClass
 								.equals("org.opennms.netmgt.linkd.snmp.IntelVlanTable")) {
 
-					vlan = new Vlan(TRUNK_VLAN_INDEX,TRUNK_VLAN_NAME);
-
-					snmpvlancollection = new SnmpVlanCollection(m_agentConfig);
-					snmpvlancollection.run();
-					
-					if (snmpvlancollection.failed()) {
-						if (log.isDebugEnabled())
-							log
-									.debug("SnmpCollection.run: no bridge info found");
-					} else {
-						if (log.isDebugEnabled())
-							log
-									.debug("SnmpCollection.run: adding bridge info to snmpcollection");
-						m_snmpVlanCollection.put(vlan,snmpvlancollection);
-					}
+					runAndSaveSnmpVlanCollection(new Vlan(TRUNK_VLAN_INDEX,TRUNK_VLAN_NAME,VlanCollectorEntry.VLAN_STATUS_OPERATIONAL));
 				} else {
-					if (log.isDebugEnabled())
-						log.debug("SnmpCollection.run: start collection for "
+					if (log().isDebugEnabled())
+						log().debug("SnmpCollection.run: start collection for "
 								+ getVlanTable().getEntries().size() + " VLAN entries ");
 
 					java.util.Iterator itr = m_vlanTable.getEntries().iterator();
@@ -152,72 +168,51 @@
 						SnmpTableEntry ent = (SnmpTableEntry) itr.next();
 		 				int vlanindex = ent.getInt32(VlanCollectorEntry.VLAN_INDEX);
 						if (vlanindex == -1) {
-							if (log.isDebugEnabled())
-								log
+							if (log().isDebugEnabled())
+								log()
 										.debug("SnmpCollection.run: found null value for vlan.");
 							continue;
 						}
 						String vlanname = ent.getDisplayString(VlanCollectorEntry.VLAN_NAME);
 						if (vlanname == null) vlanname = DEFAULT_VLAN_NAME; 
-						vlan = new Vlan(vlanindex,vlanname);
-						
-						String community = m_agentConfig.getReadCommunity();
-						if (log.isDebugEnabled())
-							log.debug("SnmpCollection.run: peer community: "
-									+ community + " with VLAN " + vlan);
-
 						Integer status = ent
-								.getInt32(VlanCollectorEntry.VLAN_STATUS);
+						.getInt32(VlanCollectorEntry.VLAN_STATUS);
+
 						if (status == null
 								|| status != VlanCollectorEntry.VLAN_STATUS_OPERATIONAL) {
-							if (log.isInfoEnabled())
-								log.info("SnmpCollection.run: skipping VLAN "
+							if (log().isInfoEnabled())
+								log().info("SnmpCollection.run: skipping VLAN "
 										+ vlan + " NOT ACTIVE or null ");
 							continue;
 						}
 
+						String community = m_agentConfig.getReadCommunity();
+						if (log().isDebugEnabled())
+							log().debug("SnmpCollection.run: peer community: "
+									+ community + " with VLAN " + vlan);
+
+
 						Integer type = ent.getInt32(VlanCollectorEntry.VLAN_TYPE);
 						if (type == null
 								|| type != VlanCollectorEntry.VLAN_TYPE_ETHERNET) {
-							if (log.isInfoEnabled())
-								log.info("SnmpCollection.run: skipping VLAN "
+							if (log().isInfoEnabled())
+								log().info("SnmpCollection.run: skipping VLAN "
 										+ vlan + " NOT ETHERNET TYPE");
 							continue;
 						}
 						m_agentConfig.setReadCommunity(community + "@" + vlanindex);
 
-						snmpvlancollection = new SnmpVlanCollection(m_agentConfig);
-						snmpvlancollection.run();
-						if (snmpvlancollection.failed()) {
-							if (log.isDebugEnabled())
-								log
-										.debug("SnmpCollection.run: no bridge info found for VLAN "
-												+ vlan);
-						} else {
-							m_snmpVlanCollection.put(vlan,snmpvlancollection);
-						}
+						runAndSaveSnmpVlanCollection(new Vlan(vlanindex,vlanname,status));
 						m_agentConfig.setReadCommunity(community);
 					}  
 				}
 
 			} else {
-				vlan = new Vlan(DEFAULT_VLAN_INDEX,DEFAULT_VLAN_NAME);
-				snmpvlancollection = new SnmpVlanCollection(m_agentConfig);
-				snmpvlancollection.run();
-				if (snmpvlancollection.failed()) {
-					if (log.isDebugEnabled())
-						log
-								.debug("SnmpCollection.run: no bridge info found");
-				} else {
-					if (log.isDebugEnabled())
-						log
-								.debug("SnmpCollection.run: adding bridge info to snmpcollection");
-					m_snmpVlanCollection.put(vlan,snmpvlancollection);
-				}
+				runAndSaveSnmpVlanCollection(new Vlan(DEFAULT_VLAN_INDEX,DEFAULT_VLAN_NAME,VlanCollectorEntry.VLAN_STATUS_OPERATIONAL));
 			}
 			// update info in linkd used correctly by discoveryLink
-			if (log.isDebugEnabled())
-				log
+			if (log().isDebugEnabled())
+				log()
 						.debug("SnmpCollection.run: saving collection into database ");
 
 			Linkd.getInstance().updateNodeSnmpCollection(this);
