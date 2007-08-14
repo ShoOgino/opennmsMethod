@@ -1,0 +1,46 @@
+	public StatisticalArrayList parallelPing(InetAddress host, int count) throws IOException {
+        Category log = ThreadCategory.getInstance(this.getClass());
+        StatisticalArrayList returnval = new StatisticalArrayList();
+        
+        Long tidKey = getTidKey();
+        ArrayList<PingRequest> requests = new ArrayList<PingRequest>();
+        parallelWaiting.put(tidKey, requests);
+        for (int i = 0; i < count; i++) {
+        	short sid = sequenceId++;
+        	PingRequest reply = new PingRequest(host, sid);
+        	log.debug("sending packet with ID '" + tidKey + "' and sequence '" + reply.getSequenceId());
+        	requests.add(reply);
+        	DatagramPacket pkt = getDatagram(host, tidKey, reply.getSequenceId());
+        	synchronized(reply) {
+        		sendPacket(pkt);
+        	}
+        }
+        
+        try {
+            Thread.sleep(timeout);
+            synchronized(requests) {
+            	requests.wait(1);
+            }
+        } catch (InterruptedException ex) {
+            // interrupted so return, reset interrupt.
+            Thread.currentThread().interrupt();
+        }
+
+        for (PingRequest reply : requests) {
+        	if (reply.isSignaled()) {
+        		Long rtt = getRTT(reply);
+        		if (rtt <= timeout * 1000) {
+        			returnval.add(rtt);
+        		} else {
+        			log.debug("a response came back, but it was too old: sid = " + reply.getSequenceId() + ", rtt = " + rtt);
+        			returnval.add(null);
+        		}
+    		} else {
+    			log.debug("no response came back: sid = " + reply.getSequenceId());
+    			returnval.add(null);
+        	}
+        }
+        
+        return returnval;
+	}
+
