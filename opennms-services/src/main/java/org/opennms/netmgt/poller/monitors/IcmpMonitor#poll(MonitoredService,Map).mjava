@@ -27,71 +27,28 @@
             throw new NetworkInterfaceNotSupportedException("Unsupported interface type, only TYPE_IPV4 currently supported");
 
         Category log = ThreadCategory.getInstance(this.getClass());
-
-        // get parameters
-        //
-        int retry = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
-        int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
-
-        // Find an appropritate thread id
-        //
-        Long tidKey = null;
-        long tid = (long) Thread.currentThread().hashCode();
-       InetAddress ipv4Addr = (InetAddress) iface.getAddress();
-       Ping reply = new Ping(ipv4Addr);
-
-       synchronized (m_waiting)
-       {
-            while (m_waiting.containsKey(tidKey = new Long(tid)))
-                ++tid;
-          m_waiting.put(tidKey, reply);
-        }
-        DatagramPacket pkt = getDatagram(ipv4Addr, tid);
-
         PollStatus serviceStatus = PollStatus.unavailable();
-        for (int attempts = 0; attempts <= retry && !reply.isSignaled(); ++attempts) {
-            // Send the datagram and wait
-            //
-            synchronized (reply) {
-                try {
-                    m_icmpSock.send(pkt);
-                } catch (IOException ioE) {
-                    log.info("Failed to send to address " + ipv4Addr, ioE);
-                    break;
-                } catch (Throwable t) {
-                    log.info("Undeclared throwable exception caught sending to " + ipv4Addr, t);
-                    break;
-                }
-
-                try {
-                    reply.wait(timeout);
-                } catch (InterruptedException ex) {
-                    // interrupted so return, reset interrupt.
-                    //
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
+        Long rtt = null;
+		InetAddress host = (InetAddress) iface.getAddress();
+		
+		try {
+			Pinger pinger = new Pinger();
+			
+			// get parameters
+			//
+			int retries = ParameterMap.getKeyedInteger(parameters, "retry", pinger.getRetries());
+			long timeout = ParameterMap.getKeyedLong(parameters, "timeout", pinger.getTimeout());
+			
+			rtt = pinger.ping(host, timeout, retries);
+		} catch (IOException e) {
+			log.debug("failed to ping " + host, e);
+		}
+        
+        if (rtt != null) {
+        	serviceStatus = PollStatus.available();
+        	serviceStatus.setResponseTime(rtt);
         }
-
-        synchronized (m_waiting)
-        {
-           m_waiting.remove(tidKey);
-        }
-
-
-        if (reply.isSignaled()) {
-            serviceStatus = PollStatus.available();
-
-            // Determine round-trip-time for the ping packet
-            ICMPEchoPacket replyPkt = reply.getPacket();
-            if (replyPkt != null) {
-                long rtt = replyPkt.getPingRTT();
-                serviceStatus.setResponseTime(rtt);
-                log.debug("Ping round trip time for " + ipv4Addr + ": " + rtt + "us");
-            }
-        }
-
+        
         return serviceStatus;
     }
 
