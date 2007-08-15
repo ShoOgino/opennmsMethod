@@ -2,24 +2,23 @@
      * Constructs a new event encapsulation instance based upon the
      * information passed to the method. The passed byte array is decoded into
      * a string using the <tt>US-ASCII</tt> character encoding.
-     * 
-     * @param addr
-     *            The remote agent's address.
-     * @param port
-     *            The remote agent's port
-     * @param data
-     *            The XML data in US-ASCII encoding.
-     * @param len
-     *            The length of the XML data in the buffer.
+     *
+     * @param addr The remote agent's address.
+     * @param port The remote agent's port
+     * @param data The XML data in US-ASCII encoding.
+     * @param len  The length of the XML data in the buffer.
      * @throws java.io.UnsupportedEncodingException
-     *             Thrown if the data buffer cannot be decoded using the
-     *             US-ASCII encoding.
+     *          Thrown if the data buffer cannot be decoded using the
+     *          US-ASCII encoding.
      */
     static ConvertToEvent make(InetAddress addr, int port, byte[] data,
-            int len, String matchPattern, int hostGroup, int messageGroup)
+                               int len, String matchPattern, int hostGroup, int messageGroup,
+                               UeiList ueiList, HideMessage hideMessage)
             throws UnsupportedEncodingException {
 
         ConvertToEvent e = new ConvertToEvent();
+
+        // Get host address /
 
         e.m_sender = addr;
         e.m_port = port;
@@ -27,7 +26,7 @@
         e.m_ackEvents = new ArrayList(16);
         e.m_log = null;
 
-        m_logPrefix = org.opennms.netmgt.syslogd.Syslogd.LOG4J_CATEGORY;
+        String m_logPrefix = Syslogd.LOG4J_CATEGORY;
         ThreadCategory.setPrefix(m_logPrefix);
         ThreadCategory.setPrefix(LOG4J_CATEGORY);
         Category log = ThreadCategory.getInstance();
@@ -42,7 +41,7 @@
         // Set nodeId
 
         long nodeId = SyslogdIPMgr.getNodeId(addr.toString().replaceAll("/",
-                                                                        ""));
+                ""));
         // log.debug("Nodeid via SyslogdIPMgr " +
         // SyslogdIPMgr.getNodeId(addr.toString().replaceAll("/","")));
 
@@ -90,8 +89,11 @@
 
         String priorityTxt = SyslogDefs.getPriorityName(priority);
         // event.setSeverity(priorityTxt);
+        // We leave the priority alone, this might need to be set.
 
         String facilityTxt = SyslogDefs.getFacilityName(facility);
+
+        //Check for UEI matching or allow a simple standard one.
 
         event.setUei("uei.opennms.org/syslogd/" + facilityTxt + "/"
                 + priorityTxt);
@@ -135,25 +137,100 @@
 
         log.debug("Message : " + message);
         log.debug("Pattern : " + matchPattern);
+        log.debug("Host group: " + hostGroup);
+        log.debug("Message group: " + messageGroup);
 
-        Pattern bsdForward = Pattern.compile(matchPattern);
+        // We will also here find out if, the host needs to
+        // be replaced, the message matched to a UEI, and
+        // last if we need to actually hide the message.
+        // this being potentially helpful in avoiding showing
+        // operator a password or other data that should be
+        // confindential.
 
-        Matcher m = bsdForward.matcher(message);
+        Pattern pattern = Pattern.compile(matchPattern);
+        Matcher m = pattern.matcher(message);
 
-        if ((m = bsdForward.matcher(message)).matches()) {
+        /*
+        * We matched on a regexp for host/message pair.
+        * This can be a forwarded message as in BSD Style
+        * or syslog-ng.
+        * We assume that the host is given to us
+        * as an IP/Hostname and that the resolver
+        * on the ONMS host actually can resolve the
+        * node to match against nodeId.
+         */
 
-            nodeId = SyslogdIPMgr.getNodeId(m.group(hostGroup).replaceAll(
-                                                                          "/",
-                                                                          ""));
+        if (m.matches()) {
 
-            if (nodeId != -1)
-                event.setNodeid(nodeId);
-            // Clean up for further processing....
-            event.setInterface(m.group(hostGroup).replaceAll("/", ""));
+            log.debug("Regexp matched message: " + message);
+            log.debug("Host: " + m.group(hostGroup));
+            log.debug("Message: " + m.group(messageGroup));
 
-            message = m.group(messageGroup);
-            log.debug("Forwarded message: " + message);
+            // We will try and extract an IP address from
+            // a hostname.....
 
+            String myHost = "";
+
+            try {
+                InetAddress address = InetAddress.getByName(m.group(hostGroup));
+                byte[] ipAddr = address.getAddress();
+
+                // Convert to dot representation
+                for (int i = 0; i < ipAddr.length; i++) {
+                    if (i > 0) {
+                        myHost += ".";
+                    }
+                    myHost += ipAddr[i] & 0xFF;
+                }
+            } catch (UnknownHostException e1) {
+                log.info("Could not parse the host: " + e1);
+
+            }
+
+            if (!"".equals(myHost)) {
+                nodeId = SyslogdIPMgr.getNodeId(myHost.replaceAll(
+                        "/",
+                        ""));
+
+                if (nodeId != -1)
+                    event.setNodeid(nodeId);
+                // Clean up for further processing....
+                event.setInterface(myHost.replaceAll("/", ""));
+
+                message = m.group(messageGroup);
+                log.debug("Regexp used to find node: " + event.getNodeid());
+            }
+        }
+
+        // Time to verify UEI matching.
+
+        Iterator match = ueiList.getUeiMatchCollection().iterator();
+        UeiMatch uei;
+        while (match.hasNext()) {
+
+            uei = (UeiMatch) match.next();
+            if (message.contains(uei.getUei())) {
+                //We can pass a new UEI on this
+                log.debug("Changed the UEI of a Syslogd event to :" + uei.getMatch());
+                event.setUei(uei.getMatch());
+
+            }
+        }
+
+        // Time to verify if we need to hide the message
+
+        match = hideMessage.getHideMatchCollection().iterator();
+
+        HideMatch hide;
+        while (match.hasNext()) {
+
+            hide = (HideMatch) match.next();
+            if (message.contains(hide.getMatch())) {
+                //We can pass a new UEI on this
+                log.debug("Hiding syslog message from Event - May contain sensitive data");
+                message = "The message logged has been removed due to configuration of Syslogd";
+
+            }
         }
 
         lbIdx = message.indexOf('[');
