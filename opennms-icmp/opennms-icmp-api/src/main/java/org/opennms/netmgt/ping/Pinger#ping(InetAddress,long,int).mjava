@@ -11,36 +11,12 @@
      *            The number of times to retry
      * 
      * @return The response time in microseconds if the host is reachable and has responded with an echo reply, otherwise a null value.
+     * @throws InterruptedException 
      */
-    public Long ping(InetAddress host, long timeout, int retries) throws IOException {
-        Category log = ThreadCategory.getInstance(this.getClass());
-        
-        Long tidKey = getTidKey();
-
-        short sid = sequenceId++;
-    	DatagramPacket pkt = getDatagram(host, tidKey, sid);
-        PingRequest reply = new PingRequest(host, sid);
-        
-        waiting.put(tidKey, reply);
-        for (int attempts = 0; attempts <= retries && !reply.isSignaled(); ++attempts) {
-            synchronized (reply) {
-                sendPacket(pkt);
-                try {
-                    reply.wait(timeout);
-                } catch (InterruptedException ex) {
-                    // interrupted so return, reset interrupt.
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-        waiting.remove(tidKey);
-        
-        Long rtt = getRTT(reply);
-        if (rtt == null && log.isDebugEnabled()) {
-        	log.debug("no response time for " + host + "received");
-        } else if (log.isDebugEnabled()){
-        	log.debug("Ping round trip time for " + host + ": " + rtt + "us");
-        }
-        return rtt;
+    public Long ping(InetAddress host, long timeout, int retries) throws InterruptedException {
+        SinglePingResponseCallback cb = new SinglePingResponseCallback();
+        ping(host, timeout, retries, (short) 1, cb);
+        cb.waitFor();
+        return cb.getResponseTime();
     }
 

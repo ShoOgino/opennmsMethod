@@ -1,8 +1,40 @@
     /**
-     * Initialize a Pinger object, using the default timeout and retries.
+     * Initialize a Pinger object, specifying the timeout and retries.
+     * @param defaultTimeout the timeout, in milliseconds, to wait for returned packets.
+     * @param defaultRetries the number of times to retry a given ping packet
      * @throws IOException
      */
-    public Pinger() throws IOException {
-		this(DEFAULT_TIMEOUT, DEFAULT_RETRIES);
+	public Pinger() throws IOException {
+		synchronized (Pinger.class) {
+			if (worker == null) {
+			    final FifoQueueImpl<Reply> queue = new FifoQueueImpl<Reply>();
+				icmpSocket = new IcmpSocket();
+                receiver = new ReplyReceiver(icmpSocket, queue, PingRequest.FILTER_ID);
+                receiver.start();
+				
+                worker = new Thread(new Runnable() {
+                    public void run() {
+                        for (;;) {
+                        	long waitTime = minimumWaitTime();
+                        	if (waitTime > 0) {
+                        	    try {
+                                    Reply pong = queue.remove(waitTime);
+                                    processReply(pong);
+                        	    } catch (InterruptedException ie) {
+                        	        break;
+                        	    } catch (FifoQueueException fqe) {
+                        	        ThreadCategory.getInstance(this.getClass()).error("Error processing response queue", fqe);
+                        	    }
+                        	} else {
+                        	    processTimeouts();
+                        	}
+                        }
+                    }
+                });
+                worker.setDaemon(true);
+                worker.start();
+			}
+			
+		}
 	}
 
