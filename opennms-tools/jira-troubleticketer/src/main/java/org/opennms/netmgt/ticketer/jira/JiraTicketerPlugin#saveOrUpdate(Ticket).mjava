@@ -1,0 +1,71 @@
+    /*
+    * (non-Javadoc)
+    * @see org.opennms.netmgt.ticketd.TicketerPlugin#saveOrUpdate(org.opennms.netmgt.ticketd.Ticket)
+    */
+    public void saveOrUpdate(Ticket ticket) {
+
+        JiraConnection jira = getConnection();
+        RemoteIssue issue = new RemoteIssue();
+        issue.setProject(getProperties().getProperty("jira.project"));
+        issue.setReporter(getProperties().getProperty("jira.username"));
+        issue.setType(getProperties().getProperty("jira.type").trim());
+        issue.setSummary(ticket.getSummary());
+        issue.setDescription(ticket.getSummary());
+        issue.setDuedate(Calendar.getInstance());
+
+        if (ticket.getId() == null || ticket.getId().equals("")) {
+            try {
+                RemoteIssue addedIssue = jira.getJira().createIssue(jira.getToken(), issue);
+                ticket.setId(addedIssue.getKey());
+                RemoteComment comment = new RemoteComment();
+                comment.setBody(ticket.getDetails());
+                comment.setAuthor(getProperties().getProperty("jira.username"));
+                jira.getJira().addComment(jira.getToken(), ticket.getId(), comment);
+                log().error("Ticket ID: " + addedIssue.getKey());
+            } catch (Exception e) {
+                log().error("Error: Could not create a Jira issue id " + e);
+            }
+        } else {
+            log().info("Received ticket: " + ticket.getId());
+
+            try {
+                issue = jira.getJira().getIssue(jira.getToken(), ticket.getId());
+            } catch (RemoteException e) {
+                log().error("Error: could not retrive remote issue");
+            }
+
+            if ("closed".equals(ticket.getState().toString().toLowerCase())) {
+                log().info("Closing ticket " + ticket.getId());
+                RemoteComment comment = new RemoteComment();
+                comment.setBody("Issue resolved by OpenNMS");
+                try {
+                    jira.getJira().addComment(jira.getToken(), issue.getKey(), comment);
+                } catch (RemoteException e) {
+                    log().error("Could not append comments " + e);
+                }
+
+                RemoteFieldValue[] resolution = new RemoteFieldValue[0];
+                try {
+                    jira.getJira().progressWorkflowAction(jira.getToken(), ticket.getId(), String.valueOf(openNMSToJira(ticket.getState())), resolution);
+                    ticket.setState(Ticket.State.CLOSED);
+                } catch (RemoteException e) {
+                    log().error("Error: Could not resolve ticket");
+                }
+            }
+
+            // This case is most likely never used.
+            if ("open".equals(ticket.getState().toString().toLowerCase())) {
+                log().info("Re-Opening ticket " + ticket.getId());
+                RemoteFieldValue[] resolution = new RemoteFieldValue[0];
+                try {
+                    jira.getJira().progressWorkflowAction(jira.getToken(), ticket.getId(), String.valueOf(openNMSToJira(ticket.getState())), resolution);
+                    ticket.setState(Ticket.State.OPEN);
+                } catch (RemoteException e) {
+                    log().error("Error: Could not re-open ticket");
+                }
+            }
+
+        }
+
+    }
+
