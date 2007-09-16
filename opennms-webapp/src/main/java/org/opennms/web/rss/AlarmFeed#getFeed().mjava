@@ -1,0 +1,56 @@
+    public SyndFeed getFeed() {
+        SyndFeed feed = new SyndFeedImpl();
+
+        feed.setTitle("Alarms");
+        feed.setDescription("OpenNMS Alarms");
+        feed.setLink(getUrlBase() + "alarm/list");
+
+        ArrayList<SyndEntry> entries = new ArrayList<SyndEntry>();
+
+        try {
+            Alarm[] alarms;
+
+            ArrayList<Filter> filters = new ArrayList<Filter>();
+            if (this.getRequest().getParameter("node") != null) {
+                Integer nodeId = Integer.parseInt(this.getRequest().getParameter("node"));
+                filters.add(new NodeFilter(nodeId));
+            }
+            if (this.getRequest().getParameter("severity") != null) {
+                String sev = this.getRequest().getParameter("severity");
+                List<Integer> severities = AlarmUtil.getSeverityList();
+                for (Integer severity : severities) {
+                    if (EventUtil.getSeverityLabel(severity).toLowerCase().equals(sev)) {
+                        filters.add(new SeverityFilter(severity));
+                    }
+                }
+
+            }
+            
+            alarms = AlarmFactory.getAlarms(SortStyle.FIRSTEVENTTIME, AcknowledgeType.BOTH, filters.toArray(new Filter[] {}), this.getMaxEntries(), -1);
+
+            SyndEntry entry;
+            
+            int count = 0;
+            for (Alarm alarm : alarms) {
+                if (count++ == this.getMaxEntries()) {
+                    break;
+                }
+                entry = new SyndEntryImpl();
+                if (alarm.getAcknowledgeTime() != null) {
+                    entry.setTitle(sanitizeTitle(alarm.getLogMessage()) + " (acknowledged by " + alarm.getAcknowledgeUser() + ")");
+                } else {
+                    entry.setTitle(sanitizeTitle(alarm.getLogMessage()));
+                }
+                entry.setLink(getUrlBase() + "alarm/detail.jsp?id=" + alarm.getId());
+                entry.setPublishedDate(alarm.getFirstEventTime());
+                
+                entries.add(entry);
+            }
+        } catch (SQLException e) {
+            log().warn("unable to get event(s)", e);
+        }
+        
+        feed.setEntries(entries);
+        return feed;
+    }
+
