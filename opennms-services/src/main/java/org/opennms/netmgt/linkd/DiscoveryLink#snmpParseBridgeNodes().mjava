@@ -1,32 +1,36 @@
-	private void parseBridgeNodes() {
+	private void snmpParseBridgeNodes() {
 
 		if(log().isDebugEnabled())
 			log().debug("parseBridgeNodes: searching bridge port for bridge identifier not yet already found. Iterating on bridge nodes.");
+		
 		List<LinkableNode> bridgenodeschanged = new ArrayList<LinkableNode>();
 		Iterator<LinkableNode> ite = bridgeNodes.values().iterator();
 		while (ite.hasNext()) {
-			LinkableNode node = ite.next();
+			LinkableNode curNode = ite.next();
 			if(log().isDebugEnabled())
-				log().debug("parseBridgeNodes: parsing bridge: " + node.getNodeId() + "/" + node.getSnmpPrimaryIpAddr());
+				log().debug("parseBridgeNodes: parsing bridge: " + curNode.getNodeId() + "/" + curNode.getSnmpPrimaryIpAddr());
 
-			String className = null;
-			boolean useVlan = Linkd.getInstance().getLinkdConfig().enableVlanDiscovery();
-			if (Linkd.getInstance().getLinkdConfig().getPackage(getPackageName()).hasEnableVlanDiscovery()) 
-				useVlan = Linkd.getInstance().getLinkdConfig().getPackage(getPackageName()).getEnableVlanDiscovery();
-			if (useVlan && Linkd.getInstance().getLinkdConfig().hasClassName(node.getSysoid())) {
-				className = Linkd.getInstance().getLinkdConfig().getClassName(node.getSysoid());
-			}
-			
 			// get macs
 			
-			List<String> macs = getNotAlreadyFoundBridgeIdentifiersOnNode(node);
+			List<String> macs = getNotAlreadyFoundMacsOnNode(curNode);
 
 			if (macs.isEmpty()) continue;
 
 			SnmpAgentConfig agentConfig = null;
 
+			String className = null;
+			
+			boolean useVlan = Linkd.getInstance().getLinkdConfig().enableVlanDiscovery();
+			if (Linkd.getInstance().getLinkdConfig().getPackage(getPackageName()).hasEnableVlanDiscovery()) 
+				useVlan = Linkd.getInstance().getLinkdConfig().getPackage(getPackageName()).getEnableVlanDiscovery();
+			
+			if (useVlan && Linkd.getInstance().getLinkdConfig().hasClassName(curNode.getSysoid())) {
+				className = Linkd.getInstance().getLinkdConfig().getClassName(curNode.getSysoid());
+			}
+			
+
 			try {
-				agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(node.getSnmpPrimaryIpAddr()));
+				agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(curNode.getSnmpPrimaryIpAddr()));
 			} catch (UnknownHostException e) {
 				log().error(
 						"parseBridgeNodes: Failed to load snmp parameter from snmp configuration file " +
@@ -37,14 +41,15 @@
 			String community = agentConfig.getReadCommunity();
 			
 			Iterator<String> mac_ite = macs.iterator();
+			
 			while (mac_ite.hasNext()) {
 				String mac = mac_ite.next();
 				if(log().isDebugEnabled())
 					log().debug("parseBridgeNodes: parsing mac: " + mac);
 
-				if (className != null && useVlan && (className.equals("org.opennms.netmgt.linkd.snmp.CiscoVlanTable") 
+				if (className != null && (className.equals("org.opennms.netmgt.linkd.snmp.CiscoVlanTable") 
 						|| className.equals("org.opennms.netmgt.linkd.snmp.IntelVlanTable"))){
-					Iterator<Vlan> vlan_ite = node.getVlans().iterator();
+					Iterator<Vlan> vlan_ite = curNode.getVlans().iterator();
 					while (vlan_ite.hasNext()) {
 						Vlan vlan = vlan_ite.next();
 						if (vlan.getVlanStatus() != VlanCollectorEntry.VLAN_STATUS_OPERATIONAL || vlan.getVlanType() != VlanCollectorEntry.VLAN_TYPE_ETHERNET) {
@@ -52,15 +57,16 @@
 							continue;
 						}
 						agentConfig.setReadCommunity(community+"@"+vlan.getVlanIndex());
-						bridgenodeschanged.add(collectMacAddress(agentConfig, node, mac, vlan.getVlanIndex()));
+						curNode = collectMacAddress(agentConfig, curNode, mac, vlan.getVlanIndex());
 						agentConfig.setReadCommunity(community);
 					}
 				} else {
 					int vlan = SnmpCollection.DEFAULT_VLAN_INDEX;
 					if (useVlan) vlan = SnmpCollection.TRUNK_VLAN_INDEX;
-					bridgenodeschanged.add(collectMacAddress(agentConfig, node, mac, vlan));
+					curNode = collectMacAddress(agentConfig, curNode, mac, vlan);
 				}
 			}
+			bridgenodeschanged.add(curNode);
 		}
 		
 		ite = bridgenodeschanged.iterator();
