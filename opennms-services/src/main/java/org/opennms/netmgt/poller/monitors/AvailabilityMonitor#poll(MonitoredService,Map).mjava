@@ -1,25 +1,18 @@
     public PollStatus poll(MonitoredService svc, Map parameters) {
-        int serviceStatus = PollStatus.SERVICE_UNAVAILABLE;
-        long responseTime = -1;
-        String reason = null;
-        int retries = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
-        boolean reachable = false;
-        try {
-            for (int i = 0; i < retries; i++) {
-                long begin = System.currentTimeMillis();
-                reachable = svc.getAddress().isReachable(ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT));
-                long end = System.currentTimeMillis();
-                if (reachable) {
-                    responseTime = end - begin;
-                    break;
+        
+        TimeoutTracker timeoutTracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
+        
+        for(timeoutTracker.reset(); timeoutTracker.shouldRetry(); timeoutTracker.nextAttempt()) {
+            try {
+                timeoutTracker.startAttempt();
+                if (svc.getAddress().isReachable(timeoutTracker.getSoTimeout())) {
+                    return PollStatus.available(timeoutTracker.elapsedTimeInMillis());
                 }
+            } catch (IOException e) {
+                logDown(Level.INFO, "Unable to contact "+svc.getIpAddr(), e);
             }
-            reason = (reachable ? null : "Unreachable");
-            serviceStatus = (reachable ? PollStatus.SERVICE_AVAILABLE : PollStatus.SERVICE_UNAVAILABLE);
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
         }
-        return PollStatus.get(serviceStatus, reason, responseTime);
+        
+        return logDown(Level.INFO, svc+" failed to respond");
     }
 
