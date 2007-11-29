@@ -1,0 +1,46 @@
+    /**
+     * Constructs a new instance of the scheduler.
+     * @param rescanProcessorFactory TODO
+     * 
+     */
+    Scheduler(FifoQueue<Runnable> rescanQ, RescanProcessorFactory rescanProcessorFactory) throws SQLException {
+
+        m_rescanQ = rescanQ;
+        m_rescanProcessorFactory = rescanProcessorFactory;
+
+        m_status = START_PENDING;
+        m_worker = null;
+
+        m_knownNodes = Collections.synchronizedList(new LinkedList<NodeInfo>());
+        
+        // Get rescan interval from configuration factory
+        //
+        m_interval = CapsdConfigFactory.getInstance().getRescanFrequency();
+        if (log().isDebugEnabled())
+            log().debug("Scheduler: rescan interval(millis): " + m_interval);
+
+        // Get initial rescan sleep time from configuration factory
+        //
+        m_initialSleep = CapsdConfigFactory.getInstance().getInitialSleepTime();
+        if (log().isDebugEnabled())
+            log().debug("Scheduler: initial rescan sleep time(millis): " + m_initialSleep);
+
+        // Schedule SMB Reparenting using special nodeId (-1)
+        //
+        // Schedule this node in such a way that it will be
+        // scheduled immediately and SMB reparenting will take place
+        Date lastSmbReparenting = new Date();
+        lastSmbReparenting.setTime(System.currentTimeMillis() - m_interval);
+
+        if (log().isDebugEnabled())
+            log().debug("Scheduler: scheduling SMB reparenting...");
+        NodeInfo smbInfo = new NodeInfo(SMB_REPARENTING_IDENTIFIER, lastSmbReparenting, m_interval);
+        m_knownNodes.add(smbInfo);
+
+        // Load actual known nodes from the database
+        //
+        loadKnownNodes();
+        if (log().isDebugEnabled())
+            log().debug("Scheduler: done loading known nodes, node count: " + m_knownNodes.size());
+    }
+
