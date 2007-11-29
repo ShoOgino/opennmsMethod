@@ -1,0 +1,102 @@
+    protected void setupOpenNMSHomeDir() throws Exception {
+        
+        File etcSourceDir = ConfigurationTestUtils.getDaemonEtcDirectory();
+
+        File currentDir = new File(System.getProperty("user.dir"));
+        File targetDir = new File(currentDir, "target");
+        File itTestDir = new File(targetDir, "integration-tests");
+        File homeDir = new File(itTestDir, getClass().getName());
+        
+        if (!homeDir.exists()) {
+            assertTrue("Unable to create tmp homeDir "+homeDir, homeDir.mkdirs());
+        }
+        
+        System.setProperty("opennms.home", homeDir.getAbsolutePath());
+
+        final File etcDestDir = new File(homeDir, "etc");
+        File shareDir = new File(homeDir, "share");
+        File rrdDir = new File(shareDir, "rrd");
+        
+        if (!rrdDir.exists()) {
+            assertTrue("Unable to create rrd base dir", rrdDir.mkdirs());
+        }
+        
+        final File createSql = new File(etcDestDir, "create.sql");
+
+        m_db = new MockDatabase(false) {
+
+            @Override
+            protected String getCreateSqlLocation() {
+                return createSql.getAbsolutePath();
+            }
+
+            @Override
+            protected String getStoredProcDirectory() {
+                return etcDestDir.getAbsolutePath();
+            }
+            
+        };
+        
+        m_substitions = new Properties(System.getProperties());
+        m_substitions.setProperty("install.database.driver", m_db.getDriver());
+        m_substitions.setProperty("install.database.url", m_db.getUrl());
+        m_substitions.setProperty("install.database.name", m_db.getTestDatabase());
+        m_substitions.setProperty("install.database.user", "opennms");
+        m_substitions.setProperty("install.database.password", "opennms");
+        m_substitions.setProperty("install.share.dir", shareDir.getAbsolutePath());
+        
+        copyDirectory(etcSourceDir, etcDestDir);
+        
+        m_db.create();
+        
+        Properties opennmsProperties = new Properties();
+        InputStream in = null;
+        try {
+            in = new FileInputStream(new File(etcDestDir, "opennms.properties"));
+            opennmsProperties.load(in);
+        } finally {
+            IOUtils.closeQuietly(in);
+        }
+        
+        System.getProperties().putAll(opennmsProperties);
+        
+        // EventIpcManager is not self initializing yet
+        
+        if (s_mockEventIpcManager == null) {
+            s_mockEventIpcManager = new MockEventIpcManager();
+            
+            EventIpcManagerFactory.setIpcManager(s_mockEventIpcManager);
+        } else {
+            s_mockEventIpcManager.reset();
+        }
+        
+        m_network = createMockNetwork();
+        
+        populateDatabase();
+        
+        MockAgentConfiguration mockAgentConfig = getMockAgentConfiguration();
+        if (mockAgentConfig != null) {
+
+            String localhost = getLocalHostAddress();
+            m_agent = MockSnmpAgent.createAgentAndRun(mockAgentConfig.getSnmpDataResource(), localhost + "/9161");
+
+            File snmpConfigFile = new File(etcDestDir, "snmp-config.xml");
+            SnmpConfig config = readSnmpConfig(snmpConfigFile);
+            Definition def = new Definition();
+            def.setPort(9161);
+            def.setVersion("v2c");
+            def.setReadCommunity("public");
+            def.setProxyHost(localhost);
+
+            for(String ipAddr : mockAgentConfig.getProxiedAddresses()) {
+                def.addSpecific(ipAddr);
+            }
+            
+            config.addDefinition(def);
+            
+            writeSnmpConfig(config, snmpConfigFile);
+        }
+        
+
+    }
+
