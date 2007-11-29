@@ -1,0 +1,86 @@
+    /**
+     * Returns true if the protocol defined by this plugin is supported. If
+     * the protocol is not supported then a false value is returned to the
+     * caller. The qualifier map passed to the method is used by the plugin to
+     * return additional information by key-name. These key-value pairs can be
+     * added to service events if needed.
+     * <P>
+     * The following parameters are used by this plugin:
+     * <UL>
+     * <LI>command - the command to be executed on this node.
+     * <LI>port - used to override the default NSClient port.
+     * <LI>password - used to override the default NSClient password
+     * <LI>retry - overrides the number of times to retry connecting to the
+     * service.
+     * <LI>timeout - tcp port timeout.
+     * <LI>parameter - a string used for checking services. see documentation
+     * on specific check types for use.
+     * <LI>criticalPercent - typically a percentage used for testing results,
+     * for example disk space used.
+     * <LI>warningPercent - typically a percentage used for testing results,
+     * for example memory space used.
+     * </UL>
+     * Protocol will return as supported only if the result code is
+     * <code>NsclientPacket.RES_STATE_OK</code> or
+     * <code>NsclientPacket.RES_STATE_WARNING</code>.
+     * 
+     * @param address
+     *            The address to check for support.
+     * @param qualifiers
+     *            The map where qualification are set by the plugin.
+     * @return True if the protocol is supported by the address.
+     */
+    public boolean isProtocolSupported(InetAddress address, Map<String, Object> qualifiers) {
+        int retries = DEFAULT_RETRY;
+        int timeout = DEFAULT_TIMEOUT;
+        int port = NsclientManager.DEFAULT_PORT;
+
+        String password = NSClientAgentConfig.DEFAULT_PASSWORD;
+        String parameter = null;
+        String command = null;
+        int critPerc = 0, warnPerc = 0;
+
+        if (qualifiers != null) {
+            command = ParameterMap.getKeyedString(
+                                                  qualifiers,
+                                                  "command",
+                                                  NsclientManager.convertTypeToString(NsclientManager.CHECK_CLIENTVERSION));
+            port = ParameterMap.getKeyedInteger(qualifiers, "port",
+                                                NsclientManager.DEFAULT_PORT);
+            retries = ParameterMap.getKeyedInteger(qualifiers, "retry",
+                                                   DEFAULT_RETRY);
+            timeout = ParameterMap.getKeyedInteger(qualifiers, "timeout",
+                                                   DEFAULT_TIMEOUT);
+            parameter = ParameterMap.getKeyedString(qualifiers, "parameter",
+                                                    null);
+            critPerc = ParameterMap.getKeyedInteger(qualifiers,
+                                                    "criticalPercent", 0);
+            warnPerc = ParameterMap.getKeyedInteger(qualifiers,
+                                                    "warningPercent", 0);
+            password = ParameterMap.getKeyedString(qualifiers, "password",
+                                                   NSClientAgentConfig.DEFAULT_PASSWORD);
+        }
+
+        // set up my check params.
+        NsclientCheckParams params = new NsclientCheckParams(critPerc,
+                                                             warnPerc,
+                                                             parameter);
+        // and perform the check, we'll get a packet back containing the check
+        // data.
+        NsclientPacket pack = isServer(address, port, password, command, retries,
+                                       timeout, params);
+
+        if (pack == null) {
+            log().debug("Received a null packet response from isServer.");
+            return false;
+        }
+
+        // only fail on critical and unknown returns .
+        if (pack.getResultCode() != NsclientPacket.RES_STATE_CRIT
+                && pack.getResultCode() != NsclientPacket.RES_STATE_UNKNOWN) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
