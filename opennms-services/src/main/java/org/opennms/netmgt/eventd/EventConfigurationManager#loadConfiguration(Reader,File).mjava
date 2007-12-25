@@ -1,0 +1,54 @@
+    public static void loadConfiguration(Reader rdr, File file) throws IOException, MarshalException, ValidationException {
+        synchronized (m_eventConf) {
+            Events toplevel = CastorUtils.unmarshal(Events.class, rdr);
+
+            m_eventConf.clear();
+
+            for (Event event : toplevel.getEventCollection()) {
+                m_eventConf.put(event);
+            }
+
+            m_secureTags = toplevel.getGlobal().getSecurity().getDoNotOverride();
+
+            for (String eventFilePath : toplevel.getEventFileCollection()) {
+                File eventFile = new File(eventFilePath);
+                
+                if (!eventFile.isAbsolute()) {
+                    if (file == null) {
+                        throw new IOException("Event configuration file contains an eventFile element with a relative path, however EventConfigurationManager.loadConfiguration was called without a file parameter, so the relative path cannot be resolved.  The event-file entry is: " + eventFilePath);
+                    }
+                    
+                    eventFile = new File(file.getParentFile(), eventFilePath);
+                }
+                
+                Reader filerdr = new FileReader(eventFile);
+                if (filerdr == null) {
+                    throw new IOException("Eventconf: Failed to load/locate events file: " + eventFile);
+                }
+
+                if (log().isDebugEnabled()) {
+                    log().debug("Eventconf: Loading event file: " + eventFile);
+                }
+
+                Events filelevel = CastorUtils.unmarshal(Events.class, filerdr);
+                
+                if (filelevel.getGlobal() != null) {
+                    throw new ValidationException("The event file " + eventFile + " included from the top-level event configuration file cannot have a 'global' element");
+                }
+                if (filelevel.getEventFileCollection().size() > 0) {
+                    throw new ValidationException("The event file " + eventFile + " included from the top-level event configuration file cannot include other configuration files: " + StringUtils.collectionToCommaDelimitedString(filelevel.getEventFileCollection()));
+                }
+                
+                for (Event event : filelevel.getEventCollection()) {
+                    m_eventConf.put(event);
+                }
+            }
+
+            try {
+                rdr.close();
+            } catch (Throwable t) {
+            }
+        }
+        m_loaded = true;
+    }
+
