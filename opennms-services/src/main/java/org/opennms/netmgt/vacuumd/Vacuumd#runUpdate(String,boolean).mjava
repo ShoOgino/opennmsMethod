@@ -1,11 +1,15 @@
-    private void runUpdate(String sql) {
+    private void runUpdate(String sql, boolean transactional) {
         log().info("Vacuumd executing statement: " + sql);
         // update the database
         Connection dbConn = null;
-        boolean commit = false;
+        
+        //initially set doCommit to avoid doing a commit in the finally
+        //if an exception is thrown.        
+        boolean commitRequired = false;
+        boolean autoCommitFlag = !transactional;
         try {
             dbConn = getDataSourceFactory().getConnection();
-            dbConn.setAutoCommit(false);
+            dbConn.setAutoCommit(autoCommitFlag);
 
             PreparedStatement stmt = dbConn.prepareStatement(sql);
             int count = stmt.executeUpdate();
@@ -15,15 +19,15 @@
                 log().debug("Vacuumd: Ran update " + sql + ": this affected " + count + " rows");
             }
 
-            commit = true;
+            commitRequired = transactional;
         } catch (SQLException ex) {
             log().error("Vacuumd:  Database error execuating statement  " + sql, ex);
         } finally {
             if (dbConn != null) {
                 try {
-                    if (commit) {
+                    if (commitRequired) {
                         dbConn.commit();
-                    } else {
+                    } else if (transactional) {
                         dbConn.rollback();
                     }
                 } catch (SQLException ex) {
