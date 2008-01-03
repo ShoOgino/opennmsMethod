@@ -10,40 +10,40 @@
      *            belongs.
      */
 
-    public int collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> map) {
+    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> map) {
         Category log = ThreadCategory.getInstance(getClass());
         InetAddress ipaddr = (InetAddress) agent.getAddress();
-        String collectionName = (String) agent.getAttribute("collectionName");
         JMXNodeInfo nodeInfo = (JMXNodeInfo) agent.getAttribute(NODE_INFO_KEY);
         HashMap mbeans = nodeInfo.getMBeans();
         String collDir = serviceName;
+        
 
+        String port = ParameterMap.getKeyedString(map, "port", null);
+        String friendlyName = ParameterMap.getKeyedString(map,
+                                                          "friendly-name",
+                                                          port);
+        if (useFriendlyName) {
+            collDir = friendlyName;
+        }
+        
+        JMXCollectionSet collectionSet=new JMXCollectionSet(agent,collDir);
+        JMXCollectionResource collectionResource=collectionSet.getResource();
+        
         ConnectionWrapper connection = null;
 
         log.debug("collect " + ipaddr.getHostAddress() + " "
-                + nodeInfo.getNodeId() + " " + m_rrdPath);
+                + nodeInfo.getNodeId());
 
         try {
-            int retry = ParameterMap.getKeyedInteger(map, "retry", 3);
-            String port = ParameterMap.getKeyedString(map, "port", null);
-            String friendlyName = ParameterMap.getKeyedString(map,
-                                                              "friendly-name",
-                                                              port);
-
             connection = getMBeanServerConnection(map, ipaddr);
 
             if (connection == null) {
-                return COLLECTION_FAILED;
+                return collectionSet;
             }
 
             MBeanServerConnection mbeanServer = connection.getMBeanServer();
 
-            // int serviceStatus = COLLECTION_FAILED;
-
-            if (useFriendlyName) {
-                collDir = friendlyName;
-            }
-
+            int retry = ParameterMap.getKeyedInteger(map, "retry", 3);
             for (int attempts = 0; attempts <= retry; attempts++) {
                 try {
                     /*
@@ -55,6 +55,8 @@
                         BeanInfo beanInfo = (BeanInfo) iter.next();
                         String objectName = beanInfo.getObjectName();
                         String excludeList = beanInfo.getExcludes();
+                        //All JMX collected values are per node
+                        AttributeGroupType attribGroupType=new AttributeGroupType(objectName,"all");
 
                         String[] attrNames = beanInfo.getAttributeNames();
 
@@ -67,12 +69,15 @@
                             try {
                                 ObjectName oName = new ObjectName(objectName);
                                 if (mbeanServer.isRegistered(oName)) {
-                                    AttributeList attrList = (AttributeList)
-                                        mbeanServer.getAttributes(oName,
-                                                                  attrNames);
-                                    updateRRDs(objectName, collectionName,
-                                               agent, attrList, collDir,
-                                               null, null);
+                                    AttributeList attrList = mbeanServer.getAttributes(oName, attrNames);
+                                    HashMap dsMap = nodeInfo.getDsMap();
+                                    for(Object attribute : attrList) {
+                                        Attribute attrib=(Attribute)attribute;
+                                        JMXDataSource ds = (JMXDataSource) dsMap.get(objectName + "|"
+                                                     + attrib.getName());
+                                        JMXCollectionAttributeType attribType=new JMXCollectionAttributeType(ds, null, null, attribGroupType);
+                                        collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
+                                    }  
                                 }
                             } catch (InstanceNotFoundException e) {
                                 log.error("Unable to retrieve attributes from "
@@ -102,17 +107,23 @@
                                     if (excludeList == null) {
                                         // the exclude list doesn't apply
                                         if (mbeanServer.isRegistered(oName)) {
-                                            AttributeList attrList =
-                                                (AttributeList)
-                                                mbeanServer.getAttributes(oName,
+                                            AttributeList attrList = mbeanServer.getAttributes(oName,
                                                                           attrNames);
-                                            updateRRDs(objectName,
-                                                       collectionName,
-                                                       agent,
-                                                       attrList,
-                                                       collDir,
-                                                       oName.getKeyProperty(beanInfo.getKeyField()),
-                                                       beanInfo.getKeyAlias());
+                                            HashMap dsMap = nodeInfo.getDsMap();
+
+                                            for(Object attribute : attrList) {
+                                                Attribute attrib=(Attribute)attribute;
+                                                JMXDataSource ds = (JMXDataSource) dsMap.get(objectName + "|"
+                                                             + attrib.getName());
+                                                JMXCollectionAttributeType attribType=
+                                                    new JMXCollectionAttributeType(ds, 
+                                                                                   oName.getKeyProperty(beanInfo.getKeyField()),  
+                                                                                   beanInfo.getKeyAlias(), 
+                                                                                   attribGroupType);
+                                                
+                                                collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
+                                            }
+
                                         }
                                     } else {
                                         /*
@@ -137,13 +148,20 @@
                                                     (AttributeList)
                                                     mbeanServer.getAttributes(oName,
                                                                               attrNames);
-                                                updateRRDs(objectName,
-                                                           collectionName,
-                                                           agent,
-                                                           attrList,
-                                                           collDir,
-                                                           oName.getKeyProperty(beanInfo.getKeyField()),
-                                                           beanInfo.getKeyAlias());
+                                                HashMap dsMap = nodeInfo.getDsMap();
+
+                                                for(Object attribute : attrList) {
+                                                    Attribute attrib=(Attribute)attribute;
+                                                    JMXDataSource ds = (JMXDataSource) dsMap.get(objectName + "|"
+                                                                 + attrib.getName());
+                                                    JMXCollectionAttributeType attribType=
+                                                        new JMXCollectionAttributeType(ds, 
+                                                                                       oName.getKeyProperty(beanInfo.getKeyField()),  
+                                                                                       beanInfo.getKeyAlias(), 
+                                                                                       attribGroupType);
+                                                    
+                                                    collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
+                                                }
                                             }
                                         }
                                     }
@@ -171,7 +189,7 @@
             }
         }
         
-        // return the status of the collection
-        return COLLECTION_SUCCEEDED;
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+        return collectionSet;
     }
 

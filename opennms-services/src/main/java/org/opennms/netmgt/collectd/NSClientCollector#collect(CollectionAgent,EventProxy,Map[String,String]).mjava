@@ -1,14 +1,18 @@
     @SuppressWarnings("unchecked")
-    public int collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> parameters) {
+    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> parameters) {
         String collectionName = parameters.get("nsclient-collection");
-        final CollectionAgent theAgent = agent; // For ResourceIdentifier
 
         // Find attributes to collect - check groups in configuration. For each,
         // check scheduled nodes to see if that group should be collected
         NsclientCollection collection = NSClientDataCollectionConfigFactory.getInstance().getNSClientCollection(collectionName);
         NSClientAgentState agentState = m_scheduledNodes.get(agent.getNodeId());
-
+        
+        NSClientCollectionSet collectionSet=new NSClientCollectionSet(agent);
+        NSClientCollectionResource collectionResource=collectionSet.getResource();
+        
         for (Wpm wpm : collection.getWpms().getWpm()) {
+            //All NSClient Perfmon counters are per node
+            AttributeGroupType attribGroupType=new AttributeGroupType(wpm.getName(),"all");
             // A wpm consists of a list of attributes, identified by name
             if (agentState.shouldCheckAvailability(wpm.getName(), wpm.getRecheckInterval())) {
                 log().debug("Checking availability of group " + wpm.getName());
@@ -21,6 +25,7 @@
                     manager.close();
                     boolean isAvailable = (result.getResultCode() == NsclientPacket.RES_STATE_OK);
                     agentState.setGroupIsAvailable(wpm.getName(), isAvailable);
+                    log().debug("Group "+wpm.getName()+" is "+(isAvailable?"":"not")+"available ");
                 } catch (NsclientException e) {
                     throw new NSClientCollectorException("Error checking group (" + wpm.getName() + ") availability", e);
                 } finally {
@@ -32,16 +37,6 @@
 
             if (agentState.groupIsAvailable(wpm.getName())) {
                 // Collect the data
-                RrdRepository rrdRepository = NSClientDataCollectionConfigFactory.getInstance().getRrdRepository(collectionName);
-                ResourceIdentifier resource = new ResourceIdentifier() {
-                    public String getOwnerName() {
-                        return theAgent.getHostAddress();
-                    }
-
-                    public File getResourceDir(RrdRepository repository) {
-                        return new File(repository.getRrdBaseDir(), Integer.toString(theAgent.getNodeId()));
-                    }
-                };
                 try {
                     NsclientManager manager = agentState.getManager();
                     manager.init(); // Open the connection, then do each
@@ -49,9 +44,7 @@
 
                     for (Attrib attrib : wpm.getAttrib()) {
                         NsclientPacket result = null;
-                        NSClientCollectionAttribute attribute;
-                        PersistOperationBuilder builder;
-                        
+
                         try {
                             NsclientCheckParams params = new NsclientCheckParams(attrib.getName());
                             result = manager.processCheckCommand(NsclientManager.CHECK_COUNTER, params);
@@ -63,17 +56,8 @@
                             if (result.getResultCode() != NsclientPacket.RES_STATE_OK) {
                                 log().info("not writing parameters for attribute '" + attrib.getName() + "', state is not 'OK'");
                             } else {
-                                attribute = new NSClientCollectionAttribute(attrib.getAlias(), attrib.getType(), result.getResponse());
-                                builder = new PersistOperationBuilder(rrdRepository, resource, attribute.getName());
-                                builder.declareAttribute(attribute);
-                                log().debug("doCollection: setting attribute: " + attribute);
-                                builder.setAttributeValue(attribute, attribute.getValue());
-
-                                try {
-                                    builder.commit();
-                                } catch (RrdException e) {
-                                    throw new NSClientCollectorException("Error writing RRD", e);
-                                }
+                                NSClientCollectionAttributeType attribType=new NSClientCollectionAttributeType(attrib, attribGroupType);
+                                collectionResource.setAttributeValue(attribType, result.getResponse());
                             }
                         }
                     }
@@ -85,7 +69,7 @@
                 }
             }
         }
-
-        return ServiceCollector.COLLECTION_SUCCEEDED;
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+        return collectionSet;
     }
 
