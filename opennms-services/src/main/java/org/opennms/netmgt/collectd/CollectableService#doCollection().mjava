@@ -1,14 +1,31 @@
 	private int doCollection() {
 		// Perform SNMP data collection
 		//
-		log().info("run: starting new collection for " + getHostAddress());
-
-		int status = ServiceCollector.COLLECTION_FAILED;
+		log().info("run: starting new collection for " + getHostAddress() + "/" + m_spec.getServiceName());
+		CollectionSet result=null;
 		try {
-	        status = m_spec.collect(m_agent);
+		    result = m_spec.collect(m_agent);
+		    if(result!=null) {
+
+                        Collectd.instrumentation().beginPersistingServiceData(m_nodeId, getHostAddress(), m_spec.getServiceName());
+                        try {
+                            BasePersister persister = createPersister(m_params, m_repository);
+                            result.visit(persister);
+                        } finally {
+                            Collectd.instrumentation().endPersistingServiceData(m_nodeId, getHostAddress(), m_spec.getServiceName());
+                        }
+                        //Do the thresholding; this could be made more generic (listeners begin passed the collectionset ), but frankly, why bother?
+                        //The first person who actually needs to configure that sort of thing on the fly can code it up
+                        if(m_thresholdVisitor!=null) {
+                            result.visit(m_thresholdVisitor);
+                        }
+                       
+		        return result.getStatus();
+		    }
 		} catch (Throwable t) {
-			log().error("run: An undeclared throwable was caught during SNMP collection for interface " + getHostAddress(), t);
+		    log().error("run: An undeclared throwable was caught during data collection for interface " + getHostAddress(), t);
 		}
-		return status;
+		//Fall-through case - something went wrong, we failed
+		return ServiceCollector.COLLECTION_FAILED;
 	}
 

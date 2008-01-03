@@ -9,7 +9,7 @@
      *            Key/value pairs from the package to which the interface
      *            belongs.
      */
-    public int collect(CollectionAgent agent, EventProxy eventProxy, Map<String, String> parameters) {
+    public CollectionSet collect(CollectionAgent agent, EventProxy eventProxy, Map<String, String> parameters) {
         try {
             
 
@@ -24,28 +24,30 @@
 
             final ForceRescanState forceRescanState = new ForceRescanState(agent, eventProxy);
 
-            CollectionSet collectionSet = snmpCollection.createCollectionSet(agent);
+            SnmpCollectionSet collectionSet = snmpCollection.createCollectionSet(agent);
             if (!collectionSet.hasDataToCollect()) {
                 logNoDataToCollect(agent);
             }
             
-            collectData(collectionSet);
-
-            if (collectionSet.rescanNeeded()) {
-                forceRescanState.rescanIndicated();
+            Collectd.instrumentation().beginCollectingServiceData(collectionSet.getCollectionAgent().getNodeId(), collectionSet.getCollectionAgent().getHostAddress(), serviceName());
+            try {
+                collectionSet.collect();
+                if (collectionSet.rescanNeeded()) {
+                    forceRescanState.rescanIndicated();
+                }
+//              Not done here anymore - see CollectableService
+                //persistData(params, collectionSet);
+                return collectionSet;
+            } catch (CollectionWarning e) {
+                Collectd.instrumentation().reportCollectionError(agent.getNodeId(), agent.getHostAddress(), serviceName(), e);
+                e.reportError();
+            } finally {
+                Collectd.instrumentation().endCollectingServiceData(collectionSet.getCollectionAgent().getNodeId(), collectionSet.getCollectionAgent().getHostAddress(), serviceName());
             }
-
-            persistData(params, collectionSet);
-
-            // return the status of the collection
-            return ServiceCollector.COLLECTION_SUCCEEDED;
-        } catch (CollectionError e) {
-            Collectd.instrumentation().reportCollectionError(agent.getNodeId(), agent.getHostAddress(), serviceName(), e);
-            return e.reportError();
         } catch (Throwable t) {
             t.printStackTrace();
-            log().error("received Throwable: " + t, t);
-            return this.unexpected(agent, t);
+            log().error("Unexpected error during node SNMP collection for : " + agent.getHostAddress(), t);
         }
+        return null;
     }
 
