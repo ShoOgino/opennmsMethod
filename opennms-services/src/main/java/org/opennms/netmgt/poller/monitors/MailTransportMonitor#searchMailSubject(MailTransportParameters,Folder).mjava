@@ -1,0 +1,56 @@
+    /**
+     * After a mailbox has been opened, search through the retrieved messages
+     * for a matching subject.
+     * 
+     * @param mailParms
+     * @param mailFolder
+     * @return a PollStatus indicative of the success of matching a subject or just retieving
+     *         mail folder contents... dependent on configuration.
+     */
+    private PollStatus searchMailSubject(final MailTransportParameters mailParms, final Folder mailFolder) {
+        PollStatus status = PollStatus.unknown();
+        try {
+            String subject = computeMatchingSubject(mailParms);
+            if (mailFolder.isOpen() && subject != null) {
+                Message[] mailMessages = mailFolder.getMessages();
+                SearchTerm searchTerm = new SubjectTerm(subject);
+                log().debug(new StringBuilder("searchMailSubject: searching ")
+                  .append(mailMessages.length)
+                  .append(" messages for subject: ")
+                  .append(subject).toString());
+
+                boolean found = false;
+                for (int i = 1; i <= mailMessages.length; i++) {
+                    Message mailMessage = mailFolder.getMessage(i);
+                    log().debug("searchMailSubject: retrieved message subject:"+mailMessage.getSubject());
+                    
+                    if (!found && mailMessage.match(searchTerm)) {
+                        log().debug("searchMailSubject: message with subject: '"+subject+"' found.");
+                        
+                        if (mailParms.isEnd2EndTestInProgress()) {
+                            mailMessage.setFlag(Flag.DELETED, true);
+                            log().debug("searchMailSubject: flagging message: "+subject+" for deletion for end2end test.");
+                        }
+                        found = true;
+                        if (found && !mailParms.getReadTest().isDeleteAllMail()) {
+                            break;
+                        } else {
+                            mailMessage.setFlag(Flag.DELETED, true);
+                        }
+                    }
+                }
+                
+                if (!found) {
+                    log().debug("searchMailSubject: message with subject: '"+subject+"' NOT found.");
+                    status = PollStatus.down("searchMailSubject: matching test message: '"+subject+"', not found.");
+                } else {
+                    status = PollStatus.available();
+                }
+            }
+        } catch (MessagingException e) {
+            return PollStatus.down(e.getLocalizedMessage());
+        }
+
+        return status;
+    }
+

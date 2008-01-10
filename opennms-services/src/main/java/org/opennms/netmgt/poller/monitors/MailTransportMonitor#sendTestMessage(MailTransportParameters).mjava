@@ -1,0 +1,32 @@
+    /**
+     * Sends message based on properties and fields configured for the service.
+     * 
+     * @param mailParms
+     * @return a PollStatus
+     */
+    private PollStatus sendTestMessage(final MailTransportParameters mailParms) {
+        PollStatus status = PollStatus.unavailable("Test not completed.");
+
+        final long interval = mailParms.getSendTestAttemptInterval();
+                
+        TimeoutTracker tracker = new TimeoutTracker(mailParms.getParameterMap(), mailParms.getRetries(), mailParms.getTimeout());
+        for (tracker.reset(); tracker.shouldRetry(); tracker.nextAttempt()) {
+            tracker.startAttempt();
+            log().debug("sendTestMessage: sending mail attempt: "+tracker.getAttempt()+", elapsed time:"+tracker.elapsedTimeInMillis()+"ms.");
+            try {
+                final JavaMailer sendMailer = createMailer(mailParms);
+                overRideDefaultProperties(mailParms, sendMailer);
+                sendMailer.mailSend();
+                status = PollStatus.available();
+                break;
+            } catch (JavaMailerException e) {
+                status = PollStatus.unavailable(e.getLocalizedMessage());
+            }
+            
+            if (tracker.shouldRetry()) {
+                status = delayTest(status, interval);
+            }
+        }
+        return status;
+    }
+
