@@ -1,0 +1,67 @@
+    protected void loadConfiguration(Reader rdr, File rootConfigFile) throws DataAccessException {
+        Map<File, Events> eventFiles = new HashMap<File, Events>();
+        EventConfData eventConfData = new EventConfData();
+        Set<String> secureTags = new HashSet<String>();
+        
+        long startTime = System.currentTimeMillis();
+
+        if (log().isDebugEnabled()) {
+            log().debug("DefaultEventConfDao: Loading root event configuration file: " + rootConfigFile);
+        }
+        Events events = CastorUtils.unmarshalWithTranslatedExceptions(Events.class, rdr);
+        IOUtils.closeQuietly(rdr);
+        
+        int count = 0;
+        
+        count += processEvents(eventFiles, eventConfData, rootConfigFile, events);
+        log().info("DefaultEventConfDao: Loaded " + events.getEventCollection().size() + " events from root event configuration file: " + rootConfigFile);
+
+        secureTags.addAll(events.getGlobal().getSecurity().getDoNotOverrideCollection());
+
+        for (String eventFilePath : events.getEventFileCollection()) {
+            File eventFile = new File(eventFilePath);
+            
+            if (!eventFile.isAbsolute()) {
+                if (rootConfigFile == null) {
+                    throw new ObjectRetrievalFailureException(File.class, eventFile, "Event configuration file contains an eventFile element with a relative path, however loadConfiguration was called without a rootConfigFile parameter, so the relative path cannot be resolved.  The event-file entry is: " + eventFilePath, null);
+                }
+                
+                eventFile = new File(rootConfigFile.getParentFile(), eventFilePath);
+                // XXX Should we do getCanonicalFile()???
+            }
+
+            FileReader fileIn;
+            
+            try {
+                fileIn = new FileReader(eventFile);
+            } catch (FileNotFoundException e) {
+                throw new DataAccessResourceFailureException("Event file '" + eventFile + "' does not exist.  Nested exception: " + e, e);
+            }
+
+            if (log().isDebugEnabled()) {
+                log().debug("DefaultEventConfDao: Loading included event configuration file: " + eventFile);
+            }
+            Events filelevel = CastorUtils.unmarshalWithTranslatedExceptions(Events.class, fileIn);
+            IOUtils.closeQuietly(fileIn);
+            
+            if (filelevel.getGlobal() != null) {
+                throw new ObjectRetrievalFailureException(File.class, eventFile, "The event file " + eventFile + " included from the top-level event configuration file cannot have a 'global' element", null);
+            }
+            if (filelevel.getEventFileCollection().size() > 0) {
+                throw new ObjectRetrievalFailureException(File.class, eventFile, "The event file " + eventFile + " included from the top-level event configuration file cannot include other configuration files: " + StringUtils.collectionToCommaDelimitedString(filelevel.getEventFileCollection()), null);
+            }
+            
+            count += processEvents(eventFiles, eventConfData, eventFile, filelevel);
+            
+            log().info("DefaultEventConfDao: Loaded " + filelevel.getEventCollection().size() + " events from included event configuration file: " + eventFile);
+        }
+        
+        long endTime = System.currentTimeMillis();
+
+        log().info("DefaultEventConfDao: Loaded a total of " + count + " events in " + (endTime - startTime) + "ms");
+
+        m_eventFiles = eventFiles;
+        m_eventConfData = eventConfData;
+        m_secureTags = secureTags;
+    }
+
