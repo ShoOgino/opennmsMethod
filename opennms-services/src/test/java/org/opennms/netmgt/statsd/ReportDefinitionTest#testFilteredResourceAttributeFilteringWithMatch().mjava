@@ -1,0 +1,41 @@
+    public void testFilteredResourceAttributeFilteringWithMatch() throws Exception {
+        OnmsAttribute rrdAttribute = new RrdGraphAttribute("IfInOctets", "something", "something else");
+        ExternalValueAttribute externalValueAttribute = new ExternalValueAttribute("ifSpeed", "100000000");
+
+        Set<OnmsAttribute> attributes = new HashSet<OnmsAttribute>();
+        attributes.add(rrdAttribute);
+        attributes.add(externalValueAttribute);
+
+        final OnmsNode node = new OnmsNode();
+        node.setId(1);
+        node.setLabel("Node One");
+        
+        MockResourceType resourceType = new MockResourceType();
+        resourceType.setName("interfaceSnmp");
+        OnmsResource resource = new OnmsResource(node.getId().toString(), node.getLabel(), resourceType, attributes);
+
+        ReportDefinition def = createReportDefinition();
+        def.getReport().getPackage().setFilter("");
+        def.setResourceAttributeKey(externalValueAttribute.getName());
+        def.setResourceAttributeValueMatch(externalValueAttribute.getValue());
+        ReportInstance report = def.createReport(m_resourceDao, m_rrdDao, m_filterDao);
+
+        m_filterDao.walkMatchingNodes(EasyMock.eq(""), EasyMock.isA(EntityVisitor.class));
+        EasyMock.expectLastCall().andAnswer(new IAnswer<Object>() {
+            public Object answer() throws Throwable {
+                ((EntityVisitor) EasyMock.getCurrentArguments()[1]).visitNode(node);
+                return null;
+            }
+        });
+        
+        EasyMock.expect(m_resourceDao.getResourceForNode(node)).andReturn(resource);
+
+        EasyMock.expect(m_rrdDao.getPrintValue(rrdAttribute, def.getConsolidationFunction(), report.getStartTime(), report.getEndTime())).andReturn(1.0);
+
+        m_mocks.replayAll();
+        
+        report.walk();
+        
+        assertEquals("results size", 1, report.getResults().size());
+    }
+
