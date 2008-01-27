@@ -1,0 +1,55 @@
+        /**
+         * Process the received events. For each event, use the EventExpander to
+         * look up matching eventconf entry and load info from that match, expand
+         * event parms, add event to database and send event to appropriate
+         * listeners.
+         */
+        public void run() {
+            // check to see if the event log is hooked up
+            if (m_eventLog == null) {
+                return;
+            }
+
+            Events events = m_eventLog.getEvents();
+            if (events == null || events.getEventCount() <= 0) {
+                // no events to process
+                return;
+            }
+
+            for (Event event : events.getEventCollection()) {
+                if (log().isDebugEnabled()) {
+                    // Log the eui, source, and other important aspects
+                    String uuid = event.getUuid();
+                    log().debug("Event {");
+                    log().debug("  uuid  = " + (uuid != null && uuid.length() > 0 ? uuid : "<not-set>"));
+                    log().debug("  uei   = " + event.getUei());
+                    log().debug("  src   = " + event.getSource());
+                    log().debug("  iface = " + event.getInterface());
+                    log().debug("  time  = " + event.getTime());
+                    Parm[] parms = (event.getParms() == null ? null : event.getParms().getParm());
+                    if (parms != null) {
+                        log().debug("  parms {");
+                        for (Parm parm : parms) {
+                            if ((parm.getParmName() != null) && (parm.getValue().getContent() != null)) {
+                                log().debug("    (" + parm.getParmName().trim() + ", " + parm.getValue().getContent().trim() + ")");
+                            }
+                        }
+                        log().debug("  }");
+                    }
+                    log().debug("}");
+                }
+
+                for (EventProcessor eventProcessor : m_eventProcessors) {
+                    try {
+                        eventProcessor.process(m_eventLog.getHeader(), event);
+                    } catch (SQLException e) {
+                        log().warn("Unable to process event using processor " + eventProcessor + "; not processing with any later processors.  Exception: " + e, e);
+                        break;
+                    } catch (Throwable t) {
+                        log().warn("Unknown exception processing event with processor " + eventProcessor + "; not processing with any later processors.  Exception: " + t, t);
+                        break;
+                    }
+                }
+            }
+        }
+

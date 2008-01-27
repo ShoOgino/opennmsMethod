@@ -15,6 +15,8 @@
             SnmpPeerFactory.setInstance(new SnmpPeerFactory(rdr));
             
             if (isStartEventd()) {
+                m_eventdIpcMgr = new EventIpcManagerDefaultImpl();
+
                 EventdConfigManager eventdConfigMgr = new MockEventConfigManager(ConfigurationTestUtils.getReaderForResource(this, "/org/opennms/netmgt/mock/eventd-configuration.xml"));
                 
                 JdbcEventdServiceManager eventdServiceManager = new JdbcEventdServiceManager();
@@ -33,12 +35,35 @@
                 EventExpander eventExpander = new EventExpander();
                 eventExpander.setEventConfDao(eventConfDao);
                 eventExpander.afterPropertiesSet();
+
+                org.opennms.netmgt.eventd.processor.JdbcEventWriter jdbcEventWriter = new org.opennms.netmgt.eventd.processor.JdbcEventWriter();
+                jdbcEventWriter.setEventdServiceManager(eventdServiceManager);
+                jdbcEventWriter.setDataSource(m_db);
+                jdbcEventWriter.setGetNextIdString(eventdConfigMgr.getGetNextEventID());
+                jdbcEventWriter.afterPropertiesSet();
                 
-                m_eventdIpcMgr = new EventIpcManagerDefaultImpl();
-                m_eventdIpcMgr.setEventdConfigMgr(eventdConfigMgr);
-                m_eventdIpcMgr.setEventExpander(eventExpander);
-                m_eventdIpcMgr.setEventdServiceManager(eventdServiceManager);
-                m_eventdIpcMgr.setDataSource(m_db);
+                EventIpcBroadcastProcessor eventIpcBroadcastProcessor = new EventIpcBroadcastProcessor();
+                eventIpcBroadcastProcessor.setEventIpcManager(m_eventdIpcMgr);
+                eventIpcBroadcastProcessor.afterPropertiesSet();
+
+                org.opennms.netmgt.eventd.processor.JdbcAlarmWriter jdbcAlarmWriter = new org.opennms.netmgt.eventd.processor.JdbcAlarmWriter();
+                jdbcAlarmWriter.setEventdServiceManager(eventdServiceManager);
+                jdbcAlarmWriter.setDataSource(m_db);
+                jdbcAlarmWriter.setGetNextIdString(eventdConfigMgr.getGetNextAlarmID());
+                jdbcAlarmWriter.afterPropertiesSet();
+                
+                List<EventProcessor> eventProcessors = new ArrayList<EventProcessor>(3);
+                eventProcessors.add(eventExpander);
+                eventProcessors.add(jdbcEventWriter);
+                eventProcessors.add(eventIpcBroadcastProcessor);
+                eventProcessors.add(jdbcAlarmWriter);
+                
+                org.opennms.netmgt.eventd.EventHandler eventHandler = new org.opennms.netmgt.eventd.EventHandler();
+                eventHandler.setEventProcessors(eventProcessors);
+                eventHandler.afterPropertiesSet();
+                
+                m_eventdIpcMgr.setHandlerPoolSize(eventdConfigMgr.getReceivers());
+                m_eventdIpcMgr.setEventHandler(eventHandler);
                 m_eventdIpcMgr.afterPropertiesSet();
                 
                 m_eventProxy = new EventProxy() {
@@ -58,7 +83,7 @@
                 EventIpcManagerEventHandlerProxy proxy = new EventIpcManagerEventHandlerProxy();
                 proxy.setEventIpcManager(m_eventdIpcMgr);
                 proxy.afterPropertiesSet();
-                List<EventHandler> eventHandlers = new ArrayList<EventHandler>(0);
+                List<EventHandler> eventHandlers = new ArrayList<EventHandler>(1);
                 eventHandlers.add(proxy);
                 
                 TcpEventReceiver tcpEventReceiver = new TcpEventReceiver();
