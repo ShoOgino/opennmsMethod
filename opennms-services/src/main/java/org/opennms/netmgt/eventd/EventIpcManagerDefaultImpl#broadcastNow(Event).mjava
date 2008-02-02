@@ -1,72 +1,56 @@
-    /**
-     * Called by eventd to send an event to all interested listeners
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.eventd.EventIpcBroadcaster#broadcastNow(org.opennms.netmgt.xml.event.Event)
      */
     public synchronized void broadcastNow(Event event) {
         if (log().isDebugEnabled()) {
-            log().debug("Event to be broadcasted: " + event.getUei());
+            log().debug("Event ID " + event.getDbid() + " to be broadcasted: " + event.getUei());
         }
 
-        if (m_listeners.size() <= 0) {
-            if (log().isDebugEnabled()) {
-                log().debug("No listeners interested in all events");
-            }
-
+        if (m_listeners.isEmpty()) {
+            log().debug("No listeners interested in all events");
         }
 
-        // send to listeners interested in receiving all events
+        // Send to listeners interested in receiving all events
         for (EventListener listener : m_listeners) {
-            ListenerThread listenerThr = m_listenerThreads.get(listener.getName());
-            try {
-                listenerThr.getQueue().add(event);
-                if (log().isDebugEnabled()) {
-                    log().debug("Queued event to listener: " + listener.getName());
-                }
-            } catch (FifoQueueException e) {
-                log().error("Error queueing event " + event.getUei() + " to listener thread " + listener.getName() + ": " + e, e);
-            } catch (InterruptedException e) {
-                log().error("Error queueing event " + event.getUei() + " to listener thread " + listener.getName() + ": " + e, e);
-            }
+            queueEventToListener(event, listener);
         }
 
-        // get event UEI
-        String uei = event.getUei();
-        if (uei == null) {
+        if (event.getUei() == null) {
+            if (log().isDebugEnabled()) {
+                log().debug("Event ID " + event.getDbid() + " does not have a UEI, so skipping UEI matching");
+            }
             return;
         }
 
-        // send to listeners who are interested in this event uei
-        //Loop to get partial wild card "directory" matches
-        while (uei.length() > 0) {
-            List<EventListener> listenerList = m_ueiListeners.get(uei);
-            if (listenerList != null) {
-                for (EventListener listener : listenerList) {
-                    ListenerThread listenerThread = m_listenerThreads.get(listener.getName());
-                    try {
-                        listenerThread.getQueue().add(event);
-                        if (log().isDebugEnabled()) {
-                            log().debug("Queued event "+uei+" to listener: " + listener.getName());
-                        }
-                    } catch (FifoQueueException e) {
-                        log().error("Error queueing event " + event.getUei() + " to listener thread " + listener.getName() + ": " + e, e);
-                    } catch (InterruptedException e) {
-                        log().error("Error queueing event " + event.getUei() + " to listener thread " + listener.getName() + ": " + e, e);
+        /*
+         * Send to listeners who are interested in this event UEI.
+         * Loop to attempt partial wild card "directory" matches.
+         */
+        Set<EventListener> sentToListeners = new HashSet<EventListener>();
+        for (String uei = event.getUei(); uei.length() > 0; ) {
+            if (m_ueiListeners.containsKey(uei)) {
+                for (EventListener listener : m_ueiListeners.get(uei)) {
+                    if (!sentToListeners.contains(listener)) {
+                        queueEventToListener(event, listener);
+                        sentToListeners.add(listener);
                     }
-                }
-            } else {
-                if (log().isDebugEnabled()) {
-                    log().debug("No listener interested in event: " + uei);
                 }
             }
             
-            //Try wild cards: Find / before last character
-            int i = uei.lastIndexOf("/",uei.length()-2);
+            // Try wild cards: Find / before last character
+            int i = uei.lastIndexOf("/", uei.length() - 2);
             if (i > 0) {
-                //Split at "/", including the /
-                uei = uei.substring (0, i+1);
+                // Split at "/", including the /
+                uei = uei.substring (0, i + 1);
             } else {
-                //No more wild cards to match
-                uei="";
+                // No more wild cards to match
                 break;
+            }
+        }
+        
+        if (sentToListeners.isEmpty()) {
+            if (log().isDebugEnabled()) {
+                log().debug("No listener interested in event ID " + event.getDbid() + ": " + event.getUei());
             }
         }
     }
