@@ -2,14 +2,25 @@
      * @see org.opennms.netmgt.config.EventConfDao#saveCurrent()
      */
     public synchronized void saveCurrent() {
-        for (Entry<File, Events> entry : m_eventFiles.entrySet()) {
-            File file = entry.getKey();
+        for (Entry<Resource, Events> entry : getEventConfiguration().getEventFiles().entrySet()) {
+            Resource resource = entry.getKey();
             Events fileEvents = entry.getValue();
             
             StringWriter stringWriter = new StringWriter();
-            CastorUtils.marshalWithTranslatedExceptions(fileEvents, stringWriter);
+            try {
+                CastorUtils.marshalWithTranslatedExceptions(fileEvents, stringWriter);
+            } catch (DataAccessException e) {
+                throw new DataAccessResourceFailureException("Could not marshal configuration file for " + resource + ": " + e, e);
+            }
             
             if (stringWriter.toString() != null) {
+                File file;
+                try {
+                    file = resource.getFile();
+                } catch (IOException e) {
+                    throw new DataAccessResourceFailureException("Event resource '" + resource + "' is not a file resource and cannot be saved.  Nested exception: " + e, e);
+                }
+                
                 FileWriter fileWriter;
                 try {
                     fileWriter = new FileWriter(file);
@@ -31,9 +42,20 @@
             }
         }
         
-        // Delete the programmatic store if it exists on disk, but isn't in the main store.  This is for cleanliness
-        if (m_programmaticStoreFile.exists() && (!m_eventFiles.containsKey(m_programmaticStoreFile))) {
-            m_programmaticStoreFile.delete(); 
+        File programmaticStoreFile;
+        try {
+            programmaticStoreFile = getProgrammaticStoreConfigResource().getFile();
+        } catch (IOException e) {
+            log().info("Programmatic store resource '" + getProgrammaticStoreConfigResource() + "'; not attempting to delete an unused programmatic store file if it exists (since we can't test for it).");
+            programmaticStoreFile = null;
+        }
+        
+        if (programmaticStoreFile != null) {
+            // Delete the programmatic store if it exists on disk, but isn't in the main store.  This is for cleanliness
+            if (programmaticStoreFile.exists() && (!getEventConfiguration().getEventFiles().containsKey(getProgrammaticStoreConfigResource()))) {
+                log().info("Deleting programmatic store configuration file because it is no longer referenced in the root config file " + getConfigResource());
+                programmaticStoreFile.delete(); 
+            }
         }
         
         /*
