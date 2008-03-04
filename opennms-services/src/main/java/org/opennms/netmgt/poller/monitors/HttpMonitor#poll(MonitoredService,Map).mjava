@@ -14,210 +14,79 @@
     public PollStatus poll(MonitoredService svc, Map parameters) {
         NetworkInterface iface = svc.getNetInterface();
 
-        //
-        // Get interface address from NetworkInterface
-        //
         if (iface.getType() != NetworkInterface.TYPE_IPV4) {
             throw new NetworkInterfaceNotSupportedException("Unsupported interface type, only TYPE_IPV4 currently supported");
         }
 
-        
-        String cmd = buildCommand(iface, parameters);
-
         // Cycle through the port list
         //
-        int serviceStatus = PollStatus.SERVICE_UNAVAILABLE;
-        String reason = null;
-        Double responseTime = null;
         int currentPort = -1;
+        HttpMonitorClient httpClient = new HttpMonitorClient(iface, new TreeMap<String, String>(parameters));
 
-        for (int portIndex = 0; portIndex < getPorts(parameters).length && serviceStatus != PollStatus.SERVICE_AVAILABLE; portIndex++) {
-            currentPort = getPorts(parameters)[portIndex];
+        for (int portIndex = 0; portIndex < determinePorts(httpClient.getParameters()).length && httpClient.getPollStatus() != PollStatus.SERVICE_AVAILABLE; portIndex++) {
+            currentPort = determinePorts(httpClient.getParameters())[portIndex];
 
-            TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
+            httpClient.setTimeoutTracker(new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT));
+            log().debug("Port = " + currentPort + ", Address = " + ((InetAddress) iface.getAddress()) + ", " + httpClient.getTimeoutTracker());
+            
+            httpClient.setCurrentPort(currentPort);
 
-            if (log().isDebugEnabled()) {
-                log().debug("Port = " + currentPort + ", Address = " + getIpv4Addr(iface) + ", " + tracker);
-            }
-
-            for(tracker.reset(); tracker.shouldRetry() && serviceStatus != PollStatus.SERVICE_AVAILABLE; tracker.nextAttempt()) {
-                Socket socket = null;
+            for(httpClient.getTimeoutTracker().reset();
+                httpClient.getTimeoutTracker().shouldRetry() && httpClient.getPollStatus() != PollStatus.SERVICE_AVAILABLE; 
+                httpClient.getTimeoutTracker().nextAttempt()) {
+                
                 try {
-                    tracker.startAttempt();
+                    httpClient.getTimeoutTracker().startAttempt();                    
+                    httpClient.connect();
+                    log().debug("HttpMonitor: connected to host: " + ((InetAddress) iface.getAddress()) + " on port: " + currentPort);
+
+                    httpClient.sendHttpCommand();
                     
-                    socket = createSocket(iface, currentPort, tracker.getSoTimeout());
-                    socket.connect(new InetSocketAddress(getIpv4Addr(iface), currentPort), tracker.getConnectionTimeout());
-                    socket = wrapSocket(socket);
-                    log().debug("HttpMonitor: connected to host: " + getIpv4Addr(iface) + " on port: " + currentPort);
-
-                    // We're connected, so upgrade status to unresponsive
-                    serviceStatus = PollStatus.SERVICE_UNRESPONSIVE;
-
-                    //
-                    // Issue HTTP 'GET' command and check the return code in the response
-                    //
-                    socket.getOutputStream().write(cmd.getBytes());
-
-                    //
-                    // Get a buffered input stream that will read a line
-                    // at a time
-                    //
-                    BufferedReader lineRdr = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                    String line = lineRdr.readLine();
-                    
-                    if (line == null) {
+                    if (httpClient.isEndOfStream()) {
                         continue;
                     }
 
-                    responseTime = tracker.elapsedTimeInMillis();
-                    
-                    if (log().isDebugEnabled()) {
-                        log().debug("poll: response= " + line);
-                        log().debug("poll: responseTime= " + responseTime + "ms");
-                    }
+                    httpClient.setResponseTime(httpClient.getTimeoutTracker().elapsedTimeInMillis());
+                    logResponseTimes(httpClient.getResponseTime(), httpClient.getCurrentLine());
 
-                    if (line.startsWith("HTTP/")) {
-                        StringTokenizer t = new StringTokenizer(line);
-                        t.nextToken();
-
-                        int serverResponseValue = -1;
-                        try {
-                            serverResponseValue = Integer.parseInt(t.nextToken());
-                        } catch (NumberFormatException nfE) {
-                            log().info("Error converting response code from host = " + getIpv4Addr(iface) + ", response = " + line);
-                        }
+                    if (httpClient.getPollStatus() == PollStatus.SERVICE_AVAILABLE && StringUtils.isNotBlank(httpClient.getResponseText())) {
+                        httpClient.setPollStatus(PollStatus.SERVICE_UNAVAILABLE);
+                        httpClient.readLinedMatching();
                         
-                        if (SnmpPeerFactory.matchNumericListOrRange(String.valueOf(serverResponseValue), getResponse(parameters))) {
-                            serviceStatus = PollStatus.SERVICE_AVAILABLE;
-                        } else {
-                            serviceStatus = PollStatus.SERVICE_UNAVAILABLE;
-                            StringBuffer sb = new StringBuffer();
-                            sb.append("HTTP response value: ");
-                            sb.append(serverResponseValue);
-                            sb.append(". Expecting: ");
-                            sb.append(getResponse(parameters));
-                            sb.append(".");
-                            reason = sb.toString();
-                        }
-                    }
-
-                    if (serviceStatus == PollStatus.SERVICE_AVAILABLE && getResponseText(parameters) != null && getResponseText(parameters).length() > 0) {
-                        // This loop will rip through the rest of the Response Header
-                        //
-                        do {
-                            line = lineRdr.readLine();
-                            
-                            if (isVerbose(parameters)) {
-                                log().debug("\theader: "+line);
-                            }
-
-                        } while (line != null && line.length() != 0);
-                        if (line == null) {
+                        if (httpClient.isEndOfStream()) {
                             continue;
                         }
 
-                        // Now lets rip through the Entity-Body (i.e., content) looking
-                        // for the required text.
-                        //
-                        boolean bResponseTextFound = false;
-                        int nullCount = 0;
-                        do {
-                            line = lineRdr.readLine();
-                            
-                            if (isVerbose(parameters)) {
-                                log().debug("\tbody: "+line);
-                            }
-                            
-                            if (line != null) {
-                                if (getResponseText(parameters).charAt(0) == '~') {
-                                    if (line.matches(getResponseText(parameters).substring(1))) {
-                                        bResponseTextFound = true;
-                                    }
-                                } else {
-                                    int responseIndex = line.indexOf(getResponseText(parameters));
-                                    if (responseIndex != -1) {
-                                        bResponseTextFound = true;
-                                    }
-                                }
-                            } else {
-                                nullCount++;
-                            }
-                            
-                        } while (nullCount < 2 && !bResponseTextFound);
+                        httpClient.read();
 
-                        // Set the status back to failed
-                        //
-                        if (!bResponseTextFound) {
-                            serviceStatus = PollStatus.SERVICE_UNAVAILABLE;
-                            reason = "Matching text: ["+getResponseText(parameters)+"] not found in body of HTTP response";
+                        if (!httpClient.isResponseTextFound()) {
+                            String message = "Matching text: ["+httpClient.getResponseText()+"] not found in body of HTTP response";
+                            log().debug(message);
+                            httpClient.setReason("Matching text: ["+httpClient.getResponseText()+"] not found in body of HTTP response");
                         }
                     }
-                } catch (NoRouteToHostException e) {
-                    log().warn("checkStatus: No route to host exception for address " + getIpv4Addr(iface) + ": " + e.getMessage());
-                    portIndex = getPorts(parameters).length; // Will cause outer for(;;) to terminate
-                    reason = "No route to host exception";
                     
-                    // don't break in case 'strict timeouts are enabled'
-                    //break; 
+                } catch (NoRouteToHostException e) {
+                    log().warn("checkStatus: No route to host exception for address " + ((InetAddress) iface.getAddress()) + ": " + e.getMessage());
+                    portIndex = determinePorts(httpClient.getParameters()).length; // Will cause outer for(;;) to terminate
+                    httpClient.setReason("No route to host exception");
                 } catch (InterruptedIOException e) {
-                    // Ignore
-                    log().info("checkStatus: did not connect to host with " + tracker);
-                    reason = "HTTP connection timeout";
+                    log().info("checkStatus: did not connect to host with " + httpClient.getTimeoutTracker().toString());
+                    httpClient.setReason("HTTP connection timeout");
                 } catch (ConnectException e) {
-                    // Connection Refused. Continue to retry.
-                    log().warn("Connection exception for " + getIpv4Addr(iface) + ":" + getPorts(parameters)[portIndex] + ":"+ e.getMessage());
-                    reason = "HTTP connection exception on port: "+getPorts(parameters)[portIndex]+": "+e.getMessage();
+                    log().warn("Connection exception for " + ((InetAddress) iface.getAddress()) + ":" + determinePorts(httpClient.getParameters())[portIndex] + ":"+ e.getMessage());
+                    httpClient.setReason("HTTP connection exception on port: "+determinePorts(httpClient.getParameters())[portIndex]+": "+e.getMessage());
                 } catch (IOException e) {
-                    // Ignore
-                    //
                     e.fillInStackTrace();
-                    log().warn("IOException while polling address " + getIpv4Addr(iface), e);
-                    reason = "IOException while polling address: "+getIpv4Addr(iface)+": "+e.getMessage();
+                    log().warn("IOException while polling address " + ((InetAddress) iface.getAddress()), e);
+                    httpClient.setReason("IOException while polling address: "+((InetAddress) iface.getAddress())+": "+e.getMessage());
                 } finally {
-                    try {
-                        // Close the socket
-                        if (socket != null) {
-                            socket.close();
-                        }
-                    } catch (IOException e) {
-                        e.fillInStackTrace();
-                        log().warn("Error closing socket connection", e);
-                    }
+                    httpClient.closeConnection();
                 }
 
             } // end for (attempts)
         } // end for (ports)
-
-        // Add the 'qualifier' parm to the parameter map. This parm will
-        // contain the port on which the service was found if AVAILABLE or
-        // will contain a comma delimited list of the port(s) which were
-        // tried if the service is UNAVAILABLE
-        //
-        if (serviceStatus == PollStatus.SERVICE_UNAVAILABLE) {
-            //
-            // Build port string
-            //
-            StringBuffer testedPorts = new StringBuffer();
-            for (int i = 0; i < getPorts(parameters).length; i++) {
-                if (i == 0) {
-                    testedPorts.append(getPorts(parameters)[0]);
-                } else {
-                    testedPorts.append(',').append(getPorts(parameters)[i]);
-                }
-            }
-
-            // Add to parameter map
-            parameters.put("qualifier", testedPorts.toString());
-            reason += "/Ports: "+testedPorts.toString();
-            log().debug("checkStatus: Reason: \""+reason+"\"");
-            return PollStatus.unavailable(reason);
-
-        } else if (serviceStatus == PollStatus.SERVICE_AVAILABLE) {
-            parameters.put("qualifier", Integer.toString(currentPort));
-            return PollStatus.available(responseTime);
-        } else {
-            return PollStatus.get(serviceStatus, reason);
-        }
+        return httpClient.determinePollStatusResponse();
 
     }
 
