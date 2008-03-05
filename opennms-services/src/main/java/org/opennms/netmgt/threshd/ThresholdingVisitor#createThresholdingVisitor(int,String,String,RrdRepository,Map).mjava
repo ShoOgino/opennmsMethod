@@ -1,10 +1,74 @@
     public static ThresholdingVisitor createThresholdingVisitor(int nodeId, String hostAddress, String serviceName, RrdRepository repo, Map params) {
-        //Use the "thresholding-group" param to get the appropriate config from DefaultThresholdsDao.
-        String groupName=(String)params.get("thresholding-group");
+        Category log = ThreadCategory.getInstance(ThresholdingVisitor.class);
         
-        if(groupName==null) {
+        // Use the "thresholding-enable" to use Thresholds processing on Collectd
+        String enabled = (String)params.get("thresholding-enabled");
+        if (enabled == null || !enabled.equals("true")) {
+        	log.warn("createThresholdingVisitor: Thresholds processing is not enabled. Check thresholding-enabled param on collectd package");
+        	return null;
+        }
+
+        // The next code was extracted from Threshd.scheduleService
+        //
+        //
+        // Searching for packages defined on threshd-configuration.xml
+        // Compare interface/service pair against each threshd package
+        // For each match, create new ThresholdableService object and
+        // schedule it for collection
+        //
+        List<String> groupNameList = new ArrayList<String>();
+        for (org.opennms.netmgt.config.threshd.Package pkg : s_threshdConfig.getConfiguration().getPackage()) {
+
+            // Make certain the the current service is in the package
+            // and enabled!
+            //
+            if (!s_threshdConfig.serviceInPackageAndEnabled(serviceName, pkg)) {
+                if (log.isDebugEnabled())
+                    log.debug("createThresholdingVisitor: address/service: " + hostAddress + "/" + serviceName + " not scheduled, service is not enabled or does not exist in package: " + pkg.getName());
+                continue;
+            }
+
+            // Is the interface in the package?
+            //
+            log.debug("createThresholdingVisitor: checking ipaddress " + hostAddress + " for inclusion in pkg " + pkg.getName());
+            boolean foundInPkg = s_threshdConfig.interfaceInPackage(hostAddress, pkg);
+            if (!foundInPkg) {
+                // The interface might be a newly added one, rebuild the package
+                // to ipList mapping and again to verify if the interface is in
+                // the package.
+                //
+                s_threshdConfig.rebuildPackageIpListMap();
+                foundInPkg = s_threshdConfig.interfaceInPackage(hostAddress, pkg);
+            }
+            if (!foundInPkg) {
+                if (log.isDebugEnabled())
+                    log.debug("createThresholdingVisitor: address/service: " + hostAddress + "/" + serviceName + " not scheduled, interface does not belong to package: " + pkg.getName());
+                continue;
+            }
+
+            // Getting thresholding-group for selected service and adding to groupNameList
+            //
+            for (org.opennms.netmgt.config.threshd.Service svc : pkg.getService()) {
+            	if (svc.getName().equals(serviceName)) {
+            		String groupName = null;
+            		for (org.opennms.netmgt.config.threshd.Parameter parameter : svc.getParameter()) {
+            			if (parameter.getKey().equals("thresholding-group")) {
+            				groupName = parameter.getValue();
+            			}
+            		}
+            		if (groupName != null) {
+            			groupNameList.add(groupName);
+            			log.debug("createThresholdingVisitor:  address/service: " + hostAddress + "/" + serviceName + ". Adding Group " + groupName);
+            		}
+            	}
+            }
+        }
+        
+        // Create ThresholdingVisitor is groupNameList is not empty
+        if (groupNameList.isEmpty()) {
+            log.warn("createThresholdingVisitor: Can't create ThreshdingVisitor for " + hostAddress + "/" + serviceName);
             return null;
         }
-        return new ThresholdingVisitor(nodeId, hostAddress, serviceName, repo, groupName);
+        return new ThresholdingVisitor(nodeId, hostAddress, serviceName, repo, groupNameList);
     }
 
