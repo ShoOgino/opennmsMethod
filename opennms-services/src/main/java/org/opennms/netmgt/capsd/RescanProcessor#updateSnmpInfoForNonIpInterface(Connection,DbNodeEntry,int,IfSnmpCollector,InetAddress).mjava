@@ -4,60 +4,36 @@
     private void updateSnmpInfoForNonIpInterface(Connection dbc,
             DbNodeEntry node, int ifIndex, IfSnmpCollector snmpc,
             InetAddress ifAddr) throws SQLException {
-        Category log = ThreadCategory.getInstance(getClass());
-
-        if (log.isDebugEnabled()) {
-            log.debug("updateNonIpInterface: updating non-IP snmp interface "
+        if (log().isDebugEnabled()) {
+            log().debug("updateNonIpInterface: updating non-IP snmp interface "
                       + "with nodeId=" + node.getNodeId() + " and ifIndex="
                       + ifIndex);
         }
 
         // Create and load SNMP Interface entry from the database
         boolean newSnmpIfTableEntry = false;
-        DbSnmpInterfaceEntry dbSnmpIfEntry =
-            DbSnmpInterfaceEntry.get(dbc,node.getNodeId(), ifIndex);
+        DbSnmpInterfaceEntry dbSnmpIfEntry = DbSnmpInterfaceEntry.get(dbc,node.getNodeId(), ifIndex);
         if (dbSnmpIfEntry == null) {
             /*
              * SNMP Interface not found with this nodeId & ifIndex, create new
              * interface
              */
-            if (log.isDebugEnabled()) {
-                log.debug("updateNonIpInterface: non-IP SNMP interface with "
+            if (log().isDebugEnabled()) {
+                log().debug("updateNonIpInterface: non-IP SNMP interface with "
                           + "ifIndex " + ifIndex+ " not in database, creating "
                           + "new snmpInterface object.");
             }
-            dbSnmpIfEntry = DbSnmpInterfaceEntry.create(node.getNodeId(),
-                                                        ifIndex);
+            dbSnmpIfEntry = DbSnmpInterfaceEntry.create(node.getNodeId(), ifIndex);
             newSnmpIfTableEntry = true;
         }
 
-        // Find the ifTable entry for this interface
-        IfTable ift = snmpc.getIfTable();
-        Iterator<IfTableEntry> ifiter = ift.getEntries().iterator();
-        IfTableEntry ifte = null;
-        boolean match = false;
-        while (ifiter.hasNext()) {
-            ifte = ifiter.next();
-
-            // index
-            Integer sint = ifte.getIfIndex();
-            if (sint != null) {
-                if (ifIndex == sint.intValue()) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("updateNonIpInterface: found match for "
-                                  + "ifIndex: " + ifIndex);
-                    }
-                    match = true;
-                    break;
-                }
-            }
-        }
+        IfTableEntry ifte = findEntryByIfIndex(ifIndex, snmpc);
 
         /*
          * Make sure we have a valid IfTableEntry object and update
          * any values which have changed
          */
-        if (match && ifte != null) {
+        if (ifte != null) {
             // index
             // dbSnmpIfEntry.updateIfIndex(ifIndex);
 
@@ -70,70 +46,14 @@
              * NOTE: non-IP interfaces don't have netmasks so skip
              */
 
-            // type
-            Integer sint = ifte.getIfType();
-            //FIXME: check for null
-            dbSnmpIfEntry.updateType(sint.intValue());
-
-            // description
-            String str = ifte.getIfDescr();
-            if (log.isDebugEnabled()) {
-                log.debug("updateNonIpInterface: ifIndex: " + ifIndex
-                          + " has ifDescription: " + str);
-            }
-            if (str != null && str.length() > 0) {
-                dbSnmpIfEntry.updateDescription(str);
-            }
-
-            String physAddr = ifte.getPhysAddr();
-
-            if (log.isDebugEnabled()) {
-                log.debug("updateNonIpInterface: ifIndex: " + ifIndex
-                          + " has physical address: -" + physAddr + "-");
-            }
-
-            if (physAddr != null && physAddr.length() == 12) {
-                dbSnmpIfEntry.updatePhysicalAddress(physAddr);
-            }
-
-            // speed
-            Long uint = ifte.getIfSpeed();
-            if (uint == null) {
-                dbSnmpIfEntry.updateSpeed(0);
-            } else {
-                dbSnmpIfEntry.updateSpeed(uint.longValue());
-            }
-
-            // admin status
-            sint = ifte.getIfAdminStatus();
-            if (sint == null) {
-                dbSnmpIfEntry.updateAdminStatus(0);
-            } else {
-                dbSnmpIfEntry.updateAdminStatus(sint.intValue());
-            }
-
-            // oper status
-            sint = ifte.getIfOperStatus();
-            if (sint == null) {
-                dbSnmpIfEntry.updateOperationalStatus(0);
-            } else {
-                dbSnmpIfEntry.updateOperationalStatus(sint.intValue());
-            }
-
-            // name (from interface extensions table)
-            String ifName = snmpc.getIfName(ifIndex);
-            if (ifName != null && ifName.length() > 0) {
-                dbSnmpIfEntry.updateName(ifName);
-            }
-
-            // alias (from interface extensions table)
-            String ifAlias = snmpc.getIfAlias(ifIndex);
-            if (ifAlias != null) {
-                dbSnmpIfEntry.updateAlias(ifAlias);
-            } else {
-                dbSnmpIfEntry.updateAlias("");
-            }		
-
+            updateType(ifte, dbSnmpIfEntry);
+            updateDescription(ifIndex, ifte, dbSnmpIfEntry);
+            updatePhysicalAddress(ifIndex, ifte, dbSnmpIfEntry);
+            updateSpeed(ifIndex, ifte, dbSnmpIfEntry);
+            updateAdminStatus(ifte, dbSnmpIfEntry);
+            updateOperationalStatus(ifte, dbSnmpIfEntry);
+            updateName(ifIndex, snmpc, dbSnmpIfEntry);
+            updateAlias(ifIndex, snmpc, dbSnmpIfEntry);
         } // end if valid ifTable entry
 
         /*
