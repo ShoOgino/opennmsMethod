@@ -5,8 +5,6 @@
             log().debug("start: Creating the xmlrpc event queue processor");
 
         // set up the event queue processor
-        m_eventlogQ = new FifoQueueImpl();
-
         try {
             if (log().isDebugEnabled())
                 log().debug("start: Initializing the xmlrpcd config factory");
@@ -21,10 +19,23 @@
             if (verifyServer)
                 localServer = OpennmsServerConfigFactory.getInstance().getServerName();
 
-            Enumeration eventEnum = xFactory.getEventEnumeration();
-            m_eventReceiver = new BroadcastEventProcessor(m_eventlogQ, xFactory.getMaxQueueSize(), eventEnum);
+            // create a BroadcastEventProcessor per server 
+            Enumeration servers = xFactory.getSubscribingServerEnumeration();
+            int i = 0;
+            while (servers.hasMoreElements()) {
+                SubscribingServers server = 
+                                    (SubscribingServers) servers.nextElement();
+                XmlrpcServer[] xServers = server.getXmlrpcServer();
+                FifoQueue q = new FifoQueueImpl();
+                m_eventlogQs.add(q);
+                m_eventReceivers.add(new BroadcastEventProcessor(
+                            Integer.toString(i), q, xFactory.getMaxQueueSize(), 
+                                    xFactory.getEventList(server)));
 
-            m_processor = new EventQueueProcessor(m_eventlogQ, xFactory.getXmlrpcServer(), xFactory.getRetries(), xFactory.getElapseTime(), verifyServer, localServer, xFactory.getMaxQueueSize());
+                // create an EventQueueProcessor per server 
+                m_processors.add( new EventQueueProcessor(q, xServers, server.getRetries(), server.getElapseTime(), verifyServer, localServer, xFactory.getMaxQueueSize()) );
+                i++;
+            }
 
         } catch (MarshalException e) {
             log().error("Failed to load configuration", e);
