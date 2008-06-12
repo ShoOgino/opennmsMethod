@@ -1,0 +1,74 @@
+    /**
+     * Load the specified config file and create the singleton instance of this factory.
+     * 
+     * @exception java.io.IOException
+     *                Thrown if the specified config file cannot be read
+     * @exception org.exolab.castor.xml.MarshalException
+     *                Thrown if the file does not conform to the schema.
+     * @exception org.exolab.castor.xml.ValidationException
+     *                Thrown if the contents do not match the required schema.
+     */
+    public static synchronized void init(File cfgFile) throws IOException, MarshalException, ValidationException {
+        if (m_loaded) {
+            // init already called - return
+            // to reload, reload() will need to be called
+            return;
+        }
+
+        ThreadCategory.getInstance(XmlrpcdConfigFactory.class).debug("init: config file path: " + cfgFile.getPath());
+
+        m_singleton = new XmlrpcdConfigFactory(cfgFile.getPath());
+        String generatedSubscriptionName = null;
+
+        /* Be backwards-compatible with old configurations.
+         * 
+         * The old style configuration did not have a <serverSubscription> field
+         * inside the <external-servers> tag, so create a default one.
+         */
+        Enumeration<ExternalServers> e = m_singleton.getExternalServerEnumeration();
+        while (e.hasMoreElements()) {
+        	ExternalServers es = e.nextElement();
+        	if (es.getServerSubscriptionCollection().size() == 0) {
+        		if (generatedSubscriptionName == null) {
+        			generatedSubscriptionName = "legacyServerSubscription-" + java.util.UUID.randomUUID().toString();
+        		}
+        		es.addServerSubscription(generatedSubscriptionName);
+        	}
+        }
+
+        if (generatedSubscriptionName != null) {
+        	boolean foundUnnamedSubscription = false;
+        	for (Subscription s : m_singleton.getConfiguration().getSubscriptionCollection()) {
+        		if (s.getName() == null) {
+        			s.setName(generatedSubscriptionName);
+        			foundUnnamedSubscription = true;
+        			break;
+        		}
+        	}
+        	if (! foundUnnamedSubscription) {
+        		String[] ueis = {
+        				"uei.opennms.org/nodes/nodeLostService",
+        				"uei.opennms.org/nodes/nodeRegainedService",
+        				"uei.opennms.org/nodes/nodeUp",
+        				"uei.opennms.org/nodes/nodeDown",
+        				"uei.opennms.org/nodes/interfaceUp",
+        				"uei.opennms.org/nodes/interfaceDown",
+        				"uei.opennms.org/internal/capsd/updateServer",
+        				"uei.opennms.org/internal/capsd/updateService",
+        				"uei.opennms.org/internal/capsd/xmlrpcNotification"
+        		};
+        		Subscription subscription = new Subscription();
+        		subscription.setName(generatedSubscriptionName);
+        		SubscribedEvent subscribedEvent = null;
+        		for (String uei : ueis) {
+        			subscribedEvent = new SubscribedEvent();
+        			subscribedEvent.setUei(uei);
+        			subscription.addSubscribedEvent(subscribedEvent);
+        		}
+        		m_singleton.getConfiguration().addSubscription(subscription);
+        	}
+        }
+
+        m_loaded = true;
+    }
+
