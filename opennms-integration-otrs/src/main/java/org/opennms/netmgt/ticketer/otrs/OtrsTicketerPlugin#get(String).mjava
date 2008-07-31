@@ -1,0 +1,82 @@
+	public Ticket get(String ticketId) {
+
+		TicketWithArticles ticketWithArticles = null;
+
+		long otrsTicketNumber = Long.parseLong(ticketId.trim());
+
+		TicketServiceLocator service = new TicketServiceLocator();
+		
+		service.setTicketServicePortEndpointAddress(m_configDao.getEndpoint());
+
+		TicketServicePort_PortType port = null;
+
+		try {
+			port = service.getTicketServicePort();
+		} catch (ServiceException e) {
+			log().error("Failed initialzing OTRS TicketServicePort" + e);
+			m_eventIpcManager.sendNow(createEvent("Failed initialzing OTRS TicketServicePort"));
+		}
+
+		Ticket opennmsTicket = new Ticket();
+
+		if (port != null) {
+
+			Credentials creds = new Credentials();
+
+			creds.setUser(m_configDao.getUserName());
+			creds.setPass(m_configDao.getPassword());
+
+			// get the ticket from OTRS system
+			
+			try {
+				ticketWithArticles = port.getByNumber(otrsTicketNumber, creds);
+			} catch (RemoteException e) {
+				log().error("Failed to retrieve OTRS ticket" + e);
+				m_eventIpcManager.sendNow(createEvent("Failed to retrieve OTRS ticket"));
+			}
+
+			
+		}
+		
+		// construct an opennms ticket from the returned OTRS ticket and articles
+
+		if (ticketWithArticles != null) {
+
+			// add ticket basics from the OTRS ticket
+			
+			log().debug(
+					"Adding Ticket details from OTRS ticket # "
+							+ ticketWithArticles.getTicket().getTicketNumber());
+			opennmsTicket.setId(ticketWithArticles.getTicket().getTicketNumber().toString());
+			opennmsTicket.setSummary(ticketWithArticles.getTicket().getTitle());
+			
+			// Note that we user "Owner" from the OTRS ticket here. There is nothing to ensure
+			// That this is a valid OpenNMS user
+			
+			opennmsTicket.setUser(ticketWithArticles.getTicket().getOwner());
+			opennmsTicket.setState(otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
+			
+			log().debug("Retrieved ticket state : " + otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
+			
+			// add all the article details from the OTRS ticket
+			
+			String opennmsTicketDetails = "";
+
+			for (Article article : ticketWithArticles.getArticles()) {
+				log().debug(
+						"Adding Article details from OTRS article ID "
+								+ article.getArticleID());
+				opennmsTicketDetails = opennmsTicketDetails + "\n"
+						+ "From:    " + article.getFrom() + "\n" + "Subject: "
+						+ article.getSubject() + "\n" + "Body:\n"
+						+ article.getBody() + "\n";
+			}
+			
+			opennmsTicket.setDetails(opennmsTicketDetails);
+
+		}
+
+		return opennmsTicket;
+
+	}
+
