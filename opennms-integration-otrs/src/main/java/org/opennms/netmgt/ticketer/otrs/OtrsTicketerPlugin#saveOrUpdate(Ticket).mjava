@@ -1,0 +1,69 @@
+	public void saveOrUpdate(Ticket newTicket) {
+		
+		TicketIDAndNumber idAndNumber = null;
+		
+		TicketServiceLocator service = new TicketServiceLocator();
+
+		TicketServicePort_PortType port = null;
+		
+		Ticket currentTicket = null;
+		
+		Credentials creds = new Credentials();
+
+		creds.setUser(m_configDao.getUserName());
+		creds.setPass(m_configDao.getPassword());
+		
+		try {
+			port = service.getTicketServicePort();
+		} catch (ServiceException e) {
+			log().error("Failed initialzing OTRS TicketServicePort" + e);
+			m_eventIpcManager.sendNow(createEvent("Failed initialzing OTRS TicketServicePort"));
+		}
+		
+		if (newTicket.getId() != null) {
+
+			currentTicket = get(newTicket.getId()); 
+		
+		} 
+		
+		try {
+			
+			if (currentTicket == null) {
+				
+				idAndNumber =  newOTRSTicket(newTicket, port, creds);
+
+				log().debug("creating new ticket : " + idAndNumber.getTicketNumber());
+				
+				newTicket.setId(String.valueOf(idAndNumber.getTicketNumber()));
+
+				log().debug("Ticket ID is " + newTicket.getId());
+				
+				newOTRSArticle(idAndNumber.getTicketNumber(), newTicket, port, creds);
+				
+				
+			} else {
+				
+				log().debug("updating existing ticket : " + currentTicket.getId());
+				
+				// Add an article with existing ticket details
+				
+				newOTRSArticle(Long.parseLong(currentTicket.getId()), newTicket, port, creds);
+				
+				// Update state only if it's changed
+				
+				if (currentTicket.getState() != newTicket.getState()) {
+					
+					updateOTRSState(newTicket, port, creds);
+					
+				}
+				
+			}
+			
+		} catch (RemoteException e) {
+			log().error("Failed to create or update OTRS ticket" + e);
+			createEvent("Failed to create or update OTRS ticket");
+		}
+		
+		
+	}
+
