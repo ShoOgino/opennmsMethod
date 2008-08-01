@@ -1,0 +1,30 @@
+    @DELETE
+    @Path("{service}")
+    public Response deleteService(@PathParam("nodeId") int nodeId, @PathParam("ipAddress") String ipAddress, @PathParam("service") String serviceName) {
+        OnmsNode node = m_nodeDao.get(nodeId);
+        if (node == null)
+            throwException(Status.BAD_REQUEST, "deleteService: can't find node with id " + nodeId);
+        OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
+        if (intf == null)
+            throwException(Status.BAD_REQUEST, "deleteService: can't find interface with ip address " + ipAddress + " for node with id " + nodeId);
+        OnmsMonitoredService service = intf.getMonitoredServiceByServiceType(serviceName);
+        if (service == null)
+            throwException(Status.CONFLICT, "deleteService: service " + serviceName + " not found on interface " + intf);
+        log().debug("deleteService: deleting service " + serviceName + " from node " + nodeId);
+        intf.getMonitoredServices().remove(service);
+        m_ipInterfaceDao.saveOrUpdate(intf);
+        Event e = new Event();
+        e.setUei(EventConstants.SERVICE_DELETED_EVENT_UEI);
+        e.setNodeid(nodeId);
+        e.setInterface(ipAddress);
+        e.setService(serviceName);
+        e.setSource(getClass().getName());
+        e.setTime(EventConstants.formatToString(new java.util.Date()));
+        try {
+            m_eventProxy.send(e);
+        } catch (EventProxyException ex) {
+            throwException(Status.BAD_REQUEST, ex.getMessage());
+        }
+        return Response.ok().build();
+    }
+
