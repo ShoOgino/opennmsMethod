@@ -9,49 +9,56 @@
         if (getAddress() == null) {
             throw new InsufficientParametersException("you must specify an address");
         }
-        
-        m_exception = null;
-        m_serverVersion = null;
-        m_session = null;
+
         try {
-            m_session = m_jsch.getSession("opennms", getAddress().getHostAddress(), getPort());
-            m_session.connect(getTimeout());
-            m_serverVersion = m_session.getServerVersion();
-            return true;
-        } catch (JSchException e) {
-            m_exception = e;
-            if (e.getCause() != null) {
-                Class cause = e.getCause().getClass();
-                if (cause == ConnectException.class) {
-                    log().debug("connection refused", e);
-                    return false;
-                } else if (cause == NoRouteToHostException.class) {
-                    log().debug("no route to host", e);
-                    return false;
-                } else if (cause == InterruptedIOException.class) {
-                    log().debug("connection timeout", e);
-                    return false;
-                } else if (cause == IOException.class) {
-                    log().debug("An I/O exception occurred", e);
-                    return false;
-                } else if (e.getMessage().matches("^.*(connection is closed by foreign host).*$")) {
-                    log().debug("JSCH failed", e);
-                    return false;
+            m_client = new SshClient();
+            m_client.setSocketTimeout(getTimeout());
+            SshConnectionProperties props = new SshConnectionProperties();
+            props.setHost(getAddress().getHostAddress());
+            props.setPort(getPort());
+            m_client.connect(props, new IgnoreHostKeyVerification());
+            if (getUsername() != null) {
+                PasswordAuthenticationClient pac = new PasswordAuthenticationClient();
+                pac.setUsername(getUsername());
+                pac.setPassword(getPassword());
+                int result = m_client.authenticate(pac);
+                switch (result) {
+                case AuthenticationProtocolState.READY:
+                    m_client.disconnect();
+                    return true;
+                    case AuthenticationProtocolState.COMPLETE:
+                        m_client.disconnect();
+                        return true;
+                    case AuthenticationProtocolState.CANCELLED:
+                        log().error("the user cancelled authentication (this error should not occur)");
+                        break;
+                    case AuthenticationProtocolState.FAILED:
+                        log().error("the authentication failed");
+                        break;
+                    case AuthenticationProtocolState.PARTIAL:
+                        log().error("the authentication was rejected");
+                        break;
+                    default:
+                        log().error("unknown AuthenticationProtocolState: " + result);
+                        break;
                 }
             } else {
-                // ugh, string parse, maybe we can get him to fix this in a newer jsch release
-                if (e.getMessage().matches("^.*(socket is not established|connection is closed by foreign host|java.io.(IOException|InterruptedIOException)|java.net.(ConnectException|NoRouteToHostException)).*$")) {
-                    log().debug("did not connect enough to verify SSH server", e);
-                    return false;
+                if (m_client.isConnected()) {
+                    m_serverVersion = m_client.getServerId();
+                    m_client.disconnect();
+                    return true;
+                } else {
+                    log().error("client did not connect");
                 }
             }
-            if (m_session != null) {
-                if (m_session.isConnected()) {
-                    m_serverVersion = m_session.getServerVersion();
-                }
+        } catch (IOException e) {
+            log().debug("connection failed", e);
+        } finally {
+            if (m_client != null && m_client.isConnected()) {
+                log().debug("client is still connected, disconnecting");
+                m_client.disconnect();
             }
-            log().debug("valid SSH server is listening: " + e.getMessage());
-            return true;
         }
+        return false;
     }
 
