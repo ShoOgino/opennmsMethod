@@ -9,15 +9,13 @@
      *            Key/value pairs from the package to which the interface
      *            belongs.
      */
-    public CollectionSet collect(CollectionAgent agent, EventProxy eventProxy, Map<String, String> parameters) {
+    public CollectionSet collect(CollectionAgent agent, EventProxy eventProxy, Map<String, String> parameters) throws CollectionException {
         try {
-            
-
             // XXX: Experimental code that reuses the OnmsSnmpCollection
-//            OnmsSnmpCollection snmpCollection = (OnmsSnmpCollection)agent.getAttribute("SNMP_COLLECTION");
-//            ServiceParameters params = snmpCollection.getServiceParameters();
+            // OnmsSnmpCollection snmpCollection = (OnmsSnmpCollection)agent.getAttribute("SNMP_COLLECTION");
+            // ServiceParameters params = snmpCollection.getServiceParameters();
             
-            // XXX: This code is commented out in light of the expermintal code above
+            // XXX: This code would be commented out in light if the expermintal code above was enabled
             final ServiceParameters params = new ServiceParameters(parameters);
             params.logIfAliasConfig();
             OnmsSnmpCollection snmpCollection = new OnmsSnmpCollection(agent, params);
@@ -27,31 +25,32 @@
             SnmpCollectionSet collectionSet = snmpCollection.createCollectionSet(agent);
             if (!collectionSet.hasDataToCollect()) {
                 logNoDataToCollect(agent);
+                // should we return here?
             }
             
             Collectd.instrumentation().beginCollectingServiceData(collectionSet.getCollectionAgent().getNodeId(), collectionSet.getCollectionAgent().getHostAddress(), serviceName());
             try {
                 collectionSet.collect();
                 if (collectionSet.rescanNeeded()) {
-                    
-                    //TODO: the behavior of this object may have been re-factored away
-                    //verify that this is correct and remove this unused object if it
-                    //is no longer needed.  My gut thinks this should be investigated.
+                    /*
+                     * TODO: the behavior of this object may have been re-factored away.
+                     * Verify that this is correct and remove this unused object if it
+                     * is no longer needed.  My gut thinks this should be investigated.
+                     */
                     forceRescanState.rescanIndicated();
                 }
-//              Not done here anymore - see CollectableService
+                //Not done here anymore - see CollectableService
                 //persistData(params, collectionSet);
                 return collectionSet;
-            } catch (CollectionWarning e) {
-                Collectd.instrumentation().reportCollectionError(agent.getNodeId(), agent.getHostAddress(), serviceName(), e);
-                e.reportError();
             } finally {
                 Collectd.instrumentation().endCollectingServiceData(collectionSet.getCollectionAgent().getNodeId(), collectionSet.getCollectionAgent().getHostAddress(), serviceName());
             }
+        } catch (CollectionException e) {
+            Collectd.instrumentation().reportCollectionException(agent.getNodeId(), agent.getHostAddress(), serviceName(), e);
+            
+            throw e;
         } catch (Throwable t) {
-            t.printStackTrace();
-            log().error("Unexpected error during node SNMP collection for : " + agent.getHostAddress(), t);
+            throw new CollectionException("Unexpected error during node SNMP collection for: " + agent.getHostAddress() + ": " + t, t);
         }
-        return null;
     }
 
