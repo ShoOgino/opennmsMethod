@@ -1,0 +1,44 @@
+    private PollableService addServiceToNetwork(final PollableNetwork pNetwork,
+            int nodeId, String nodeLabel, String ipAddr, String serviceName,
+            Number svcLostEventId, String svcLostUei,
+            Date svcLostTime, final ScheduleTimer scheduler,
+            final PollerConfig pollerConfig,
+            final PollOutagesConfig pollOutageConfig) {
+        InetAddress addr = getInetAddress(ipAddr); 
+
+        Package pkg = findPackageForService(pollerConfig, ipAddr, serviceName);
+        if (pkg == null) {
+            MockUtil.println("No package for service "+serviceName+" with ipAddr "+ipAddr);
+            return null;
+        }
+        
+
+            
+        PollableService svc = pNetwork.createService(nodeId, nodeLabel, addr, serviceName);
+        PollableServiceConfig pollConfig = new PollableServiceConfig(svc, pollerConfig, pollOutageConfig, pkg, scheduler);
+        svc.setPollConfig(pollConfig);
+        synchronized (svc) {
+            if (svc.getSchedule() == null) {
+                Schedule schedule = new Schedule(svc, pollConfig, scheduler);
+                svc.setSchedule(schedule);
+            }
+        }
+
+        //MockUtil.println("svcLostEventId for "+svc+" is "+svcLostEventId);
+        if (svcLostEventId == null) {
+            if (svc.getParent().getStatus().isUnknown()) {
+                svc.updateStatus(PollStatus.up());
+            } else {
+                svc.updateStatus(svc.getParent().getStatus());
+                svc.setCause(svc.getParent().getCause());
+            }
+        }
+        else {
+            svc.updateStatus(PollStatus.down());
+            
+            PollEvent cause = new DbPollEvent(svcLostEventId.intValue(), svcLostUei, svcLostTime);
+            svc.setCause(cause);
+        }
+        return svc;
+    }
+
