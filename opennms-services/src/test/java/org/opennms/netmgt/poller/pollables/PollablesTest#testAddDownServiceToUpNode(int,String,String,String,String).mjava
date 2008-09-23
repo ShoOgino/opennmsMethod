@@ -1,0 +1,60 @@
+    private void testAddDownServiceToUpNode(int nodeId, String nodeLabel,
+            String ipAddr, String existingSvcName, String newSvcName) {
+        PollableService pExistingSvc = m_network.getService(nodeId, getInetAddress(ipAddr), existingSvcName);
+        PollableInterface pIface = pExistingSvc.getInterface();
+        PollableNode pNode = pExistingSvc.getNode();
+        
+        // first we cause a poll for the up node just be make sure everythings working
+        pExistingSvc.doPoll();
+        
+        m_network.processStatusChange(new Date());
+        
+        verifyAnticipated();
+
+        // no we add the mock serve
+        MockService mSvc = m_mockNetwork.addService(nodeId, ipAddr, newSvcName);
+        m_db.writeService(mSvc);
+        
+        // bring down the service
+        mSvc.bringDown();
+
+        // expect a nodeLostService event
+        anticipateDown(mSvc);
+
+        // add the service to the PollableNetowrk (simulates nodeGainedService event)
+        PollableService pSvc = addServiceToNetwork(nodeId, nodeLabel, ipAddr, newSvcName);
+        assertNotNull(pSvc);
+        
+        // before the first call nothing has a cause
+        assertElementHasNullCause(pSvc);
+        assertElementHasNullCause(pExistingSvc);
+        assertElementHasNullCause(pIface);
+        assertElementHasNullCause(pNode);
+        
+        // and everything is up
+        assertUp(pSvc);
+        assertUp(pExistingSvc);
+        assertUp(pIface);
+        assertUp(pNode);
+        
+        // now poll
+        pSvc.doPoll();
+
+        // expect the svc to be down and everythign else up
+        assertDown(pSvc);
+        assertUp(pExistingSvc);
+        assertUp(pIface);
+        assertUp(pNode);
+
+        // no we send the events and update the causes
+        m_network.processStatusChange(new Date());
+
+        // only the svc has a cause
+        assertNotNull(pSvc.getCause());
+        assertElementHasNullCause(pExistingSvc);
+        assertElementHasNullCause(pIface);
+        assertElementHasNullCause(pNode);
+        
+        verifyAnticipated();
+    }
+
