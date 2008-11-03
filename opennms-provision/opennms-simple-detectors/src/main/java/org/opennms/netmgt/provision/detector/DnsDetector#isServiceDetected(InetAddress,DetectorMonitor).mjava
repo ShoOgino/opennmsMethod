@@ -1,0 +1,62 @@
+    @Override
+    public boolean isServiceDetected(InetAddress address, DetectorMonitor detectMonitor) {
+        
+        boolean isAServer = false;
+        // Allocate a communication socket
+        //
+        DatagramSocket socket = null;
+        try {
+            // Allocate a socket
+            //
+            socket = new DatagramSocket();
+            socket.setSoTimeout(getTimeout());
+
+            // Allocate a receive buffer
+            //
+            byte[] data = new byte[512];
+
+            for (int count = 0; count < getRetries() && !isAServer; count++) {
+                try {
+                    // Construct a new DNS Address Request
+                    //
+                    DNSAddressRequest request = new DNSAddressRequest(getLookup());
+
+                    // build the datagram packet used to request the address.
+                    //
+                    byte[] rdata = request.buildRequest();
+                    DatagramPacket outpkt = new DatagramPacket(rdata, rdata.length, address, getPort());
+                    rdata = null;
+
+                    // send the output packet
+                    //
+                    socket.send(outpkt);
+
+                    // receive a resposne
+                    //
+                    DatagramPacket inpkt = new DatagramPacket(data, data.length);
+                    socket.receive(inpkt);
+                    
+                    if (inpkt.getAddress().equals(address)) {
+                        try {
+                            request.verifyResponse(inpkt.getData(), inpkt.getLength());
+                            isAServer = true;
+                        } catch (IOException ex) {
+                            detectMonitor.info(this, ex, "Failed to match response to request, an IOException occured", new Object());
+                        }
+                    }
+                } catch (InterruptedIOException ex) {
+                    // discard this exception, do next loop
+                    //
+                }
+            }
+        } catch (IOException ex) {
+            detectMonitor.info(this, ex, "isServer: An I/O exception during DNS resolution test.", new Object());
+            //log.warn("isServer: An I/O exception during DNS resolution test.", ex);
+        } finally {
+            if (socket != null)
+                socket.close();
+        }
+
+        return isAServer;
+    }
+
