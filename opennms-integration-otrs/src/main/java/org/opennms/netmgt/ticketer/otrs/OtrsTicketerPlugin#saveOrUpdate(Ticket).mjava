@@ -2,7 +2,7 @@
 		
 		TicketIDAndNumber idAndNumber = null;
 		
-		TicketServicePort_PortType port = getTicketServicePort();
+		TicketServicePort_PortType port = getTicketServicePort(m_endpoint);
 		
 		Ticket currentTicket = null;
 		
@@ -11,23 +11,28 @@
 		creds.setUser(m_configDao.getUserName());
 		creds.setPass(m_configDao.getPassword());
 		
-		if (newTicket.getId() != null) {
+		// we have a ticketID and it's not "unavailable"
+		
+		if ((newTicket.getId() != null) && (! newTicket.getId().equals(UNAVAILABLE_TICKET_ID) ) ) {
 
 			currentTicket = get(newTicket.getId()); 
 		
-		} 
+		}
 		
 		try {
+		    
+		    // If there is no ticket in the external ticketing system, then
+		    // ticketid will marked as "unavailable" so it's new (i.e. Try to recreate).
+		    
+		    // If there's no external ID in the OpenNMS ticket, we need to create one
 			
-			if (currentTicket == null) {
+			if ((newTicket.getId() == null) ) {
 				
 				idAndNumber =  newOTRSTicket(newTicket, port, creds);
 
-				log().debug("creating new ticket : " + idAndNumber.getTicketNumber());
-				
 				newTicket.setId(String.valueOf(idAndNumber.getTicketNumber()));
 
-				log().debug("Ticket ID is " + newTicket.getId());
+				log().debug("created new ticket: " + newTicket.getId());
 				
 				newOTRSArticle(idAndNumber.getTicketNumber(), newTicket, port, creds);
 				
@@ -52,7 +57,8 @@
 			
 		} catch (RemoteException e) {
 			log().error("Failed to create or update OTRS ticket" + e);
-			createEvent("Failed to create or update OTRS ticket");
+			m_eventIpcManager.sendNow(createEvent("Failed to create or update OTRS ticket"));
+			newTicket.setId(UNAVAILABLE_TICKET_ID);
 		}
 		
 		
