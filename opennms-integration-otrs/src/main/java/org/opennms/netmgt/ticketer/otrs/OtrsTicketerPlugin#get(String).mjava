@@ -2,32 +2,42 @@
 
 		TicketWithArticles ticketWithArticles = null;
 
-		long otrsTicketNumber = Long.parseLong(ticketId.trim());
-
-		TicketServicePort_PortType port = getTicketServicePort();
-
+		// don't try to get ticket if it's marked as not available
+		
 		Ticket opennmsTicket = new Ticket();
 
-		if (port != null) {
-
-			Credentials creds = new Credentials();
-
-			creds.setUser(m_configDao.getUserName());
-			creds.setPass(m_configDao.getPassword());
-
-			// get the ticket from OTRS system
-			
-			try {
-				ticketWithArticles = port.getByNumber(otrsTicketNumber, creds);
-			} catch (RemoteException e) {
-				log().error("Failed to retrieve OTRS ticket" + e);
-				m_eventIpcManager.sendNow(createEvent("Failed to retrieve OTRS ticket"));
-			}
-
+		if (ticketId.equals(UNAVAILABLE_TICKET_ID))  {
+		    
+		    log().error("No OTRS ticketID available in OpenNMS Ticket");
+		    
+		} else {
+		    
+		    TicketServicePort_PortType port = getTicketServicePort(m_endpoint);
+	   
+		    if (port != null) {
+		    
+    		    long otrsTicketNumber = Long.parseLong(ticketId.trim());
+    
+    			Credentials creds = new Credentials();
+    
+    			creds.setUser(m_configDao.getUserName());
+    			creds.setPass(m_configDao.getPassword());
+    
+    			// get the ticket from OTRS system
+    			
+    			try {
+    				ticketWithArticles = port.getByNumber(otrsTicketNumber, creds);
+    			} catch (RemoteException e) {
+    				log().error("Failed to retrieve OTRS ticket" + e);
+    				m_eventIpcManager.sendNow(createEvent("Failed to retrieve OTRS ticket"));
+    			}
+    			
+		    }
 			
 		}
 		
 		// construct an opennms ticket from the returned OTRS ticket and articles
+		// That's if there were any.....
 
 		if (ticketWithArticles != null) {
 
@@ -64,6 +74,21 @@
 			
 			opennmsTicket.setDetails(opennmsTicketDetails);
 
+		} else {
+		    
+		    // Create a skeleton ticket at state CANCELLED
+		    // will do this if:
+		    // 1. There was no ticketID attached to the OpenNMS ticket
+		    // 2. Ticket retrieval failed.
+		    
+		    log().error("No valid Ticket data available - returning 'unavailable' ticket");
+		    
+		    opennmsTicket.setId(UNAVAILABLE_TICKET_ID);
+		    opennmsTicket.setState(Ticket.State.CANCELLED);
+		    opennmsTicket.setSummary(UNAVAILABLE_TICKET_SUMMARY);
+		    opennmsTicket.setUser(UNAVAILABLE_TICKET_USER);
+		    opennmsTicket.setDetails(UNAVAILABLE_TICKET_DETAILS);
+		    
 		}
 
 		return opennmsTicket;
