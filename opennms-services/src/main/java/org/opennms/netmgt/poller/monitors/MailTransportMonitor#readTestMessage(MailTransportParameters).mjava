@@ -7,21 +7,28 @@
         if (mailParms.isEnd2EndTestInProgress()) {
             log().debug("Initially delaying read test: "+mailParms.getReadTestAttemptInterval()+" because end to end test is in progress.");
             
-            if (delayTest(status, interval).getStatusCode() == PollStatus.SERVICE_UNKNOWN) {
+            if (delayTest(status, interval) == PollStatus.SERVICE_UNKNOWN) {
                 return status;
             }
         }
         
+        Store mailStore = null;
+        Folder mailFolder = null;
         try {
             JavaMailer readMailer = new JavaMailer(mailParms.getJavamailProperties());
             setReadMailProperties(mailParms, readMailer);
 
-            Store mailStore = null;
-            Folder mailFolder = null;
             TimeoutTracker tracker = new TimeoutTracker(mailParms.getParameterMap(), mailParms.getRetries(), mailParms.getTimeout());
             for (tracker.reset(); tracker.shouldRetry(); tracker.nextAttempt()) {
                 tracker.startAttempt();
-                log().debug("readTestMessage: reading mail attempt: "+tracker.getAttempt()+", elapsed time:"+tracker.elapsedTimeInMillis()+"ms.");
+                
+                if (tracker.getAttempt() > 0) {
+                    if (delayTest(status, interval) == PollStatus.SERVICE_UNKNOWN) {
+                        log().warn("readTestMessage: Status set to: "+status+" during delay, exiting test.");
+                        break;
+                    }
+                }
+                log().debug("readTestMessage: reading mail attempt: "+String.valueOf((tracker.getAttempt()+1))+", elapsed time:"+tracker.elapsedTimeInMillis()+"ms.");
                 try {
                     mailStore = readMailer.getSession().getStore();
                     mailFolder = retrieveMailFolder(mailParms, mailStore);
@@ -38,17 +45,16 @@
                 }
                 if (mailFolder.isOpen() && (mailParms.getReadTest().getSubjectMatch() != null || mailParms.isEnd2EndTestInProgress())) {
                     status = searchMailSubject(mailParms, mailFolder);
-                } 
-                break;
+                    if (status.getStatusCode() == PollStatus.SERVICE_AVAILABLE) {
+                        break;
+                    }
+                }
             }
 
-            if (tracker.shouldRetry()) {
-                status = delayTest(status, interval);
-            }
-
-            closeStore(mailStore, mailFolder);
         } catch (JavaMailerException e) {
             status = PollStatus.down(e.getLocalizedMessage());
+        } finally {
+            closeStore(mailStore, mailFolder);
         }
         return status;
     }
