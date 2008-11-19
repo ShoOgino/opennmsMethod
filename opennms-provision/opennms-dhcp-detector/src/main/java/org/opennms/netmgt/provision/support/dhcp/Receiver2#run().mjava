@@ -1,0 +1,77 @@
+    public void run() {
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // set the state
+        //
+        synchronized (this) {
+            m_status = RUNNING;
+        }
+
+        byte[] dgbuf = new byte[2048];
+
+        // Roundy, Roundy, Round we go...
+        //
+        for (;;) {
+            try {
+                DatagramPacket pkt = new DatagramPacket(dgbuf, dgbuf.length);
+                m_receiver.receive(pkt);
+                log.debug("got a DHCP response.");
+                Message msg = new Message(pkt.getAddress(), new DHCPMessage(pkt.getData()));
+
+                synchronized (m_clients) {
+                    Iterator iter = m_clients.iterator();
+                    if(!iter.hasNext()) {
+                        log.debug("No client waiting for response.");
+                    }
+                    while (iter.hasNext()) {
+                        Client c = (Client) iter.next();
+                        if (c.getStatus() == RUNNING) {
+                            try {
+                                log.debug("sending DHCP response pkt to client " + c.getName());
+                                c.sendMessage(msg);
+                            } catch (IOException ex) {
+                                log.warn("Error sending response to client " + c.getName());
+                            }
+                        } else if (c.getStatus() == STOPPED) {
+                            log.debug("Removing stale client " + c.getName());
+                            iter.remove();
+                        }
+                    }
+                }
+
+            } catch (InterruptedIOException ex) {
+                // ignore
+            } catch (IOException ex) {
+                synchronized (this) {
+                    if (m_status == RUNNING)
+                        log.warn("Failed to read message, I/O error", ex);
+                }
+                break;
+            } catch (Throwable t) {
+                synchronized (this) {
+                    if (m_status == RUNNING)
+                        log.warn("Undeclared throwable caught", t);
+                }
+                break;
+            }
+
+            synchronized (this) {
+                if (m_status != RUNNING)
+                    break;
+            }
+        }
+
+        synchronized (this) {
+            m_status = STOP_PENDING;
+        }
+
+        // close the datagram socket
+        //
+        m_receiver.close();
+
+        synchronized (this) {
+            m_status = STOPPED;
+        }
+
+    } // end run() method
+
