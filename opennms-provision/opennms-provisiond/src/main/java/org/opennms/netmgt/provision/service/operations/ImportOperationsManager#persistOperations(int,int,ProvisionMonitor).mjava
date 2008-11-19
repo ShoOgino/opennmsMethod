@@ -1,0 +1,27 @@
+    public void persistOperations(final int writeThreads,
+            final int scanThreads, final ProvisionMonitor monitor) {
+        
+        
+        monitor.beginProcessingOps(getDeleteCount(), getUpdateCount(), getInsertCount());
+
+        final ExecutorService dbPool = Executors.newFixedThreadPool(writeThreads);
+        final ExecutorService scanPool = Executors.newFixedThreadPool(scanThreads);
+        
+        monitor.beginPreprocessingOps();
+        
+        final Collection<ImportOperation> operations = getOperations();
+
+        for(final ImportOperation op : operations) {
+            Runnable r = sequence(dbPool, scanner(op, monitor), persister(op, monitor));
+            scanPool.execute(r);
+        }
+                
+        shutdownAndWaitForCompletion(scanPool, "preprocessor interrupted!");
+        
+        monitor.finishPreprocessingOps();
+
+		shutdownAndWaitForCompletion(dbPool, "persister interrupted!");
+
+		monitor.finishProcessingOps();
+    }
+

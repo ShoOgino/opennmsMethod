@@ -1,43 +1,80 @@
-    private void doImport(Resource resource, ProvisionMonitor monitor,
-            int scanThreads, int writeThreads,
-            ImportManager importManager, String foreignSource) throws ModelImportException, IOException {
+    private void doImport(Resource resource, final ProvisionMonitor monitor,
+            final int scanThreads, final int writeThreads,
+            ImportManager importManager, final String foreignSource) throws Exception {
         
         importManager.getClass();
-        monitor.beginImporting();
-    	monitor.beginLoadingResource(resource);
-    	
-        SpecFile specFile = new SpecFile();
-        specFile.loadResource(resource);
         
-        monitor.finishLoadingResource(resource);
+        final Task<Resource, SpecFile> loader = new Task<Resource, SpecFile>() {
+
+            @Override
+            public SpecFile execute(Resource resource) throws Exception {
+                return loadSpecFile(resource, foreignSource, monitor);
+            }
+            
+        };
         
         
-        if (foreignSource != null) {
-            specFile.setForeignSource(foreignSource);
-        }
+
         
-        monitor.beginAuditNodes();
-        createDistPollerIfNecessary();
+        final Task<SpecFile, ImportOperationsManager> auditor = new Task<SpecFile, ImportOperationsManager>() {
+
+            @Override
+            public ImportOperationsManager execute(SpecFile specFile) throws Exception {
+                monitor.beginAuditNodes();
+                ImportOperationsManager opsMgr = auditNodes(specFile, monitor);
+                monitor.finishAuditNodes();
+                return opsMgr;
+            }
+        };
         
-        Map<String, Integer> foreignIdsToNodes = getForeignIdToNodeMap(specFile.getForeignSource());
         
-        ImportOperationsManager opsMgr = createImportOperationsManager(foreignIdsToNodes, monitor);
-        opsMgr.setForeignSource(specFile.getForeignSource());
-        opsMgr.setScanThreads(scanThreads);
-        opsMgr.setWriteThreads(writeThreads);
         
-        auditNodes(opsMgr, specFile);
+        final Task<ImportOperationsManager, Void> persistor = new Task<ImportOperationsManager, Void>() {
+
+            @Override
+            public Void execute(ImportOperationsManager opsMgr) throws Exception {
+                opsMgr.persistOperations(writeThreads, scanThreads, monitor);
+                return null;
+            }
+            
+        };
         
-        monitor.finishAuditNodes();
         
-        opsMgr.persistOperations();
         
-        monitor.beginRelateNodes();
+        final Task<SpecFile, Void> relator = new Task<SpecFile, Void>() {
+
+            @Override
+            public Void execute(SpecFile specFile) throws Exception {
+                monitor.beginRelateNodes();
+                
+                relateNodes(specFile);
+                
+                monitor.finishRelateNodes();
+                return null;
+            }
+            
+        };
         
-        relateNodes(specFile);
         
-        monitor.finishRelateNodes();
-    
-        monitor.finishImporting();
+        final Task<Resource, Void> importer = new Task<Resource, Void>() {
+
+            @Override
+            public Void execute(Resource resource) throws Exception {
+                monitor.beginImporting();
+
+                SpecFile specFile = loader.execute(resource);
+                ImportOperationsManager opsMgr = auditor.execute(specFile);
+                persistor.execute(opsMgr);
+                relator.execute(specFile);
+                
+            
+                monitor.finishImporting();
+                return null;
+            }
+            
+        };
+        
+        importer.execute(resource);
+
     }
 
