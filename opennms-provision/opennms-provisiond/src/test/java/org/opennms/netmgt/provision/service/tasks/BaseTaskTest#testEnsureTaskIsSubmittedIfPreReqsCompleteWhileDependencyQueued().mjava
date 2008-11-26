@@ -1,0 +1,68 @@
+    @Test
+    public void testEnsureTaskIsSubmittedIfPreReqsCompleteWhileDependencyQueued() throws Exception {
+    
+        m_coordinator.setLoopDelay(1000);
+        
+        /**
+         * This is a test case that tests a very specific race condition.  The loopDelay is used to
+         * make the race condition work
+         */
+
+        // use latches so the finishing can be managed
+        CountDownLatch aBlocker = new CountDownLatch(1);
+        CountDownLatch bBlocker = new CountDownLatch(1);
+        CountDownLatch cBlocker = new CountDownLatch(0); // we don't care when c finishes
+
+
+        // create the tasks and a simple prerequisite and schedule
+        BaseTask a = createTask(waiter("A", aBlocker));
+        BaseTask b = createTask(waiter("B", bBlocker));
+        BaseTask c = createTask(waiter("C", cBlocker));
+
+        c.addPrerequisite(a);
+        
+        b.schedule();
+        a.schedule();
+        c.schedule();
+
+        // wait for the coordinator thread to process all of the above
+        Thread.sleep(3500);
+        
+        /* we are not trying to set up the following situation
+         * c has 1 'pendingPrereq' 
+         * the coordinator threads Q has 'a.complete, b.complete, c.addPrereq(b)'
+         *
+         * In this situation then the completing tasks will not be able to submit
+         * 'c' because it has a pending prerequisite.
+         * 
+         * By the time the prerequisite is added they are all complete. 
+         * 
+         * In this case we need to ensure the c is submitted
+         */
+
+
+        // Because of the loopDelay.. this following will all sit on the queue
+
+        // call countDown will allow these to complete
+        bBlocker.countDown();
+        aBlocker.countDown();
+        
+        // we wait just to a litlte to make sure the two completes get added
+        Thread.sleep(100);
+
+        // not we add the prerequisite
+        c.addPrerequisite(b);
+        
+        
+        c.waitFor(10000, TimeUnit.MILLISECONDS);
+        
+        assertTrue("Task C never completed", c.isFinished());
+        
+
+        /*
+         * If the queue call look this AFTER the call to c.addPrerequisite(b) increment pendingPrereqs
+         * Q: a.complete, (pendingPrereq non zero) b.complete (pendingPrereq non zero) c.prereq(b) (decrementPrereqs)  ..... 
+         */
+        
+    }
+
