@@ -1,19 +1,23 @@
     @Override
     public DetectFuture isServiceDetected(InetAddress address, DetectorMonitor monitor) {
+        DetectFuture future = null;
+        
         SocketConnector connector = new NioSocketConnector();
         
-        DetectFuture future = new DefaultDetectFuture(this);
+        future = new DefaultDetectFuture(this);
 
         // Set connect timeout.
-        connector.setConnectTimeoutMillis( 3000 );
+        connector.setConnectTimeoutMillis( getTimeout() );
         connector.setHandler( createDetectorHandler(future) );
         connector.getFilterChain().addLast( "logger", getLoggingFilter() != null ? getLoggingFilter() : new LoggingFilter() );
         connector.getFilterChain().addLast( "codec", getProtocolCodecFilter());
         connector.getSessionConfig().setIdleTime( IdleStatus.READER_IDLE, getIdleTime() );
 
         // Start communication
-        connector.connect( new InetSocketAddress( address, getPort() ));
-
+        InetSocketAddress socketAddress = new InetSocketAddress(address, getPort());
+        ConnectFuture cf = connector.connect( socketAddress );
+        cf.addListener(retryAttemptListener( connector, future, socketAddress, getRetries() ));
+        
         return future;
     }
 
