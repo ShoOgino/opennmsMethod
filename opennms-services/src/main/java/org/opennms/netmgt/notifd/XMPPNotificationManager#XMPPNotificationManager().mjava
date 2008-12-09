@@ -6,80 +6,62 @@
 		
 		// Load up some properties
 
-		try {
-			this.props.load(new FileInputStream(ConfigFileConstants
-					.getFile(ConfigFileConstants.XMPP_CONFIG_FILE_NAME)));
-			xmppServer = this.props.getProperty("xmpp.server");
-			xmppUser = this.props.getProperty("xmpp.user");
-			xmppPassword = this.props.getProperty("xmpp.pass");
-			if (this.props.containsKey("xmpp.port")) {
-				xmppPort = Integer.valueOf(this.props.getProperty("xmpp.port")).intValue();
-			} else {
-				xmppPort = XMPP_PORT;
-			}
-		        xmppConfig = new ConnectionConfiguration(xmppServer, xmppPort);
-			if (this.props.containsKey("xmpp.TLSEnabled")
-					&& this.props.getProperty("xmpp.TLSEnabled").equals("true")) {
-				xmppConfig.setTLSEnabled(true);
-				log().debug("XMPPManager Enabling TLS");
-			} else {
-				xmppConfig.setTLSEnabled(false);
-			}
-			if (this.props.containsKey("xmpp.selfSignedCertificateEnabled")
-					&& this.props.getProperty("xmpp.selfSignedCertificateEnabled").equals("true")) {
-				xmppConfig.setSelfSignedCertificateEnabled(true);
-				log().debug("XMPPManager Enabling self-signed certificates");
-			} else {
-				xmppConfig.setSelfSignedCertificateEnabled(false);
-			}
-			if (this.props.containsKey("xmpp.truststorePassword")) {
-				xmppConfig.setTruststorePassword(this.props.getProperty("xmpp.truststorePassword"));
-				log().debug("XMPPManager set non-default truststore password");
-			} else {
-				log().debug("XMPPManager set default truststore password");
-				xmppConfig.setTruststorePassword(TRUST_STORE_PASSWORD);
-			}
-			if (this.props.containsKey("xmpp.debuggerEnabled") 
-					&& this.props.getProperty("xmpp.debuggerEnabled").equals("true")) {
-				xmppConfig.setDebuggerEnabled(true);
-				log().debug("XMPPManager set debugger enabled");
-			} else {
-				xmppConfig.setDebuggerEnabled(false);
-				log().debug("XMPPManager set debugger disabled");
-			}
-			xmppConfig.setSASLAuthenticationEnabled(true);
-			log().debug("XMPP Manager connection config: " + xmppConfig.toString());
-			log().debug("never get here");
-		} catch (Exception e) {
-			log().error("XMPP Manager couldn't configure connection : ", e);
+	    File config = null;
+	    try {
+	        config = ConfigFileConstants.getFile(ConfigFileConstants.XMPP_CONFIG_FILE_NAME);
+	    } catch (IOException e) {
+	        log().warn(ConfigFileConstants.XMPP_CONFIG_FILE_NAME + " not readable", e);
+	    }
+		if (Boolean.getBoolean("useSystemXMPPConfig") || !config.canRead()) {
+		    this.props = System.getProperties();
+		} else {
+		    FileInputStream fis = null;
+		    try {
+		        fis = new FileInputStream(config);
+		        this.props.load(fis);
+		    } catch (IOException e) {
+		        log().warn("unable to load " + config, e);
+		    } finally {
+		        IOUtils.closeQuietly(fis);
+		    }
 		}
 
-		// dump some settings:
+		xmppServer = this.props.getProperty("xmpp.server");
+		xmppServiceName = this.props.getProperty("xmpp.servicename", xmppServer);
+		xmppUser = this.props.getProperty("xmpp.user");
+		xmppPassword = this.props.getProperty("xmpp.pass");
+		xmppPort = Integer.valueOf(this.props.getProperty("xmpp.port", XMPP_PORT));
 
+		xmppConfig = new ConnectionConfiguration(xmppServer, xmppPort, xmppServiceName);
 
-
-		// Connect to xmpp server
-
-		try {
-			log().debug("Attempting vanilla XMPP Connection to " + xmppServer + ":" + xmppPort);
-			xmpp = new XMPPConnection(xmppConfig);
-			if (xmpp.isConnected()) {
-				log().debug("XMPP Manager successfully connected");
-				// Following requires a later version of the library
-				if (xmpp.isSecureConnection()) 
-					log().debug("XMPP Manager successfully nogotiated a secure connection");
-				if (xmpp.isUsingTLS()) 
-					log().debug("XMPP Manager successfully nogotiated a TLS connection");
-				log().debug("XMPP Manager Connected"); 
-				login();
-				// Add connection listener
-				xmpp.addConnectionListener(conlistener);
-			} else {
-				log().debug("XMPP Manager Not Connected");
-			}
-		} catch (Exception e) {
-			log().fatal("XMPP Manager unable to connect : ", e);
+		boolean debuggerEnabled = Boolean.parseBoolean(props.getProperty("xmpp.debuggerEnabled"));
+		xmppConfig.setDebuggerEnabled(debuggerEnabled);
+		if (debuggerEnabled) {
+		    log().setLevel(Level.DEBUG);
 		}
+
+		xmppConfig.setSASLAuthenticationEnabled(Boolean.parseBoolean(props.getProperty("xmpp.SASLEnabled", "true")));
+		xmppConfig.setSelfSignedCertificateEnabled(Boolean.parseBoolean(props.getProperty("xmpp.selfSignedCertificateEnabled")));
+
+		if (Boolean.parseBoolean(props.getProperty("xmpp.TLSEnabled"))) {
+			xmppConfig.setSecurityMode(SecurityMode.enabled);
+		} else {
+		    xmppConfig.setSecurityMode(SecurityMode.disabled);
+		}
+		if (this.props.containsKey("xmpp.truststorePassword")) {
+			xmppConfig.setTruststorePassword(this.props.getProperty("xmpp.truststorePassword"));
+		} else {
+			xmppConfig.setTruststorePassword(TRUST_STORE_PASSWORD);
+		}
+
+		if (log().isDebugEnabled()) {
+		    log().debug("XMPP Manager connection config: " + xmppConfig.toString());
+		}
+
+        xmpp = new XMPPConnection(xmppConfig);
+
+        // Connect to xmpp server
+		connectToServer();
 
 	}
 
