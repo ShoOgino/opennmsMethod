@@ -1,4 +1,4 @@
-	public Ticket get(String ticketId) {
+	public Ticket get(String ticketId) throws PluginException {
 
 		TicketWithArticles ticketWithArticles = null;
 
@@ -6,9 +6,10 @@
 		
 		Ticket opennmsTicket = new Ticket();
 
-		if (ticketId.equals(UNAVAILABLE_TICKET_ID))  {
+		if (ticketId == null)  {
 		    
 		    log().error("No OTRS ticketID available in OpenNMS Ticket");
+		    throw new PluginException("No OTRS ticketID available in OpenNMS Ticket");
 		    
 		} else {
 		    
@@ -29,67 +30,45 @@
     				ticketWithArticles = port.getByNumber(otrsTicketNumber, creds);
     			} catch (RemoteException e) {
     				log().error("Failed to retrieve OTRS ticket" + e);
-    				m_eventIpcManager.sendNow(createEvent("Failed to retrieve OTRS ticket"));
+    				throw new PluginException("Failed to retrieve OTRS ticket");
     			}
     			
 		    }
 			
 		}
+
+		// add ticket basics from the OTRS ticket
 		
-		// construct an opennms ticket from the returned OTRS ticket and articles
-		// That's if there were any.....
+		log().debug(
+				"Adding Ticket details from OTRS ticket # "
+						+ ticketWithArticles.getTicket().getTicketNumber());
+		opennmsTicket.setId(ticketWithArticles.getTicket().getTicketNumber().toString());
+		opennmsTicket.setSummary(ticketWithArticles.getTicket().getTitle());
+		
+		// Note that we user "Owner" from the OTRS ticket here. There is nothing to ensure
+		// That this is a valid OpenNMS user
+		
+		opennmsTicket.setUser(ticketWithArticles.getTicket().getOwner());
+		opennmsTicket.setState(otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
+		
+		log().debug("Retrieved ticket state : " + otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
+		
+		// add all the article details from the OTRS ticket
+		// this is not strictly essential as we have no way of viewing this atm.
+		
+		String opennmsTicketDetails = "";
 
-		if (ticketWithArticles != null) {
-
-			// add ticket basics from the OTRS ticket
-			
+		for (Article article : ticketWithArticles.getArticles()) {
 			log().debug(
-					"Adding Ticket details from OTRS ticket # "
-							+ ticketWithArticles.getTicket().getTicketNumber());
-			opennmsTicket.setId(ticketWithArticles.getTicket().getTicketNumber().toString());
-			opennmsTicket.setSummary(ticketWithArticles.getTicket().getTitle());
-			
-			// Note that we user "Owner" from the OTRS ticket here. There is nothing to ensure
-			// That this is a valid OpenNMS user
-			
-			opennmsTicket.setUser(ticketWithArticles.getTicket().getOwner());
-			opennmsTicket.setState(otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
-			
-			log().debug("Retrieved ticket state : " + otrsToOpenNMSState(ticketWithArticles.getTicket().getStateID()));
-			
-			// add all the article details from the OTRS ticket
-			// this is not strictly essential as we have no way of viewing this atm.
-			
-			String opennmsTicketDetails = "";
-
-			for (Article article : ticketWithArticles.getArticles()) {
-				log().debug(
-						"Adding Article details from OTRS article ID "
-								+ article.getArticleID());
-				opennmsTicketDetails = opennmsTicketDetails + "\n"
-						+ "From:    " + article.getFrom() + "\n" + "Subject: "
-						+ article.getSubject() + "\n" + "Body:\n"
-						+ article.getBody() + "\n";
-			}
-			
-			opennmsTicket.setDetails(opennmsTicketDetails);
-
-		} else {
-		    
-		    // Create a skeleton ticket at state CANCELLED
-		    // will do this if:
-		    // 1. There was no ticketID attached to the OpenNMS ticket
-		    // 2. Ticket retrieval failed.
-		    
-		    log().error("No valid Ticket data available - returning 'unavailable' ticket");
-		    
-		    opennmsTicket.setId(UNAVAILABLE_TICKET_ID);
-		    opennmsTicket.setState(Ticket.State.CANCELLED);
-		    opennmsTicket.setSummary(UNAVAILABLE_TICKET_SUMMARY);
-		    opennmsTicket.setUser(UNAVAILABLE_TICKET_USER);
-		    opennmsTicket.setDetails(UNAVAILABLE_TICKET_DETAILS);
-		    
+					"Adding Article details from OTRS article ID "
+							+ article.getArticleID());
+			opennmsTicketDetails = opennmsTicketDetails + "\n"
+					+ "From:    " + article.getFrom() + "\n" + "Subject: "
+					+ article.getSubject() + "\n" + "Body:\n"
+					+ article.getBody() + "\n";
 		}
+		
+		opennmsTicket.setDetails(opennmsTicketDetails);
 
 		return opennmsTicket;
 
