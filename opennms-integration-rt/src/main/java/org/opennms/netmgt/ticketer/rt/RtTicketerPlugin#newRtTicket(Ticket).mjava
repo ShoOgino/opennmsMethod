@@ -1,0 +1,57 @@
+	/**
+	* Convenience method for creating a new ticket in RT
+	* 
+	* @param   ticket      the ticket details
+	* @return  the RT ticket id for the new ticket
+	*/
+	
+	private String newRtTicket(Ticket newTicket) throws PluginException {
+		
+		String rtTicketNumber = null;
+		StringBuilder contentBuilder = new StringBuilder("id: ticket/new\n");
+		contentBuilder.append("Queue: " + m_configDao.getQueue() + "\n");
+		contentBuilder.append("Requestor: " + m_configDao.getRequestor() + "\n");
+		contentBuilder.append("Subject: " + newTicket.getSummary() + "\n");
+		contentBuilder.append("text: " + newTicket.getDetails() + "\n");
+		
+		PostMethod post = new PostMethod(m_configDao.getBaseURL() + "/REST/1.0/edit");
+
+		NameValuePair[] ticketCreateParams = {
+		          new NameValuePair("content", contentBuilder.toString()),
+		          new NameValuePair("user", m_user),
+		          new NameValuePair("pass", m_password)
+		        };
+		    
+	    post.setRequestBody(ticketCreateParams);
+	    
+        try {
+            if(getClient().executeMethod(post) != HttpStatus.SC_OK) {
+                throw new PluginException("Received a non 200 response code from the server");
+            } else {
+                String in = post.getResponseBodyAsString();
+                log().debug(in);
+                Pattern okPattern = Pattern.compile("(?s) Ticket (\\d+) created");
+                Matcher matcher = okPattern.matcher(in);
+                if (matcher.find()) {
+                    rtTicketNumber = matcher.group(1);
+                } else {
+                    throw new PluginException("Did not receive confirmation that ticket was updated");
+                }
+            } 
+        } catch (HttpException e) {
+            log().error("HTTP exception attempting to logon to RT: " + e.getMessage());
+            e.printStackTrace();
+        } catch (IOException e) {
+            log().error("IO exception attempting to logon to RT: " + e.getMessage());
+        } finally {
+            post.releaseConnection();
+        }
+		
+		if (rtTicketNumber == null) {
+		    throw new PluginException("Received no ticket number from RT");
+		} 
+		
+		return rtTicketNumber;
+		
+	}
+

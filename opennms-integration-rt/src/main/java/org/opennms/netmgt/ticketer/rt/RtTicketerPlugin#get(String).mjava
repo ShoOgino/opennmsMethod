@@ -1,0 +1,70 @@
+    /**
+     * Gets ticket details from the RT trouble ticket system
+     * 
+     * @param   ticketId    a string representation of the RT ticketID
+     * @return  ticket      the ticket details
+     */
+
+	public Ticket get(String ticketId) throws PluginException {
+
+		boolean ticketFound = false;
+		
+		Ticket ticket = null;
+		
+		HashMap<String,String> ticketAttributes = new HashMap<String,String>();
+		// don't try to get ticket if it's marked as not available
+		
+		if (ticketId == null)  {
+		    
+		    log().error("No RT ticketID available in OpenNMS Ticket");
+		    throw new PluginException("No RT ticketID available in OpenNMS Ticket");
+		    
+		} else {
+		    
+		    PostMethod post = new PostMethod(m_configDao.getBaseURL() + "/REST/1.0/ticket/" + ticketId);
+		    
+		    NameValuePair[] ticketGetParams = {
+	                  new NameValuePair("user", m_user),
+	                  new NameValuePair("pass", m_password)
+	                };
+		    
+	        post.setRequestBody(ticketGetParams);
+		        
+		    try {
+                if(getClient().executeMethod(post) != HttpStatus.SC_OK) {
+                    throw new PluginException("Received a non 200 response code from the server");
+                } else {
+                    String in = post.getResponseBodyAsString();
+                    log().debug(in);
+                    Pattern inTokensPattern = Pattern.compile("^(\\w+):\\s(.*)$", Pattern.MULTILINE);
+                    Matcher matcher = inTokensPattern.matcher(in);
+                    while (matcher.find()) {
+                        ticketFound = true;
+                        ticketAttributes.put(matcher.group(1), matcher.group(2));
+                    } 
+                } 
+            } catch (HttpException e) {
+                log().error("HTTP exception attempting to logon to RT: " + e.getMessage());
+                e.printStackTrace();
+            } catch (IOException e) {
+                log().error("HTTP exception attempting to logon to RT: " + e.getMessage());
+            } finally {
+                post.releaseConnection();
+            }
+			
+		}
+		
+		if (ticketFound) {
+		    ticket = new Ticket();
+    		ticket.setState(rtToOpenNMSState(ticketAttributes.get("Status")));
+    		ticket.setId(ticketId);
+    		ticket.setUser(ticketAttributes.get("Requestors"));
+    		ticket.setSummary(ticketAttributes.get("Subject"));
+		} else {
+		    throw new PluginException("could not find ticket in RT for Ticket: " + ticketId);
+		}
+		
+		return ticket;
+
+	}
+
