@@ -1,9 +1,25 @@
     public Notification getNoticeInfo(int id) throws SQLException {
-        Notification nbean = new Notification();
+        Notification nbean = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
 
         Connection conn = Vault.getDbConnection();
 
         try {
+            pstmt = conn.prepareStatement(NOTICE_ID);
+            pstmt.setInt(1, id);
+            rs = pstmt.executeQuery();
+
+            Notification[] n = rs2NotifyBean(conn, rs);
+            if (n.length > 0) {
+                nbean = n[0];
+            } else {
+                nbean = new Notification();
+            }
+
+            rs.close();
+            pstmt.close();
+
             // create the list of users the page was sent to
             PreparedStatement sentTo = conn.prepareStatement(SENT_TO);
             sentTo.setInt(1, id);
@@ -25,66 +41,25 @@
             }
 
             nbean.m_sentTo = sentToList;
-
-            // fill out the rest of the bean
-            PreparedStatement pstmt = conn.prepareStatement(NOTICE_ID);
-            pstmt.setInt(1, id);
-            ResultSet rs = pstmt.executeQuery();
-
-            // FIXME: Don't reuse the "element" variable for different objects.
-            while (rs.next()) {
-                Object element = rs.getString(TXT_MESG);
-                nbean.m_txtMsg = (String) element;
-
-                element = rs.getString(NUM_MESG);
-                nbean.m_numMsg = (String) element;
-
-                element = new Integer(rs.getInt(NOTIFY));
-                nbean.m_notifyID = ((Integer) element).intValue();
-
-                element = rs.getTimestamp(TIME);
-                nbean.m_timeSent = ((Timestamp) element).getTime();
-
-                element = rs.getTimestamp(REPLYTIME);
-                if (element != null) {
-                    nbean.m_timeReply = ((Timestamp) element).getTime();
-                } else {
-                    nbean.m_timeReply = 0;
-                }
-
-                element = rs.getString(ANS_BY);
-                nbean.m_responder = (String) element;
-
-                element = new Integer(rs.getInt(NODE));
-                nbean.m_nodeID = ((Integer) element).intValue();
-
-                element = rs.getString(INTERFACE);
-                nbean.m_interfaceID = (String) element;
-
-                element = new Integer(rs.getInt(SERVICE));
-                nbean.m_serviceId = ((Integer) element).intValue();
-
-                element = new Integer(rs.getInt(EVENTID));
-                nbean.m_eventId = ((Integer) element).intValue();
-
-                PreparedStatement stmttmp = conn.prepareStatement("SELECT servicename from service where serviceid = ?");
-                stmttmp.setInt(1, nbean.m_serviceId);
-                ResultSet rstmp = stmttmp.executeQuery();
-
-                if (rstmp.next()) {
-                    element = rstmp.getString("servicename");
-                    if (element != null) {
-                        nbean.m_serviceName = (String) element;
-                    }
-                }
-            }
-
-            rs.close();
-            pstmt.close();
         } catch (SQLException e) {
             log().error("Problem getting data from the notifications table: " + e, e);
             throw e;
         } finally {
+            try {
+                if (rs != null) {
+                    rs.close();
+                }
+            } catch (SQLException e) {
+                throw(e);
+            } finally {
+                try {
+                    if (pstmt != null) {
+                        pstmt.close();
+                    }
+                } catch (SQLException e) {
+                    throw(e);
+                }
+            }
             Vault.releaseDbConnection(conn);
         }
 
