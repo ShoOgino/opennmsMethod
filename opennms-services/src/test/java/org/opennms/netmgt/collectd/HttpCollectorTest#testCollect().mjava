@@ -4,25 +4,43 @@
      */
     @Test
     public final void testCollect() throws Exception {
+        InetAddress opennmsDotOrg = InetAddress.getByName(m_testHostName);
         
-        InetAddress opennmsDotOrg = InetAddress.getByName("www.opennms.org");
-        
+        initializeHttpDatacollectionConfigFactory("/org/opennms/netmgt/config/http-datacollection-config.xml");
         RrdTestUtils.initializeNullStrategy();
         HttpCollector collector = new HttpCollector();
         OnmsDistPoller distPoller = new OnmsDistPoller("localhost", "127.0.0.1");
-        OnmsNode node = new OnmsNode(distPoller );
+        OnmsNode node = new OnmsNode(distPoller);
         node.setId(1);
         OnmsIpInterface iface = new OnmsIpInterface(opennmsDotOrg.getHostAddress(), node );
         iface.setId(2);
-        
-        IpInterfaceDao ifDao = EasyMock.createMock(IpInterfaceDao.class);
-        EasyMock.expect(ifDao.load(iface.getId())).andReturn(iface).anyTimes();
-        EasyMock.replay(ifDao);
-        
-        CollectionAgent agent = DefaultCollectionAgent.create(iface.getId(), ifDao, m_transMgr);
+        node.addIpInterface(iface);
+
         Map<String, String> parameters = new HashMap<String, String>();
-        parameters.put("http-collection", "default");
-        EventProxy eproxy = getEventProxy();
-        collector.collect(agent, eproxy, parameters);
+        parameters.put("collection", "default");
+        collector.initialize(parameters);
+        
+        CollectionSpecification spec = createCollectionSpec("HTTP", collector, "default");
+        
+        CollectionAgent agent = createCollectionAgent(iface);
+        
+        // node level collection
+        File nodeDir = anticipatePath(getSnmpRrdDirectory(), "1");
+        anticipateRrdFiles(nodeDir, "documentCount");
+        anticipateRrdFiles(nodeDir, "documentType");
+        anticipateRrdFiles(nodeDir, "greatAnswer");
+
+        spec.initialize(agent);
+        
+        CollectionSet collectionSet = spec.collect(agent);
+        assertEquals("collection status",
+                     ServiceCollector.COLLECTION_SUCCEEDED,
+                     collectionSet.getStatus());
+        persistCollectionSet(spec, collectionSet);
+        
+        spec.release(agent);
+        
+        // Wait for any RRD writes to finish up
+        Thread.sleep(1000);
     }
 
