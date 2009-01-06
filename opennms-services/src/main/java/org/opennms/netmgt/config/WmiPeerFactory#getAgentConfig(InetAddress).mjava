@@ -1,0 +1,80 @@
+    public synchronized WmiAgentConfig getAgentConfig(InetAddress agentInetAddress) {
+
+        if (m_config == null) {
+            return new WmiAgentConfig(agentInetAddress);
+        }
+        
+        WmiAgentConfig agentConfig = new WmiAgentConfig(agentInetAddress);
+        
+        //Now set the defaults from the m_config
+        setWmiAgentConfig(agentConfig, new Definition());
+
+        // Attempt to locate the node
+        //
+        Enumeration edef = m_config.enumerateDefinition();
+        DEFLOOP: while (edef.hasMoreElements()) {
+            Definition def = (Definition) edef.nextElement();
+
+            // check the specifics first
+            //
+            Enumeration espec = def.enumerateSpecific();
+            while (espec.hasMoreElements()) {
+                String saddr = ((String) espec.nextElement()).trim();
+                try {
+                    InetAddress addr = InetAddress.getByName(saddr);
+                    if (addr.equals(agentConfig.getAddress())) {
+                        setWmiAgentConfig(agentConfig, def);
+                        break DEFLOOP;
+                    }
+                } catch (UnknownHostException e) {
+                    Category log = ThreadCategory.getInstance(getClass());
+                    log.warn("WmiPeerFactory: could not convert host " + saddr + " to InetAddress", e);
+                }
+            }
+
+            // check the ranges
+            //
+            long lhost = InetAddressUtils.toIpAddrLong(agentConfig.getAddress());
+            Enumeration erange = def.enumerateRange();
+            while (erange.hasMoreElements()) {
+                Range rng = (Range) erange.nextElement();
+                try {
+                    InetAddress begin = InetAddress.getByName(rng.getBegin());
+                    InetAddress end = InetAddress.getByName(rng.getEnd());
+
+                    long start = InetAddressUtils.toIpAddrLong(begin);
+                    long stop = InetAddressUtils.toIpAddrLong(end);
+
+                    if (start <= lhost && lhost <= stop) {
+                        setWmiAgentConfig(agentConfig, def );
+                        break DEFLOOP;
+                    }
+                } catch (UnknownHostException e) {
+                    Category log = ThreadCategory.getInstance(getClass());
+                    log.warn("WmiPeerFactory: could not convert host(s) " + rng.getBegin() + " - " + rng.getEnd() + " to InetAddress", e);
+                }
+            }
+            
+            // check the matching ip expressions
+            //
+            Enumeration eMatch = def.enumerateIpMatch();
+            while (eMatch.hasMoreElements()) {
+                String ipMatch = (String)eMatch.nextElement();
+                if (IPLike.matches(agentInetAddress.getHostAddress(), ipMatch)) {
+                    setWmiAgentConfig(agentConfig, def);
+                    break DEFLOOP;
+                }
+            }
+            
+        } // end DEFLOOP
+
+        if (agentConfig == null) {
+
+            Definition def = new Definition();
+            setWmiAgentConfig(agentConfig, def);
+        }
+
+        return agentConfig;
+
+    }
+
