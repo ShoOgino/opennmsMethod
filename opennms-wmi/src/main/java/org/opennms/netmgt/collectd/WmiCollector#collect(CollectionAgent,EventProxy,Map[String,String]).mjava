@@ -1,0 +1,88 @@
+    @SuppressWarnings("unchecked")
+    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> parameters) {
+
+        String collectionName = parameters.get("collection");
+        if (collectionName == null) {
+            //Look for the old configuration style:
+            collectionName = parameters.get("wmi-collection");
+        }
+        // Find attributes to collect - check groups in configuration. For each,
+        // check scheduled nodes to see if that group should be collected
+        WmiCollection collection = WmiDataCollectionConfigFactory.getInstance().getWmiCollection(collectionName);
+        WmiAgentState agentState = m_scheduledNodes.get(agent.getNodeId());
+
+        // Load the attribute group types.
+        loadAttributeGroupList(collection);
+
+        // Load the attribute types.
+        loadAttributeTypeList(collection);
+
+        // Create a new collection set.
+        WmiCollectionSet collectionSet = new WmiCollectionSet(agent);        
+
+        // Iterate through the WMI collection groups.
+        for (Wpm wpm : collection.getWpms().getWpm()) {
+            // A wpm consists of a list of attributes, identified by name
+            if (agentState.shouldCheckAvailability(wpm.getName(), wpm.getRecheckInterval())) {
+                if (!isGroupAvailable(agentState, wpm)) continue;
+            }
+
+            if (agentState.groupIsAvailable(wpm.getName())) {
+                // Collect the data
+                try {
+                    // Tell the agent to connect
+                    agentState.connect();
+
+                    // And retrieve the client object for working.
+                    WmiClient client = (WmiClient) agentState.getWmiClient();
+
+                    OnmsWbemObjectSet wOS;
+
+                    // Retrieve the WbemObjectSet from the class defined on the group.
+                    wOS = client.performInstanceOf(wpm.getWmiClass());
+
+                    // If we received a WbemObjectSet result, lets go through it and collect it.
+                    if (wOS != null) {
+                        //  Go through each object (class instance) in the object set.
+                        for (int i = 0; i < wOS.count(); i++) {
+                            // Create a new collection resource.
+                            WmiCollectionResource resource = null;
+
+                            // Fetch our WBEM Object
+                            OnmsWbemObject obj = wOS.get(i);
+
+                            // If this is multi-instance, fetch the instance name and store it.
+                            if(wOS.count()>1) {
+                                // Fetch the value of the key value. e.g. Name.
+                                OnmsWbemProperty prop = obj.getWmiProperties().getByName(wpm.getKeyvalue());
+                                Object propVal = prop.getWmiValue();
+                                String instance = null;
+                                if(propVal instanceof String) {
+                                    instance = (String)propVal;
+                                } else {
+                                    instance = propVal.toString();
+                                }
+                                resource = new WmiMultiInstanceCollectionResource(agent,instance,wpm.getName());
+                            } else {
+                                resource = new WmiSingleInstanceCollectionResource(agent);
+                            }
+
+
+                            for (Attrib attrib : wpm.getAttrib()) {
+                                OnmsWbemProperty prop = obj.getWmiProperties().getByName(attrib.getWmiObject());                                
+                                WmiCollectionAttributeType attribType = m_attribTypeList.get(attrib.getName());
+                                resource.setAttributeValue(attribType, prop.getWmiValue().toString());
+                            }
+                            collectionSet.getResources().add(resource);
+                        }
+                    }
+                    client.disconnect();
+                } catch (WmiException e) {
+                    log().info("unable to collect params for wpm '" + wpm.getName() + "'", e);
+                }
+            }
+        }
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+        return collectionSet;
+    }
+
