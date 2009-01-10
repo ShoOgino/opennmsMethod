@@ -1,0 +1,40 @@
+    @Override
+    public void beforeTestMethod(TestContext testContext) throws Exception {
+        JUnitCollector config = findCollectorAnnotation(testContext);
+        if (config == null) {
+            return;
+        }
+
+        // FIXME: Is there a better way to inject the TestContext into the test class?  Seems that spring doesn't give direct access...
+        Method m = ReflectionUtils.findMethod(testContext.getTestClass(), "setTestContext", new Class[]{TestContext.class});
+        if (m != null && testContext.getTestInstance() != null) {
+            System.err.println("invoking setTestContext on " + testContext.getTestInstance());
+            m.invoke(testContext.getTestInstance(), testContext);
+        }
+        
+        RrdTestUtils.initialize();
+
+        // make a fake database schema with hibernate
+        Reader rdr = ConfigurationTestUtils.getReaderForResource(testContext.getTestInstance(), config.schemaConfig());
+        DatabaseSchemaConfigFactory.setInstance(new DatabaseSchemaConfigFactory(rdr));
+        rdr.close();
+
+        // set up temporary directories for RRD files
+        m_fileAnticipator = new FileAnticipator();
+        m_snmpRrdDirectory = m_fileAnticipator.tempDir("snmp");
+        m_snmpRrdDirectory.mkdirs();
+        testContext.setAttribute("fileAnticipator", m_fileAnticipator);
+        testContext.setAttribute("rrdDirectory", m_snmpRrdDirectory);
+
+        // set up the collection configuration factory
+        rdr = ConfigurationTestUtils.getReaderForResourceWithReplacements(testContext.getTestInstance(), config.datacollectionConfig(), new String[] { "%rrdRepository%", m_snmpRrdDirectory.getAbsolutePath() });
+        if (config.datacollectionType().equalsIgnoreCase("http")) {
+            HttpCollectionConfigFactory factory = new HttpCollectionConfigFactory(rdr);
+            HttpCollectionConfigFactory.setInstance(factory);
+            HttpCollectionConfigFactory.init();
+        } else {
+            throw new UnsupportedOperationException("data collection type '" + config.datacollectionType() + "' not supported");
+        }
+        rdr.close();
+    }
+

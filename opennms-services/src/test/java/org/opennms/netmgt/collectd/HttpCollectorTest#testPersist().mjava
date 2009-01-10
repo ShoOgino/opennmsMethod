@@ -1,56 +1,37 @@
     @Test
+    @JUnitCollector(datacollectionConfig="/org/opennms/netmgt/config/http-datacollection-persist-test-config.xml", datacollectionType="http",
+                    anticipateRrds={ "1/documentCount", "1/greatAnswer", "1/someNumber" }, anticipateFiles={ "1/strings.properties" })
     public final void testPersist() throws Exception {
-        InetAddress opennmsDotOrg = InetAddress.getByName(m_testHostName);
-        
-        initializeHttpDatacollectionConfigFactory("/org/opennms/netmgt/config/http-datacollection-persist-test-config.xml");
-        RrdTestUtils.initialize();
-        HttpCollector collector = new HttpCollector();
-        OnmsDistPoller distPoller = new OnmsDistPoller("localhost", "127.0.0.1");
-        OnmsNode node = new OnmsNode(distPoller);
-        node.setId(1);
-        OnmsIpInterface iface = new OnmsIpInterface(opennmsDotOrg.getHostAddress(), node );
-        iface.setId(2);
-        node.addIpInterface(iface);
+        File snmpRrdDirectory = (File)m_context.getAttribute("rrdDirectory");
+        FileAnticipator anticipator = (FileAnticipator)m_context.getAttribute("fileAnticipator");
 
-        Map<String, String> parameters = new HashMap<String, String>();
-        parameters.put("collection", "default");
-        collector.initialize(parameters);
-        
-        CollectionSpecification spec = createCollectionSpec("HTTP", collector, "default");
-        
-        CollectionAgent agent = createCollectionAgent(iface);
-        
-        // node level collection
-        File nodeDir = anticipatePath(getSnmpRrdDirectory(), "1");
-        anticipateRrdFiles(nodeDir, "documentCount", "documentType", "greatAnswer");
-        File documentCountRrdFile = new File(nodeDir, rrd("documentCount"));
-        File someNumberRrdFile = new File(nodeDir, rrd("someNumber"));
-        File greatAnswerRrdFile = new File(nodeDir, rrd("greatAnswer"));
-        
         int numUpdates = 2;
         int stepSizeInSecs = 1;
         
         int stepSizeInMillis = stepSizeInSecs*1000;
 
-        spec.initialize(agent);
+        m_collectionSpecification.initialize(m_collectionAgent);
         
-        collectNTimes(spec, agent, numUpdates);
+        CollectorTestUtils.collectNTimes(m_collectionSpecification, m_collectionAgent, numUpdates);
         
-        // This is the value of documentCount from the first test page
+        // node level collection
+        File nodeDir = CollectorTestUtils.anticipatePath(anticipator, snmpRrdDirectory, "1");
+        File documentCountRrdFile = new File(nodeDir, CollectorTestUtils.rrd("documentCount"));
+        File someNumberRrdFile = new File(nodeDir, CollectorTestUtils.rrd("someNumber"));
+        File greatAnswerRrdFile = new File(nodeDir, CollectorTestUtils.rrd("greatAnswer"));
+
+       // This is the value of documentCount from the first test page
         // documentCount = Gauge32: 5
-        assertEquals(5.0, RrdUtils.fetchLastValueInRange(documentCountRrdFile.getAbsolutePath(), "documentCount", stepSizeInMillis, stepSizeInMillis));
+        assertEquals("documentCount", Double.valueOf(5.0), RrdUtils.fetchLastValueInRange(documentCountRrdFile.getAbsolutePath(), "documentCount", stepSizeInMillis, stepSizeInMillis));
 
         // This is the value of documentType from the first test page
         // someNumber = Gauge32: 17
-        assertEquals(17.0, RrdUtils.fetchLastValueInRange(someNumberRrdFile.getAbsolutePath(), "someNumber", stepSizeInMillis, stepSizeInMillis));
+        assertEquals("documentType", Double.valueOf(17.0), RrdUtils.fetchLastValueInRange(someNumberRrdFile.getAbsolutePath(), "someNumber", stepSizeInMillis, stepSizeInMillis));
 
         // This is the value of greatAnswer from the second test page
         //someNumber = Gauge32: 42
-        assertEquals(42.0, RrdUtils.fetchLastValueInRange(greatAnswerRrdFile.getAbsolutePath(), "greatAnswer", stepSizeInMillis, stepSizeInMillis));
+        assertEquals("greatAnswer", Double.valueOf(42.0), RrdUtils.fetchLastValueInRange(greatAnswerRrdFile.getAbsolutePath(), "greatAnswer", stepSizeInMillis, stepSizeInMillis));
         
-        spec.release(agent);
-        
-        // Wait for any RRD writes to finish up
-        Thread.sleep(1000);
+        m_collectionSpecification.release(m_collectionAgent);
     }
 
