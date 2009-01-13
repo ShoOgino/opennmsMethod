@@ -1,23 +1,58 @@
     void updateSnmpData(OnmsNode node) {
-        run();
         
-        getSystemGroup().updateSnmpDataForNode(node);
+        try {
+
+            m_systemGroup = new SystemGroup(m_address);
+
+            Set<SnmpInstId> ipAddrs = new TreeSet<SnmpInstId>();
+            for(OnmsIpInterface iface : node.getIpInterfaces()) {
+                ipAddrs.add(new SnmpInstId(iface.getIpAddress()));
+            }
+
+            m_ipAddrTable = new IpAddrTable(m_address, ipAddrs);
+
+            SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(m_address);
+            SnmpWalker walker = SnmpUtils.createWalker(agentConfig, "system/ipAddrTable", m_systemGroup, m_ipAddrTable);
+            walker.start();
+
+            walker.waitFor();
+
+            Set<SnmpInstId> ifIndices = new TreeSet<SnmpInstId>();
+
+            for(Integer ifIndex : m_ipAddrTable.getIfIndices()) {
+                ifIndices.add(new SnmpInstId(ifIndex));
+            }
+
+            
+            m_ifTable = new IfTable(m_address, ifIndices);
+            m_ifXTable = new IfXTable(m_address, ifIndices);
+
+            SnmpAgentConfig agentConfig2 = agentConfig;
+            walker = SnmpUtils.createWalker(agentConfig2, "ifTable/ifXTable", m_ifTable, m_ifXTable);
+            walker.start();
+
+            walker.waitFor();
+
+            m_systemGroup.updateSnmpDataForNode(node);
         
-        Set<String> ipAddrs = getIpAddressesToUpdate(node);
-        
-        Set<Integer> ifIndices = getIfIndicesToUpdate(node);
-        
-        for(Integer ifIndex : ifIndices) {
-            getIfTable().updateSnmpInterfaceData(node, ifIndex);
+            for(SnmpInstId ifIndex : ifIndices) {
+                m_ifTable.updateSnmpInterfaceData(node, ifIndex.toInt());
+            }
+
+            for(SnmpInstId ifIndex : ifIndices) {
+                m_ifXTable.updateSnmpInterfaceData(node, ifIndex.toInt());
+            }
+
+            for(SnmpInstId ipAddr : ipAddrs) {   
+                m_ipAddrTable.updateIpInterfaceData(node, ipAddr.toString());
+            }
+
+        } catch (InterruptedException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+
         }
         
-        for(Integer ifIndex : ifIndices) {
-            getIfXTable().updateSnmpInterfaceData(node, ifIndex);
-        }
-                
-        for(String ipAddr : ipAddrs) {   
-            getIpAddrTable().updateIpInterfaceData(node, ipAddr);
-        }
 
     }
 
