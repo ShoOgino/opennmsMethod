@@ -1,0 +1,60 @@
+    private List<Message> readMessages() throws JavaMailerException {
+        List<Message> messages = null;
+        
+        //TODO: Need a factory for this
+        ReadmailConfig m_config = new ReadmailConfig();
+        
+        String protocol = m_config.getReadmailHost().getReadmailProtocol().getTransport();
+        Properties jmProps = createProperties(m_config.getJavamailPropertyCollection());
+        jmProps.put("mail." + protocol + ".host", m_config.getReadmailHost().getHost());
+        jmProps.put("mail." + protocol + ".user", m_config.getUserAuth().getUserName());
+        jmProps.put("mail." + protocol + ".port", m_config.getReadmailHost().getPort());
+        jmProps.put("mail." + protocol + ".starttls.enable", m_config.getReadmailHost().getReadmailProtocol().isStartTls());
+        jmProps.put("mail.smtp.auth", "true");
+
+        if (m_config.getReadmailHost().getReadmailProtocol().isSslEnable()) {
+            jmProps.put("mail." + protocol + ".socketFactory.port", m_config.getReadmailHost().getPort());
+            jmProps.put("mail." + protocol + ".socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+            jmProps.put("mail." + protocol + ".socketFactory.fallback", "false");
+        }
+
+        //FIXME: need config for these
+        jmProps.put("mail." + protocol + ".connectiontimeout", 3000);
+        jmProps.put("mail." + protocol + ".timeout", 3000);
+        jmProps.put("mail.store.protocol", protocol);
+
+        Store mailStore = null;
+        Folder mailFolder = null;
+        
+
+        try {
+            JavaMailer readMailer = new JavaMailer(jmProps);
+            TimeoutTrackerMap map = new TimeoutTrackerMap(Integer.valueOf(3), Integer.valueOf(3000), Boolean.TRUE);
+            TimeoutTracker tracker = new TimeoutTracker(map.getParameterMap(), 1, 3000);
+
+            for (tracker.reset(); tracker.shouldRetry(); tracker.nextAttempt()) {
+                tracker.startAttempt();
+                
+                try {
+                    mailStore = readMailer.getSession().getStore();
+                    mailFolder = retrieveMailFolder(m_config, mailStore);
+                    mailFolder.open(Folder.READ_WRITE);  //TODO: Make sure configuration supports flag for deleting acknowledgments
+                    
+                    if (mailFolder.isOpen()) {
+                        Message[] msgs = mailFolder.getMessages();
+                        messages = Arrays.asList(msgs);
+                    }
+                } catch (MessagingException e) {
+                    //TODO: something clever here and continue?
+                    continue;
+                }
+            }
+
+            
+        } finally {
+            
+        }
+
+        return messages;
+    }
+
