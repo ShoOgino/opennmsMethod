@@ -1,4 +1,4 @@
-    private VElement refresh(VElement mapElement, Set nodesBySource, Vector deletedNodeids, java.util.Map outagedNodes,java.util.Map avails) throws MapsException {
+    private VElement refresh(VElement mapElement, Set<Integer> nodesBySource, Vector<Integer> deletedNodeids, java.util.Map<Integer,OutageInfo> outagedNodes,java.util.Map<Integer,Double> avails) throws MapsException {
 		VElement ve = (VElement) mapElement.clone();
 		if (log.isDebugEnabled())
 			log.debug("refresh: parsing VElement ID " + ve.getId()
@@ -12,15 +12,17 @@
 		
 		// get status, severity and availability: for each node, look for alternative data
 		// sources; if no source is found or if the data is not retrieved, use opennms. 
-		if (ve.isNode()) {
-			//ve.setLabel(dbManager.getNodeLabel(ve.getId()));
-			//FIRST: get data from OpenNMS
+		if (dbManager.isElementNotDeleted(ve.getId(), ve.getType())) {
+            elementAvail = mapsPropertiesFactory.getUndefinedAvail().getMin();
+            elementStatus=mapsPropertiesFactory.getUnknownStatus().getId();
+            elementSeverity = mapsPropertiesFactory.getIndeterminateSeverity().getId();
+            log.warn("The element type: " + ve.getType() +" with id=" + ve.getId() + " was deleted");
+		} else if (ve.isNode()) {
 			if(deletedNodeids.contains(new Integer(ve.getId()))){
-				elementAvail = mapsPropertiesFactory.getUndefinedAvail().getMin();
-				elementStatus=mapsPropertiesFactory.getUnknownStatus().getId();
-				elementSeverity = mapsPropertiesFactory.getIndeterminateSeverity().getId();
+	            elementAvail = mapsPropertiesFactory.getUndefinedAvail().getMin();
+	            elementStatus=mapsPropertiesFactory.getUnknownStatus().getId();
+	            elementSeverity = mapsPropertiesFactory.getIndeterminateSeverity().getId();
 			} else{ //if the node isn't deleted
-				
 				if (nodesBySource.contains(new Integer(ve.getId()))) {
 					Object id = new Integer(ve.getId());
 					log.debug("getting status from alternative source " + dataSource.getClass().getName());
@@ -43,21 +45,21 @@
 						} 
 					}
 				} else {
-					OutageInfo oi = (OutageInfo) outagedNodes.get(new Integer(ve.getId()));
+					OutageInfo oi = outagedNodes.get(new Integer(ve.getId()));
 					if (oi != null) {
 						elementStatus = oi.getStatus();
 						elementSeverity= oi.getSeverity();
 					}
 	  				if (mapsPropertiesFactory.isAvailEnabled()) {
-	   					elementAvail =((Double) avails.get(new Integer(ve.getId()))).doubleValue();
+	   					elementAvail =avails.get(new Integer(ve.getId())).doubleValue();
 	   				}				
 					
 				}
-			}				
-		} else { // the element is a Map
+			} // end of nodes deleted				
+    	} else { // the element is a Map
 			log.debug("Calculating severity for submap Element " + ve.getId()
 					+ " using '" + calculateSeverityAs + "' mode.");
-			Set nodesonve = getNodeidsOnElement(ve);
+			Set<Integer> nodesonve = getNodeidsOnElement(ve);
 			if (nodesonve != null && nodesonve.size() > 0) {
 				log.debug("found nodes on Map element :" + nodesonve.toString());
 				elementAvail = mapsPropertiesFactory.getDisabledAvail().getMin();
@@ -66,9 +68,9 @@
 						|| calculateSeverityAs.equalsIgnoreCase("best")) {
 					sev = mapsPropertiesFactory.getDefaultSeverity().getId();
 				}
-				Iterator ite = nodesonve.iterator();
+				Iterator<Integer> ite = nodesonve.iterator();
 				while (ite.hasNext()) {
-					Integer nextNodeId = (Integer) ite.next();
+					Integer nextNodeId = ite.next();
 					if(deletedNodeids.contains(nextNodeId)){
 						elementAvail += mapsPropertiesFactory.getUndefinedAvail().getMin();
 						elementStatus=mapsPropertiesFactory.getUnknownStatus().getId();
@@ -106,10 +108,9 @@
 									elementAvail += avail;
 									log.debug("got availability from alternative source. Value is "+avail);
 								} 
-							}
-							
+							}	
 						} else {
-							OutageInfo oi = (OutageInfo) outagedNodes.get(nextNodeId);
+							OutageInfo oi = outagedNodes.get(nextNodeId);
 							if (oi != null) {
 								elementStatus = oi.getStatus();
 								float tempSeverity= oi.getSeverity();
@@ -130,7 +131,7 @@
 								} 	
 							}
 			  				if (mapsPropertiesFactory.isAvailEnabled()) {
-			   					elementAvail +=((Double) avails.get(nextNodeId)).doubleValue();
+			   					elementAvail +=avails.get(nextNodeId).doubleValue();
 			   				}	
 							
 						}
@@ -150,7 +151,6 @@
 			}
 		}
 		
-
 		if (log.isDebugEnabled())
 			log.debug("refreshElement: element avail/status/severity "
 					+ elementAvail + "/" + elementStatus + "/"
