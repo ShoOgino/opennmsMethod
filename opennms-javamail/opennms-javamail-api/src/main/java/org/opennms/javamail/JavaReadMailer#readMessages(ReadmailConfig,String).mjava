@@ -1,0 +1,46 @@
+    /*
+     * TODO: Need readers that:
+     *   - use FetchProfiles
+     *   - make use of pre-fetch nature of getMessages()
+     *   - A reader for the entire system could be implemented using events/event listeners
+     * TODO: Need to make this more efficient... probably needs state so that message contents can be retrieved from the
+     *       store after they are read via this message.
+     */
+    public List<OpenNMSJavaMailMessage> readMessages(ReadmailConfig config, String subjectMatch) throws JavaMailerException {
+        Message[] msgs;
+        Folder mailFolder = null;
+        
+        Session sess = Session.getInstance(configureProperties(config), configureAuthenticator(config));
+        try {
+            Store store = sess.getStore(config.getReadmailHost().getReadmailProtocol().getTransport());
+            store.connect(config.getReadmailHost().getHost(), (int)config.getReadmailHost().getPort(), config.getUserAuth().getUserName(), config.getUserAuth().getPassword());
+            mailFolder = store.getFolder(config.getMailFolder());
+            mailFolder.open(Folder.READ_WRITE);
+            msgs = mailFolder.getMessages();
+        } catch (NoSuchProviderException e) {
+            throw new JavaMailerException("No provider matching:"+config.getReadmailHost().getReadmailProtocol().getTransport()+" from config:"+config.getName(), e);
+        } catch (MessagingException e) {
+            throw new JavaMailerException("Problem reading messages from configured mail store", e);
+        } finally {
+            if (mailFolder.isOpen()) {
+                try {
+                    mailFolder.close(true);
+                } catch (MessagingException e) {
+                    throw new JavaMailerException("problem closing mail folder:"+config.getMailFolder(), e);
+                }
+            }
+        }
+        
+        List<OpenNMSJavaMailMessage> omsgs = new ArrayList<OpenNMSJavaMailMessage>(msgs.length);
+        for (int i = 0; i < msgs.length; i++) {
+            try {
+                omsgs.add(new OpenNMSJavaMailMessage(msgs[i], sess));
+            } catch (MessagingException e) {
+                throw new JavaMailerException("Problem creating message", e);
+            } catch (IOException e) {
+                throw new JavaMailerException("IO Problem creating message", e);
+            }
+        }
+        return omsgs;
+    }
+
