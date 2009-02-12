@@ -1,0 +1,113 @@
+    // handle a tabular query, save each row in its own
+    // collection resource
+    private boolean handleTableQuery(String groupName, 
+            String resourceType,
+            XmpCollectionSet collectionSet,
+            String[] tableInfo,
+            XmpSession session, 
+            XmpVar[] queryVars)
+    {
+        XmpCollectionResource aRow;
+        int numColumns,numRows;
+        XmpMessage reply;
+        int i,j;
+        XmpVar[] vars;
+        String targetInstance;
+
+        numColumns = queryVars.length;
+
+        // make sure we have an instance or * for all rows; preserve
+        // passed in value as targetInstance so we know if we are
+        // are going to use targetInstance for saving results or
+        // use returned instance for saving values
+
+        // if resourceType is present, we use it as a subDir in
+        // our RRD dir
+
+        targetInstance = tableInfo[2];
+        if ((tableInfo[2] == null) || (tableInfo[2].length() == 0)) {
+            tableInfo[2] = new String("*");
+            targetInstance = null;
+        }
+
+        log().debug("sending table query "+tableInfo[0]+","+
+                    tableInfo[1]+","+tableInfo[2]+" target: "+targetInstance);
+
+        reply = session.queryTableVars(tableInfo,0,queryVars);
+
+        if (reply == null) {
+            log().warn("collect: query to "+
+                       collectionSet.getCollectionAgent()+" failed, "+
+                       Xmp.errorStatusToString(session.getErrorStatus()));
+            return false;
+        }
+
+        vars = reply.getMIBVars();
+
+        // we have to go through the reply and find out how 
+        // many rows we have
+
+        // for each row: create a CollectionResource of
+        //               appropriate type, instance, etc.
+        //               create AttributeGroup to put 
+        //               the values in 
+
+        numRows = vars.length / numColumns;
+
+        log().info("query returned valid table data for "+groupName+" numRows="+
+                   numRows+" numColumns="+numColumns);
+
+        for (i=0; i<numRows; i++) {
+
+            XmpCollectionResource rowResource;
+            AttributeGroup ag;
+            AttributeGroupType agt;
+            String rowInstance;
+
+            // determine instance for this row
+            // we use either the rowInstance or targetInstance for
+            // naming the instance for saving RRD file; if user
+            // wanted all rows (blank instance), then we will use
+            // the returned instance; if user specified an instance
+            // we use that instance for specifying the RRD file
+            // and collection resource
+
+            rowInstance = vars[i*numColumns].getKey();
+
+            // instead of using '*' for the nodeTypeName, use the
+            // table name so that the proper rrd file is spec'd
+
+            if (targetInstance != null)
+                rowResource = new XmpCollectionResource(collectionSet.getCollectionAgent(),resourceType, tableInfo[1],targetInstance);
+            else 
+                rowResource = new XmpCollectionResource(collectionSet.getCollectionAgent(),resourceType, tableInfo[1],rowInstance);
+
+            agt = new AttributeGroupType(groupName,"all");
+            ag = new AttributeGroup(rowResource,agt);
+
+            log().debug("queryTable instance="+rowInstance);
+
+            for (j=0; j<numColumns; j++) {
+
+                XmpCollectionAttributeType attribType = new XmpCollectionAttributeType(vars[i*numColumns+j],agt);
+
+                XmpCollectionAttribute aVar = 
+                    new XmpCollectionAttribute(rowResource,
+                                               attribType,
+                                               vars[i*numColumns+j].getObjName(),
+                                               vars[i*numColumns+j]);
+
+                ag.addAttribute(aVar);
+
+            } /* for each column */
+
+            rowResource.addAttributeGroup(ag);
+            collectionSet.addResource(rowResource);
+            log().info("query table data adding row resource "+rowResource);
+
+        } /* for each row returned */
+
+        return true;
+
+    } /* handleTableQuery() */
+
