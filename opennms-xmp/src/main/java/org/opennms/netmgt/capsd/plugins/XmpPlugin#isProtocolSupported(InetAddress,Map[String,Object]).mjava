@@ -1,0 +1,114 @@
+    /**
+     * Returns true if the protocol defined by this plugin is supported. If the
+     * protocol is not supported then a false value is returned to the caller.
+     * The qualifier map passed to the method is used by the plugin to return
+     * additional information by key-name. These key-value pairs can be added to
+     * service events if needed.
+     * 
+     * @param address
+     *            The address to check for support.
+     * @param qualifiers
+     *            The map where qualification are set by the plugin.
+     * 
+     * @return True if the protocol is supported by the address.
+     */
+    public boolean isProtocolSupported(InetAddress address, Map<String, Object> qualifiers) {
+        Category log = ThreadCategory.getInstance(getClass());
+        XmpConfig protoConfig = XmpConfigFactory.getXmpConfig();
+        XmpSession session;
+        SocketOpts sockopts = new SocketOpts();
+        // TODO how to apply timeout and retry to XMP operations?
+        int retry = protoConfig.hasRetry() ? protoConfig.getRetry() : DEFAULT_RETRY;
+        int timeout = protoConfig.hasTimeout() ? protoConfig.getTimeout() : DEFAULT_TIMEOUT;
+        int port = DEFAULT_PORT;
+        String authenUser = DEFAULT_AUTHEN_USER;
+        String requestType = DEFAULT_REQUEST_TYPE;
+        String mib = DEFAULT_REQUEST_MIB;
+        String table = DEFAULT_REQUEST_TABLE;
+        String object = DEFAULT_REQUEST_OBJECT;
+        String instance = DEFAULT_REQUEST_INSTANCE;
+        String instanceMatch = null;
+        String valueOperator = XmpUtil.EQUALS;
+        String valueOperand = DEFAULT_VALUE_OPERAND;
+        int minMatches = DEFAULT_MIN_MATCHES;
+        int maxMatches = DEFAULT_MAX_MATCHES;
+        boolean maxMatchesUnbounded = DEFAULT_MAX_MATCHES_UNBOUNDED;
+        boolean valueCaseSensitive = DEFAULT_VALUE_CASE_SENSITIVE;
+
+        if (qualifiers != null) {
+            retry = ParameterMap.getKeyedInteger(qualifiers, "retry", protoConfig.hasRetry() ? protoConfig.getRetry() : DEFAULT_RETRY);
+            timeout = ParameterMap.getKeyedInteger(qualifiers, "timeout", protoConfig.hasTimeout() ? protoConfig.getTimeout() : DEFAULT_TIMEOUT);
+            port = ParameterMap.getKeyedInteger(qualifiers, "port", DEFAULT_PORT);
+            authenUser = ParameterMap.getKeyedString(qualifiers, "authenUser", DEFAULT_AUTHEN_USER);
+            requestType = ParameterMap.getKeyedString(qualifiers, "request-type", DEFAULT_REQUEST_TYPE);
+            mib = ParameterMap.getKeyedString(qualifiers, "mib", DEFAULT_REQUEST_MIB);
+            table = ParameterMap.getKeyedString(qualifiers, "table", DEFAULT_REQUEST_TABLE);
+            object = ParameterMap.getKeyedString(qualifiers, "object", DEFAULT_REQUEST_OBJECT);
+            instance = ParameterMap.getKeyedString(qualifiers, "instance", DEFAULT_REQUEST_INSTANCE);
+            instanceMatch = ParameterMap.getKeyedString(qualifiers, "instance-match", DEFAULT_INSTANCE_MATCH);
+            valueOperator = ParameterMap.getKeyedString(qualifiers, "value-operator", "==");
+            valueOperand = ParameterMap.getKeyedString(qualifiers, "value-match", DEFAULT_VALUE_MATCH);
+            valueCaseSensitive = ParameterMap.getKeyedBoolean(qualifiers, "value-case-sensitive", DEFAULT_VALUE_CASE_SENSITIVE);
+            minMatches = ParameterMap.getKeyedInteger(qualifiers, "min-matches", DEFAULT_MIN_MATCHES);
+            maxMatches = ParameterMap.getKeyedInteger(qualifiers, "max-matches", DEFAULT_MAX_MATCHES);
+            String maxMatchesUnboundedStr = ParameterMap.getKeyedString(qualifiers, "max-matches", "unbounded");
+            maxMatchesUnbounded = (maxMatchesUnboundedStr.equalsIgnoreCase("unbounded"));
+        }
+        
+        // If this is a SelectTableRequest, then you can't use the defaults
+        // for Table and Object.
+        if (requestType.equalsIgnoreCase("SelectTableRequest")) {
+            if (table.equals(DEFAULT_REQUEST_TABLE)) {
+                throw new IllegalArgumentException("When performing a SelectTableRequest, table must be specified");
+            }
+            if (object.equals(DEFAULT_REQUEST_OBJECT)) {
+                throw new IllegalArgumentException("When performing a SelectTableRequest, object must be specified and must be tabular");
+            }
+        }
+        
+        // If this is a GetRequest, then you can't specify a table or
+        // an instance
+        else if (requestType.equalsIgnoreCase("GetRequest")) {
+            if (! table.equals(DEFAULT_REQUEST_TABLE)) {
+                throw new IllegalArgumentException("When performing a GetRequest, table must not be specified");
+            }
+            if (! instance.equals(DEFAULT_REQUEST_INSTANCE)) {
+                throw new IllegalArgumentException("When performing a GetRequest, instance must not be specified");
+            }
+        } else {
+            throw new IllegalArgumentException("Unknown request type " + requestType + ", only GetRequest and SelectTableRequest are supported");
+        }
+        
+        RE instanceRegex = null;
+        try {
+            if (instanceMatch == null) {
+                instanceRegex = null;
+            } else if (instanceMatch != null) {
+                instanceRegex = new RE(instanceMatch);                
+            }
+        } catch (RESyntaxException e) {
+            throw new java.lang.reflect.UndeclaredThrowableException(e);
+        }
+
+        boolean result = false;
+        session = new XmpSession(sockopts, address, port, authenUser);
+        if (session == null) {
+            log.info("XMP connection failed to " + address + ":" + port + " with user " + authenUser + " and " + sockopts);
+            return false;
+        }
+        if (requestType.equalsIgnoreCase("SelectTableRequest")) {
+            try {
+                result = XmpUtil.handleTableQuery(session, mib, table, object, instance, instanceRegex, valueOperator, valueOperand, minMatches, maxMatches, maxMatchesUnbounded, log, valueCaseSensitive);
+            } catch (XmpUtilException e) {
+                result = false;
+            }
+        } else if (requestType.equalsIgnoreCase("GetRequest")) {
+            try {
+                result = XmpUtil.handleScalarQuery(session, mib, object, valueOperator, valueOperand, log, valueCaseSensitive);
+            } catch (XmpUtilException e) {
+                result = false;
+            }
+        }        
+        return result;
+    }
+

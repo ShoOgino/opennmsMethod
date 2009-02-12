@@ -1,0 +1,162 @@
+    /** Collect data, via XMP, from a particular agent EventProxy is
+       used to send opennms events into the system in case a
+       collection fails or if a system is back working again after a
+       failure (suceed event).  But otherwise, no events sent if
+       collection succeeds.  Collect is called once per agent per
+       collection cycle.  Parameters are a map of String Key/String
+       Value passed in.  Keys come from collectd config 
+     **/
+    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, 
+            Map<String, String> parameters)
+    {
+        XmpCollectionSet collectionSet;
+        XmpSession session;
+        long oldUptime;
+        int i;
+        XmpCollection collection;
+        XmpCollectionResource scalarResource;
+
+        log().debug("collect agent "+agent);
+
+        oldUptime = 0;
+
+        if (parameters.get("authenUser") != null)
+            authenUser = (String)parameters.get("authenUser");
+
+        if (parameters.get("timeout") != null) {
+            timeout = Integer.valueOf(parameters.get("timeout")).intValue();
+        }
+        parameters.get("collection");
+
+        if (parameters.get("port") != null) {
+            xmpPort = Integer.valueOf((String)parameters.get("port")).intValue();
+        }
+
+        String collectionName = parameters.get("collection");
+
+        // collectionName tells us what set of data to get 
+        // this would/will come from xmp-datacollection.xml
+        if (collectionName == null) {
+            // log this!
+            log().warn("collect found no collectionName for "+agent);
+            return null;
+        }
+
+        // get/create our collections set
+        collectionSet = new XmpCollectionSet(agent);
+        collectionSet.setStatusFailed(); // default
+        collectionSet.ignorePersistTrue(); // default not to persist
+
+        // default collection resource for putting scalars in
+        scalarResource = new XmpCollectionResource(agent,null,"node",null);
+        collectionSet.addResource(scalarResource);
+
+        // get the collection, again, from the data config file factory
+        // because it could have changed; its not necessarily re-parsed,
+        // but we are getting another copy of it for each agent
+        // that we are queried each time we are invoked
+
+        collection = XmpCollectionFactory.getInstance().getXmpCollection(collectionName);
+        if (collection == null) {
+            log().warn("collect found no matching collection for "+agent);
+            return collectionSet;
+        }
+
+        oldUptime = agent.getSavedSysUpTime();
+
+        // open/get a session with the target agent
+
+        // log().debug("collect: attempting to open session with "+agent.getInetAddress()+":"+xmpPort+","+authenUser);
+
+        session = new XmpSession(sockopts,
+                                 agent.getInetAddress(),
+                                 xmpPort,authenUser);
+
+        if (session == null) {
+            // send event saying collection failed
+            log().warn("collect unable to get XMP session with "+agent);
+            return collectionSet;
+        }
+
+        if (session.isClosed()) {
+            log().warn("collect unable to open XMP session with "+agent);
+            return collectionSet;
+        }
+
+        // for each group within the collection (from data config)
+        // query agent
+
+        for (Group group : collection.getGroups().getGroup()) {
+
+            // get name of group and MIB objects in group
+            String groupName = group.getName();
+            String groupResourceType = group.getResourceType();
+            MibObj[] mibObjects = group.getMibObj();
+            XmpVar[] vars = new XmpVar[mibObjects.length];
+
+            log().debug("collecting group "+groupName+" with "+mibObjects.length+" mib objects");
+
+            // prepare the query vars
+            for (i=0 ; i< mibObjects.length; i++) {
+
+                vars[i] = new XmpVar(mibObjects[i].getMib(),
+                                     mibObjects[i].getVar(), 
+                                     mibObjects[i].getInstance(),
+                                     "",
+                                     Xmp.SYNTAX_NULLSYNTAX);
+
+            } /* for each MIB object in a particular group */
+
+            if ((mibObjects[0].getTable() != null) && 
+                    (mibObjects[0].getTable().length() != 0)) {
+
+                String[] tableInfo = new String[3];
+                tableInfo[0] = mibObjects[0].getMib();
+                tableInfo[1] = mibObjects[0].getTable();
+                tableInfo[2] = mibObjects[0].getInstance();
+
+                // tabular query               
+                if (handleTableQuery(group.getName(),
+                                     group.getResourceType(),
+                                     collectionSet,
+                                     tableInfo,
+                                     session,
+                                     vars) == false) {
+                    session.closeSession();
+                    return collectionSet;
+                }
+            }
+            else {
+                // scalar query
+                if (handleScalarQuery(group.getName(),
+                                      collectionSet,
+                                      oldUptime,
+                                      session,
+                                      scalarResource,
+                                      vars) == false) {
+                    session.closeSession();
+                    return collectionSet;
+                }
+            }
+
+        } /* for each Group in collection Group list */
+
+        // done talking to this agent; close session
+        session.closeSession();
+
+        // Did agent restart since last query?  If so, set
+        // ignorePersist to true; our scalar
+        // query will have handled this by searching returned
+        // MIB objects for sysUpTime
+
+        // warning, each collection should have a scalar query that
+        // includes core.sysUpTime 
+
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+
+        //log().info("collect finished, uptime for "+agent+" is "+
+        //            agent.getSavedSysUpTime());
+
+        return collectionSet;
+    }
+
