@@ -1,0 +1,70 @@
+	private ModelAndView insecureHandleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+		
+		ThreadCategory.setPrefix(MapsConstants.LOG4J_CATEGORY);
+		log = ThreadCategory.getInstance(this.getClass());
+		
+		String command = request.getParameter("command");
+		String address = request.getParameter("address");
+	    log.info("Executing "+command+ " "+ address+".");
+        response.setBufferSize(0);
+        response.setContentType("text/html");
+        response.setHeader("pragma","no-Chache");
+        response.setHeader("Expires","0");
+        response.setHeader("Chache-Control","no-Chache");
+        final OutputStreamWriter os = new OutputStreamWriter(response.getOutputStream());
+        os.write("<html>"); 
+
+        try {
+			final Command p = new Command(command, address);
+			String comm = (command.startsWith("ping"))?"Ping":null;
+			if(comm==null){
+				comm = (command.startsWith("traceroute"))?"Trace Route":"";
+			}
+			
+			os.write("<head><title>"+comm+" "+address+" | OpenNMS Web Console</title>" +
+    		"</head>" +
+			"<div width='100%' align='right'>" +
+			"<input type='button' value='Close' onclick='window.close();'/>" +
+			"</div>" +
+    		"<h3><font face='courier,arial'>Executing "+comm+" for the ip address "+address+"</h3>");
+			new Thread(new Runnable()
+			{
+			    public void run()
+			    {
+			        try
+			        {
+			            String s = null;
+			            while((s = p.getBufferedReader().readLine()) != null)
+			            {
+			               os.write(s);
+			               os.write("<br>");
+			               os.flush();
+			               //log.debug(s);
+			            }
+			            
+			        }
+			        catch(IOException io){
+			        	log.warn(io);
+			        }
+			    }
+			}).start();
+			try{
+				p.waitFor();
+			}catch(Exception e){
+				log.warn(e);
+			}
+
+		} catch (Exception e) {
+			log.error("An error occourred while executing command.",e);
+			os.write("An error occourred.");
+		}finally{
+			os.write("</font>" +
+					"<br>" +
+					"</html>");
+			os.flush();
+			os.close();
+		}
+
+		return null;
+	}
+
