@@ -2,9 +2,6 @@
         HttpSession userSession = request.getSession(false);
         List<SnmpManagedInterface> allInterfaces = getManagedInterfacesFromSession(userSession);
 
-        // the list of all interfaces marked as managed
-        List<String> interfaceList = getList(request.getParameterValues("collTypeCheck"));
-
         // the node being modified
         String nodeIdString = request.getParameter("node");
         int currNodeId = WebSecurityUtils.safeParseInt(nodeIdString);
@@ -12,8 +9,9 @@
         String primeInt = null;
 
         for (SnmpManagedInterface testInterface : allInterfaces) {
-            if (testInterface.getNodeid() == currNodeId && "P".equals(testInterface.getStatus()))
+            if (testInterface.getNodeid() == currNodeId && "P".equals(testInterface.getStatus())) {
                 primeInt = testInterface.getAddress();
+            }
         }
 
         try {
@@ -23,23 +21,11 @@
                 PreparedStatement stmt = connection.prepareStatement(UPDATE_INTERFACE);
 
                 for (SnmpManagedInterface curInterface : allInterfaces) {
-                    String intKey = curInterface.getNodeid() + "+" + curInterface.getIfIndex();
-
-                    // determine what is managed and unmanged
-                    if (interfaceList.contains(intKey) && (curInterface.getStatus() == null || curInterface.getStatus().equals("N"))) {
-                        stmt.setString(1, "C");
-                        stmt.setInt(2, curInterface.getNodeid());
-                        stmt.setInt(3, curInterface.getIfIndex());
-                        this.log("DEBUG: executing SNMP Collection Type update to C for nodeid: " + curInterface.getNodeid() + " ifIndex: " + curInterface.getIfIndex());
-                        stmt.executeUpdate();
-                    } else if (!interfaceList.contains(intKey) && curInterface.getNodeid() == currNodeId && ("C".equals(curInterface.getStatus()) || "S".equals(curInterface.getStatus()))) {
-                        stmt.setString(1, "N");
-                        stmt.setInt(2, curInterface.getNodeid());
-                        stmt.setInt(3, curInterface.getIfIndex());
-                        this.log("DEBUG: executing SNMP Collection Type update to N for nodeid: " + curInterface.getNodeid() + " ifIndex: " + curInterface.getIfIndex());
-                        stmt.executeUpdate();
-                    }
-
+                    String option = request.getParameter("collect-" + curInterface.getIfIndex());
+                    System.err.println(String.format("option = %s", option));
+                    stmt.setString(1, option);
+                    stmt.setInt(2, curInterface.getSnmpInterfaceId());
+                    stmt.execute();
                 }
 
                 connection.commit();
@@ -52,8 +38,9 @@
         }
 
         // send the event to restart SNMP Collection
-        if (primeInt != null)
+        if (primeInt != null) {
             sendSNMPRestartEvent(currNodeId, primeInt);
+        }
 
         // forward the request for proper display
         // TODO This will redirect to the node page, but the URL will be admin/changeCollectStatus. Needs fixed.
