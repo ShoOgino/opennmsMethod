@@ -1,13 +1,22 @@
     @Transactional
     private void doUpdate(AdapterOperation op) {
+        OnmsNode node = null;
         try {
-            OnmsNode node = m_nodeDao.get(op.getNodeId());
+            node = m_nodeDao.get(op.getNodeId());
             DnsRecord record = new DnsRecord(node);
-            DynamicDnsAdapter.update(record);
-            
-            m_nodeDnsRecordMap.replace(Integer.valueOf(op.getNodeId()), record);
+            DnsRecord oldRecord = m_nodeDnsRecordMap.get(Integer.valueOf(node.getId()));
+
+            Update update = new Update(Name.fromString(record.getZone()));
+
+            if (oldRecord != null && oldRecord.getHostname() != record.getHostname()) {
+                update.delete(Name.fromString(oldRecord.getHostname()), Type.A);
+            }
+            update.replace(Name.fromString(record.getHostname()), Type.A, 3600, record.getIp().getHostAddress());
+            m_resolver.send(update);
+
+            m_nodeDnsRecordMap.put(Integer.valueOf(op.getNodeId()), record);
         } catch (Exception e) {
-            log().error("updateNode: Error handling node added event.", e);
+            log().error("addNode: Error handling node added event.", e);
             sendAndThrow(op.getNodeId(), e);
         }
     }
