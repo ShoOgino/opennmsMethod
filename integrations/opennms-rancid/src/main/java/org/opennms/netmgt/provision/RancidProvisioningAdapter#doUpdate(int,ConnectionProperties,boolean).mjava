@@ -1,5 +1,5 @@
     @Transactional
-    public void doUpdate(int nodeId) throws ProvisioningAdapterException {
+    public void doUpdate(int nodeId, ConnectionProperties cp, boolean retry) throws ProvisioningAdapterException {
         log().debug("RANCID PROVISIONING ADAPTER CALLED updateNode");
         try {
             OnmsNode node = m_nodeDao.get(nodeId);
@@ -10,20 +10,25 @@
             RancidNode rNode = m_onmsNodeRancidNodeMap.get(Integer.valueOf(nodeId)).getNode();            
             RancidNodeAuthentication rAuth = m_onmsNodeRancidNodeMap.get(Integer.valueOf(nodeId)).getAuth();
                 if (!rNode.getDeviceName().equals(node.getLabel())) {
-                    RWSClientApi.deleteRWSRancidNode(m_cp, rNode);
-                    RWSClientApi.deleteRWSAuthNode(m_cp, rAuth);
+                    RWSClientApi.deleteRWSRancidNode(cp, rNode);
+                    RWSClientApi.deleteRWSAuthNode(cp, rAuth);
                 }
             }
             
             RancidNode rNode = getSuitableRancidNode(node);
-            RWSClientApi.createOrUpdateRWSRancidNode(m_cp, rNode);
+            RWSClientApi.createOrUpdateRWSRancidNode(cp, rNode);
             
             RancidNodeAuthentication rAuth = getSuitableRancidNodeAuthentication(node);
-            RWSClientApi.createOrUpdateRWSAuthNode(m_cp, getSuitableRancidNodeAuthentication(node));
+            RWSClientApi.createOrUpdateRWSAuthNode(cp, getSuitableRancidNodeAuthentication(node));
             
             m_onmsNodeRancidNodeMap.replace(node.getId(), new RancidNodeContainer(rNode, rAuth));
         } catch (Exception e) {
-            sendAndThrow(nodeId, e);
+            cp = getStandByRWSConnection();
+            if (retry && cp != null) {
+                doNodeConfigChanged(nodeId, cp, false);
+            } else {
+                sendAndThrow(nodeId, e);            
+            }
         }
     }
 
