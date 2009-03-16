@@ -1,0 +1,87 @@
+    @Test
+    public void testReadMessagesWithSearchTerm() throws JavaMailerException, MessagingException, InterruptedException {
+        
+        String gmailAccount = "bamboo.opennms";
+        String gmailPassword = "w00tisawerd";
+        
+        JavaSendMailer sendMailer = createSendMailer(gmailAccount, gmailPassword);
+        
+        String term1 = String.valueOf(Calendar.getInstance().getTimeInMillis());
+        Thread.sleep(2);
+        String term2 = String.valueOf(Calendar.getInstance().getTimeInMillis());
+        Thread.sleep(2);
+        String term3 = String.valueOf(Calendar.getInstance().getTimeInMillis());
+        Thread.sleep(2);
+        
+        SendmailMessage sendMsg = createAckMessage(gmailAccount, "1", term1, "ack");
+        sendMailer.setMessage(sendMailer.buildMimeMessage(sendMsg));
+        sendMailer.send();
+        
+        sendMsg = createAckMessage(gmailAccount, "2", term2, "ack");
+        sendMailer.setMessage(sendMailer.buildMimeMessage(sendMsg));
+        sendMailer.send();
+
+        sendMsg = createAckMessage(gmailAccount, "3", term3, "ack");
+        sendMailer.setMessage(sendMailer.buildMimeMessage(sendMsg));
+        sendMailer.send();
+        
+        JavaReadMailer readMailer = createGoogleReadMailer(gmailAccount, gmailPassword);
+        
+        //See if search finds all 3 messages
+        SearchTerm st = new OrTerm(new SubjectTerm(".*"+term1+" #.*"), new SubjectTerm(".*"+term2+" #.*"));
+        st = new OrTerm(st, new SubjectTerm("*."+term3+" #.*"));
+
+        List<Message> msgs = null;
+        try {
+            msgs = readMailer.retrieveMessages(st);
+        } catch (JavaMailerException e) {
+            e.printStackTrace();
+        }
+        
+        Assert.assertEquals(3, msgs.size());
+        
+        st = new OrTerm(new SubjectTerm(".*"+term1+" #.*"), new SubjectTerm(".*"+term2+" #.*"));
+        
+        try {
+            msgs = readMailer.retrieveMessages(st);
+        } catch (JavaMailerException e) {
+            e.printStackTrace();
+        }
+        
+        //Should find only term1 and term2 messages
+        Assert.assertNotNull(msgs);
+        Assert.assertEquals(2, msgs.size());
+
+        //Now cleanup
+        //Delete the term1 and term2 messages
+        for (Message msg : msgs) {
+            msg.setFlag(Flag.DELETED, true);
+        }
+        
+        //Find and delete the term3 messages
+        st = new SubjectTerm("*."+term3+" #.*");
+        try {
+            msgs = readMailer.retrieveMessages(st);
+        } catch (JavaMailerException e) {
+            e.printStackTrace();
+        }
+        
+        Assert.assertNotNull(msgs);
+        Assert.assertTrue(msgs.size() >= 1);
+        for (Message eventMsg : msgs) {
+            eventMsg.setFlag(Flag.DELETED, true);
+        }
+        
+        //Make sure they're all gone
+        st = new OrTerm(new SubjectTerm(".*"+term1+" #.*"), new SubjectTerm(".*"+term2+" #.*"));
+        st = new OrTerm(st, new SubjectTerm("*."+term3+" #.*"));
+
+        try {
+            msgs = readMailer.retrieveMessages(st);
+        } catch (JavaMailerException e) {
+            e.printStackTrace();
+        }
+        Assert.assertTrue(msgs.isEmpty());
+        
+    }
+
