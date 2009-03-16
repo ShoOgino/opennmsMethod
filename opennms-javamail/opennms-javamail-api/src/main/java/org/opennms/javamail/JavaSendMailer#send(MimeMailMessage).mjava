@@ -1,0 +1,40 @@
+    private void send(MimeMailMessage message) throws JavaMailerException {
+        Transport t = null;
+        try {
+            SendmailProtocol protoConfig = m_config.getSendmailProtocol();
+            t = m_session.getTransport(protoConfig.getTransport());
+            log().debug("for transport name '" + protoConfig.getTransport() + "' got: " + t.getClass().getName() + "@" + Integer.toHexString(t.hashCode()));
+
+            LoggingTransportListener listener = new LoggingTransportListener(log());
+            t.addTransportListener(listener);
+
+            if (t.getURLName().getProtocol().equals("mta")) {
+                // JMTA throws an AuthenticationFailedException if we call connect()
+                log().debug("transport is 'mta', not trying to connect()");
+            } else if (m_config.isUseAuthentication()) {
+                log().debug("authenticating to " + m_config.getSendmailHost().getHost());
+                t.connect(m_config.getSendmailHost().getHost(), (int)m_config.getSendmailHost().getPort(), m_config.getUserAuth().getUserName(), m_config.getUserAuth().getPassword());
+            } else {
+                log().debug("not authenticating to " + m_config.getSendmailHost().getHost());
+                t.connect(m_config.getSendmailHost().getHost(), (int)m_config.getSendmailHost().getPort(), null, null);
+            }
+
+            t.sendMessage(message.getMimeMessage(), message.getMimeMessage().getAllRecipients());
+            listener.assertAllMessagesDelivered();
+        } catch (NoSuchProviderException e) {
+            log().error("Couldn't get a transport: " + e, e);
+            throw new JavaMailerException("Couldn't get a transport: " + e, e);
+        } catch (MessagingException e) {
+            log().error("Java Mailer messaging exception: " + e, e);
+            throw new JavaMailerException("Java Mailer messaging exception: " + e, e);
+        } finally {
+            try {
+                if (t != null && t.isConnected()) {
+                    t.close();
+                }
+            } catch (MessagingException e) {
+                throw new JavaMailerException("Java Mailer messaging exception on transport close: " + e, e);
+            }
+        }
+    }
+
