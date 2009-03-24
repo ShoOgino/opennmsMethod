@@ -1,0 +1,116 @@
+    /**
+     * <P>
+     * The poll() method is responsible for polling the specified address for
+     * SNMP service availability.
+     * </P>
+     * @param parameters
+     *            The package parameters (timeout, retry, etc...) to be used for
+     *            this poll.
+     * @param iface
+     *            The network interface to test the service on.
+     * @return The availability of the interface and if a transition event
+     *         should be supressed.
+     * 
+     * @exception RuntimeException
+     *                Thrown for any uncrecoverable errors.
+     */
+    public PollStatus poll(MonitoredService svc, Map parameters) {   
+        NetworkInterface iface = svc.getNetInterface();
+        
+        String returnValue = new String ();
+
+        PollStatus status = PollStatus.unavailable();
+        InetAddress ipaddr = (InetAddress) iface.getAddress();
+        
+        // Retrieve this interface's SNMP peer object
+        //
+        SnmpAgentConfig agentConfig = (SnmpAgentConfig) iface.getAttribute(SNMP_AGENTCONFIG_KEY);
+        if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
+
+        // Get configuration parameters
+        //
+        // This should never need to be overridden, but it can be in order to be used with similar tables.
+        String bgpPeerIp = ParameterMap.getKeyedString(parameters, "bgpPeerIp", null);
+
+        // set timeout and retries on SNMP peer object
+        //
+        agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout()));
+        agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters, "retry", ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries())));
+        agentConfig.setPort(ParameterMap.getKeyedInteger(parameters, "port", agentConfig.getPort()));
+            
+        // Establish SNMP session with interface
+        //
+        try {
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: SnmpAgentConfig address: " +agentConfig);
+            }
+
+            if (bgpPeerIp == null) {
+                log().warn("BgpSessionMonitor.poll: No BGP-Peer IP Defined! ");
+                return status;
+            }
+    
+            // This returns two maps: one of instance and service name, and one of instance and status.
+            SnmpObjId bgpPeerStateSnmpObject = SnmpObjId.get(BGP_PEER_STATE_OID + "." + bgpPeerIp);
+            SnmpValue bgpPeerState = SnmpUtils.get(agentConfig, bgpPeerStateSnmpObject);
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: bgpPeerState: " + bgpPeerState);
+            }
+            
+            SnmpObjId bgpPeerAdminStateSnmpObject = SnmpObjId.get(BGP_PEER_ADMIN_STATE_OID + "." + bgpPeerIp);
+            SnmpValue bgpPeerAdminState = SnmpUtils.get(agentConfig, bgpPeerAdminStateSnmpObject);
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: bgpPeerAdminState: " + bgpPeerAdminState);
+            }
+            
+            SnmpObjId bgpPeerRemoteAsSnmpObject = SnmpObjId.get(BGP_PEER_REMOTEAS_OID + "." + bgpPeerIp);
+            SnmpValue bgpPeerRemoteAs = SnmpUtils.get(agentConfig, bgpPeerRemoteAsSnmpObject);
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: bgpPeerRemoteAs: " + bgpPeerRemoteAs);
+            }
+
+            SnmpObjId bgpPeerLastErrorSnmpObject = SnmpObjId.get(BGP_PEER_LAST_ERROR_OID + "." + bgpPeerIp);
+            SnmpValue bgpPeerLastError = SnmpUtils.get(agentConfig, bgpPeerLastErrorSnmpObject);
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: bgpPeerLastError: " + bgpPeerLastError.toHexString() + 
+                    " - decoded: " + resolveBgpErrorCode(bgpPeerLastError.toHexString()));
+            }
+            
+            SnmpObjId bgpPeerFsmEstTimeSnmpObject = SnmpObjId.get(BGP_PEER_FSM_EST_TIME_OID + "." + bgpPeerIp);
+            SnmpValue bgpPeerFsmEstTime = SnmpUtils.get(agentConfig, bgpPeerFsmEstTimeSnmpObject);
+            if (log().isDebugEnabled()) {
+                log().debug("BgpSessionMonitor.poll: bgpPeerFsmEstTime: " + bgpPeerFsmEstTime);
+            }
+            
+            if (bgpPeerState == null || bgpPeerState.isNull()) {
+                log().debug("BgpSessionMonitor poll failed: no results, addr=" + ipaddr.getHostAddress() + " oid=" + bgpPeerStateSnmpObject);
+                returnValue = "No result for " + bgpPeerIp;
+                status = PollStatus.unavailable(returnValue);
+            }
+            
+            if (bgpPeerState.toInt() != BGP_STATE_ESTABLISHED) {
+                returnValue = "BGP Session to AS" + bgpPeerRemoteAs + 
+                " via " + bgpPeerIp + " is not established! Last peer " +
+                "error message is " + resolveBgpErrorCode(bgpPeerLastError.toHexString()) + 
+                ". BGP admin state is " + bgpPeerAdminState + ". BGP Session established time: "
+                + bgpPeerFsmEstTime;
+                status = PollStatus.unavailable(returnValue);
+            }
+            
+            if (bgpPeerState.toInt() == BGP_STATE_ESTABLISHED) {
+                status = PollStatus.available();
+            }
+            
+        } catch (NumberFormatException e) {
+            status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            status = logDown(Level.ERROR, "Invalid Snmp Criteria: " + e.getMessage());
+        } catch (Throwable t) {
+            status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + ipaddr.getHostAddress(), t);
+        }
+
+        // If matchAll is set to true, then the status is set to available above with a single match.
+        // Otherwise, the service will be unavailable.
+        return status;
+    }
+
