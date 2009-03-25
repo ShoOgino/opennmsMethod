@@ -1,0 +1,23 @@
+    @PUT
+    @Path("{foreignSource}/import")
+    @Transactional
+    public Response importRequisition(@PathParam("foreignSource") String foreignSource) {
+        log().debug("importing requisition for foreign source " + foreignSource);
+
+        Requisition req = getActiveRequisition(foreignSource);
+        // just to be sure, since there's a potential race condition
+        m_pendingForeignSourceRepository.save(req);
+
+        String url = m_pendingForeignSourceRepository.getRequisitionURL(foreignSource).toString();
+        EventBuilder bldr = new EventBuilder(EventConstants.RELOAD_IMPORT_UEI, "Web");
+        bldr.addParam(EventConstants.PARM_URL, url);
+        
+        try {
+            m_eventProxy.send(bldr.getEvent());
+        } catch (EventProxyException e) {
+            throw new DataAccessResourceFailureException("Unable to send event to import group "+foreignSource, e);
+        }
+        
+        return Response.ok(req).build();
+    }
+
