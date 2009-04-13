@@ -1,0 +1,64 @@
+    /*
+     * getRancidNodeWithClogin will filter any exception, the page will show an empty table
+     * in case of node not in DB or device name not in RWS 
+     */
+    public Map<String, Object> getRancidNodeWithCLogin(int nodeid, boolean adminRole) {
+        
+        log().debug("getRancidNodeWithClogin start");
+        Map<String, Object> nodeModel = getRancidNodeBase(nodeid);
+        String rancidName = (String)nodeModel.get("id"); 
+        
+        // Group list 
+        RWSResourceList groups;
+        try {
+            groups = RWSClientApi.getRWSResourceGroupsList(m_cp);
+        } catch (RancidApiException e1) {
+            log().error(e1.getLocalizedMessage());
+            return nodeModel;
+        }
+            
+        List<String> grouplist = groups.getResource();
+        nodeModel.put("grouplist",grouplist);
+        Iterator<String> iter1 = grouplist.iterator();        
+      
+        String groupname;
+        while (iter1.hasNext()){
+            groupname = iter1.next();
+            log().debug("getRancidNodeWithClogin " + rancidName + " group " + groupname);        
+            
+            try {
+                RancidNode rn = RWSClientApi.getRWSRancidNodeTLO(m_cp, groupname, rancidName);
+                nodeModel.put("devicename", rn.getDeviceName());
+                nodeModel.put("status", rn.getState());
+                nodeModel.put("devicetype", rn.getDeviceType());
+                nodeModel.put("comment", rn.getComment());
+                nodeModel.put("groupname", groupname);
+            }
+            catch (RancidApiException e){
+                log().debug("No device found in router.db for:" + rancidName + "on Group: " + groupname);
+            }
+        }
+                    
+        //CLOGIN
+        if (adminRole) {
+            log().debug("getRancidNode: getting clogin info for: " + rancidName);        
+            RancidNodeAuthentication rn5;
+            try {
+                rn5 = RWSClientApi.getRWSAuthNode(m_cp,rancidName);
+                nodeModel.put("isadmin", "true");
+                nodeModel.put("cloginuser", rn5.getUser());
+                nodeModel.put("cloginpassword", rn5.getPassword());
+                nodeModel.put("cloginconnmethod", rn5.getConnectionMethodString());
+                nodeModel.put("cloginenablepass", rn5.getEnablePass());
+                String autoen = "0";
+                if (rn5.isAutoEnable()){
+                    autoen = "1";
+                }
+                nodeModel.put("cloginautoenable", autoen);
+            }catch (RancidApiException e){
+                log().error("getRancidNode: clogin get failed with reason: " + e.getLocalizedMessage());
+            }
+        }
+        return nodeModel;
+    }
+
