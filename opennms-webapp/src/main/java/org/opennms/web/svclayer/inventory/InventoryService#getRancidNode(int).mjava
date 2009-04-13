@@ -1,0 +1,72 @@
+    /*
+     * getRancidNode will filter any exception, the page will show an empty table
+     * in case of node not in DB or device name not in RWS 
+     */
+    public Map<String, Object> getRancidNode(int nodeid) {
+        
+        log().debug("getRancidNode start");
+        Map<String, Object> nodeModel = getRancidNodeBase(nodeid);
+        // TODO find a method to get root service for URL
+        nodeModel.put("url", m_cp.getUrl()+m_cp.getDirectory());
+        String rancidName = (String)nodeModel.get("id"); 
+        List<RancidNodeWrapper> ranlist = new ArrayList<RancidNodeWrapper>();
+        List<BucketItem> bucketlist = new ArrayList<BucketItem>();
+        // Group list 
+        RWSResourceList groups;
+        try {
+            groups = RWSClientApi.getRWSResourceGroupsList(m_cp);
+        } catch (RancidApiException e1) {
+            log().error(e1.getLocalizedMessage());
+            return nodeModel;
+        }
+            
+        List<String> grouplist = groups.getResource();
+        Iterator<String> iter1 = grouplist.iterator();
+        
+      
+        boolean first = true;
+        while (iter1.hasNext()){
+            String groupname = iter1.next();
+            log().debug("getRancidNode: " + nodeid + " for group " + groupname);        
+            
+            try {
+                if (first){
+                    RancidNode rn = RWSClientApi.getRWSRancidNodeTLO(m_cp, groupname, rancidName);
+                    nodeModel.put("devicename", rn.getDeviceName());
+                    nodeModel.put("status", rn.getState());
+                    nodeModel.put("devicetype", rn.getDeviceType());
+                    nodeModel.put("comment", rn.getComment());
+                    nodeModel.put("groupname", groupname);
+                    first = false;
+                } 
+                RancidNode rn = RWSClientApi.getRWSRancidNodeInventory(m_cp ,groupname, rancidName);
+                String vs = rn.getHeadRevision();
+                InventoryNode in = (InventoryNode)rn.getNodeVersions().get(vs);
+
+                RancidNodeWrapper rnw = new RancidNodeWrapper(rn.getDeviceName(), groupname, rn.getDeviceType(), rn.getComment(), rn.getHeadRevision(),
+                  rn.getTotalRevisions(), in.getCreationDate(), rn.getRootConfigurationUrl());
+
+                ranlist.add(rnw); 
+                
+            }
+            catch (RancidApiException e){
+                log().debug("No device found in router.db for nodeid:" + nodeid  + " on Group: " + groupname + " .Cause: " + e.getLocalizedMessage());
+            }
+        }
+            
+        //Groups invariant            
+        nodeModel.put("grouptable", ranlist);
+
+        
+        try {
+            RWSBucket bucket = RWSClientApi.getBucket(m_cp, rancidName);
+            bucketlist.addAll(bucket.getBucketItem());
+        } catch (RancidApiException e) {
+            log().debug("No bucket found for nodeid:" + nodeid  + " nodeLabel: " + rancidName + " .Cause: " + e.getLocalizedMessage());
+        }
+        
+        nodeModel.put("bucketitems", bucketlist);        
+
+        return nodeModel;
+    }
+
