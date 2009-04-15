@@ -1,0 +1,72 @@
+    /**
+     * Return all notices (optionally only unacknowledged notices) sorted by the
+     * given sort style.
+     * 
+     * <p>
+     * <strong>Note: </strong> This limit/offset code is <em>Postgres 
+     * specific!</em>
+     * Per <a href="mailto:shaneo@opennms.org">Shane </a>, this is okay for now
+     * until we can come up with an Oracle alternative too.
+     * </p>
+     * 
+     * @param limit
+     *            if -1 or zero, no limit or offset is used
+     * @param offset
+     *            if -1, no limit or offset if used
+     */
+    public static Notification[] getNotices(SortStyle sortStyle, AcknowledgeType ackType, org.opennms.web.filter.Filter[] filters, int limit, int offset) throws SQLException {
+        if (sortStyle == null || ackType == null || filters == null) {
+            throw new IllegalArgumentException("Cannot take null parameters.");
+        }
+
+        boolean useLimits = false;
+        if (limit > 0 && offset > -1) {
+            useLimits = true;
+        }
+
+        Notification[] notices = null;
+        Connection conn = Vault.getDbConnection();
+
+        try {
+            StringBuffer select = new StringBuffer("SELECT * FROM NOTIFICATIONS WHERE");
+            select.append(getAcknowledgeTypeClause(ackType));
+
+            for (int i = 0; i < filters.length; i++) {
+                select.append(" AND");
+                select.append(filters[i].getParamSql());
+            }
+
+            select.append(getOrderByClause(sortStyle));
+
+            if (useLimits) {
+                select.append(" LIMIT ?");
+                //select.append(limit);
+                select.append(" OFFSET ?");
+                //select.append(offset);
+            }
+
+            PreparedStatement stmt = conn.prepareStatement(select.toString());
+            
+            int parameterIndex = 1;
+            for (int i = 0; i < filters.length; i++) {
+            	parameterIndex += filters[i].bindParam(stmt, parameterIndex);
+            }
+            
+            if (useLimits) {
+            	stmt.setInt(parameterIndex++, limit);
+            	stmt.setInt(parameterIndex, offset);
+            }
+            ResultSet rs = stmt.executeQuery();
+            
+//            PreparedStatement ps = conn.prepareStatement(select.toString());
+            notices = rs2Notices(rs);
+
+            rs.close();
+            stmt.close();
+        } finally {
+            Vault.releaseDbConnection(conn);
+        }
+
+        return notices;
+    }
+
