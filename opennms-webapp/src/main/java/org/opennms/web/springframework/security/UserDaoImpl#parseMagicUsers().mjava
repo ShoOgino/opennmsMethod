@@ -1,0 +1,82 @@
+    /**
+     * Parses the magic-users.properties file into two mappings: from magic
+     * username to password, and from magic role to authorized users of that
+     * role.
+     */
+    private void parseMagicUsers() throws DataRetrievalFailureException {
+        HashMap<String, org.opennms.web.springframework.security.User> magicUsers = new HashMap<String, org.opennms.web.springframework.security.User>();
+        HashMap<String, GrantedAuthority[]> roles = new HashMap<String, GrantedAuthority[]>();
+
+        long lastModified = new File(m_magicUsersConfigurationFile).lastModified();
+
+        // read the file
+        Properties properties = new Properties();
+        try {
+            properties.load(new FileInputStream(m_magicUsersConfigurationFile));
+        } catch (FileNotFoundException e) {
+            throw new DataRetrievalFailureException("Magic users configuration file '" + m_magicUsersConfigurationFile + "' not found: " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new DataRetrievalFailureException("Error reading magic users configuration file '" + m_magicUsersConfigurationFile + "': " + e.getMessage(), e);
+        }
+
+        // look up users and their passwords
+        String[] configuredUsers = BundleLists.parseBundleList(properties.getProperty("users"));
+
+        for (String user : configuredUsers ) {
+            String username = properties.getProperty("user." + user + ".username");
+            String password = properties.getProperty("user." + user + ".password");
+
+            org.opennms.web.springframework.security.User newUser = new org.opennms.web.springframework.security.User();
+            newUser.setUsername(username);
+            newUser.setPassword(PASSWORD_ENCODER.encodePassword(password, null));
+
+            magicUsers.put(username, newUser);
+        }
+
+        String[] configuredRoles = BundleLists.parseBundleList(properties.getProperty("roles"));
+        // Use roles from the groups.xml file if specified in applicationContext-spring-security.xml
+        Map<String, LinkedList<String>> roleMap = m_useGroups ? parseGroupRoles() 
+                                                              : new HashMap<String, LinkedList<String>>();
+        Map<String, Boolean> roleAddDefaultMap = new HashMap<String, Boolean>();
+        for (String role : configuredRoles) {
+            String rolename = properties.getProperty("role." + role + ".name");
+            if (rolename == null) {
+                throw new DataRetrievalFailureException("Role configuration for '" + role + "' does not have 'name' parameter.  Expecting a 'role." + role + ".name' property");
+            }
+
+            String userList = properties.getProperty("role." + role + ".users");
+            if (userList == null) {
+                throw new DataRetrievalFailureException("Role configuration for '" + role + "' does not have 'users' parameter.  Expecting a 'role." + role + ".users' property");
+            }
+            String[] authUsers = BundleLists.parseBundleList(userList);
+
+            boolean notInDefaultGroup = "true".equals(properties.getProperty("role." + role + ".notInDefaultGroup"));
+
+            String securityRole = Authentication.getSpringSecuirtyRoleFromOldRoleName(rolename);
+            if (securityRole == null) {
+                throw new DataRetrievalFailureException("Could not find Spring Security role mapping for old role name '" + rolename + "' for role '" + role + "'");
+            }
+
+            for (String authUser : authUsers) {
+                if (roleMap.get(authUser) == null) {
+                    roleMap.put(authUser, new LinkedList<String>());
+                }
+                LinkedList<String> userRoleList = roleMap.get(authUser); 
+                userRoleList.add(securityRole);
+            }
+            
+            roleAddDefaultMap.put(securityRole, !notInDefaultGroup);
+        }
+
+        for (String user : roleMap.keySet()) {
+            roles.put(user, getAuthorityListFromRoleList(roleMap.get(user), roleAddDefaultMap));
+        }
+        
+        log().debug("Loaded the magic-users.properties file with " + magicUsers.size() + " magic users, " + configuredRoles.length + " roles, and " + roles.size() + " user roles");
+
+
+        m_magicUsersLastModified = lastModified; 
+        m_magicUsers = magicUsers;
+        m_roles = roles;
+    }
+
