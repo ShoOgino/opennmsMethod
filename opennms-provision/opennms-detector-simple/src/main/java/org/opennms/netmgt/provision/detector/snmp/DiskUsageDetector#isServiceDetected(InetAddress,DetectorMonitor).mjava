@@ -1,0 +1,90 @@
+    /**
+     * Returns true if the protocol defined by this plugin is supported. If the
+     * protocol is not supported then a false value is returned to the caller.
+     * The qualifier map passed to the method is used by the plugin to return
+     * additional information by key-name. These key-value pairs can be added to
+     * service events if needed.
+     * 
+     * @param address
+     *            The address to check for support.
+     * @param qualifiers
+     *            The map where qualification are set by the plugin.
+     * 
+     * @return True if the protocol is supported by the address.
+     */
+    public boolean isServiceDetected(InetAddress address, DetectorMonitor detectMonitor) {
+        int matchType = MATCH_TYPE_EXACT;
+
+        try {
+
+            SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(address);
+            String expectedValue = null;
+            
+            if (getPort() > 0) {
+                agentConfig.setPort(getPort());
+            }
+            
+            if (getTimeout() > 0) {
+                agentConfig.setTimeout(getTimeout());
+            }
+            
+            if (getRetries() > -1) {
+                agentConfig.setRetries(getRetries());
+            }
+            
+            if (getForceVersion() != null) {
+                String version = getForceVersion();
+                
+                if (version.equalsIgnoreCase("snmpv1")) {
+                    agentConfig.setVersion(SnmpAgentConfig.VERSION1);
+                } else if (version.equalsIgnoreCase("snmpv2") || version.equalsIgnoreCase("snmpv2c")) {
+                    agentConfig.setVersion(SnmpAgentConfig.VERSION2C);
+                } else if (version.equalsIgnoreCase("snmpv3")) {
+                    agentConfig.setVersion(SnmpAgentConfig.VERSION3);
+                }
+            }
+                
+            // "match-type" parm
+            //
+            if (!"".equals(getMatchType())) {
+                String matchTypeStr = getMatchType();
+                if (matchTypeStr.equalsIgnoreCase("exact")) {
+                    matchType = MATCH_TYPE_EXACT; 
+                } else if (matchTypeStr.equalsIgnoreCase("startswith")) {
+                    matchType = MATCH_TYPE_STARTSWITH;
+                } else if (matchTypeStr.equalsIgnoreCase("endswith")) {
+                    matchType = MATCH_TYPE_ENDSWITH;
+                } else if (matchTypeStr.equalsIgnoreCase("regex")) {
+                    matchType = MATCH_TYPE_REGEX;
+                } else {
+                    throw new RuntimeException("Unknown value '" + matchTypeStr + "' for parameter 'match-type'");
+                }
+            }
+
+            SnmpObjId hrStorageDescrSnmpObject = SnmpObjId.get(getHrStorageDescr());
+            
+            Map<SnmpInstId, SnmpValue> descrResults = SnmpUtils.getOidValues(agentConfig, "DiskUsagePoller", hrStorageDescrSnmpObject);
+            
+            if(descrResults.size() == 0) {
+                return false;
+            }
+
+            for (Map.Entry<SnmpInstId, SnmpValue> e : descrResults.entrySet()) { 
+                log().debug("capsd: SNMPwalk succeeded, addr=" + address.getHostAddress() + " oid=" + hrStorageDescrSnmpObject + " instance=" + e.getKey() + " value=" + e.getValue());
+              
+                if (isMatch(e.getValue().toString(), getDisk(), matchType)) {
+                    log().debug("Found disk '" + getDisk() + "' (matching hrStorageDescr was '" + e.getValue().toString() + "'");
+                    return true;
+                        
+                }
+                 
+            }
+            
+            return false;
+        
+        } catch (Throwable t) {
+            throw new UndeclaredThrowableException(t);
+        }
+        
+    }
+
