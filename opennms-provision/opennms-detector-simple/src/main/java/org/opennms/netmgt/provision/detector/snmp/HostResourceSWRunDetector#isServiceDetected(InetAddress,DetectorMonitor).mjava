@@ -1,0 +1,73 @@
+    /**
+     * Returns true if the protocol defined by this plugin is supported. If the
+     * protocol is not supported then a false value is returned to the caller.
+     * The qualifier map passed to the method is used by the plugin to return
+     * additional information by key-name. These key-value pairs can be added to
+     * service events if needed.
+     * 
+     * @param address
+     *            The address to check for support.
+     * @param qualifiers
+     *            The map where qualification are set by the plugin.
+     * 
+     * @return True if the protocol is supported by the address.
+     */
+    @Override
+    public boolean isServiceDetected(InetAddress address, DetectorMonitor detectMonitor) {
+        
+        boolean status = false;
+
+        // Retrieve this interface's SNMP peer object
+        //
+        SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(address);
+        if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + address);
+
+        // Get configuration parameters
+        //
+        
+        // This is the string that represents the service name to be monitored.
+        String serviceName = getServiceToDetect(); 
+
+        // set timeout and retries on SNMP peer object
+        //
+        configureAgentPTR(agentConfig);
+
+        if (log().isDebugEnabled()) log().debug("capsd: service= SNMP address= " + agentConfig);
+
+        // Establish SNMP session with interface
+        //
+        try {
+            if (log().isDebugEnabled()) {
+                log().debug("HostResourceSwRunMonitor.poll: SnmpAgentConfig address: " +agentConfig);
+            }
+
+            if (serviceName == null) {
+                log().warn("HostResourceSwRunMonitor.poll: No Service Name Defined! ");
+                return status;
+            }
+
+            // This returns two maps: one of instance and service name, and one of instance and status.
+            Map<SnmpInstId, SnmpValue> nameResults = SnmpUtils.getOidValues(agentConfig, "HostResourceSwRunMonitor", SnmpObjId.get(getServiceNameOid()));
+
+            // Iterate over the list of running services
+            for(SnmpInstId nameInstance : nameResults.keySet()) {
+                
+                // See if the service name is in the list of running services
+                if (stripExtraParens(nameResults.get(nameInstance).toString()).equals(serviceName) && !status) {
+                    log().debug("poll: HostResourceSwRunMonitor poll succeeded, addr=" + address.getHostAddress() + " service name=" + serviceName + " value=" + nameResults.get(nameInstance));
+                        status = true;
+                }
+            }
+
+        } catch (NumberFormatException e) {
+            log().warn("Number operator used on a non-number " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log().warn("Invalid Snmp Criteria: " + e.getMessage());
+        } catch (Throwable t) {
+            log().warn("Unexpected exception during SNMP poll of interface " + address.getHostAddress(), t);
+        }
+
+        return status;
+        
+    }
+
