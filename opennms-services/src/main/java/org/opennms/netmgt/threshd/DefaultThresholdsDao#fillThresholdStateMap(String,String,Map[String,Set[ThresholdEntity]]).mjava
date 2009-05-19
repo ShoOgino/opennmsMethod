@@ -1,0 +1,69 @@
+    private void fillThresholdStateMap(String groupName, String  typeName, Map<String, Set<ThresholdEntity>> thresholdMap) {
+        boolean merge = !thresholdMap.isEmpty();
+        for (Basethresholddef thresh : getThresholdingConfigFactory().getThresholds(groupName)) {
+            // See if map entry already exists for this datasource; if not, create a new one.
+            if (thresh.getDsType().equals(typeName)) {
+                try {
+                    BaseThresholdDefConfigWrapper wrapper=BaseThresholdDefConfigWrapper.getConfigWrapper(thresh);
+                    Set<ThresholdEntity> thresholdEntitySet = thresholdMap.get(wrapper.getDatasourceExpression());
+                    // Found set for this DS type?
+                    if (thresholdEntitySet == null) {
+                        // Nope, create a new set
+                        thresholdEntitySet = new LinkedHashSet<ThresholdEntity>();
+                        thresholdMap.put(wrapper.getDatasourceExpression(), thresholdEntitySet);
+                    }
+                    try {
+                        ThresholdEntity thresholdEntity = new ThresholdEntity();
+                        thresholdEntity.addThreshold(wrapper);
+                        if (merge) {
+                            boolean updated = false;
+                            for (ThresholdEntity e : thresholdEntitySet) {
+                                // See implementation on BaseThresholdDefConfigWrapper equals are different from identical for this case.
+                                if (thresholdEntity.getThresholdConfig().equals(e.getThresholdConfig())) {
+                                    e.merge(thresholdEntity);
+                                    updated = true;
+                                }
+                            }
+                            if (!updated) // Does not exist!
+                                thresholdEntitySet.add(thresholdEntity);
+                        } else {
+                            thresholdEntitySet.add(thresholdEntity);
+                        }
+                    } catch (IllegalStateException e) {
+                        log().warn("fillThresholdStateMap: Encountered duplicate " + thresh.getType() + " for datasource " + wrapper.getDatasourceExpression() + ": " + e, e);
+                    } 
+                }
+                catch (ThresholdExpressionException e) {
+                    log().warn("fillThresholdStateMap: Could not parse threshold expression: "+e.getMessage(), e);
+                }
+            }
+        }
+        // Search for deleted configuration
+        if (merge) {
+            log().debug("fillThresholdStateMap(merge): checking if definitions that are no longer exist for group " + groupName + " using type " + typeName);
+            for (String expression : thresholdMap.keySet()) {
+                for (Iterator<ThresholdEntity> i = thresholdMap.get(expression).iterator(); i.hasNext();) {
+                    ThresholdEntity entity = i.next();
+                    boolean found = false;
+                    for (Basethresholddef thresh : getThresholdingConfigFactory().getThresholds(groupName)) {
+                        BaseThresholdDefConfigWrapper newConfig = null;
+                        try {
+                            newConfig = BaseThresholdDefConfigWrapper.getConfigWrapper(thresh);
+                        } catch (ThresholdExpressionException e) {
+                            log().warn("fillThresholdStateMap: Could not parse threshold expression: " + e.getMessage(), e);
+                        }
+                        if (newConfig.equals(entity.getThresholdConfig())) {
+                            found = true;
+                            continue;
+                        }
+                    }
+                    if (!found) {
+                        log().info("fillThresholdStateMap(merge): deleting entity " + entity);
+                        entity.delete();
+                        i.remove();
+                    }
+                }
+            }
+        }
+    }
+

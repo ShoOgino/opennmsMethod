@@ -1,0 +1,37 @@
+    /*
+     * If I have a high threshold triggered, and then replace it with their equivalent low threshold,
+     * The high definition must be removed from cache and rearmed event must be sent.
+     * 
+     * Before call visitor.reload(), this test uses this files from src/test/resources:
+     * - thresd-configuration.xml
+     * - test-thresholds.xml
+     * 
+     * After call visitor.reload(), this test uses this files from src/test/resources:
+     * - thresd-configuration.xml
+     * - test-thresholds-4.xml
+     */
+    @Test
+    public void testBug3146_replaceThreshold() throws Exception {
+        ThresholdingVisitor visitor = createVisitor();
+        
+        // Add Events
+        String lowThresholdUei = "uei.opennms.org/threshold/lowThresholdExceeded";
+        String highExpression = "(((hrStorageAllocUnits*hrStorageUsed)/(hrStorageAllocUnits*hrStorageSize))*100)";
+        String lowExpression = "(100-((hrStorageAllocUnits*hrStorageUsed)/(hrStorageAllocUnits*hrStorageSize))*100)";
+        addHighThresholdEvent(1, 30, 25, 50, "/opt", "1", highExpression, null, null);
+        addHighRearmEvent(1, 30, 25, Double.NaN, "/opt", "1", highExpression, null, null);
+        addEvent(lowThresholdUei, "SNMP", 1, 10, 20, 5, "/opt", "1", lowExpression, null, null);
+
+        // Step 1: Trigger threshold
+        runFileSystemDataTest(visitor, "/opt", 500, 1000);
+
+        // Step 2: Reload Configuration (merge). Threshold definition was replaced.
+        initFactories("/threshd-configuration.xml","/test-thresholds-4.xml");
+        visitor.reload();
+        
+        // Step 3: Must trigger only one low threshold exceeded
+        runFileSystemDataTest(visitor, "/opt", 950, 1000);
+        
+        verifyEvents(0);
+    }
+
