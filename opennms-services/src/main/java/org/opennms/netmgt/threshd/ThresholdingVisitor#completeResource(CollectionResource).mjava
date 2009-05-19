@@ -1,102 +1,12 @@
-    public void completeResource(final CollectionResource resource) {
-        Date date=new Date();
-        List<Event> eventsList=new ArrayList<Event>();
-        if(log().isDebugEnabled()) {
-            log().debug("Completing Resource "+resource.getResourceTypeName() + "/" + resource.getOwnerName() +"/"+(resource.getInstance()==null?"default":resource.getInstance())
-                        +": "+resource.getType()+" ("+resource+")");
-        }
-        
-        File resourceDir= resource.getResourceDir(m_repository); //used repeatedly; only obtain once
-        for (ThresholdGroup thresholdGroup : m_thresholdGroupList) {
-            // Find the appropriate ThresholdEntity map to use based on the type of
-            // CollectionResource we're looking at
-            Map<String, Set<ThresholdEntity>> entityMap;
-            String resourceType = resource.getResourceTypeName();
-            String ifLabel = null;
-            if ("node".equals(resourceType)) {
-                entityMap = thresholdGroup.getNodeResourceType().getThresholdMap();
-            } else if ("if".equals(resourceType)) {
-                entityMap = thresholdGroup.getIfResourceType().getThresholdMap();
-                ifLabel = resource.getResourceDir(m_repository).getName();
-                if (m_snmpIfIndex == null) {
-                    m_snmpIfIndex = this.getIfInfo(m_nodeId, ifLabel, "snmpifindex");
-                }
-            } else {
-                Map<String, ThresholdResourceType> typeMap = thresholdGroup.getGenericResourceTypeMap();
-                if (typeMap == null) {
-                    log().error("Generic Resource Type map was null (this shouldn't happen)");
-                    return; // Cannot sensibly continue
-                }
-                ThresholdResourceType thisResourceType = typeMap.get(resourceType);
-                if (thisResourceType == null) {
-                    log().warn("No thresholds configured for resource type " + resourceType + ".  Not processing this collection ");
-                    continue;
-                }
-                entityMap = thisResourceType.getThresholdMap();
-            }
-
-            // Now look at each
-            for(String key : entityMap.keySet()) {
-            	for (ThresholdEntity threshold : entityMap.get(key)) {
-            	    
-	                if (passedThresholdFilters(resourceDir, thresholdGroup.getName(), threshold.getDatasourceType(), threshold)) {
-	                    log().info("Processing threshold "+key+ " : " +threshold);
-	                    
-	                    Collection<String> requiredDatasources=threshold.getRequiredDatasources();
-	                    Map<String, Double> values=new HashMap<String,Double>();
-	                    boolean valueMissing=false;
-	                    
-	                    for(String ds: requiredDatasources) {
-	                        log().info("Looking for datasource "+ds);
-	                        Double dsValue=getValue(resource, ds);
-	                        if(dsValue==null) {
-	                            log().info("Could not get data source value for '" + ds + "'.  Not evaluating threshold.");
-	                            valueMissing=true;
-	                        }
-	                        values.put(ds,dsValue);
-	                    }
-	                    if(!valueMissing) {
-	                        log().info("All values found, evaluating");
-	                        List<Event> thresholdEvents=threshold.evaluateAndCreateEvents(resource.getInstance(), values, date);   
-	                    
-	                        //Check in the fetched values first; if the label isn't there, check on disk.
-	                        //This is acceptable because the strings.properties files tend to be tiny, so the performance implications are minimal
-	                        // whereas there is (IMHO) a reasonable chance that the labels users want to use may well not have been collected
-	                        // in the same collection set being visited now
-	                        String dsLabelValue=m_stringAttributeValues.get(threshold.getDatasourceLabel());
-	                        if(dsLabelValue==null) {
-	                            log().info("No datasource label found in CollectionSet, fetching from storage");
-	                            dsLabelValue= getDataSourceLabelFromFile(resourceDir, threshold);
-	                        }
-	                        completeEventList(thresholdEvents, ifLabel, m_snmpIfIndex, dsLabelValue); //Finishes off events with details that a ThresholdEntity shouldn't know
-	                        eventsList.addAll(thresholdEvents);
-	                    }
-	                } else {
-	                    log().info("Not processing threshold "+ key + " : " + threshold +" because no filters matched");
-	                }
-            	}
-            }
-    	}
-    	
-        if (eventsList.size() > 0) {
-            //Create the structure which can be passed around with events in it
-            Events events=new Events();
-            for (Event event: eventsList) {
-                events.addEvent(event);
-            }
-            try {
-                
-                Log eventLog = new Log();
-                eventLog.setEvents(events);
-                //Used to use a proxy for this, but the threshd implementation was  just a simple wrapper around the following call
-                // (not even any other code).  Rather than try to get an Event Proxy into this class, it's easier to just call direct.
-                EventIpcManagerFactory.getIpcManager().sendNow(eventLog);
-            } catch (Exception e) {
-                log().info("completeResource: Failed sending threshold events: " + e, e);
-                thresholdingFinished(false);
-            }
-        }
-
-        thresholdingFinished(true);
+    /*
+     * Apply threshold for specific resource (and required attributes).
+     * Send thresholds events (if exists)
+     */
+    @Override
+    public void completeResource(CollectionResource resource) {
+        List<Event> eventList = m_thresholdingSet.applyThresholds(resource, m_attributesMap);
+        ThresholdingEventProxy proxy = new ThresholdingEventProxy();
+        proxy.add(eventList);
+        proxy.sendAllEvents();
     }
 
