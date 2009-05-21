@@ -1,29 +1,35 @@
     public void migrate(Migration migration) throws MigrationException {
-        Database db;
+        Connection connection;
+        Database database;
+
+        SpringFileOpener sfo = new SpringFileOpener();
+        sfo.setResourceLoader(getMigrationResourceLoader(migration));
+
         try {
-            db = CommandLineUtils.createDatabaseObject(
-                getMigrationClassLoader(migration),
-                migration.getJdbcUrl(),
-                migration.getAdminUser(),
-                migration.getAdminPassword(),
-                migration.getJdbcDriver(),
-                "public",
-                null);
-        } catch (JDBCException e) {
-            throw new MigrationException("unable to get database implementation for migration " + migration, e);
+            connection = m_dataSource.getConnection();
+        } catch (Exception e) {
+            throw new MigrationException("unable to get a database connection from the datasource", e);
         }
 
-        if (db != null) {
-            FileSystemFileOpener fsOpener = new FileSystemFileOpener();
-            CommandLineFileOpener clOpener = new CommandLineFileOpener(getMigrationClassLoader(migration));
-            CompositeFileOpener fileOpener = new CompositeFileOpener(fsOpener, clOpener);
-            Liquibase liquibase = new Liquibase(migration.getChangeLog(), fileOpener, db);
-            try {
-                liquibase.update(null);
-            } catch (LiquibaseException e) {
-                throw new MigrationException("unable to update the database", e);
-            }
+        try {
+            database = DatabaseFactory.getInstance().findCorrectDatabaseImplementation(connection);
+        } catch (Exception e) {
+            safeCloseConnection(connection);
+            throw new MigrationException("unable to determine the Liquibase database object", e);
         }
-        
+
+        Liquibase liquibase = new Liquibase( migration.getChangeLog(), sfo, database );
+        liquibase.setChangeLogParameterValue("install.database.admin.user", migration.getAdminUser());
+        liquibase.setChangeLogParameterValue("install.database.admin.password", migration.getAdminPassword());
+        liquibase.setChangeLogParameterValue("install.database.user", migration.getDatabaseUser());
+
+        try {
+            liquibase.update("");
+        } catch (Exception e) {
+            safeCloseConnection(connection);
+            throw new MigrationException("unable to update the database", e);
+        }
+
+        safeCloseConnection(connection);
     }
 
