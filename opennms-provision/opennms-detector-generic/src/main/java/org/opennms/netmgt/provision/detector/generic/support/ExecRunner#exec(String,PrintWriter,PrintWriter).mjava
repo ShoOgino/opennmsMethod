@@ -1,0 +1,120 @@
+    /**
+     * The <code>exec(String, PrintWriter, PrintWriter)</code> method runs a
+     * process inside of a watched thread. It returns the client's exit code and
+     * feeds its STDOUT and STDERR to the passed-in streams.
+     * 
+     * @return The command's return code
+     * @param command
+     *            The program or command to run
+     * @param stdoutWriter
+     *            java.io.PrintWriter
+     * @param stderrWriter
+     *            java.io.PrintWriter
+     * @throws IOException
+     *             thrown if a problem occurs
+     * @throws InterruptedException
+     *             thrown if a problem occurs
+     */
+    public int exec(String command, PrintWriter stdoutWriter, PrintWriter stderrWriter) throws IOException, InterruptedException {
+
+        // Default exit value is non-zero to indicate a problem.
+        int exitVal = 1;
+
+        // //////////////////////////////////////////////////////////////
+        Runtime rt = Runtime.getRuntime();
+        Process proc;
+        String[] cmd = null;
+
+        // First get the start time & calculate comparison numbers
+        Date startTime = new Date();
+        long startTimeMs = startTime.getTime();
+        long maxTimeMs = startTimeMs + (maxRunTimeSecs * 1000);
+
+        // //////////////////////////////////////////////////////////////
+        // First determine the OS to build the right command string
+        String osName = System.getProperty("os.name");
+        if (osName.equals("Windows NT") || osName.equals("Windows 2000")) {
+            cmd = new String[3];
+            cmd[0] = WINDOWS_NT_2000_COMMAND_1;
+            cmd[1] = WINDOWS_NT_2000_COMMAND_2;
+            cmd[2] = command;
+        } else if (osName.equals("Windows 95") || osName.equals("Windows 98") || osName.equals("Windows ME")) {
+            cmd = new String[3];
+            cmd[0] = WINDOWS_9X_ME_COMMAND_1;
+            cmd[1] = WINDOWS_9X_ME_COMMAND_2;
+            cmd[2] = command;
+        } else {
+            // Linux (and probably other *nixes) prefers to be called
+            // with each argument supplied separately, so we first
+            // Tokenize it across spaces as the boundary.
+            StringTokenizer st = new StringTokenizer(command, " ");
+            cmd = new String[st.countTokens()];
+            int token = 0;
+            while (st.hasMoreTokens()) {
+                String tokenString = st.nextToken();
+                cmd[token++] = tokenString;
+            }
+        }
+
+        // Execute the command and start the two output gobblers
+        if (cmd != null && cmd.length > 0) {
+            proc = rt.exec(cmd);
+        } else {
+            throw new IOException("Insufficient commands!");
+        }
+
+        StreamGobbler outputGobbler = new StreamGobbler(proc.getInputStream(), stdoutWriter);
+        StreamGobbler errorGobbler = new StreamGobbler(proc.getErrorStream(), stderrWriter);
+        outputGobbler.start();
+        errorGobbler.start();
+
+        // Wait for the program to finish running and return the
+        // exit value obtained from the executable
+        while (true) {
+
+            try {
+                exitVal = proc.exitValue();
+                break;
+            } catch (IllegalThreadStateException e) {
+
+                // If we get this exception, then the process isn't
+                // done executing and we determine if our time is up.
+                if (maxRunTimeSecs > 0) {
+
+                    Date endTime = new Date();
+                    long endTimeMs = endTime.getTime();
+                    if (endTimeMs > maxTimeMs) {
+                        // Time's up - kill the process and the gobblers and
+                        // return
+                        proc.destroy();
+                        maxRunTimeExceeded = true;
+                        stderrWriter.println(MAX_RUN_TIME_EXCEEDED_STRING);
+                        outputGobbler.quit();
+                        errorGobbler.quit();
+                        return exitVal;
+
+                    } else {
+                        // Time is not up yet so wait 100 ms before testing
+                        // again
+                        Thread.sleep(POLL_DELAY_MS);
+                    }
+
+                }
+
+            }
+
+        }
+
+        // //////////////////////////////////////////////////////////////
+        // Wait for output gobblers to finish forwarding the output
+        while (outputGobbler.isAlive() || errorGobbler.isAlive()) {
+        }
+
+        // //////////////////////////////////////////////////////////////
+        // All done, flush the streams and return the exit value
+        stdoutWriter.flush();
+        stderrWriter.flush();
+        return exitVal;
+
+    }
+
