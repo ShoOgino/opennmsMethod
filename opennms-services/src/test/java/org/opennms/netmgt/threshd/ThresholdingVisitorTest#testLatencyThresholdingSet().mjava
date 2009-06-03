@@ -1,5 +1,7 @@
     /*
      * Testing custom ThresholdingSet implementation for in-line Latency thresholds processing for Pollerd.
+     * 
+     * This test validate that Bug 1582 has been fixed.
      */
     @Test    
     public void testLatencyThresholdingSet() throws Exception {
@@ -11,26 +13,38 @@
         Map<String, Double> attributes = new HashMap<String, Double>();        
 
         attributes.put("http", 90.0);
-        List<Event> events = thresholdingSet.applyThresholds("http", attributes);
-        assertTrue(events.size() == 0);
+        List<Event> triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+        assertTrue(triggerEvents.size() == 0);
 
+        // Test Trigger
         attributes.put("http", 200.0);
-        if (thresholdingSet.hasThresholds("http")) {
-            events = thresholdingSet.applyThresholds("http", attributes);
-            assertTrue(events.size() == 0); // Trigger == 1
+        for (int i = 1; i < 5; i++) {
+            log().debug("testLatencyThresholdingSet: run number " + i);
+            if (thresholdingSet.hasThresholds("http")) {
+                triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+                assertTrue(triggerEvents.size() == 0);
+            }
         }
         if (thresholdingSet.hasThresholds("http")) {
-            events = thresholdingSet.applyThresholds("http", attributes);
-            assertTrue(events.size() == 0); // Trigger == 2
+            log().debug("testLatencyThresholdingSet: run number 5");
+            triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+            assertTrue(triggerEvents.size() == 1);
         }
+        
+        // Test Rearm
+        List<Event> rearmEvents = null;
         if (thresholdingSet.hasThresholds("http")) {
-            events = thresholdingSet.applyThresholds("http", attributes);
-            assertTrue(events.size() == 1); // Trigger == 3
+            attributes.put("http", 40.0);
+            rearmEvents = thresholdingSet.applyThresholds("http", attributes);
+            assertTrue(rearmEvents.size() == 1);
         }
 
-        addEvent("uei.opennms.org/threshold/highThresholdExceeded", "HTTP", 3, 100, 50, 200, "Unknown", "127.0.0.1[http]", "http", "127.0.0.1", null);
+        // Validate Events
+        addEvent("uei.opennms.org/threshold/highThresholdExceeded", "HTTP", 5, 100, 50, 200, "Unknown", "127.0.0.1[http]", "http", "127.0.0.1", null);
+        addEvent("uei.opennms.org/threshold/highThresholdRearmed", "HTTP", 5, 100, 50, 40, "Unknown", "127.0.0.1[http]", "http", "127.0.0.1", null);
         ThresholdingEventProxy proxy = new ThresholdingEventProxy();
-        proxy.add(events);
+        proxy.add(triggerEvents);
+        proxy.add(rearmEvents);
         proxy.sendAllEvents();
         verifyEvents(0);
     }
