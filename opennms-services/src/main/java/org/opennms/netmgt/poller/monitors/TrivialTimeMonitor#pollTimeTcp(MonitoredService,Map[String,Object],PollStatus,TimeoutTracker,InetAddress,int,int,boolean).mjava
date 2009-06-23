@@ -1,0 +1,64 @@
+    public PollStatus pollTimeTcp(MonitoredService svc, Map<String, Object> parameters, PollStatus serviceStatus, TimeoutTracker tracker, InetAddress ipv4Addr, int port, int allowedSkew, boolean persistSkew) {
+        int localTime = 0;
+        int remoteTime = 0;
+        boolean gotTime = false;
+
+        for (tracker.reset(); tracker.shouldRetry() && !gotTime; tracker.nextAttempt()) {
+            Socket socket = null;
+            try {
+
+                tracker.startAttempt();
+
+                socket = new Socket();
+                socket.connect(new InetSocketAddress(ipv4Addr, port), tracker.getConnectionTimeout());
+                socket.setSoTimeout(tracker.getSoTimeout());
+                log().debug("Connected to host: " + ipv4Addr + " on TCP port: " + port);
+
+                //
+                // Try to read from the socket
+                //
+                byte[] timeBytes = new byte[4];
+                ByteBuffer timeByteBuffer = ByteBuffer.wrap(timeBytes);
+                int bytesRead = socket.getInputStream().read(timeBytes);
+
+                if (bytesRead != 4)
+                    continue;
+                if (log().isDebugEnabled()) {
+                    log().debug("pollTimeTcp: bytes read = " + bytesRead);
+                }
+                
+                try {
+                    remoteTime = timeByteBuffer.getInt();
+                } catch (BufferUnderflowException bue) {
+                    log().error("Encountered buffer underflow while reading time from remote socket.");
+                    remoteTime = 0;
+                    serviceStatus = PollStatus.unavailable("Failed to read a valid time from remote host.");
+                    continue; // to next iteration of for() loop
+                }
+                
+                localTime  = (int)(System.currentTimeMillis() / 1000) - EPOCH_ADJ_FACTOR;
+                gotTime = true;
+                serviceStatus = qualifyTime(remoteTime, localTime, allowedSkew, serviceStatus, tracker.elapsedTimeInMillis(), persistSkew);
+            } catch (NoRouteToHostException e) {
+                serviceStatus = logDown(Level.WARN, "No route to host exception for address " + ipv4Addr.getHostAddress(), e);
+            } catch (InterruptedIOException e) {
+                serviceStatus = logDown(Level.DEBUG, "did not connect to host with " + tracker);
+            } catch (ConnectException e) {
+                serviceStatus = logDown(Level.DEBUG, "Connection exception for address: " + ipv4Addr, e);
+            } catch (IOException e) {
+                serviceStatus = logDown(Level.DEBUG, "IOException while polling address: " + ipv4Addr, e);
+            } finally {
+                try {
+                    // Close the socket
+                    if (socket != null)
+                        socket.close();
+                } catch (IOException e) {
+                    e.fillInStackTrace();
+                    if (log().isDebugEnabled())
+                        log().debug("pollTimeTcp: Error closing socket.", e);
+                }
+            }
+        }
+        return serviceStatus;
+    }
+

@@ -1,0 +1,57 @@
+    /**
+     * Poll the specified address for DHCP service availability.
+     * @param parameters
+     *            The package parameters (timeout, retry, etc...) to be used for
+     *            this poll.
+     * @param iface
+     *            The network interface to test the service on.
+     * @return The availability of the interface and if a transition event
+     *         should be supressed.
+     * 
+     */
+    public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+        NetworkInterface iface = svc.getNetInterface();
+
+        // Get interface address from NetworkInterface
+        //
+        if (iface.getType() != NetworkInterface.TYPE_IPV4)
+            throw new NetworkInterfaceNotSupportedException("Unsupported interface type, only TYPE_IPV4 currently supported");
+
+        // Process parameters
+        //
+        Category log = ThreadCategory.getInstance(getClass());
+
+        // Retries
+        //
+        int retry = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRY);
+        int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+
+        // Get interface address from NetworkInterface
+        //
+        InetAddress ipv4Addr = (InetAddress) iface.getAddress();
+
+        if (log.isDebugEnabled())
+            log.debug("DhcpMonitor.poll: address: " + ipv4Addr + " timeout: " + timeout + " retry: " + retry);
+
+        PollStatus serviceStatus = PollStatus.unavailable();
+        long responseTime = -1;
+        try {
+            // Dhcpd.isServer() returns the response time in milliseconds
+            // if the remote box is a DHCP server or -1 if the remote
+            // box is NOT a DHCP server.
+            // 
+            responseTime = Dhcpd.isServer(ipv4Addr, (long) timeout, retry);
+            if (responseTime >= 0) {
+                serviceStatus = PollStatus.available((double)responseTime);
+            }
+        } catch (IOException ioE) {
+            ioE.fillInStackTrace();
+            serviceStatus = logDown(Level.WARN, "An I/O exception occured during DHCP discovery", ioE);
+        }
+
+        //
+        // return the status of the service
+        //
+        return serviceStatus;
+    }
+
