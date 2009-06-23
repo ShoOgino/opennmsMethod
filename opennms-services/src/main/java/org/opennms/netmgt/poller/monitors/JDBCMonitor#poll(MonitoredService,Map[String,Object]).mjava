@@ -1,0 +1,112 @@
+	/**
+	 * Network interface to poll for a given service. Make sure you're using the
+	 * latest (at least 5.5) <a
+	 * href="http://www.sybase.com/detail_list/1,6902,2912,00.html">JConnect
+	 * version </a> or the plugin will not be able to tell exactly if the
+	 * service is up or not.
+	 * @param parameters
+	 *            Parameters to pass when polling the interface Currently
+	 *            recognized Map keys:
+	 *            <ul>
+	 *            <li>user - Database user
+	 *            <li>password - User password
+	 *            <li>port - server port
+	 *            <li>timeout - Number of miliseconds to wait before sending a
+	 *            timeout
+	 *            <li>driver - The JDBC driver to use
+	 *            <li>url - The vendor specific jdbc URL
+	 *            </ul>
+	 * @param iface
+	 *            The interface to poll
+	 * @return int An status code that shows the status of the service
+	 * @throws java.lang.RuntimeException
+	 *             Thrown if an unrecoverable error occurs that prevents the
+	 *             interface from being monitored.
+	 * @see org.opennms.netmgt.poller.ServiceMonitor#SERVICE_AVAILABLE
+	 * @see org.opennms.netmgt.poller.ServiceMonitor#SERVICE_UNAVAILABLE
+	 * @see org.opennms.netmgt.poller.ServiceMonitor#SERVICE_UNRESPONSIVE
+	 * @see <a
+	 *      href="http://manuals.sybase.com/onlinebooks/group-jc/jcg0550e/prjdbc/@Generic__BookTextView/9332;pt=1016#X">Error
+	 *      codes for JConnect </a>
+	 */
+	public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+		NetworkInterface iface = svc.getNetInterface();
+
+		// Assume that the service is down
+		PollStatus status = PollStatus.unavailable();
+		Driver driver = null;
+		Connection con = null;
+		Statement statement = null;
+		ResultSet resultset = null;
+
+		if (iface.getType() != NetworkInterface.TYPE_IPV4) {
+			log().error("Unsupported interface type, only TYPE_IPV4 currently supported");
+			throw new NetworkInterfaceNotSupportedException(getClass().getName() + ": Unsupported interface type, only TYPE_IPV4 currently supported");
+		}
+
+		if (parameters == null) {
+			throw new NullPointerException("parameter cannot be null");
+		}
+		try {
+			String driverClass = ParameterMap.getKeyedString(parameters, "driver", DBTools.DEFAULT_JDBC_DRIVER);
+			driver = (Driver)Class.forName(driverClass).newInstance();
+		} catch (Exception exp) {
+			throw new RuntimeException("Unable to load driver class: "+exp.toString(), exp);
+		}
+
+		log().info("Loaded JDBC driver");
+
+		// Get the JDBC url host part
+		InetAddress ipv4Addr = (InetAddress) iface.getAddress();
+		String url = null;
+		url = DBTools.constructUrl(ParameterMap.getKeyedString(parameters, "url", DBTools.DEFAULT_URL), ipv4Addr.getCanonicalHostName());
+		log().debug("JDBC url: " + url);
+		
+		TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
+
+		String db_user = ParameterMap.getKeyedString(parameters, "user", DBTools.DEFAULT_DATABASE_USER);
+		String db_pass = ParameterMap.getKeyedString(parameters, "password", DBTools.DEFAULT_DATABASE_PASSWORD);
+
+		Properties props = new Properties();
+		props.setProperty("user", db_user);
+		props.setProperty("password", db_pass);
+		props.setProperty("timeout", String.valueOf(tracker.getTimeoutInSeconds()));
+
+
+		for (tracker.reset(); tracker.shouldRetry(); tracker.nextAttempt()) {
+			try {
+				con = driver.connect(url, props);
+
+				// We are connected, upgrade the status to unresponsive
+				status = PollStatus.unresponsive();
+
+				if (con != null) {
+					log().debug("JDBC Connection Established");
+
+					tracker.startAttempt();
+
+					status = checkDatabaseStatus(con, parameters);
+
+					if (status.isAvailable()) {
+						double responseTime = tracker.elapsedTimeInMillis();
+						status = PollStatus.available(responseTime);
+
+						log().debug("JDBC service is AVAILABLE on: " + ipv4Addr.getCanonicalHostName());
+						log().debug("poll: responseTime= " + responseTime + "ms");
+
+						break;
+					}
+				} // end if con
+			} catch (SQLException sqlEx) {
+				
+				status = logDown(Level.INFO, "JDBC service is not responding on: " + ipv4Addr.getCanonicalHostName() + ", " + sqlEx.getSQLState() + ", " + sqlEx.toString(), sqlEx);
+
+			} finally {
+				closeResultSet(resultset);
+				closeStmt(statement);
+				closeConnection(con);
+			}
+		}
+		return status;
+	}
+
