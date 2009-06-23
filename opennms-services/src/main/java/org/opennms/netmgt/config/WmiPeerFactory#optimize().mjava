@@ -10,13 +10,10 @@
         Category log = log();
 
         // First pass: Remove empty definition elements
-        for (Iterator definitionsIterator =
-                 m_config.getDefinitionCollection().iterator();
+        for (Iterator<Definition> definitionsIterator = m_config.getDefinitionCollection().iterator();
              definitionsIterator.hasNext();) {
-            Definition definition =
-                (Definition) definitionsIterator.next();
-            if (definition.getSpecificCount() == 0
-                && definition.getRangeCount() == 0) {
+            Definition definition = definitionsIterator.next();
+            if (definition.getSpecificCount() == 0 && definition.getRangeCount() == 0) {
                 if (log.isDebugEnabled())
                     log.debug("optimize: Removing empty definition element");
                 definitionsIterator.remove();
@@ -24,58 +21,40 @@
         }
 
         // Second pass: Replace single IP range elements with specific elements
-        for (Iterator definitionsIterator =
-                 m_config.getDefinitionCollection().iterator();
-             definitionsIterator.hasNext();) {
-            Definition definition =
-                (Definition) definitionsIterator.next();
-            for (Iterator rangesIterator =
-                     definition.getRangeCollection().iterator();
-                 rangesIterator.hasNext();) {
-                Range range = (Range) rangesIterator.next();
-                if (range.getBegin().equals(range.getEnd())) {
-                    definition.addSpecific(range.getBegin());
-                    rangesIterator.remove();
+        for (Definition definition : m_config.getDefinitionCollection()) {
+            synchronized(definition) {
+                for (Iterator<Range> rangesIterator = definition.getRangeCollection().iterator(); rangesIterator.hasNext();) {
+                    Range range = rangesIterator.next();
+                    if (range.getBegin().equals(range.getEnd())) {
+                        definition.addSpecific(range.getBegin());
+                        rangesIterator.remove();
+                    }
                 }
             }
         }
 
         // Third pass: Sort specific and range elements for improved XML
         // readability and then combine them into fewer elements where possible
-        for (Iterator definitionsIterator =
-                 m_config.getDefinitionCollection().iterator();
-             definitionsIterator.hasNext();) {
-            Definition definition =
-                (Definition) definitionsIterator.next();
+        for (Iterator<Definition> defIterator = m_config.getDefinitionCollection().iterator(); defIterator.hasNext(); ) {
+            Definition definition = defIterator.next();
 
             // Sort specifics
-            TreeMap specificsMap = new TreeMap();
-            for (Iterator specificsIterator =
-                     definition.getSpecificCollection().iterator();
-                 specificsIterator.hasNext();) {
-                String specific = ((String) specificsIterator.next()).trim();
-                specificsMap.put(new Integer(new IPv4Address(specific).getAddress()),
-                                 specific);
+            TreeMap<Integer,String> specificsMap = new TreeMap<Integer,String>();
+            for (String specific : definition.getSpecificCollection()) {
+                specific = specific.trim();
+                specificsMap.put(new Integer(new IPv4Address(specific).getAddress()), specific);
             }
 
             // Sort ranges
-            TreeMap rangesMap = new TreeMap();
-            for (Iterator rangesIterator =
-                     definition.getRangeCollection().iterator();
-                 rangesIterator.hasNext();) {
-                Range range = (Range) rangesIterator.next();
-                rangesMap.put(new Integer(new IPv4Address(range.getBegin()).getAddress()),
-                              range);
+            TreeMap<Integer,Range> rangesMap = new TreeMap<Integer,Range>();
+            for (Range range : definition.getRangeCollection()) {
+                rangesMap.put(new Integer(new IPv4Address(range.getBegin()).getAddress()), range);
             }
 
             // Combine consecutive specifics into ranges
             Integer priorSpecific = null;
             Range addedRange = null;
-            for (Iterator specificsIterator =
-                     new ArrayList(specificsMap.keySet()).iterator();
-                 specificsIterator.hasNext();) {
-                Integer specific = (Integer) specificsIterator.next();
-
+            for (Integer specific : specificsMap.keySet()) {
                 if (priorSpecific == null) {
                     priorSpecific = specific;
                     continue;
@@ -87,8 +66,7 @@
                 if (specificInt == priorSpecificInt + 1) {
                     if (addedRange == null) {
                         addedRange = new Range();
-                        addedRange.setBegin
-                             (IPv4Address.addressToString(priorSpecificInt));
+                        addedRange.setBegin(IPv4Address.addressToString(priorSpecificInt));
                         rangesMap.put(priorSpecific, addedRange);
                         specificsMap.remove(priorSpecific);
                     }
@@ -104,21 +82,17 @@
             }
 
             // Move specifics to ranges
-            for (Iterator specificsIterator =
-                     new ArrayList(specificsMap.keySet()).iterator();
-                 specificsIterator.hasNext();) {
-                Integer specific = (Integer) specificsIterator.next();
+            for (Iterator<Integer> specIterator = specificsMap.keySet().iterator(); specIterator.hasNext(); ) {
+                Integer specific = specIterator.next();
                 int specificInt = specific.intValue();
-                for (Iterator rangesIterator =
-                         new ArrayList(rangesMap.keySet()).iterator();
-                     rangesIterator.hasNext();) {
-                    Integer begin = (Integer) rangesIterator.next();
+                for (Iterator<Integer> rangeIterator = rangesMap.keySet().iterator(); rangeIterator.hasNext();) {
+                    Integer begin = rangeIterator.next();
                     int beginInt = begin.intValue();
 
                     if (specificInt < beginInt - 1)
                         continue;
 
-                    Range range = (Range) rangesMap.get(begin);
+                    Range range = rangesMap.get(begin);
 
                     int endInt = new IPv4Address(range.getEnd()).getAddress();
 
@@ -150,22 +124,18 @@
             Range priorRange = null;
             int priorBegin = 0;
             int priorEnd = 0;
-            for (Iterator rangesIterator =
-                     rangesMap.keySet().iterator();
-                 rangesIterator.hasNext();) {
-                Integer rangeKey = (Integer) rangesIterator.next();
+            for (Iterator<Integer> rangesIterator = rangesMap.keySet().iterator(); rangesIterator.hasNext();) {
+                Integer rangeKey = rangesIterator.next();
 
-                Range range = (Range) rangesMap.get(rangeKey);
+                Range range = rangesMap.get(rangeKey);
 
                 int begin = rangeKey.intValue();
                 int end = new IPv4Address(range.getEnd()).getAddress();
 
                 if (priorRange != null) {
                     if (begin - priorEnd <= 1) {
-                        priorRange.setBegin(IPv4Address.addressToString
-                                             (Math.min(priorBegin, begin)));
-                        priorRange.setEnd(IPv4Address.addressToString
-                                           (Math.max(priorEnd, end)));
+                        priorRange.setBegin(IPv4Address.addressToString(Math.min(priorBegin, begin)));
+                        priorRange.setEnd(IPv4Address.addressToString(Math.max(priorEnd, end)));
 
                         rangesIterator.remove();
                         continue;
@@ -178,8 +148,8 @@
             }
 
             // Update changes made to sorted maps
-            definition.setSpecificCollection(new ArrayList(specificsMap.values()));
-            definition.setRangeCollection(new ArrayList(rangesMap.values()));
+            definition.setSpecific(specificsMap.values().toArray(new String[0]));
+            definition.setRange(rangesMap.values().toArray(new Range[0]));
         }
     }
 
