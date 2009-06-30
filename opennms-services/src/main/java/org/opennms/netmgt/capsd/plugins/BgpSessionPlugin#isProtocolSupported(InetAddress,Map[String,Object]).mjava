@@ -5,16 +5,25 @@
      * return additional information by key-name. These key-value pairs can be
      * added to service events if needed.
      * 
-     * @param address
+     * @param ipaddr
      *            The address to check for support.
      * @param qualifiers
      *            The map where qualification are set by the plugin.
      * @return True if the protocol is supported by the address.
      */
-    public boolean isProtocolSupported(InetAddress address, Map<String, Object> qualifiers) {
+    public boolean isProtocolSupported(InetAddress ipaddr, Map<String, Object> qualifiers) {
         try {
             String bgpPeerIp = ParameterMap.getKeyedString(qualifiers,"bgpPeerIp", null);
-            SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(address);
+            
+            // If no parameter for bgpPeerIp, do not detect the protocol and quit
+            if (bgpPeerIp == null) {
+                log().warn("poll: No BGP-Peer IP Defined! ");
+                return false;
+            }
+            
+            SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(ipaddr);
+            if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
+            
             if (qualifiers != null) {
                 // "port" parm
                 //
@@ -52,19 +61,62 @@
                         agentConfig.setVersion(SnmpAgentConfig.VERSION3);
                 }
 
+                // Get the BGP admin state
+                SnmpObjId bgpPeerAdminStateSnmpObject = SnmpObjId.get(BGP_PEER_ADMIN_STATE_OID + "." + bgpPeerIp);
+                SnmpValue bgpPeerAdminState = SnmpUtils.get(agentConfig, bgpPeerAdminStateSnmpObject);
+                
+                // If no admin state received, do not detect the protocol and quit
+                if (bgpPeerAdminState == null)
+                {
+                    log().warn("Cannot receive bgpAdminState");
+                    return false;
+                } else {
+                    if (log().isDebugEnabled()) {
+                        log().debug("poll: bgpPeerAdminState: " + bgpPeerAdminState);
+                    }
+                }
+                
+                // If BGP peer session administratively STOP do not detect
+                if  (Integer.parseInt(bgpPeerAdminState.toString()) != BGP_PEER_ADMIN_STATE.START.value())
+                {
+                    return false;
+                }
+                
+                // BGP peer session is administratively START check valid state
                 SnmpObjId bgpPeerStateSnmpObject = SnmpObjId.get(BGP_PEER_STATE_OID + "." + bgpPeerIp);
                 SnmpValue bgpPeerState = SnmpUtils.get(agentConfig, bgpPeerStateSnmpObject);
-                if (Log.isDebugEnabled()) {
-                    log().debug("BgpSessionMonitor.capsd: bgpPeerState: " + bgpPeerState);
+                
+                // If no peer state is received or SNMP is not possible, do not detect and quit
+                if (bgpPeerState == null) {
+                    log().warn("No BGP peer state received!");
+                    return false;
+                } else {
+                    if (log().isDebugEnabled()) {
+                        log().debug("poll: bgpPeerState: " + bgpPeerState);
+                    }
                 }
-                if  (Integer.parseInt(bgpPeerState.toString()) >= 1 && 
-                    Integer.parseInt(bgpPeerState.toString()) <= 6)
+
+                // Validate sessions, check state is somewhere between IDLE and ESTABLISHED
+                if  (Integer.parseInt(bgpPeerState.toString()) >= BGP_PEER_STATE.IDLE.value() && 
+                    Integer.parseInt(bgpPeerState.toString()) <= BGP_PEER_STATE.ESTABLISHED.value())
                 {
+                    // Session detected
+                    if (log().isDebugEnabled()) {
+                        log().debug("poll: bgpPeerState: "
+                                    + bgpPeerState
+                                    + " is valid, protocol supported.");
+                    }
                     return true;
                 }
             }
+        } catch (NullPointerException e) {
+            log().warn("SNMP not available or RFC1269-MIB not supported!");
+        } catch (NumberFormatException e) {
+            log().warn("Number operator used on a non-number " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log().warn("Invalid Snmp Criteria: " + e.getMessage());
         } catch (Throwable t) {
-            throw new UndeclaredThrowableException(t);
+            log().warn("Unexpected exception during SNMP poll of interface " + ipaddr, t);
         }
         return false;
     }
