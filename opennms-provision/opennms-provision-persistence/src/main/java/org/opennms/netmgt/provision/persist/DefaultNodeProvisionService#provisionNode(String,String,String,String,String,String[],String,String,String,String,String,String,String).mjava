@@ -66,62 +66,11 @@
         } catch (ForeignSourceRepositoryException e) {
             throw new RuntimeException("unable to retrieve foreign source '" + foreignSource + "'", e);
         }
-        
-        log().debug("creating database node");
-        // Create the basic node
-        
-        OnmsDistPoller dp = m_distPollerDao.get("localhost");
-        OnmsNode node = new OnmsNode(dp);
-        node.setType("A");
-        node.setForeignSource(foreignSource);
-        node.setForeignId(foreignId);
-        node.setLabel(nodeLabel);
-        node.setLabelSource("U");
 
-        node.getAssetRecord().setBuilding(foreignSource);
-        node.getAssetRecord().setAutoenable(autoEnable);
-        node.getAssetRecord().setConnection(accessMethod);
-        node.getAssetRecord().setEnable(enablePassword);
-        node.getAssetRecord().setUsername(deviceUsername);
-        node.getAssetRecord().setPassword(devicePassword);
-        
-        for(String category : categories) {
-            node.addCategory(getCategory(category));
-        }
-        
-        OnmsIpInterface iface = new OnmsIpInterface(ipAddress, node);
-        iface.setIsManaged("M");
-        iface.setIsSnmpPrimary(PrimaryType.PRIMARY);
-        
-        node.addIpInterface(iface);
-
-        for(String svcType : new String[] { "ICMP", "SNMP" }) {
-            OnmsMonitoredService svc = new OnmsMonitoredService(iface, getServiceType(svcType));
-            svc.setSource(OnmsMonitoredService.SOURCE_DETECTOR);
-            if (getPollerConfig().isPolled(iface.getIpAddress(), svcType)) svc.setStatus(OnmsMonitoredService.STATUS_ACTIVE);
-            else svc.setStatus(OnmsMonitoredService.STATUS_NOT_POLLED);
-            iface.getMonitoredServices().add(svc);
-        }
-        
-        log().debug("saving database node");
-        m_nodeDao.save(node);
-        
-        OnmsNode savedNode = m_nodeDao.findByForeignId(foreignSource, foreignId);
-        
-        Assert.notNull(savedNode, "Failed to save node to database");
-        
-        log().debug("sending events for new node ID " + savedNode.getId());
-        savedNode.visit(new AddEventVisitor(m_eventForwarder) {
-
-            /* (non-Javadoc)
-             * @see org.opennms.netmgt.model.events.AddEventVisitor#createNodeAddedEvent(org.opennms.netmgt.model.OnmsNode)
-             */
-            @Override
-            protected Event createNodeAddedEvent(OnmsNode node) {
-                Event e = super.createNodeAddedEvent(node);
-                return new EventBuilder(e).addParam(EventConstants.PARM_USER, user).getEvent();
-            }
-        });
+        Event e = new EventBuilder(EventConstants.RELOAD_IMPORT_UEI, "NodeProvisionService")
+            .addParam("url", m_foreignSourceRepository.getRequisitionURL(foreignSource).toString())
+            .getEvent();
+        m_eventForwarder.sendNow(e);
 
         log().warn("about to return (" + System.currentTimeMillis() + ")");
         return true;
