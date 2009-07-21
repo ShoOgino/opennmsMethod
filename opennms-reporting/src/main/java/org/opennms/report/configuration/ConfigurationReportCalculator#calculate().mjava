@@ -1,0 +1,107 @@
+    public void calculate() {
+
+        rlist = new RwsRancidlistreport();
+        rlist.setUser(user);
+        rlist.setReportRequestDate(reportRequestDate.toString());
+
+        //parse date
+        SimpleDateFormat format = new SimpleDateFormat("yyyy/M/d");
+        Date tmp_date = new Date();
+        try {
+            tmp_date = format.parse(theDate);
+        }
+        catch (ParseException pe){
+            tmp_date = Calendar.getInstance().getTime();
+        }
+        log().debug("calculate:report date[" + tmp_date.toString() + "]"); 
+        rlist.setReportDate(tmp_date.toString());
+
+        int totalGroups = 0;
+        int groupsMatching = 0;
+        int groupWithoutNodes = 0;
+        int groupsWithNodesWithoutconfigurationAtAll = 0;
+        int groupsWithNodesWithoutconfigurationAtReportDate = 0;
+
+
+        for (String groupName : getGroups()) {
+            log().debug("calculate:report group [" + groupName + "]"); 
+            totalGroups++;
+            GroupXSet gs = new GroupXSet();
+            gs.setGroupXSetName(groupName);
+            int totalNodes = 0;
+            int nodeMatching = 0;
+            int nodesWithoutConfigurationAtAll=0;
+            int nodesWithoutConfigurationAtReportDate=0;
+            boolean groupHasDevices = false;
+            boolean groupHasNodesWithoutconfigurationAtAll = false;
+            boolean groupHasNodesWithoutconfigurationAtrequestDate = false;
+            for (String deviceName: getDeviceListOnGroup(groupName)) {
+                totalNodes++;
+                NodeSet ns = new NodeSet();
+                ns.setDevicename(deviceName);
+                ns.setGroupname(groupName);
+                log().debug("calculate:report device [" + deviceName + "]");
+                
+                RancidNode rancidNode = getFullNode(groupName, deviceName);
+                if ( rancidNode == null ) {
+                    ns.setVersion("No Configurations found");
+                    groupHasNodesWithoutconfigurationAtAll = true;
+                    nodesWithoutConfigurationAtAll++;
+                    gs.addNodeSet(ns);
+                    continue;
+                }
+                
+                InventoryNode invNode = new InventoryNode(rancidNode);
+                boolean found = false;
+                
+                for (String versionMatch : getVersionListOnDevice(deviceName, groupName)) {
+
+
+                    invNode = (InventoryNode)rancidNode.getNodeVersions().get(versionMatch);
+
+                    log().debug("calculate:report parsing InventoryNode version[" + invNode.getVersionId() + "] date ["+invNode.getCreationDate()+"]"); 
+                    
+                    if (tmp_date.compareTo(invNode.getCreationDate()) >  0 ) {
+                        found = true;
+                        log().debug("calculate:report Date found is ["+invNode.getCreationDate()+"] version is [" + versionMatch + "]");
+                        break;
+                    }
+                }  //end for on version
+                if (found == false) {
+                    // skip device
+                    log().debug("calculate:report device has no inventory at this date["+deviceName+ "]"); 
+                    groupHasNodesWithoutconfigurationAtrequestDate = true;
+                    nodesWithoutConfigurationAtReportDate++;
+                    ns.setVersion("No configuration found at Report Date");
+                } else{
+                    ns.setVersion(invNode.getVersionId());
+                    ns.setConfigurationurl(invNode.getConfigurationUrl());
+                    ns.setSwconfigurationurl(invNode.getSoftwareImageUrl());
+                    ns.setStatus(rancidNode.getState());
+                    ns.setCreationdate(invNode.getCreationDate().toString());
+
+                    groupHasDevices = true;
+                    nodeMatching++;
+               }
+                gs.addNodeSet(ns);
+            } //end for on devices
+            
+            gs.setTotalNodes(totalNodes);
+            gs.setNodesMatching(nodeMatching);
+            gs.setNodesWithoutconfigurationAtReportDate(nodesWithoutConfigurationAtReportDate);
+            gs.setNodesWithoutconfigurationAtAll(nodesWithoutConfigurationAtAll);
+            rlist.addGroupXSet(gs);
+            if (groupHasDevices) groupsMatching++;
+            else groupWithoutNodes++;
+            if (groupHasDevices && groupHasNodesWithoutconfigurationAtAll) 
+                groupsWithNodesWithoutconfigurationAtAll++;
+            if (groupHasDevices &&groupHasNodesWithoutconfigurationAtrequestDate) 
+                groupsWithNodesWithoutconfigurationAtReportDate++;
+        } //end for of groups
+        rlist.setTotalGroups(totalGroups);
+        rlist.setGroupWithoutNodes(groupWithoutNodes);
+        rlist.setGroupsMatching(groupsMatching);
+        rlist.setGroupsWithNodesWithoutconfigurationAtAll(groupsWithNodesWithoutconfigurationAtAll);
+        rlist.setGroupsWithNodesWithoutconfigurationAtReportDate(groupsWithNodesWithoutconfigurationAtReportDate);
+    }
+
