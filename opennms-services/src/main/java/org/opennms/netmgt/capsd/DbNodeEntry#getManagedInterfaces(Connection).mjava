@@ -1,36 +1,44 @@
     DbIpInterfaceEntry[] getManagedInterfaces(Connection db) throws SQLException {
-        PreparedStatement stmt = db.prepareStatement(SQL_LOAD_MANAGED_IF_LIST);
-        stmt.setInt(1, m_nodeId);
+        PreparedStatement stmt = null;
+        ResultSet rset = null;
+        final DBUtils d = new DBUtils(getClass());
+        
+        List<DbIpInterfaceEntry> l;
+        try {
+            stmt = db.prepareStatement(SQL_LOAD_MANAGED_IF_LIST);
+            d.watch(stmt);
+            stmt.setInt(1, m_nodeId);
 
-        ResultSet rset = stmt.executeQuery();
-        List<DbIpInterfaceEntry> l = new ArrayList<DbIpInterfaceEntry>();
+            rset = stmt.executeQuery();
+            d.watch(rset);
+            l = new ArrayList<DbIpInterfaceEntry>();
 
-        while (rset.next()) {
-            String saddr = rset.getString(1);
-            int ifIndex = rset.getInt(2);
-            if (rset.wasNull())
-                ifIndex = -1;
+            while (rset.next()) {
+                String saddr = rset.getString(1);
+                int ifIndex = rset.getInt(2);
+                if (rset.wasNull())
+                    ifIndex = -1;
 
-            InetAddress addr = null;
-            try {
-                addr = InetAddress.getByName(saddr);
-            } catch (UnknownHostException e) {
-                ThreadCategory.getInstance(getClass()).warn("Failed to convert address " + saddr + " to InetAddress for node " + m_nodeId + ", ifIndex " + ifIndex, e);
-                continue;
+                InetAddress addr = null;
+                try {
+                    addr = InetAddress.getByName(saddr);
+                } catch (UnknownHostException e) {
+                    log().warn("Failed to convert address " + saddr + " to InetAddress for node " + m_nodeId + ", ifIndex " + ifIndex, e);
+                    continue;
+                }
+
+                DbIpInterfaceEntry entry = null;
+                if (ifIndex == -1)
+                    entry = DbIpInterfaceEntry.get(db, m_nodeId, addr);
+                else
+                    entry = DbIpInterfaceEntry.get(db, m_nodeId, addr, ifIndex);
+
+                if (entry != null)
+                    l.add(entry);
             }
-
-            DbIpInterfaceEntry entry = null;
-            if (ifIndex == -1)
-                entry = DbIpInterfaceEntry.get(db, m_nodeId, addr);
-            else
-                entry = DbIpInterfaceEntry.get(db, m_nodeId, addr, ifIndex);
-
-            if (entry != null)
-                l.add(entry);
+        } finally {
+            d.cleanUp();
         }
-
-        rset.close();
-        stmt.close();
 
         DbIpInterfaceEntry[] entries = new DbIpInterfaceEntry[l.size()];
         return l.toArray(entries);

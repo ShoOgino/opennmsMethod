@@ -111,12 +111,15 @@
                     }
                     
                     PreparedStatement stmt = null;
+                    final DBUtils d = new DBUtils(getClass());
                     try {
                         stmt = dbc.prepareStatement(SQL_DB_RETRIEVE_OTHER_NODES);
+                        d.watch(stmt);
                         stmt.setString(1, ifaddr.getHostAddress());
                         stmt.setInt(2, node.getNodeId());
                         
                         ResultSet rs = stmt.executeQuery();
+                        d.watch(rs);
                         while (rs.next()) {
                             int existingNodeId = rs.getInt(1);
                             if (log().isDebugEnabled()) {
@@ -126,8 +129,7 @@
                                           + existingNodeId);
                             }
                             
-                            DbNodeEntry suspectNodeEntry =
-                                DbNodeEntry.get(dbc, existingNodeId);
+                            DbNodeEntry suspectNodeEntry = DbNodeEntry.get(dbc, existingNodeId);
                             if (suspectNodeEntry == null) {
                                 // This can happen if a node has been deleted.
                                 continue;
@@ -137,27 +139,23 @@
                              * Retrieve list of interfaces associated with the
                              * old node
                              */
-                            DbIpInterfaceEntry[] tmpIfArray =
-                                suspectNodeEntry.getInterfaces(dbc);
+                            DbIpInterfaceEntry[] tmpIfArray = suspectNodeEntry.getInterfaces(dbc);
                             
                             /*
                              * Verify if the suspectNodeEntry is a duplicate
                              * node
                              */
-                            if (areDbInterfacesInSnmpCollection(tmpIfArray,
-                                                                snmpc)) {
+                            if (areDbInterfacesInSnmpCollection(tmpIfArray, snmpc)) {
                                 /*
                                  * Reparent each interface under the targets'
                                  * nodeid
                                  */
                                 for (int i = 0; i < tmpIfArray.length; i++) {
-                                    InetAddress addr =
-                                        tmpIfArray[i].getIfAddress();
+                                    InetAddress addr = tmpIfArray[i].getIfAddress();
                                     int index = snmpc.getIfIndex(addr);
                                     
                                     // Skip non-IP or loopback interfaces
-                                    if (addr.getHostAddress().equals("0.0.0.0")
-                                            || addr.getHostAddress().startsWith("127.")) {
+                                    if (addr.getHostAddress().equals("0.0.0.0") || addr.getHostAddress().startsWith("127.")) {
                                         continue;
                                     }
                                     
@@ -171,14 +169,10 @@
                                                   + existingNodeId);
                                     }
                                     
-                                    reparentInterface(dbc, addr, index,
-                                                      node.getNodeId(),
-                                                      existingNodeId);
+                                    reparentInterface(dbc, addr, index, node.getNodeId(), existingNodeId);
                                     
                                     // Create interfaceReparented event
-                                    createInterfaceReparentedEvent(node,
-                                                                   existingNodeId,
-                                                                   addr);
+                                    createInterfaceReparentedEvent(node, existingNodeId, addr);
                                 }
                                 
                                 if (log().isDebugEnabled()) {
@@ -189,9 +183,7 @@
                                               + " by reparenting from existing "
                                               + "node: " + existingNodeId);
                                 }
-                                dbIpIfEntry = DbIpInterfaceEntry.get(dbc,
-                                                                     node.getNodeId(),
-                                                                     ifaddr);
+                                dbIpIfEntry = DbIpInterfaceEntry.get(dbc, node.getNodeId(), ifaddr);
                                 reparentFlag = true;
                                 
                                 // delete duplicate node after reparenting.
@@ -202,15 +194,10 @@
                     }
                     
                     catch (SQLException e) {
-                        log().error("SQLException while updating interface: "
-                                  + ifaddr.getHostAddress()
-                                  + " on nodeid: " + node.getNodeId());
+                        log().error("SQLException while updating interface: " + ifaddr.getHostAddress() + " on nodeid: " + node.getNodeId());
                         throw e;
                     } finally {
-                        try {
-                            stmt.close();
-                        } catch (SQLException e) {
-                        }
+                        d.cleanUp();
                     }
                 }
             }

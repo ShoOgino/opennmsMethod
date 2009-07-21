@@ -11,8 +11,6 @@
         if (!m_fromDb)
             throw new IllegalStateException("The record does not exists in the database");
 
-        Category log = ThreadCategory.getInstance(getClass());
-
         StringBuffer sqlText = new StringBuffer("UPDATE ifServices SET ");
 
         char comma = ' ';
@@ -53,66 +51,71 @@
 
         sqlText.append(" WHERE nodeID = ? AND ipAddr = ? AND serviceID = ? and status <> 'D'");
 
-        log.debug("DbIfServiceEntry.update: SQL update statment = " + sqlText.toString());
+        log().debug("DbIfServiceEntry.update: SQL update statment = " + sqlText.toString());
 
-        // create the Prepared statment and then
+        // create the Prepared statement and then
         // start setting the result values
-        //
-        PreparedStatement stmt = c.prepareStatement(sqlText.toString());
-        sqlText = null;
+        PreparedStatement stmt = null;
+        final DBUtils d = new DBUtils(getClass());
+        
+        try {
+            stmt = c.prepareStatement(sqlText.toString());
+            d.watch(stmt);
+            sqlText = null;
 
-        int ndx = 1;
-        if ((m_changed & CHANGED_IFINDEX) == CHANGED_IFINDEX) {
-            if (m_ifIndex == -1)
-                stmt.setNull(ndx++, Types.INTEGER);
-            else
-                stmt.setInt(ndx++, m_ifIndex);
+            int ndx = 1;
+            if ((m_changed & CHANGED_IFINDEX) == CHANGED_IFINDEX) {
+                if (m_ifIndex == -1)
+                    stmt.setNull(ndx++, Types.INTEGER);
+                else
+                    stmt.setInt(ndx++, m_ifIndex);
+            }
+
+            if ((m_changed & CHANGED_STATUS) == CHANGED_STATUS) {
+                if (m_status != STATUS_UNKNOWN)
+                    stmt.setString(ndx++, new String(new char[] { m_status }));
+                else
+                    stmt.setNull(ndx++, Types.CHAR);
+            }
+
+            if ((m_changed & CHANGED_LASTGOOD) == CHANGED_LASTGOOD) {
+                if (m_lastGood != null) {
+                    stmt.setTimestamp(ndx++, m_lastGood);
+                } else
+                    stmt.setNull(ndx++, Types.TIMESTAMP);
+            }
+
+            if ((m_changed & CHANGED_LASTFAIL) == CHANGED_LASTFAIL) {
+                if (m_lastFail != null) {
+                    stmt.setTimestamp(ndx++, m_lastFail);
+                } else
+                    stmt.setNull(ndx++, Types.TIMESTAMP);
+            }
+
+            if ((m_changed & CHANGED_SOURCE) == CHANGED_SOURCE) {
+                if (m_source == SOURCE_UNKNOWN)
+                    stmt.setNull(ndx++, Types.CHAR);
+                else
+                    stmt.setString(ndx++, new String(new char[] { m_source }));
+            }
+
+            if ((m_changed & CHANGED_NOTIFY) == CHANGED_NOTIFY) {
+                if (m_notify == NOTIFY_UNKNOWN)
+                    stmt.setNull(ndx++, Types.CHAR);
+                else
+                    stmt.setString(ndx++, new String(new char[] { m_notify }));
+            }
+
+            stmt.setInt(ndx++, m_nodeId);
+            stmt.setString(ndx++, m_ipAddr.getHostAddress());
+            stmt.setInt(ndx++, m_serviceId);
+
+            // Run the insert
+            int rc = stmt.executeUpdate();
+            log().debug("DbIfServiceEntry.update: update result = " + rc);
+        } finally {
+            d.cleanUp();
         }
-
-        if ((m_changed & CHANGED_STATUS) == CHANGED_STATUS) {
-            if (m_status != STATUS_UNKNOWN)
-                stmt.setString(ndx++, new String(new char[] { m_status }));
-            else
-                stmt.setNull(ndx++, Types.CHAR);
-        }
-
-        if ((m_changed & CHANGED_LASTGOOD) == CHANGED_LASTGOOD) {
-            if (m_lastGood != null) {
-                stmt.setTimestamp(ndx++, m_lastGood);
-            } else
-                stmt.setNull(ndx++, Types.TIMESTAMP);
-        }
-
-        if ((m_changed & CHANGED_LASTFAIL) == CHANGED_LASTFAIL) {
-            if (m_lastFail != null) {
-                stmt.setTimestamp(ndx++, m_lastFail);
-            } else
-                stmt.setNull(ndx++, Types.TIMESTAMP);
-        }
-
-        if ((m_changed & CHANGED_SOURCE) == CHANGED_SOURCE) {
-            if (m_source == SOURCE_UNKNOWN)
-                stmt.setNull(ndx++, Types.CHAR);
-            else
-                stmt.setString(ndx++, new String(new char[] { m_source }));
-        }
-
-        if ((m_changed & CHANGED_NOTIFY) == CHANGED_NOTIFY) {
-            if (m_notify == NOTIFY_UNKNOWN)
-                stmt.setNull(ndx++, Types.CHAR);
-            else
-                stmt.setString(ndx++, new String(new char[] { m_notify }));
-        }
-
-        stmt.setInt(ndx++, m_nodeId);
-        stmt.setString(ndx++, m_ipAddr.getHostAddress());
-        stmt.setInt(ndx++, m_serviceId);
-
-        // Run the insert
-        //
-        int rc = stmt.executeUpdate();
-        log.debug("DbIfServiceEntry.update: update result = " + rc);
-        stmt.close();
 
         // clear the mask and mark as backed
         // by the database

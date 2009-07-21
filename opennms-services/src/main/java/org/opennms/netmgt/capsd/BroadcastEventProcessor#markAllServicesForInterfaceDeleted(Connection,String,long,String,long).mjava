@@ -17,14 +17,17 @@
     private List<Event> markAllServicesForInterfaceDeleted(Connection dbConn, String source, long nodeId, String ipAddr, long txNo) throws SQLException {
         PreparedStatement stmt = null;
         ResultSet rs = null;
+        final DBUtils d = new DBUtils(getClass());
         try {
             List<Event> eventsToSend = new LinkedList<Event>();
 
             final String DB_FIND_SERVICES_FOR_INTERFACE = "SELECT DISTINCT service.serviceName FROM ifservices as ifservices, service as service WHERE ifservices.nodeID = ? and ifservices.ipAddr = ? and ifservices.status != 'D' and ifservices.serviceID = service.serviceID";
             stmt = dbConn.prepareStatement(DB_FIND_SERVICES_FOR_INTERFACE);
+            d.watch(stmt);
             stmt.setLong(1, nodeId);
             stmt.setString(2, ipAddr);
             rs = stmt.executeQuery();
+            d.watch(rs);
 
             Set<String> services = new HashSet<String>();
             while (rs.next()) {
@@ -33,17 +36,13 @@
                 services.add(serviceName);
             }
 
-            rs.close();
-            rs = null;
-            stmt.close();
-            stmt = null;
-
             final String DB_MARK_SERVICES_FOR_INTERFACE = "UPDATE ifservices SET status = 'D' where ifservices.nodeID = ? and ifservices.ipAddr = ?";
             stmt = dbConn.prepareStatement(DB_MARK_SERVICES_FOR_INTERFACE);
+            d.watch(stmt);
             stmt.setLong(1, nodeId);
             stmt.setString(2, ipAddr);
 
-            stmt.executeUpdate(); //TODO: why is this line not in stable version
+            stmt.executeUpdate();
 
             for(String serviceName : services) {
                 log().debug("creating event for service " + serviceName + " for ipAddr " + ipAddr + " node " + nodeId);
@@ -55,11 +54,7 @@
 
             return eventsToSend;
         } finally {
-            try {
-                if (rs != null) rs.close();
-            } finally {
-                if (stmt != null) stmt.close();
-            }
+            d.cleanUp();
         }        
     }
 

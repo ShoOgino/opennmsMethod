@@ -26,84 +26,72 @@
      *         node does not have a primary interface.
      */
     public static NodeLabel computeLabel(int nodeID, Connection dbConnection) throws SQLException {
-        Category log = ThreadCategory.getInstance(NodeLabel.class);
         // Issue SQL query to retrieve NetBIOS name associated with the node
         String netbiosName = null;
-        PreparedStatement stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NETBIOS_NAME);
-        if (log.isDebugEnabled())
-            log.debug("NodeLabel.computeLabel: sql: " + SQL_DB_RETRIEVE_NETBIOS_NAME + " node id: " + nodeID);
-        stmt.setInt(1, nodeID);
+        PreparedStatement stmt = null;
+        ResultSet rs = null;
+        final DBUtils d = new DBUtils(NodeLabel.class);
 
         try {
-            // Issue database query
-            ResultSet rs = stmt.executeQuery();
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NETBIOS_NAME);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+
+            rs = stmt.executeQuery();
+            d.watch(rs);
 
             // Process result set, retrieve node's sysname
             while (rs.next()) {
                 netbiosName = rs.getString(1);
             }
-            rs.close();
-        } catch (SQLException sqlE) {
-            throw sqlE;
+
+            if (netbiosName != null) {
+                // Truncate sysName if it exceeds max node label length
+                if (netbiosName.length() > MAX_NODE_LABEL_LENGTH) {
+                    netbiosName = netbiosName.substring(0, MAX_NODE_LABEL_LENGTH);
+                }
+
+                if (log().isDebugEnabled()) {
+                    log().debug("NodeLabel.computeLabel: returning NetBIOS name as nodeLabel: " + netbiosName);
+                }
+
+                NodeLabel nodeLabel = new NodeLabel(netbiosName, SOURCE_NETBIOS);
+                return nodeLabel;
+            }
         } finally {
-            stmt.close();
+            d.cleanUp();
         }
 
-        if (netbiosName != null) {
-            // Truncate sysName if it exceeds max node label length
-            if (netbiosName.length() > MAX_NODE_LABEL_LENGTH)
-                netbiosName = netbiosName.substring(0, MAX_NODE_LABEL_LENGTH);
-
-            if (log.isDebugEnabled())
-                log.debug("NodeLabel.computeLabel: returning NetBIOS name as nodeLabel: " + netbiosName);
-            NodeLabel nodeLabel = new NodeLabel(netbiosName, SOURCE_NETBIOS);
-            return nodeLabel;
-        }
-
-        // Ok, if we get this far the node has no NetBIOS name associated with
-        // it so,
+        // OK, if we get this far the node has no NetBIOS name associated with it so,
         // retrieve the primary interface select method property which indicates
-        // the method to use for determining which interface on a
-        // multi-interface
+        // the method to use for determining which interface on a multi-interface
         // system is to be deemed the primary interface. The primary interface
         // will then determine what the node's label is.
         String method = System.getProperty(PropertyConstants.PROP_PRIMARY_INTERFACE_SELECT_METHOD);
         if (method == null) {
-            log.warn("NodeLabel.computeLabel: unable to retrieve property '" + PropertyConstants.PROP_PRIMARY_INTERFACE_SELECT_METHOD + "', will use default value: " + DEFAULT_SELECT_METHOD);
             method = DEFAULT_SELECT_METHOD;
         }
 
         if (!method.equals(SELECT_METHOD_MIN) && !method.equals(SELECT_METHOD_MAX)) {
-            log.warn("NodeLabel.computeLabel: retrieved value for property '" + PropertyConstants.PROP_PRIMARY_INTERFACE_SELECT_METHOD + "' is invalid.");
-            log.warn("Retrieved value is '" + method + "'.  Valid values are 'min' & 'max'.  Will use default value: " + DEFAULT_SELECT_METHOD);
+            log().warn("Interface selection method is '" + method + "'.  Valid values are 'min' & 'max'.  Will use default value: " + DEFAULT_SELECT_METHOD);
             method = DEFAULT_SELECT_METHOD;
         }
-
-        if (log.isDebugEnabled())
-            log.debug("NodeLabel.computeLabel: primary interface select method: " + method);
 
         List<IPv4Address> ipv4AddrList = new ArrayList<IPv4Address>();
         List<String> ipHostNameList = new ArrayList<String>();
 
-        // Issue SQL query to retrieve all managed interface IP addresses from
-        // 'ipinterface' table
-        stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_MANAGED_INTERFACES);
-        if (log.isDebugEnabled())
-            log.debug("NodeLabel.computeLabel: sql: " + SQL_DB_RETRIEVE_MANAGED_INTERFACES + " node id: " + nodeID);
-        stmt.setInt(1, nodeID);
-
+        // Issue SQL query to retrieve all managed interface IP addresses from 'ipinterface' table
         try {
-            // Issue database query
-            ResultSet rs = stmt.executeQuery();
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_MANAGED_INTERFACES);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+            rs = stmt.executeQuery();
+            d.watch(rs);
 
             // Process result set, store retrieved addresses/host names in lists
             loadAddressList(rs, ipv4AddrList, ipHostNameList);
-
-            rs.close();
-        } catch (SQLException sqlE) {
-            throw sqlE;
         } finally {
-            stmt.close();
+            d.cleanUp();
         }
 
         IPv4Address primaryAddr = selectPrimaryAddress(ipv4AddrList, method);
@@ -113,32 +101,23 @@
         // managed interfaces. So lets go after all the non-managed interfaces
         // and select the primary interface from them.
         if (primaryAddr == null) {
-            if (log.isDebugEnabled())
-                log.debug("NodeLabel.computeLabel: unable to find a primary address for node " + nodeID + ", returning null");
+            if (log().isDebugEnabled()) {
+                log().debug("NodeLabel.computeLabel: unable to find a primary address for node " + nodeID + ", returning null");
+            }
 
-            ipv4AddrList = new ArrayList<IPv4Address>();
-            ipHostNameList = new ArrayList<String>();
-
-            // Issue SQL query to retrieve all non-managed interface IP
-            // addresses from 'ipinterface' table
-            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NON_MANAGED_INTERFACES);
-            if (log.isDebugEnabled())
-                log.debug("NodeLabel.computeLabel: sql: " + SQL_DB_RETRIEVE_NON_MANAGED_INTERFACES + " node id: " + nodeID);
-            stmt.setInt(1, nodeID);
+            ipv4AddrList.clear();
+            ipHostNameList.clear();
 
             try {
-                // Issue database query
-                ResultSet rs = stmt.executeQuery();
-
-                // Process result set, store retrieved addresses/host names in
-                // lists
+                // retrieve all non-managed interface IP addresses from 'ipinterface' table
+                stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NON_MANAGED_INTERFACES);
+                d.watch(stmt);
+                stmt.setInt(1, nodeID);
+                rs = stmt.executeQuery();
+                d.watch(rs);
                 loadAddressList(rs, ipv4AddrList, ipHostNameList);
-
-                rs.close();
-            } catch (SQLException sqlE) {
-                throw sqlE;
             } finally {
-                stmt.close();
+                d.cleanUp();
             }
 
             primaryAddr = selectPrimaryAddress(ipv4AddrList, method);
@@ -152,60 +131,44 @@
         // If length of string is > 0 then the primary interface has a hostname
         if (primaryHostName.length() != 0) {
             // Truncate host name if it exceeds max node label length
-            if (primaryHostName.length() > MAX_NODE_LABEL_LENGTH)
+            if (primaryHostName.length() > MAX_NODE_LABEL_LENGTH) {
                 primaryHostName = primaryHostName.substring(0, MAX_NODE_LABEL_LENGTH);
+            }
 
-            if (log.isDebugEnabled())
-                log.debug("NodeLabel.computeLabel: returning hostname as nodeLabel: " + primaryHostName);
-            NodeLabel nodeLabel = new NodeLabel(primaryHostName, SOURCE_HOSTNAME);
-            return nodeLabel;
+            return new NodeLabel(primaryHostName, SOURCE_HOSTNAME);
         }
 
-        //
         // If we get this far either the primary interface does not have
         // a host name or the node does not have a primary interface...
         // so we need to use the node's sysName if available...
-        //
 
-        // Issue SQL query to retrieve sysName for the node
+        // retrieve sysName for the node
         String primarySysName = null;
-        stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_SYSNAME);
-        if (log.isDebugEnabled())
-            log.debug("NodeLabel.computeLabel: sql: " + SQL_DB_RETRIEVE_SYSNAME + " node id: " + nodeID);
-        stmt.setInt(1, nodeID);
-
         try {
-            // Issue database query
-            ResultSet rs = stmt.executeQuery();
-
-            // Process result set, retrieve node's sysname
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_SYSNAME);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+            rs = stmt.executeQuery();
+            d.watch(rs);
             while (rs.next()) {
                 primarySysName = rs.getString(1);
             }
-            rs.close();
-        } catch (SQLException sqlE) {
-            throw sqlE;
         } finally {
-            stmt.close();
+            d.cleanUp();
         }
 
         if (primarySysName != null && primarySysName.length() > 0) {
             // Truncate sysName if it exceeds max node label length
-            if (primarySysName.length() > MAX_NODE_LABEL_LENGTH)
+            if (primarySysName.length() > MAX_NODE_LABEL_LENGTH) {
                 primarySysName = primarySysName.substring(0, MAX_NODE_LABEL_LENGTH);
+            }
 
-            if (log.isDebugEnabled())
-                log.debug("NodeLabel.computeLabel: returning sysName as nodeLabel: " + primarySysName);
             NodeLabel nodeLabel = new NodeLabel(primarySysName, SOURCE_SYSNAME);
             return nodeLabel;
         }
 
-        // 
         // If we get this far the node has no sysName either so we need to
         // use the ipAddress as the nodeLabel
-        //
-        if (log.isDebugEnabled())
-            log.debug("NodeLabel.computeLabel: returning IP Address as nodeLabel: " + primaryAddr.toString());
         NodeLabel nodeLabel = new NodeLabel(primaryAddr.toString(), SOURCE_ADDRESS);
         return nodeLabel;
     }

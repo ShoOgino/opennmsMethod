@@ -31,18 +31,24 @@
     
         // prepare the SQL statement to query the database
         PreparedStatement ipRetStmt = null;
-    
-        if (verifyServer) {
-            ipRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IP_INTERFACE_IN_LOCAL_SERVER);
-            ipRetStmt.setString(1, localServer);
-        } else
-            ipRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IP_INTERFACE);
-    
+        final DBUtils d = new DBUtils(getClass());
         List<LightWeightIfEntry> ifList = new ArrayList<LightWeightIfEntry>();
-        ResultSet result = null;
+
         try {
+            if (verifyServer) {
+                ipRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IP_INTERFACE_IN_LOCAL_SERVER);
+                d.watch(ipRetStmt);
+                ipRetStmt.setString(1, localServer);
+            } else {
+                ipRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IP_INTERFACE);
+                d.watch(ipRetStmt);
+            }
+        
+            ResultSet result = null;
+            
             // run the statement
             result = ipRetStmt.executeQuery();
+            d.watch(result);
     
             // Build array list of CapsdInterface objects representing each
             // of the interfaces retrieved from the database
@@ -67,19 +73,20 @@
                 ifList.add(new LightWeightIfEntry(nodeId, LightWeightIfEntry.NULL_IFINDEX, address, managedState, DbIpInterfaceEntry.SNMP_UNKNOWN, LightWeightIfEntry.NULL_IFTYPE));
             }
         } finally {
-            result.close();
-            ipRetStmt.close();
+            d.cleanUp();
         }
-    
-        // For efficiency, prepare the SQL statements in advance
-        PreparedStatement ifUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_IP_INTERFACE);
-        PreparedStatement allSvcUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_ALL_SERVICES_FOR_NIP);
-    
-        PreparedStatement svcRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IF_SERVICES);
-        PreparedStatement svcUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_SERVICE_FOR_NIP);
-    
-        // get a handle to the PollerConfigFactory
+
         try {
+            // For efficiency, prepare the SQL statements in advance
+            PreparedStatement ifUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_IP_INTERFACE);
+            d.watch(ifUpdateStmt);
+            PreparedStatement allSvcUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_ALL_SERVICES_FOR_NIP);
+            d.watch(allSvcUpdateStmt);
+            PreparedStatement svcRetStmt = conn.prepareStatement(SQL_DB_RETRIEVE_IF_SERVICES);
+            d.watch(svcRetStmt);
+            PreparedStatement svcUpdateStmt = conn.prepareStatement(SQL_DB_UPDATE_SERVICE_FOR_NIP);
+            d.watch(svcUpdateStmt);
+    
             /*
              * Loop through interface list and determine if there has been a
              * change in the managed status of the interface based on the
@@ -173,6 +180,7 @@
                     svcRetStmt.setString(2, ipaddress);
     
                     ResultSet svcRS = svcRetStmt.executeQuery();
+                    d.watch(svcRS);
                     while (svcRS.next()) {
                         int svcId = svcRS.getInt(1);
     
@@ -230,17 +238,7 @@
                 } // interface managed
             } // end while
         } finally {
-            // Close the prepared statements...
-            try {
-                ifUpdateStmt.close();
-                allSvcUpdateStmt.close();
-                svcRetStmt.close();
-                svcUpdateStmt.close();
-            } catch (Exception e) {
-                if (log().isDebugEnabled()) {
-                    log().debug("Exception while closing prepared statements", e);
-                }
-            }
+            d.cleanUp();
         }
     }
 

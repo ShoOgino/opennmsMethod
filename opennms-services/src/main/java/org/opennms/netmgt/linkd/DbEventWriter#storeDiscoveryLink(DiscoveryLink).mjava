@@ -4,132 +4,130 @@
      */
     public void storeDiscoveryLink(DiscoveryLink discovery) throws SQLException {
 
-        Connection dbConn = getConnection();
-        Timestamp now = new Timestamp(System.currentTimeMillis());
-        PreparedStatement stmt = null;
-        ResultSet rs = null;
-
-        NodeToNodeLink[] links = discovery.getLinks();
-
-        if (log().isDebugEnabled()) {
-            log().debug("storelink: Storing " + links.length + " NodeToNodeLink information into database");
-        }
-        for (int i = 0; i < links.length; i++) {
-            NodeToNodeLink lk = links[i];
-            int nodeid = lk.getNodeId();
-            int ifindex = lk.getIfindex();
-            int nodeparentid = lk.getNodeparentid();
-            int parentifindex = lk.getParentifindex();
-
-            DbDataLinkInterfaceEntry dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeid, ifindex);
-            if (dbentry == null) {
-                // Create a new entry
-                dbentry = DbDataLinkInterfaceEntry.create(nodeid, ifindex);
+        final DBUtils d = new DBUtils(getClass());
+        try {
+            Connection dbConn = getConnection();
+            d.watch(dbConn);
+            Timestamp now = new Timestamp(System.currentTimeMillis());
+            PreparedStatement stmt = null;
+            ResultSet rs = null;
+    
+            NodeToNodeLink[] links = discovery.getLinks();
+    
+            if (log().isDebugEnabled()) {
+                log().debug("storelink: Storing " + links.length + " NodeToNodeLink information into database");
             }
-            dbentry.updateNodeParentId(nodeparentid);
-            dbentry.updateParentIfIndex(parentifindex);
-            dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_ACTIVE);
-            dbentry.set_lastpolltime(now);
-
-            dbentry.store(dbConn);
-
-            // now parsing simmetrical and setting to D if necessary
-
-            dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeparentid, parentifindex);
-
-            if (dbentry != null) {
-                if (dbentry.get_nodeparentid() == nodeid && dbentry.get_parentifindex() == ifindex
-                        && dbentry.get_status() != DbDataLinkInterfaceEntry.STATUS_DELETE) {
-                    dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_DELETE);
-                    dbentry.store(dbConn);
+            for (int i = 0; i < links.length; i++) {
+                NodeToNodeLink lk = links[i];
+                int nodeid = lk.getNodeId();
+                int ifindex = lk.getIfindex();
+                int nodeparentid = lk.getNodeparentid();
+                int parentifindex = lk.getParentifindex();
+    
+                DbDataLinkInterfaceEntry dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeid, ifindex);
+                if (dbentry == null) {
+                    // Create a new entry
+                    dbentry = DbDataLinkInterfaceEntry.create(nodeid, ifindex);
+                }
+                dbentry.updateNodeParentId(nodeparentid);
+                dbentry.updateParentIfIndex(parentifindex);
+                dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_ACTIVE);
+                dbentry.set_lastpolltime(now);
+    
+                dbentry.store(dbConn);
+    
+                // now parsing simmetrical and setting to D if necessary
+    
+                dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeparentid, parentifindex);
+    
+                if (dbentry != null) {
+                    if (dbentry.get_nodeparentid() == nodeid && dbentry.get_parentifindex() == ifindex
+                            && dbentry.get_status() != DbDataLinkInterfaceEntry.STATUS_DELETE) {
+                        dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_DELETE);
+                        dbentry.store(dbConn);
+                    }
                 }
             }
+    
+            MacToNodeLink[] linkmacs = discovery.getMacLinks();
+    
+            if (log().isDebugEnabled()) {
+                log().debug("storelink: Storing " + linkmacs.length + " MacToNodeLink information into database");
+            }
+            for (int i = 0; i < linkmacs.length; i++) {
+    
+                MacToNodeLink lkm = linkmacs[i];
+                String macaddr = lkm.getMacAddress();
+    
+                if (log().isDebugEnabled()) log().debug("storelink: finding nodeid,ifindex on DB using mac address: " + macaddr);
+    
+                stmt = dbConn.prepareStatement(SQL_GET_NODEID_IFINDEX);
+                d.watch(stmt);
+    
+                stmt.setString(1, macaddr);
+    
+                rs = stmt.executeQuery();
+                d.watch(rs);
+    
+                if (log().isDebugEnabled())
+                    log().debug("storelink: finding nodeid,ifindex on DB. Sql Statement " + SQL_GET_NODEID_IFINDEX + " with mac address " + macaddr);
+    
+                if (!rs.next()) {
+                    if (log().isDebugEnabled()) log().debug("storelink: no nodeid found on DB for mac address " + macaddr + " on link. .... Skipping");
+                    continue;
+                }
+    
+                // extract the values.
+                //
+                int ndx = 1;
+    
+                int nodeid = rs.getInt(ndx++);
+                if (rs.wasNull()) {
+                    if (log().isDebugEnabled()) log().debug("storelink: no nodeid found on DB for mac address " + macaddr + " on link. .... Skipping");
+                    continue;
+                }
+    
+                String ipaddr = rs.getString(ndx++);
+                if (rs.wasNull()) {
+                    if (log().isDebugEnabled()) log().debug("storelink: no ipaddr found on DB for mac address " + macaddr + " on link. .... Skipping");
+                    continue;
+                }
+    
+                if (!Linkd.getInstance().isInterfaceInPackage(ipaddr, discovery.getPackageName())) {
+                    if (log().isDebugEnabled()) log().debug("storelink: not in package ipaddr found: " + ipaddr + " on link. .... Skipping");
+                    continue;
+    
+                }
+                int ifindex = rs.getInt(ndx++);
+                if (rs.wasNull()) {
+                    if (log().isDebugEnabled()) log().debug("storelink: no ifindex found on DB for mac address " + macaddr + " on link.");
+                    ifindex = -1;
+                }
+    
+                int nodeparentid = lkm.getNodeparentid();
+                int parentifindex = lkm.getParentifindex();
+                DbDataLinkInterfaceEntry dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeid, ifindex);
+                if (dbentry == null) {
+                    // Create a new entry
+                    dbentry = DbDataLinkInterfaceEntry.create(nodeid, ifindex);
+                }
+                dbentry.updateNodeParentId(nodeparentid);
+                dbentry.updateParentIfIndex(parentifindex);
+                dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_ACTIVE);
+                dbentry.set_lastpolltime(now);
+    
+                dbentry.store(dbConn);
+    
+            }
+    
+            stmt = dbConn.prepareStatement(SQL_UPDATE_DATALINKINTERFACE);
+            d.watch(stmt);
+            stmt.setTimestamp(1, now);
+    
+            int i = stmt.executeUpdate();
+        } finally {
+            d.cleanUp();
         }
-
-        MacToNodeLink[] linkmacs = discovery.getMacLinks();
-
-        if (log().isDebugEnabled()) {
-            log().debug("storelink: Storing " + linkmacs.length + " MacToNodeLink information into database");
-        }
-        for (int i = 0; i < linkmacs.length; i++) {
-
-            MacToNodeLink lkm = linkmacs[i];
-            String macaddr = lkm.getMacAddress();
-
-            if (log().isDebugEnabled()) log().debug("storelink: finding nodeid,ifindex on DB using mac address: " + macaddr);
-
-            stmt = dbConn.prepareStatement(SQL_GET_NODEID_IFINDEX);
-
-            stmt.setString(1, macaddr);
-
-            rs = stmt.executeQuery();
-
-            if (log().isDebugEnabled())
-                log().debug("storelink: finding nodeid,ifindex on DB. Sql Statement " + SQL_GET_NODEID_IFINDEX + " with mac address " + macaddr);
-
-            if (!rs.next()) {
-                rs.close();
-                stmt.close();
-                if (log().isDebugEnabled()) log().debug("storelink: no nodeid found on DB for mac address " + macaddr + " on link. .... Skipping");
-                continue;
-            }
-
-            // extract the values.
-            //
-            int ndx = 1;
-
-            int nodeid = rs.getInt(ndx++);
-            if (rs.wasNull()) {
-                rs.close();
-                stmt.close();
-                if (log().isDebugEnabled()) log().debug("storelink: no nodeid found on DB for mac address " + macaddr + " on link. .... Skipping");
-                continue;
-            }
-
-            String ipaddr = rs.getString(ndx++);
-            if (rs.wasNull()) {
-                rs.close();
-                stmt.close();
-                if (log().isDebugEnabled()) log().debug("storelink: no ipaddr found on DB for mac address " + macaddr + " on link. .... Skipping");
-                continue;
-            }
-
-            if (!Linkd.getInstance().isInterfaceInPackage(ipaddr, discovery.getPackageName())) {
-                if (log().isDebugEnabled()) log().debug("storelink: not in package ipaddr found: " + ipaddr + " on link. .... Skipping");
-                continue;
-
-            }
-            int ifindex = rs.getInt(ndx++);
-            if (rs.wasNull()) {
-                if (log().isDebugEnabled()) log().debug("storelink: no ifindex found on DB for mac address " + macaddr + " on link.");
-                ifindex = -1;
-            }
-
-            rs.close();
-            stmt.close();
-
-            int nodeparentid = lkm.getNodeparentid();
-            int parentifindex = lkm.getParentifindex();
-            DbDataLinkInterfaceEntry dbentry = DbDataLinkInterfaceEntry.get(dbConn, nodeid, ifindex);
-            if (dbentry == null) {
-                // Create a new entry
-                dbentry = DbDataLinkInterfaceEntry.create(nodeid, ifindex);
-            }
-            dbentry.updateNodeParentId(nodeparentid);
-            dbentry.updateParentIfIndex(parentifindex);
-            dbentry.updateStatus(DbDataLinkInterfaceEntry.STATUS_ACTIVE);
-            dbentry.set_lastpolltime(now);
-
-            dbentry.store(dbConn);
-
-        }
-
-        stmt = dbConn.prepareStatement(SQL_UPDATE_DATALINKINTERFACE);
-        stmt.setTimestamp(1, now);
-
-        int i = stmt.executeUpdate();
-        stmt.close();
-        dbConn.close();
         if (log().isDebugEnabled()) log().debug("storelink: datalinkinterface - updated to NOT ACTIVE status " + i + " rows ");
     }
 
