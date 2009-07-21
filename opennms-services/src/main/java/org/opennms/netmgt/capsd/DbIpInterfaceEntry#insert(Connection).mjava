@@ -10,15 +10,11 @@
      */
     private void insert(Connection c) throws SQLException {
         if (m_fromDb) {
-            throw new IllegalStateException("The record already exists in the "
-                                            + "database");
+            throw new IllegalStateException("The record already exists in the database");
         }
 
-        Category log = ThreadCategory.getInstance(getClass());
-
         // first extract the next node identifier
-        StringBuffer names = new StringBuffer("INSERT INTO ipInterface "
-                                              + "(nodeID,ipAddr");
+        StringBuffer names = new StringBuffer("INSERT INTO ipInterface (nodeID,ipAddr");
         StringBuffer values = new StringBuffer("?,?");
 
         if ((m_changed & CHANGED_IFINDEX) == CHANGED_IFINDEX) {
@@ -52,45 +48,47 @@
         }
 
         names.append(") VALUES (").append(values).append(')');
-        log.debug("DbIpInterfaceEntry.insert: SQL insert statment = "
-                  + names.toString());
-
-        // create the Prepared statment and then start setting the result values
-        PreparedStatement stmt = c.prepareStatement(names.toString());
-        names = null;
-
-        int ndx = 1;
-        stmt.setInt(ndx++, m_nodeId);
-        stmt.setString(ndx++, m_ipAddr.getHostAddress());
-
-        if ((m_changed & CHANGED_IFINDEX) == CHANGED_IFINDEX) {
-            stmt.setInt(ndx++, m_ifIndex);
+        if (log().isDebugEnabled()) {
+            log().debug("DbIpInterfaceEntry.insert: SQL insert statment = " + names.toString());
         }
 
-        if ((m_changed & CHANGED_HOSTNAME) == CHANGED_HOSTNAME) {
-            stmt.setString(ndx++, m_hostname);
-        }
+        // create the Prepared statement and then start setting the result values
+        PreparedStatement stmt = null;
+        final DBUtils d = new DBUtils(getClass());
 
-        if ((m_changed & CHANGED_MANAGED) == CHANGED_MANAGED) {
-            stmt.setString(ndx++, new String(new char[] { m_managedState }));
+        try {
+            stmt = c.prepareStatement(names.toString());
+            d.watch(stmt);
+            names = null;
+            int ndx = 1;
+            stmt.setInt(ndx++, m_nodeId);
+            stmt.setString(ndx++, m_ipAddr.getHostAddress());
+            if ((m_changed & CHANGED_IFINDEX) == CHANGED_IFINDEX) {
+                stmt.setInt(ndx++, m_ifIndex);
+            }
+            if ((m_changed & CHANGED_HOSTNAME) == CHANGED_HOSTNAME) {
+                stmt.setString(ndx++, m_hostname);
+            }
+            if ((m_changed & CHANGED_MANAGED) == CHANGED_MANAGED) {
+                stmt.setString(ndx++,
+                               new String(new char[] { m_managedState }));
+            }
+            if ((m_changed & CHANGED_STATUS) == CHANGED_STATUS) {
+                stmt.setInt(ndx++, m_status);
+            }
+            if ((m_changed & CHANGED_POLLTIME) == CHANGED_POLLTIME) {
+                stmt.setTimestamp(ndx++, m_lastPoll);
+            }
+            if ((m_changed & CHANGED_PRIMARY) == CHANGED_PRIMARY) {
+                stmt.setString(ndx++,
+                               new String(new char[] { m_primaryState }));
+            }
+            // Run the insert
+            int rc = stmt.executeUpdate();
+            log().debug("DbIpInterfaceEntry.insert: SQL update result = " + rc);
+        } finally {
+            d.cleanUp();
         }
-
-        if ((m_changed & CHANGED_STATUS) == CHANGED_STATUS) {
-            stmt.setInt(ndx++, m_status);
-        }
-
-        if ((m_changed & CHANGED_POLLTIME) == CHANGED_POLLTIME) {
-            stmt.setTimestamp(ndx++, m_lastPoll);
-        }
-
-        if ((m_changed & CHANGED_PRIMARY) == CHANGED_PRIMARY) {
-            stmt.setString(ndx++, new String(new char[] { m_primaryState }));
-        }
-
-        // Run the insert
-        int rc = stmt.executeUpdate();
-        log.debug("DbIpInterfaceEntry.insert: SQL update result = " + rc);
-        stmt.close();
 
         // clear the mask and mark as backed by the database
         m_fromDb = true;
