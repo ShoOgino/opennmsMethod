@@ -116,14 +116,17 @@
             log().debug("getExistingNodeEntry: issuing SQL command: "
                     + sqlBuffer.toString());
 
-        PreparedStatement stmt = dbc.prepareStatement(sqlBuffer.toString());
-
-        // Do any of the IP addrs already exist in the database under another
-        // node?
-        //
         int nodeID = -1;
+        PreparedStatement stmt;
+        final DBUtils d = new DBUtils(getClass());
+
         try {
+            stmt = dbc.prepareStatement(sqlBuffer.toString());
+            d.watch(stmt);
+
+            // Do any of the IP addrs already exist in the database under another node?
             ResultSet rs = stmt.executeQuery();
+            d.watch(rs);
             if (rs.next()) {
                 nodeID = rs.getInt(1);
                 if (log().isDebugEnabled())
@@ -131,14 +134,8 @@
                             + collector.getTarget().getHostAddress() + nodeID);
                 rs = null;
             }
-        } catch (SQLException sqlE) {
-            throw sqlE;
         } finally {
-            try {
-                stmt.close(); // automatically closes the result set as well
-            } catch (Exception e) {
-                // Ignore
-            }
+            d.cleanUp();
         }
 
         if (nodeID == -1)
@@ -146,32 +143,26 @@
 
         try {
             stmt = dbc.prepareStatement(SQL_RETRIEVE_IPINTERFACES_ON_NODEID);
+            d.watch(stmt);
             stmt.setInt(1, nodeID);
 
             ResultSet rs = stmt.executeQuery();
+            d.watch(rs);
             while (rs.next()) {
                 String ipaddr = rs.getString(1);
                 if (!ipaddr.equals("0.0.0.0"))
                     ipaddrsOfOldNode.add(ipaddr);
             }
-        } catch (SQLException sqlE) {
-            throw sqlE;
         } finally {
-            try {
-                stmt.close(); // automatically closes the result set as well
-            } catch (Exception e) {
-                // Ignore
-            }
+            d.cleanUp();
         }
 
         if (ipaddrsOfNewNode.containsAll(ipaddrsOfOldNode)) {
             if (log().isDebugEnabled())
-                log().debug("getExistingNodeEntry: found one of the addrs under existing node: "
-                        + nodeID);
+                log().debug("getExistingNodeEntry: found one of the addrs under existing node: " + nodeID);
             return DbNodeEntry.get(nodeID);
         } else {
-            String dupIpaddr = getDuplicateIpaddress(ipaddrsOfOldNode,
-                                                     ipaddrsOfNewNode);
+            String dupIpaddr = getDuplicateIpaddress(ipaddrsOfOldNode, ipaddrsOfNewNode);
             createAndSendDuplicateIpaddressEvent(nodeID, dupIpaddr);
             return null;
         }
