@@ -2,41 +2,44 @@
      * This test uses this files from src/test/resources:
      * - thresd-configuration.xml
      * - test-thresholds.xml
+     * 
+     * Updated to reflect the fact that counter are treated as rates.
      */
     @Test
-    public void testResourceCounterData() {
+    public void testResourceCounterData() throws Exception {
+        initFactories("/threshd-configuration.xml", "/test-thresholds-counters.xml");
         ThresholdingVisitor visitor = createVisitor();
 
         CollectionAgent agent = createCollectionAgent();
         NodeResourceType resourceType = createNodeResourceType(agent);
-        MibObject mibObject = createMibObject("counter", "freeMem", "0");
+        MibObject mibObject = createMibObject("counter", "myCounter", "0");
         SnmpAttributeType attributeType = new NumericAttributeType(resourceType, "default", mibObject, new AttributeGroupType("mibGroup", "ignore"));
 
         // Add Events
-        addHighThresholdEvent(1, 10000, 5000, 15000, "Unknown", null, "freeMem", null, null);
-        addHighRearmEvent(1, 10000, 5000, 1000, "Unknown", null, "freeMem", null, null);
+        addHighThresholdEvent(1, 10, 5, 15, "Unknown", null, "myCounter", null, null);
+        addHighRearmEvent(1, 10, 5, 2, "Unknown", null, "myCounter", null, null);
 
-        // Collect Step 1 : Initialize counter cache
+        // Collect Step 1 : Initialize counter cache.
         SnmpCollectionResource resource = new NodeInfo(resourceType, agent);
-        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(15000));
+        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(1000));
         resource.visit(visitor);
 
-        // Collect Step 2 : Trigger
+        // Collect Step 2 : Trigger. (last-current)/step => (5500-1000)/300=15
         resource = new NodeInfo(resourceType, agent);
-        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(30000));
+        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(5500));
         resource.visit(visitor);
 
-        // Collect Step 3 : Rearm
+        // Collect Step 3 : Rearm. (last-current)/step => (6100-5500)/300=2
         resource = new NodeInfo(resourceType, agent);
-        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(4000));
+        resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(6100));
         resource.visit(visitor);
 
-        // Collect Step 3 : Reset counter (bad value)
+        // Collect Step 3 : Reset counter (bad value). last=6100, current=10
         resource = new NodeInfo(resourceType, agent);
         resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(10));
         resource.visit(visitor);
 
-        // Collect Step 3 : Normal
+        // Collect Step 3 : Normal. last=10, current=1000 => (1000-10)/300=3.3
         resource = new NodeInfo(resourceType, agent);
         resource.setAttributeValue(attributeType, SnmpUtils.getValueFactory().getCounter32(1010));
         resource.visit(visitor);
