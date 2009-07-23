@@ -15,33 +15,34 @@
         }
 
         Interface[] intfs = null;
-        Connection conn = Vault.getDbConnection();
-
+        final DBUtils d = new DBUtils(NetworkElementFactory.class);
         try {
+            Connection conn = Vault.getDbConnection();
+            d.watch(conn);
             StringBuffer buffer = new StringBuffer("%");
             buffer.append(ifAlias);
             buffer.append("%");
 
-            PreparedStatement stmt = conn.prepareStatement("");
-	    if(nodeId > 0) {
-      		stmt = conn.prepareStatement("SELECT * FROM IPINTERFACE WHERE NODEID = ? AND IFINDEX IN (SELECT SNMPIFINDEX FROM SNMPINTERFACE WHERE SNMPIFALIAS ILIKE ? AND IPINTERFACE.NODEID=SNMPINTERFACE.NODEID) AND ISMANAGED != 'D'");
-            stmt.setInt(1, nodeId);
-	    stmt.setString(2, buffer.toString());
-	    } else {
+            PreparedStatement stmt = null;
+            if(nodeId > 0) {
+                stmt = conn.prepareStatement("SELECT * FROM IPINTERFACE WHERE NODEID = ? AND IFINDEX IN (SELECT SNMPIFINDEX FROM SNMPINTERFACE WHERE SNMPIFALIAS ILIKE ? AND IPINTERFACE.NODEID=SNMPINTERFACE.NODEID) AND ISMANAGED != 'D'");
+                d.watch(stmt);
+                stmt.setInt(1, nodeId);
+                stmt.setString(2, buffer.toString());
+            } else {
                 stmt = conn.prepareStatement("SELECT * FROM IPINTERFACE WHERE IPINTERFACE.IFINDEX IN (SELECT SNMPIFINDEX FROM SNMPINTERFACE WHERE SNMPIFALIAS ILIKE ? AND IPINTERFACE.NODEID=SNMPINTERFACE.NODEID) AND IPINTERFACE.ISMANAGED != 'D' ORDER BY IPINTERFACE.NODEID");
-	    stmt.setString(1, buffer.toString());
-	    }
+                d.watch(stmt);
+                stmt.setString(1, buffer.toString());
+            }
             ResultSet rs = stmt.executeQuery();
-
+            d.watch(rs);
+            
             intfs = rs2Interfaces(rs);
-
-            rs.close();
-            stmt.close();
 
             augmentInterfacesWithSnmpData(intfs, conn);
 
         } finally {
-            Vault.releaseDbConnection(conn);
+            d.cleanUp();
         }
 
         return intfs;
