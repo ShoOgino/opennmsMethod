@@ -1,19 +1,50 @@
-    public static String getIfLabel(int nodeId, String ipAddr) throws SQLException {
+    public static String getIfLabel(final int nodeId, final String ipAddr) {
         if (ipAddr == null) {
             throw new IllegalArgumentException("Cannot take null parameters.");
         }
 
-        String label = null;
-        final DBUtils d = new DBUtils(IfLabel.class);
+        
+        class LabelHolder {
+            private String m_label;
 
-        try {
-            Connection conn = Vault.getDbConnection();
-            d.watch(conn);
-            label = getIfLabel(conn, nodeId, ipAddr);
-        } finally {
-            d.cleanUp();
+            public void setLabel(String label) {
+                m_label = label;
+            }
+
+            public String getLabel() {
+                return m_label;
+            }
         }
+        
+        final LabelHolder holder = new LabelHolder();
 
-        return label;
+        String query = "" +
+        		"SELECT DISTINCT snmpifname, snmpifdescr,snmpphysaddr " +
+        		"  FROM snmpinterface, ipinterface " +
+        		" WHERE (ipinterface.ismanaged!='D') " +
+        		"   AND ipinterface.nodeid=snmpinterface.nodeid " +
+        		"   AND ifindex=snmpifindex " +
+        		"   AND ipinterface.nodeid = "+nodeId+
+        		"   AND ipinterface.ipaddr = '"+ipAddr+"'";
+        
+        Querier q = new Querier(Vault.getDataSource(), query, new RowProcessor() {
+            public void processRow(ResultSet rs) throws SQLException {
+                if (rs.next()) {
+                    String name = rs.getString("snmpifname");
+                    String descr = rs.getString("snmpifdescr");
+                    String physAddr = rs.getString("snmpphysaddr");
+
+                    if (name != null || descr != null) {
+                        holder.setLabel(getIfLabel(name, descr, physAddr));
+                    } else {
+                        log.warn("Interface (nodeId/ipAddr=" + nodeId + "/" + ipAddr + ") has no ifName and no ifDescr...setting to label to 'no_ifLabel'.");
+                        holder.setLabel("no_ifLabel");
+                    }
+                }
+            }
+        });
+        q.execute();
+        
+        return holder.getLabel();
     }
 
