@@ -1,0 +1,53 @@
+    private void adjustReaderState(AckReader reader, AckReaderState requestedState, List<AckReaderState> allowedCurrentStates) {
+
+        synchronized (m_lock) {
+
+            if (!getConfigDao().isReaderEnabled(reader.getName())) {
+                
+                //stop a disabled reader if necessary
+                if (!AckReaderState.STOPPED.equals(reader.getState())) {
+                    log().warn("adjustReaderState: ignoring requested state and stopping the disabled reader: "+reader.getName()+"...");
+                    reader.stop();
+                    log().warn("adjustReaderState: disabled reader: "+reader.getName()+" stopped");
+                    return;
+                }
+                
+                log().warn("adjustReaderState: Not adjustingReaderState, disabled reader: "+reader);
+                return;
+            }
+
+            if (allowedCurrentStates.contains(reader.getState())) {
+
+                log().debug("adjustReaderState: adjusting reader state from: "+reader.getState()+" to: "+requestedState+"...");
+
+                org.opennms.netmgt.config.ackd.ReaderSchedule configSchedule = getConfigDao().getReaderSchedule(reader.getName());
+
+                long interval = configSchedule.getInterval();
+                String unit = configSchedule.getUnit();
+
+                if (AckReaderState.STARTED.equals(requestedState)) {
+                    reader.start(ReaderSchedule.createSchedule(interval, unit));
+                    
+                } else if (AckReaderState.STOPPED.equals(requestedState)) {
+                    reader.stop();
+                    
+                } else if (AckReaderState.PAUSED.equals(requestedState)) {
+                    reader.pause();
+                    
+                } else if (AckReaderState.RESUMED.equals(requestedState)) {
+                    reader.resume();
+                    
+                } else {
+                    IllegalStateException e = new IllegalStateException("adjustReaderState: cannot request state: "+requestedState);
+                    log().error(e.getLocalizedMessage(), e);
+                    throw e;
+                }
+
+            } else {
+                IllegalStateException e = new IllegalStateException("error adjusting reader state; reader cannot be change from: "+reader.getState()+" to: "+requestedState);
+                log().error(e.getLocalizedMessage(), e);
+                throw e; 
+            }
+        }
+    }
+
