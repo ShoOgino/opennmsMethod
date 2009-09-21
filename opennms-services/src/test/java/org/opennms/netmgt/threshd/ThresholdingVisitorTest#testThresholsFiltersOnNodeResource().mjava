@@ -1,0 +1,44 @@
+    /*
+     * This test uses this files from src/test/resources:
+     * - thresd-configuration.xml
+     * - test-thresholds-5.xml
+     */
+    @Test
+    public void testThresholsFiltersOnNodeResource() throws Exception {
+        initFactories("/threshd-configuration.xml","/test-thresholds-5.xml");
+        ThresholdingVisitor visitor = createVisitor();
+        
+        // Adding Expected Thresholds
+        addHighThresholdEvent(1, 30, 25, 50, "/home", null, "(hda1_hrStorageUsed/hda1_hrStorageSize)*100", null, null);
+        addHighThresholdEvent(1, 50, 45, 60, "/opt", null, "(hda2_hrStorageUsed/hda2_hrStorageSize)*100", null, null);
+
+        // Creating Node ResourceType
+        CollectionAgent agent = createCollectionAgent();
+        MockDataCollectionConfig dataCollectionConfig = new MockDataCollectionConfig();        
+        OnmsSnmpCollection collection = new OnmsSnmpCollection(agent, new ServiceParameters(new HashMap<String, String>()), dataCollectionConfig);
+        NodeResourceType resourceType = new NodeResourceType(agent, collection);
+
+        // Creating strings.properties file
+        Properties p = new Properties();
+        p.put("hda1_hrStorageDescr", "/home");
+        p.put("hda2_hrStorageDescr", "/opt");
+        p.put("hda3_hrStorageDescr", "/usr");
+        File f = new File(getRepository().getRrdBaseDir(), "1/strings.properties");
+        ResourceTypeUtils.saveUpdatedProperties(f, p);
+        
+        // Creating Resource
+        SnmpCollectionResource resource = new NodeInfo(resourceType, agent);
+        addAttributeToCollectionResource(resource, resourceType, "hda1_hrStorageUsed", "gauge", "node", 50);
+        addAttributeToCollectionResource(resource, resourceType, "hda1_hrStorageSize", "gauge", "node", 100);
+        addAttributeToCollectionResource(resource, resourceType, "hda2_hrStorageUsed", "gauge", "node", 60);
+        addAttributeToCollectionResource(resource, resourceType, "hda2_hrStorageSize", "gauge", "node", 100);
+        addAttributeToCollectionResource(resource, resourceType, "hda3_hrStorageUsed", "gauge", "node", 70);
+        addAttributeToCollectionResource(resource, resourceType, "hda3_hrStorageSize", "gauge", "node", 100);
+
+        // Run Visitor and Verify Events
+        resource.visit(visitor);
+        EasyMock.verify(agent);
+        f.delete();
+        verifyEvents(0);
+    }
+
