@@ -1,0 +1,72 @@
+    @Before
+    public void setUp() throws Exception {
+    	m_fileAnticipator = new FileAnticipator();
+
+    	m_smsSequence = new MobileSequenceConfig();
+
+    	SequenceSessionVariable amountSessionVar = new SequenceSessionVariable("amount", "org.opennms.sms.monitor.session.UniqueNumber");
+    	amountSessionVar.addParameter("min", "1");
+    	amountSessionVar.addParameter("max", "15");
+    	m_smsSequence.addSessionVariable(amountSessionVar);
+    	
+    	MobileSequenceTransaction reqBalanceTransfer = new MobileSequenceTransaction("ussd-transfer");
+    	reqBalanceTransfer.setGatewayId("ACM0");
+    	
+    	UssdSequenceRequest request = new UssdSequenceRequest("req-balance-transfer", "*327*${recipient}*${amount}#");
+    	request.setGatewayId("ACM0");
+    	reqBalanceTransfer.setRequest(request);
+    	
+    	UssdSequenceResponse response = new UssdSequenceResponse("balance-conf-resp");
+    	response.setGatewayId("ACM0");
+    	response.addMatcher(new UssdSessionStatusMatcher("FURTHER_ACTION_REQUIRED"));
+    	response.addMatcher(new TextResponseMatcher("^Transfiere L ${amount} al ${recipient}$"));
+    	reqBalanceTransfer.addResponse(response);
+
+    	m_smsSequence.addTransaction(reqBalanceTransfer);
+    	
+    	MobileSequenceTransaction reqConf = new MobileSequenceTransaction("req-conf");
+    	reqConf.setGatewayId("ACM0");
+    	
+    	request = new UssdSequenceRequest("conf-transfer", "1");
+    	request.setGatewayId("ACM0");
+    	reqConf.setRequest(request);
+    	
+    	response = new UssdSequenceResponse("processing");
+    	response.setGatewayId("ACM0");
+    	response.addMatcher(new UssdSessionStatusMatcher("NO_FURTHER_ACTION_REQUIRED"));
+    	response.addMatcher(new TextResponseMatcher("^.*Su transaccion se esta procesando.*$"));
+    	reqConf.addResponse(response);
+
+    	SmsSequenceResponse smsResponse = new SmsSequenceResponse("transferred");
+    	smsResponse.setGatewayId("ACM0");
+    	smsResponse.addMatcher(new TextResponseMatcher("^.*le ha transferido L ${amount}.*$"));
+    	smsResponse.addMatcher(new SmsSourceMatcher("+3746"));
+    	reqConf.addResponse(smsResponse);
+
+    	m_smsSequence.addTransaction(reqConf);
+
+    	m_context = JAXBContext.newInstance(
+    			MobileSequenceConfig.class,
+    			SmsSequenceRequest.class,
+    			UssdSequenceRequest.class,
+    			SmsSequenceResponse.class,
+    			UssdSequenceResponse.class,
+    			SmsFromRecipientResponseMatcher.class,
+    			SmsSourceMatcher.class,
+    			TextResponseMatcher.class,
+    			UssdSessionStatusMatcher.class
+    			);
+
+    	m_marshaller = m_context.createMarshaller();
+    	m_marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+        m_marshaller.setProperty("com.sun.xml.bind.namespacePrefixMapper", new MobileSequenceNamespacePrefixMapper());
+
+    	m_unmarshaller = m_context.createUnmarshaller();
+    	m_unmarshaller.setSchema(null);
+
+    	XMLUnit.setIgnoreComments(true);
+        XMLUnit.setIgnoreWhitespace(true);
+        XMLUnit.setIgnoreAttributeOrder(true);
+        XMLUnit.setNormalize(true);
+    }
+
