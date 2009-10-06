@@ -1,0 +1,70 @@
+        public static void main(String[] args) {
+            // Timeout = 1s
+            final int TIMEOUT_VALUE = 10000;
+
+            LoopbackEventTest loopbackTest = new LoopbackEventTest();
+            try {
+                // Open serial port
+                loopbackTest.connect(args[0]);
+
+                // Register the serial event handler
+                String testString = args.length < 2 
+                	? "The quick brown fox jumps over the lazy dog"
+                    : args[1].replace("\\r", "\r").replace("\\n", "\n").replace("\\\\", "\\");
+                InputStream inStream =
+                        loopbackTest.getSerialInputStream();
+                
+                String result = args.length < 3 ? testString : args[2].replace("\\r", "\r").replace("\\n", "\n").replace("\\\\", "\\"); 
+
+                SerialEventHandler serialEventHandler =
+                        new SerialEventHandler(inStream, 2048);
+                loopbackTest.addDataAvailableEventHandler(serialEventHandler);
+
+                // Send the testing string
+                OutputStream outStream =
+                        loopbackTest.getSerialOutputStream();
+
+                byte[] bytes = testString.getBytes();
+
+                for(int i = 0; i < bytes.length; i++) {
+                	outStream.write(bytes[i]);
+                }
+		    
+                // Wait until all the data is received
+                long startTime = System.currentTimeMillis();
+                long elapsedTime;
+                boolean matches = false;
+                String actual;
+                do {
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException ex) {
+                    }
+                    elapsedTime = System.currentTimeMillis() - startTime;
+                    
+                    actual = serialEventHandler.getReadBuffer();
+                    matches = actual.equals(result);
+                    System.out.println("Expected: " + result + " Actual: " + actual + " Equals? " + matches);
+                } while ((elapsedTime < TIMEOUT_VALUE) && !matches);
+
+                // Check the data if not TIMEOUT
+                if (elapsedTime < TIMEOUT_VALUE) {
+                    if (serialEventHandler.getReadBuffer().matches(result)) {
+                        System.out.println("All data is received successfully");
+                    } else {
+                        System.out.println("Test failed");
+                        System.out.println("Sent:" + testString);
+                        System.out.println("Received:" +
+                                serialEventHandler.getReadBuffer());
+                    }
+                } else {
+                    System.err.println("Timeout");
+                }
+
+                System.out.println("Test done");
+                loopbackTest.disconnect();
+            } catch (IOException ex) {
+                System.err.println(ex.getMessage());
+            }
+        }
+
