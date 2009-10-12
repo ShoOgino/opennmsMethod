@@ -1,0 +1,70 @@
+    /**
+     * Mark the given interface deleted
+     * 
+     * @param dbConn
+     *            the database connection
+     * @param source
+     *            the source for any events set
+     * @param nodeId
+     *            the id the interface resides on
+     * @param ipAddr
+     *            the ipAddress of the interface
+     * @param ifIndex
+     *            the ifIndex of the interface            
+     * @param txNo
+     *            a transaction no to associate with this deletion
+     * @return a List containing an interfaceDeleted event for the interface if
+     *         it was actually marked
+     * @throws SQLException
+     *             if a database error occurs
+     */
+    private List<Event> markInterfaceDeleted(Connection dbConn, String source, long nodeId, String ipAddr, int ifIndex, long txNo) throws SQLException {
+        final String DB_FIND_INTERFACE = "UPDATE ipinterface SET isManaged = 'D' WHERE nodeid = ? and ipAddr = ? and isManaged != 'D'";
+        final String DB_FIND_SNMPINTERFACE = "UPDATE snmpinterface SET snmpcollect = 'D' WHERE nodeid = ? and snmpifindex = ? and snmpcollect != 'D'";
+        PreparedStatement stmt = null;
+        final DBUtils d = new DBUtils(getClass());
+        int countip = 0;
+        int countsnmp = 0;
+        try {
+
+            if(!EventUtils.isNonIpInterface(ipAddr)) {
+                stmt = dbConn.prepareStatement(DB_FIND_INTERFACE);
+                d.watch(stmt);
+                stmt.setLong(1, nodeId);
+                stmt.setString(2, ipAddr);
+                countip = stmt.executeUpdate();
+            }
+            if (ifIndex > -1) {
+                stmt = dbConn.prepareStatement(DB_FIND_SNMPINTERFACE);
+                d.watch(stmt);
+                stmt.setLong(1, nodeId);
+                stmt.setInt(2, ifIndex);
+                countsnmp = stmt.executeUpdate();
+            }
+            
+            if (countip > 0) {
+                if (log().isDebugEnabled()) {
+                    log().debug("markInterfaceDeleted: marked ip interface deleted: node = " + nodeId + ", IP address = " + ipAddr);
+                }
+            }
+            if (countsnmp > 0) {
+                if (log().isDebugEnabled()) {       
+                    log().debug("markInterfaceDeleted: marked snmp interface deleted: node = " + nodeId + ", ifIndex = " + ifIndex);
+                }
+            }
+            if (countip > 0 || countsnmp > 0) {
+                return Collections.singletonList(EventUtils.createInterfaceDeletedEvent(source, nodeId, ipAddr, ifIndex, txNo));
+            } else {
+                if (log().isDebugEnabled()) {
+                    log().debug("markInterfaceDeleted: Interface not found: node = " + nodeId
+                                            + ", with ip address " + (ipAddr != null ? ipAddr : "null")
+                                            + ", and ifIndex " + (ifIndex > -1 ? ifIndex : "N/A"));
+
+                }
+                return Collections.emptyList();
+            }
+        } finally {
+            d.cleanUp();
+        }        
+    }
+
