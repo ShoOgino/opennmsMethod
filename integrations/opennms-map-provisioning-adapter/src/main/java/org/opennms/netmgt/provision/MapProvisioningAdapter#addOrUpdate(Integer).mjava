@@ -1,8 +1,8 @@
-    private void addOrUpdate() throws Exception {
-        log().debug("addOrUpdate: adding or updating the automated maps for the node with nodeid:" + m_nodeId);
+    private void addOrUpdate(Integer nodeId) throws Exception {
+        log().debug("addOrUpdate: adding or updating the automated maps for the node with nodeid:" + nodeId);
 
-        OnmsNode node = m_onmsNodeDao.get(m_nodeId);
-        if (node == null) throw new Exception("Error Adding element. Node does not exist: nodeid: " + m_nodeId);
+        OnmsNode node = m_onmsNodeDao.get(nodeId);
+        if (node == null) throw new Exception("Error Adding element. Node does not exist: nodeid: " + nodeId);
         
         // This is the array with the new elements
         
@@ -11,7 +11,7 @@
         Map<String,OnmsMapElement> elemsinmaps = new HashMap<String,OnmsMapElement>();
 
         // first of all delete all elements not matching the packages
-        for (OnmsMapElement elem: m_onmsMapElementDao.findElementsByElementIdAndType(m_nodeId, OnmsMapElement.NODE_TYPE)) {
+        for (OnmsMapElement elem: m_onmsMapElementDao.findElementsByElementIdAndType(nodeId, OnmsMapElement.NODE_TYPE)) {
             
             if (celements.containsKey(elem.getMap().getName())) { 
                 elemsinmaps.put(elem.getMap().getName(), elem);
@@ -24,11 +24,9 @@
                 log().debug("addOrUpdate: deleting element with label: '" + elem.getLabel() + "' from automated map: '" + elem.getMap().getName()+ "'");
 
                 m_onmsMapElementDao.delete(elem);
-                m_onmsMapElementDao.flush();
                 
                 onmsMap.setLastModifiedTime(new Date());
                 m_onmsMapDao.update(onmsMap);
-                m_onmsMapDao.flush();
                 
                 if (onmsMap.getMapElements().size() == 0)
                     removeEmptySubmap(onmsMap);
@@ -36,21 +34,19 @@
         }
         
         if (celements.isEmpty()) {
-            log().info("addOrUpdate: Element is not managed in the adapter configuration file: no package match nodeid: "+m_nodeId);
+            log().info("addOrUpdate: Element is not managed in the adapter configuration file: no package match nodeid: "+nodeId);
             return;
         }
-        log().debug("addOrUpdate: found #" + celements.size() + " container automated maps for the nodeid: " +m_nodeId);
+        log().debug("addOrUpdate: found #" + celements.size() + " container automated maps for the nodeid: " +nodeId);
 
         for (String mapName: celements.keySet()) {
-            log().debug("addOrUpdate: found mapName: " + mapName + " container map for the nodeid: " +m_nodeId);
+            log().debug("addOrUpdate: found mapName: " + mapName + " container map for the nodeid: " +nodeId);
             Celement celement = celements.get(mapName);
             OnmsMap onmsMap = getSuitableMap(mapName);
-            if (onmsMap.isNew()) {
-                throw new Exception("Error adding element. Automated map does not exist in database: " + mapName);
-            } else if (onmsMap.getType().equals(OnmsMap.AUTOMATICALLY_GENERATED_MAP)) {
+            if (onmsMap.getType().equals(OnmsMap.AUTOMATICALLY_GENERATED_MAP)) {
                 log().debug("addOrUpdate: found container automated map: " + mapName + " with mapId: " + onmsMap.getId() );
-                if (onmsMap.getMapElements().size() == 0) {
-                    log().debug("addOrUpdate: automated map: " + mapName + " has no elements try to add as submap to automatic container maps");
+                if (m_mapNameMapSizeListMap.get(mapName) == 0) {
+                    log().debug("addOrUpdate: automated map: " + mapName + " has at least 1 element add as submap to container maps");
                     addAsSubMap(mapName);
                 }
                 OnmsMapElement mapElement = elemsinmaps.get(mapName);
@@ -61,7 +57,7 @@
                     XY xy=getXY(onmsMap, elementsize);
                     log().debug("addOrUpdate: mapElement is new: saved last mapElement at X position: " +  xy.getX());
                     log().debug("addOrUpdate: mapElement is new: saved last mapElement at Y position: " +  xy.getY());
-                    mapElement = new OnmsMapElement(onmsMap,m_nodeId,OnmsMapElement.NODE_TYPE,node.getLabel(),celement.getIcon(),xy.getX(),xy.getY());
+                    mapElement = new OnmsMapElement(onmsMap,nodeId,OnmsMapElement.NODE_TYPE,node.getLabel(),celement.getIcon(),xy.getX(),xy.getY());
                     m_mapNameMapSizeListMap.replace(mapName, ++elementsize);
                 } else {
                     mapElement.setIconName(celement.getIcon());
@@ -69,27 +65,20 @@
                     log().debug("doAddOrUpdate: updating node: " + node.getLabel() + " to map: " + mapName);
                 }
                 m_onmsMapElementDao.saveOrUpdate(mapElement);
-                m_onmsMapElementDao.flush();
                 onmsMap.setLastModifiedTime(new Date());
                 m_onmsMapDao.update(onmsMap);
-                m_onmsMapDao.flush();
             } else if(onmsMap.getType().equals(OnmsMap.AUTOMATIC_SAVED_MAP)) {
                 if (elemsinmaps.containsKey(mapName)) {
                     log().debug("addOrUpdate: map element found in static map, doing nothink");
                     continue;
                 }
-                OnmsMapElement mapElement = new OnmsMapElement(onmsMap,m_nodeId,OnmsMapElement.NODE_HIDE_TYPE,node.getLabel(),celement.getIcon(),0,0);
+                OnmsMapElement mapElement = new OnmsMapElement(onmsMap,nodeId,OnmsMapElement.NODE_HIDE_TYPE,node.getLabel(),celement.getIcon(),0,0);
                 m_onmsMapElementDao.saveOrUpdate(mapElement);
-                m_onmsMapElementDao.flush();
                 onmsMap.setLastModifiedTime(new Date());
                 m_onmsMapDao.update(onmsMap);
-                m_onmsMapDao.flush();
             } else {
                 log().warn("addOrUpdate: map: " + mapName + " has mapId: " + onmsMap.getId() + " Type: " + onmsMap.getType());                    
             }
         }
-        m_onmsMapElementDao.clear();
-        m_onmsMapDao.clear();
-
     }
 
