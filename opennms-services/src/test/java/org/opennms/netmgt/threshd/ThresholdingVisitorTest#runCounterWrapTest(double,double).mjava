@@ -1,0 +1,39 @@
+    /*
+     * Parameter expectedValue should be around 200:
+     * Initial counter value is 20000 below limit.
+     * Next value is 40000, so the difference will be 60000.
+     * Counters are treated as rates so 60000/300 is 200.
+     */
+    private void runCounterWrapTest(double bits, double expectedValue) throws Exception {
+        initFactories("/threshd-configuration.xml","/test-thresholds-bug3194.xml");
+        setupSnmpInterfaceDatabase("127.0.0.1", "wlan0");
+        addHighThresholdEvent(1, 100, 90, expectedValue, "Unknown", "1", "ifOutOctets", "wlan0", "1");
+        ThresholdingVisitor visitor = createVisitor();
+        
+        // Creating Interface Resource Type
+        SnmpIfData ifData = createSnmpIfData("127.0.0.1", "wlan0");
+        CollectionAgent agent = createCollectionAgent();
+        IfResourceType resourceType = createInterfaceResourceType(agent);
+
+        // Creating Data Source
+        MibObject object = createMibObject("counter", "ifOutOctets", "ifIndex");
+        SnmpAttributeType objectType = new NumericAttributeType(resourceType, "default", object, new AttributeGroupType("mibGroup", "ignore"));
+
+        // Step 1 - Initialize Counter
+        BigDecimal n = new BigDecimal(Math.pow(2, bits) - 20000);
+        SnmpValue snmpValue1 = SnmpUtils.getValueFactory().getCounter64(n.toBigInteger());
+        SnmpCollectionResource resource1 = new IfInfo(resourceType, agent, ifData);
+        resource1.setAttributeValue(objectType, snmpValue1);
+        resource1.visit(visitor);
+        
+        // Step 2 - Wrap Counter
+        SnmpValue snmpValue2 = SnmpUtils.getValueFactory().getCounter64(new BigInteger("40000"));
+        SnmpCollectionResource resource2 = new IfInfo(resourceType, agent, ifData);
+        resource2.setAttributeValue(objectType, snmpValue2);
+        resource2.visit(visitor);
+
+        // Verify Events
+        EasyMock.verify(agent);        
+        verifyEvents(0);
+    }
+
