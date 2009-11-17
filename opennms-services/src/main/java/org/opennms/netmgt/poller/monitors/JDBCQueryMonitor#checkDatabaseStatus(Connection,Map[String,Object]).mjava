@@ -1,0 +1,70 @@
+    public PollStatus checkDatabaseStatus(Connection con, Map<String, Object> parameters) {
+        PollStatus ps = PollStatus.unavailable();
+        Statement st = null; 
+        String query = ParameterMap.getKeyedString(parameters, "query", null);
+        String action = ParameterMap.getKeyedString(parameters, "action", "row_count");
+        String column = ParameterMap.getKeyedString(parameters, "column", null);
+        String operator = ParameterMap.getKeyedString(parameters, "operator", ">=");
+        String message = ParameterMap.getKeyedString(parameters, "message", null );
+        
+        log().debug("Query: " + query);
+        
+        if (query == null) {
+            ps = PollStatus.unavailable("Null Query, ensure query value set in poller configuration.");
+            return ps;
+        }
+        
+        try {
+            st = con.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_READ_ONLY);
+            ResultSet rs = st.executeQuery(query);
+            rs.first();
+            switch(actionMap.get(action).intValue()) {
+                case QUERY_ACTION_ROW_COUNT:
+                    rs.last();
+                    int rowCount = rs.getRow();
+                    int expectedRowCount = ParameterMap.getKeyedInteger(parameters,"operand",1);
+                    if (integerCheck(rowCount,expectedRowCount,operator))
+                        ps = PollStatus.available();
+                    else 
+                        ps = PollStatus.unavailable("Row Count Check Failed: " + rowCount +  " " +  operator + " " + expectedRowCount );
+                    break;
+                case QUERY_ACTION_COMPARE_STRING:
+                    String expectedString = ParameterMap.getKeyedString(parameters, "operand", null);
+                    String retrivedString = rs.getString(column);
+                    if ( expectedString.equals(retrivedString)) 
+                        ps = PollStatus.available();
+                    else
+                        ps = PollStatus.unavailable("String Field Check Failed: Expected: " + expectedString + " Returned: " + retrivedString );
+                       
+                    break;
+                case QUERY_ACTION_COMPARE_INT:
+                    int expectedInt = ParameterMap.getKeyedInteger(parameters, "operand", 1);
+                    int retrivedInt = rs.getInt(column);
+                    if (integerCheck(retrivedInt,expectedInt,operator))
+                         ps = PollStatus.available();
+                    else 
+                         ps = PollStatus.unavailable("Integer Field Check Failed: " + expectedInt + " " + operator + " " + retrivedInt  );
+                    break;
+                
+            }
+            
+        }
+        catch ( SQLException sqle ){
+            ps = PollStatus.unavailable("Err: " + sqle.toString());
+            
+        }
+        catch ( Exception exp ){ 
+            ps = PollStatus.unavailable("Err: " + exp.toString());
+            
+        }
+        finally {
+           closeStmt(st);
+        }
+      
+        if(message != null && ps.isUnavailable()) 
+            ps = PollStatus.unavailable(message + " " + ps.getReason());
+        
+        
+        return ps;
+    }
+
