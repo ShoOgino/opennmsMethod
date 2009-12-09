@@ -1,6 +1,6 @@
     private int scheduleMatchingServices(String criteria) {
         String sql = "SELECT ifServices.nodeId AS nodeId, node.nodeLabel AS nodeLabel, ifServices.ipAddr AS ipAddr, " +
-                "ifServices.serviceId AS serviceId, service.serviceName AS serviceName, " +
+                "ifServices.serviceId AS serviceId, service.serviceName AS serviceName, ifServices.status as status, " +
                 "outages.svcLostEventId AS svcLostEventId, events.eventUei AS svcLostEventUei, " +
                 "outages.ifLostService AS ifLostService, outages.ifRegainedService AS ifRegainedService " +
         "FROM ifServices " +
@@ -12,22 +12,25 @@
         "ifServices.serviceId = outages.serviceId AND " +
         "ifRegainedService IS NULL " +
         "LEFT OUTER JOIN events ON outages.svcLostEventId = events.eventid " +
-        "WHERE ifServices.status = 'A'" +
+        "WHERE ifServices.status in ('A','N')" +
         (criteria == null ? "" : " AND "+criteria);
        
         
+        final AtomicInteger count = new AtomicInteger(0);
         
         Querier querier = new Querier(m_dataSource, sql) {
             public void processRow(ResultSet rs) throws SQLException {
-                scheduleService(rs.getInt("nodeId"), rs.getString("nodeLabel"), rs.getString("ipAddr"), rs.getString("serviceName"), 
-                                (Number)rs.getObject("svcLostEventId"), rs.getTimestamp("ifLostService"), 
-                                rs.getString("svcLostEventUei"));
+                if (scheduleService(rs.getInt("nodeId"), rs.getString("nodeLabel"), rs.getString("ipAddr"), rs.getString("serviceName"), 
+                                "A".equals(rs.getString("status")), (Number)rs.getObject("svcLostEventId"), rs.getTimestamp("ifLostService"), 
+                                rs.getString("svcLostEventUei"))) {
+                    count.incrementAndGet();
+                }
             }
         };
         querier.execute();
         
         
-        return querier.getCount();
+        return count.get();
 
     }
 
