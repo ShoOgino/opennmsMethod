@@ -1,24 +1,34 @@
     public PollStatus poll(MonitoredService svc, Map<String, Object> parameterMap) {
         HttpClient client = null;
+        PollStatus serviceStatus = PollStatus.unavailable("");
         
+        Map<String,Number> responseTimes = new LinkedHashMap<String,Number>();
+
         try {
             PageSequenceMonitorParameters parms = PageSequenceMonitorParameters.get(parameterMap);
 
             client = parms.createHttpClient();
 
             long startTime = System.nanoTime();
-
-            parms.getPageSequence().execute(client, svc);
+            responseTimes.put("response-time", Double.NaN);
+            parms.getPageSequence().execute(client, svc, responseTimes);
 
             long endTime = System.nanoTime();
-            double responseTime = (endTime - startTime)/1000000.0;
-            
-            return PollStatus.available(responseTime);
+            double responseTime = (endTime - startTime) / 1000000.0;
+            serviceStatus = PollStatus.available();
+            responseTimes.put("response-time", responseTime);
+            serviceStatus.setProperties(responseTimes);
+
+            return serviceStatus;
         } catch (PageSequenceMonitorException e) {
-            return PollStatus.unavailable(e.getMessage());
+            serviceStatus = PollStatus.unavailable(e.getMessage());
+            serviceStatus.setProperties(responseTimes);
+            return serviceStatus;
         } catch (IllegalArgumentException e) {
             log().error("Invalid parameters to monitor: " + e, e);
-            return PollStatus.unavailable("Invalid parameter to monitor: " + e.getMessage() + ".  See log for details.");
+            serviceStatus = PollStatus.unavailable("Invalid parameter to monitor: " + e.getMessage() + ".  See log for details.");
+            serviceStatus.setProperties(responseTimes);
+            return serviceStatus;
         } finally {
             if (client != null) {
                 client.getHttpConnectionManager().closeIdleConnections(0);
