@@ -12,49 +12,61 @@
 
         CronTrigger cronTrigger = null;
 
-        String reportBean = m_configDao.getReportService(criteria.getReportId());
-        ReportService reportService = (ReportService) m_applicationContext.getBean(reportBean);
+        String reportServiceName = m_configDao.getReportService(criteria.getReportId());
+        
+        try {
+            
+            ReportService reportService = m_reportServiceLocator.getReportService(reportServiceName);
+            
+            if (reportService.validate(criteria.getReportParms(),
+                                       criteria.getReportId()) == false) {
+                log().error(PARAMETER_ERROR);
+                context.getMessageContext().addMessage(
+                                                       new MessageBuilder().error().defaultText(
+                                                                                                PARAMETER_ERROR).build());
+                return ERROR;
+            } else {
+                try {
+                    cronTrigger = new CronTrigger();
+                    cronTrigger.setGroup(m_triggerGroup);
+                    cronTrigger.setName(triggerName);
+                    cronTrigger.setJobName(m_jobDetail.getName());
+                    cronTrigger.setCronExpression(cronExpression);
+                    // cronTrigger = new CronTrigger(triggerName, m_triggerGroup,
+                    // cronExpression);
+                } catch (ParseException e) {
+                    log().error(TRIGGER_PARSE_ERROR, e);
+                    context.getMessageContext().addMessage(
+                                                           new MessageBuilder().error().defaultText(
+                                                                                                    TRIGGER_PARSE_ERROR).build());
+                    return ERROR;
+                }
 
-        if (reportService.validate(criteria.getReportParms(),
-                                   criteria.getReportId()) == false) {
-            log().error(PARAMETER_ERROR);
+                cronTrigger.setJobName(m_jobDetail.getName());
+                cronTrigger.getJobDataMap().put("criteria", criteria);
+                cronTrigger.getJobDataMap().put("deliveryOptions",
+                                                deliveryOptions);
+                cronTrigger.getJobDataMap().put("reportServiceName", reportServiceName);
+                try {
+                    m_scheduler.scheduleJob(cronTrigger);
+                } catch (SchedulerException e) {
+                    log().error(SCHEDULER_ERROR, e);
+                    context.getMessageContext().addMessage(
+                                                           new MessageBuilder().error().defaultText(
+                                                                                                    SCHEDULER_ERROR).build());
+                    return ERROR;
+                }
+
+                return SUCCESS;
+            }
+        } catch (ReportServiceLocatorException e) {
+            log().error(REPORTID_ERROR);
             context.getMessageContext().addMessage(
                                                    new MessageBuilder().error().defaultText(
-                                                                                            PARAMETER_ERROR).build());
+                                                                                            REPORTID_ERROR).build());
             return ERROR;
-        } else {
-            try {
-                cronTrigger = new CronTrigger();
-                cronTrigger.setGroup(m_triggerGroup);
-                cronTrigger.setName(triggerName);
-                cronTrigger.setJobName(m_jobDetail.getName());
-                cronTrigger.setCronExpression(cronExpression);
-                // cronTrigger = new CronTrigger(triggerName, m_triggerGroup,
-                // cronExpression);
-            } catch (ParseException e) {
-                log().error(TRIGGER_PARSE_ERROR, e);
-                context.getMessageContext().addMessage(
-                                                       new MessageBuilder().error().defaultText(
-                                                                                                TRIGGER_PARSE_ERROR).build());
-                return ERROR;
-            }
-
-            cronTrigger.setJobName(m_jobDetail.getName());
-            cronTrigger.getJobDataMap().put("criteria", criteria);
-            cronTrigger.getJobDataMap().put("deliveryOptions",
-                                            deliveryOptions);
-            cronTrigger.getJobDataMap().put("reportServiceName", reportBean);
-            try {
-                m_scheduler.scheduleJob(cronTrigger);
-            } catch (SchedulerException e) {
-                log().error(SCHEDULER_ERROR, e);
-                context.getMessageContext().addMessage(
-                                                       new MessageBuilder().error().defaultText(
-                                                                                                SCHEDULER_ERROR).build());
-                return ERROR;
-            }
-
-            return SUCCESS;
         }
+
+        
     }
 

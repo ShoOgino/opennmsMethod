@@ -8,34 +8,44 @@
     public String execute(DatabaseReportCriteria criteria,
             DeliveryOptions deliveryOptions, RequestContext context) {
 
-        String reportBean = m_configDao.getReportService(criteria.getReportId());
-        ReportService reportService = (ReportService) m_applicationContext.getBean(reportBean);
-
-        if (reportService.validate(criteria.getReportParms(),
-                                   criteria.getReportId()) == false) {
-            context.getMessageContext().addMessage(
-                                                   new MessageBuilder().error().defaultText(
-                                                                                            PARAMETER_ERROR).build());
-            return ERROR;
-        } else {
-            SimpleTrigger trigger = new SimpleTrigger("immediateTrigger",
-                                                      m_triggerGroup,
-                                                      new Date(), null, 0, 0L);
-            trigger.setJobName(m_jobDetail.getName());
-            trigger.getJobDataMap().put("criteria", criteria);
-            trigger.getJobDataMap().put("deliveryOptions", deliveryOptions);
-            trigger.getJobDataMap().put("reportServiceName", reportBean);
-            try {
-                m_scheduler.scheduleJob(trigger);
-            } catch (SchedulerException e) {
-                e.printStackTrace();
+        String reportServiceName = m_configDao.getReportService(criteria.getReportId());
+        ReportService reportService;
+        try {
+            reportService = m_reportServiceLocator.getReportService(reportServiceName);
+            if (reportService.validate(criteria.getReportParms(),
+                                       criteria.getReportId()) == false) {
                 context.getMessageContext().addMessage(
                                                        new MessageBuilder().error().defaultText(
-                                                                                                SCHEDULER_ERROR).build());
+                                                                                                PARAMETER_ERROR).build());
                 return ERROR;
-            }
+            } else {
+                SimpleTrigger trigger = new SimpleTrigger("immediateTrigger",
+                                                          m_triggerGroup,
+                                                          new Date(), null, 0, 0L);
+                trigger.setJobName(m_jobDetail.getName());
+                trigger.getJobDataMap().put("criteria", criteria);
+                trigger.getJobDataMap().put("deliveryOptions", deliveryOptions);
+                trigger.getJobDataMap().put("reportServiceName", reportServiceName);
+                try {
+                    m_scheduler.scheduleJob(trigger);
+                } catch (SchedulerException e) {
+                    e.printStackTrace();
+                    context.getMessageContext().addMessage(
+                                                           new MessageBuilder().error().defaultText(
+                                                                                                    SCHEDULER_ERROR).build());
+                    return ERROR;
+                }
 
-            return SUCCESS;
+                return SUCCESS;
+            }
+        } catch (ReportServiceLocatorException e) {
+            log().error(REPORTID_ERROR);
+            context.getMessageContext().addMessage(
+                                                   new MessageBuilder().error().defaultText(
+                                                                                            REPORTID_ERROR).build());
+            return ERROR;
         }
+
+
     }
 
