@@ -1,0 +1,157 @@
+    /**
+     * Compute N days daily service availability.
+     * 
+     * @param endTime
+     *            End time
+     * @param catSections
+     *            Castors sections
+     * @param label
+     *            Section name in the xml
+     * @param descr
+     *            Section descr.
+     */
+    private void lastNDaysDailyServiceAvailability(int days, long endTime, CatSections catSections, String label, String descr) {
+        ThreadCategory.setPrefix(LOG4J_CATEGORY);
+        org.apache.log4j.Category log = ThreadCategory.getInstance(this.getClass());
+        log.debug("Inside lastNDaysDailyServiceAvailability " + days);
+
+
+        long outage;
+        String periodFrom = "";
+        SimpleDateFormat fmtmp = new SimpleDateFormat("dd MMM, yyyy");
+        String periodTo = "";
+        periodTo = fmtmp.format(new java.util.Date(endTime));
+        for(String service : m_monitoredServices) {
+            TreeMap<Date, Double> treeMap = new TreeMap<Date, Double>();
+            Rows rows = new Rows();
+            log.debug("SERvice " + service);
+
+            long curTime = endTime;
+            Map<IfService, OutageSvcTimesList> svcOutages = null;
+            if (m_services != null)
+                svcOutages = m_services.get(service);
+            if (svcOutages == null || svcOutages.size() <= 0) {
+                int daysCnt = 0;
+                while (daysCnt++ < days) {
+                    log.debug("DAy 100 % : " + daysCnt);
+                    periodFrom = fmtmp.format(new java.util.Date(curTime));
+
+                    treeMap.put(new java.util.Date(curTime), new Double(100.0));
+
+                    curTime -= ROLLING_WINDOW;
+                }
+
+                Set<Date> keys = treeMap.keySet();
+                Iterator<Date> iter = keys.iterator();
+                while (iter.hasNext()) {
+                    Date tmp = iter.next();
+                    Value dateValue = new Value();
+                    SimpleDateFormat fmt = new SimpleDateFormat("dd");
+                    dateValue.setContent(fmt.format(tmp) + "");
+                    dateValue.setType("title");
+
+                    Value value = new Value();
+                    value.setContent("100.0");
+                    value.setType("data");
+
+                    Row row = new Row();
+                    row.addValue(dateValue);
+                    row.addValue(value);
+                    rows.addRow(row);
+                }
+
+                Col col = new Col();
+                col.addColTitle(0, "Date");
+                col.addColTitle(1, "Percentage Availability");
+				ClassicTable table = new ClassicTable();
+				table.setCol(col);
+				table.setRows(rows);
+				Section section = new Section();
+				section.setClassicTable(table);
+                section.setPeriod(periodFrom + " to " + periodTo);
+                section.setSectionName(label + service);
+                section.setSectionTitle(label + service);
+                section.setSectionDescr(descr + service);
+                section.setSectionIndex(m_sectionIndex);
+                m_sectionIndex++;
+                catSections.addSection(section);
+            } else {
+                int daysCnt = 0;
+                while (daysCnt++ < days) {
+                    log.debug("DAy : " + daysCnt + " end time " + new Date(curTime) + " " + " ROLLING_WINDOW " + ROLLING_WINDOW);
+                    int serviceCnt = 0;
+                    long outageTime = 0;
+                    // For each node in the service table.
+                    //
+                    // Iterate each svc node for getting the ifservice
+                    Set<IfService> keys = svcOutages.keySet();
+                    Iterator<IfService> iter = keys.iterator();
+                    while (iter.hasNext()) {
+                        IfService ifservice = (IfService) iter.next();
+                        log.debug(ifservice);
+                        OutageSvcTimesList outageList = (OutageSvcTimesList) svcOutages.get(ifservice);
+                        if (outageList != null) {
+                            outage = outageList.getDownTime(curTime, ROLLING_WINDOW);
+                            // Keep track of the number of services being
+                            // monitored.
+                            //
+                            outageTime += outage;
+                        }
+                        serviceCnt++;
+                    }
+                    log.debug("Outage Time " + outageTime);
+                    long den = (ROLLING_WINDOW * serviceCnt);
+                    double outag = 1.0 * outageTime;
+                    double denom = 1.0 * den;
+                    double cal = 0;
+                    if (den > 0)
+                        cal = 100.0 * (1 - (outag / denom));
+
+                    treeMap.put(new java.util.Date(curTime), new Double(cal));
+
+                    periodFrom = fmtmp.format(new java.util.Date(curTime));
+                    log.debug("Added to svc list " + new java.util.Date(curTime));
+                    curTime -= ROLLING_WINDOW;
+                }
+
+                Set<Date> keys = treeMap.keySet();
+                Iterator<Date> iter = keys.iterator();
+                while (iter.hasNext()) {
+                    Date tmp = iter.next();
+                    Value dateValue = new Value();
+                    SimpleDateFormat fmt = new SimpleDateFormat("dd");
+                    dateValue.setContent(fmt.format(tmp) + "");
+                    dateValue.setType("title");
+
+                    Double val = treeMap.get(tmp);
+
+                    Value value = new Value();
+                    value.setContent("" + val);
+                    value.setType("data");
+
+                    Row row = new Row();
+                    row.addValue(dateValue);
+                    row.addValue(value);
+                    rows.addRow(row);
+                }
+
+                Col col = new Col();
+                col.addColTitle(0, "Date");
+                col.addColTitle(1, "Percentage Availability");
+				ClassicTable table = new ClassicTable();
+				table.setCol(col);
+				table.setRows(rows);
+				Section section = new Section();
+				section.setClassicTable(table);
+                section.setPeriod(periodFrom + " to " + periodTo);
+                section.setSectionName(label + service);
+                section.setSectionTitle(label + service);
+                section.setSectionDescr(descr + service);
+                section.setSectionIndex(m_sectionIndex);
+                m_sectionIndex++;
+                catSections.addSection(section);
+            }
+        }
+        log.debug("Leaving lastNDaysDailyServiceAvailability");
+    }
+
