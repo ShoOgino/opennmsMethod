@@ -1,0 +1,70 @@
+    @BeforeClass
+    public static void startListenerThread() throws Exception {
+        m_listenerThread = new Thread() {
+            public void run() {
+                this.setName("fail");
+                try {
+                    ServerSocket ssocket = new ServerSocket(8999);
+                    ssocket.setSoTimeout(500);
+                    while (true) {
+                        try {
+                            /*
+                             * This python code is not working properly under Jython. My
+                             * hunch is that it would be better under the new Jython 2.5.1
+                             * but that version is not easy to use under Maven, see:
+                             * 
+                             * http://bugs.jython.org/issue1512
+                             * http://bugs.jython.org/issue1513
+                             * 
+                            PythonInterpreter python = new PythonInterpreter();
+                            python.execfile(
+                                    // Load the python path parser script from the classpath
+                                    Thread.currentThread().getContextClassLoader().getResourceAsStream(
+                                            "rrdPathParser.py"
+                                    )
+                            );
+                            python.eval("configureRrdPaths('" + m_tempDir + "')");
+                             */
+
+                            Socket socket = ssocket.accept();
+                            PerformanceDataProtos.PerformanceDataReadings messages = PerformanceDataProtos.PerformanceDataReadings.parseFrom(socket.getInputStream());
+                            for (PerformanceDataProtos.PerformanceDataReading message : messages.getMessageList()) {
+                                StringBuffer values = new StringBuffer();
+                                values.append("{ ");
+                                for (int i = 0; i < message.getValueCount(); i++) {
+                                    if (i != 0) { values.append(", "); }
+                                    values.append(message.getValue(i));
+                                }
+                                values.append(" }");
+                                System.out.println("Message received: { " + 
+                                        "path: \"" + message.getPath() + "\", " + 
+                                        "owner: \"" + message.getOwner() + "\", " + 
+                                        "timestamp: \"" + message.getTimestamp() + "\", " + 
+                                        "values: " + values.toString() + " }");
+
+                                /*
+                                 * See comments above re: Jython
+                                PyDictionary attributes = (PyDictionary)python.eval("parseRrdPath('" + message.getPath() + "')");
+                                System.out.println(attributes.getClass().getName());
+                                 */
+                            }
+                        } catch (SocketTimeoutException e) {
+                            if (this.isInterrupted()) {
+                                this.setName("notfailed");
+                                return;
+                            }
+                        } catch (IOException e) {
+                            ThreadCategory.getInstance(this.getClass()).error(e.getMessage(), e);
+                        }
+                    }
+                } catch (IOException e) {
+                    ThreadCategory.getInstance(this.getClass()).error(e.getMessage(), e);
+                } catch (Throwable e) {
+                    ThreadCategory.getInstance(this.getClass()).error(e.getMessage(), e);
+                }
+            }
+        };
+
+        m_listenerThread.start();
+    }
+
