@@ -1,46 +1,91 @@
     public void doUpdate(int nodeId, ConnectionProperties cp, boolean retry) throws ProvisioningAdapterException {
-        log().debug("RANCID PROVISIONING ADAPTER CALLED updateNode: nodeid: " + nodeId);
+        log().debug("doUpdate: updating nodeid: " + nodeId);
             
         RancidNode rLocalNode = m_onmsNodeRancidNodeMap.get(Integer.valueOf(nodeId));
-
-        log().debug("RANCID PROVISIONING ADAPTER found Node in local map: " + rLocalNode.toString());
+        log().debug("doUpdate: found local map Node: " + rLocalNode.toString());
         
-        try {
-            RancidNode rRemoteNode = RWSClientApi.getRWSRancidNodeTLO(cp, rLocalNode.getGroup(), rLocalNode.getDeviceName());
-            log().debug("RANCID PROVISIONING ADAPTER found Node in router.db : " + rRemoteNode.toString());
-            if (!rLocalNode.getDeviceType().equalsIgnoreCase(rRemoteNode.getDeviceType())) {
-                try {
-                    // don't change the status of the node in update operation
-                    rLocalNode.setStateUp(rRemoteNode.isStateUp());
-                    log().debug("RANCID PROVISIONING ADAPTER updating router.db data");
-                    RWSClientApi.updateRWSRancidNode(cp, rLocalNode);
-                    if ( updateAuth(rLocalNode.getAuth(), RWSClientApi.getRWSAuthNode(cp, rLocalNode.getDeviceName())) ) {
-                        log().debug("RANCID PROVISIONING ADAPTER updating authentication data");
-                        RWSClientApi.updateRWSAuthNode(cp, rLocalNode.getAuth());                                                        
-                    }
-                } catch (Exception e) {
-                    log().error("RANCID PROVISIONING ADAPTER Failed to update node: " + nodeId + " Exception: " + e.getMessage());
-                }
+        final OnmsNode node = m_nodeDao.get(nodeId);
+        Assert.notNull(node, "doAdd: failed to return node for given nodeId:"+nodeId);
+ 
+        String ipaddress = (String) m_template.execute(new TransactionCallback() {
+            public Object doInTransaction(TransactionStatus arg0) {
+                return getSuitableIpForRancid(node);
             }
-        } catch (RancidApiException re) {
-            if (re.getRancidCode() ==RancidApiException.OTHER_ERROR) {
-                log().info("RANCID PROVISIONING ADAPTER: addng the node: " + rLocalNode.toString());
-                try {
-                    RWSClientApi.createRWSRancidNode(cp, rLocalNode);
-                    RWSClientApi.createOrUpdateRWSAuthNode(cp, rLocalNode.getAuth());
-                } catch (RancidApiException e) {
-                    log().error("RANCID PROVISIONING ADAPTER Failed to create node: " + nodeId + " Exception: " + e.getMessage());
+        });
+
+        m_onmsNodeIpMap.put(nodeId, ipaddress);
+
+        RancidNode rUpdatedNode = getSuitableRancidNode(node);
+        log().debug("doUpdate: found updated Node : " + rUpdatedNode.toString());
+
+        if (rLocalNode.getDeviceName().equalsIgnoreCase(rUpdatedNode.getDeviceName())) {            
+            try {
+                RancidNode rRemoteNode = RWSClientApi.getRWSRancidNodeTLO(cp, rLocalNode.getGroup(), rLocalNode.getDeviceName());
+                RancidNodeAuthentication rRemoteNodeAuth = RWSClientApi.getRWSAuthNode(cp, rLocalNode.getDeviceName());
+                log().debug("doUpdate: found Node in router.db : " + rRemoteNode.toString());
+                if (!rUpdatedNode.getDeviceType().equalsIgnoreCase(rRemoteNode.getDeviceType())) {
+                    try {
+                        // don't change the status of the node in update operation
+                        rUpdatedNode.setStateUp(rRemoteNode.isStateUp());
+                        log().debug("doUpdate: updating router.db");
+                        RWSClientApi.updateRWSRancidNode(cp, rLocalNode);
+                    } catch (Exception e) {
+                        log().error("doUpdate: failed to update node: " + nodeId + " Exception: " + e.getMessage());
+                    }
                 }
-            } else {
-                cp = getStandByRWSConnection();
-                if (retry && cp != null) {
-                    log().info("Rancid Provisioning Adapter: retry Update on standByConn: " + cp.getUrl());
-                    doUpdate(nodeId, cp, false);
+                
+                if ( updateAuth(rUpdatedNode.getAuth(), rRemoteNodeAuth) ) {
+                    log().debug("doUpdate: updating authentication data");
+                    try {
+                        RWSClientApi.updateRWSAuthNode(cp, rUpdatedNode.getAuth());                                                        
+                    } catch (Exception e) {
+                        log().error("doUpdate: Failed to update node authentication data: " + nodeId + " Exception: " + e.getMessage());
+                    }
+                }
+                
+                rUpdatedNode.setStateUp(rLocalNode.isStateUp());
+                m_onmsNodeRancidNodeMap.put(nodeId, rUpdatedNode);
+            
+            } catch (RancidApiException re) {
+                if (re.getRancidCode() ==RancidApiException.OTHER_ERROR) {
+                    log().warn("doUpdate: node not found in router.db: " + rUpdatedNode.toString());
+                    try {
+                        log().debug("doUpdate: adding Node to router.db for nodeid: " + nodeId);
+                        rUpdatedNode.setStateUp(true);
+                        RWSClientApi.createRWSRancidNode(cp, rUpdatedNode);
+                        RWSClientApi.createOrUpdateRWSAuthNode(cp, rUpdatedNode.getAuth());
+                        m_onmsNodeRancidNodeMap.put(nodeId, rUpdatedNode);
+                    } catch (RancidApiException e) {
+                        log().error("doUpdate: Failed to create node: " + nodeId + " Exception: " + e.getMessage());
+                        sendAndThrow(nodeId, e);            
+                    }
                 } else {
-                    sendAndThrow(nodeId, re);            
-                }
-            } 
+                    cp = getStandByRWSConnection();
+                    if (retry && cp != null) {
+                        log().info("doUpdate: retry Update on standByConn: " + cp.getUrl());
+                        doUpdate(nodeId, cp, false);
+                    } else {
+                        sendAndThrow(nodeId, re);            
+                    }
+                } 
+            }
+        } else {
+            log().debug("doUpdate: the device name is changed for Nodeid: " + nodeId);
+        
+            log().debug("doUpdate: calling doDelete for NodeId: " + nodeId);
+            doDelete(nodeId, cp, retry);
+            
+            try {
+                log().debug("doUpdate: adding Node to router.db for nodeid: " + nodeId);
+                rUpdatedNode.setStateUp(true);
+                RWSClientApi.createRWSRancidNode(cp, rUpdatedNode);
+                RWSClientApi.createOrUpdateRWSAuthNode(cp, rUpdatedNode.getAuth());
+                m_onmsNodeRancidNodeMap.put(nodeId, rUpdatedNode);
+                m_onmsNodeIpMap.put(nodeId, ipaddress);
+            } catch (RancidApiException e) {
+                log().error("doUpdate: Failed to create node: " + nodeId + " Exception: " + e.getMessage());
+                sendAndThrow(nodeId, e);            
+            }
         }
-     
     }
 
