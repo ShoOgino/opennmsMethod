@@ -38,7 +38,7 @@
 
                 HttpClient httpClient = new HttpClient();
                 HostConfiguration hostConfig = new HostConfiguration();
-                GetMethod  getMethod = new GetMethod("/opennms/alerts");
+                GetMethod  getMethod = new GetMethod("/hqu/opennms/alertStatus/list.hqu");
                 httpClient.getParams().setParameter(HttpClientParams.SO_TIMEOUT, 3000);
                 httpClient.getParams().setParameter(HttpClientParams.USER_AGENT, "OpenNMS Ackd.HypericAckProcessor");
                 // Change these parameters to be configurable
@@ -60,7 +60,34 @@
 
                     Integer statusCode = getMethod.getStatusCode();
                     String statusText = getMethod.getStatusText();
-                    String responseText = getMethod.getResponseBodyAsString(); 
+                    String responseText = getMethod.getResponseBodyAsString();
+
+                    // Instantiate a JAXB context to parse the alert status
+                    JAXBContext context = JAXBContext.newInstance(new Class[] { HypericAckProcessor.HypericAlertStatus.class });
+                    XMLInputFactory xmlif = XMLInputFactory.newInstance();
+                    XMLEventReader xmler = xmlif.createXMLEventReader(new StringReader(responseText));
+                    EventFilter filter = new EventFilter() {
+                        public boolean accept(XMLEvent event) {
+                            return event.isStartElement();
+                        }
+                    };
+                    XMLEventReader xmlfer = xmlif.createFilteredReader(xmler, filter);
+                    // Read up until the beginning of the root element
+                    StartElement e = (StartElement)xmlfer.nextEvent();
+                    // Fetch the root element name for {@link HypericAlertStatus} objects
+                    String rootElementName = context.createJAXBIntrospector().getElementName(new HypericAlertStatus()).getLocalPart();
+                    if (rootElementName.equals(e.getName().getLocalPart())) {
+                        Unmarshaller unmarshaller = context.createUnmarshaller();
+                        // Use StAX to pull parse the incoming alert statuses
+                        while (xmlfer.peek() != null) {
+                            Object object = unmarshaller.unmarshal(xmler);
+                            if (object instanceof HypericAlertStatus) {
+                                HypericAlertStatus alertStatus = (HypericAlertStatus)object;
+                            }
+                        }
+                    } else {
+                        // Formatting exception
+                    }
                 } catch (HttpException e) {
                     log().info(e);
                 } catch (IOException e) {
