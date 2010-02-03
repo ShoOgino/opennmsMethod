@@ -1,26 +1,26 @@
     public void run() {
         int count = 0;
 
-        // Parse Hyperic alert states
         try {
             log().info("run: Processing Hyperic acknowledgments..." );
 
+            // Query for existing, unacknowledged alarms in OpenNMS that were generated based on Hyperic alerts
             OnmsCriteria criteria = new OnmsCriteria(OnmsAlarm.class, "alarm");
             criteria.add(Restrictions.isNull("alarmAckUser"));
             // Restrict to Hyperic alerts
             criteria.add(Restrictions.eq("uei", "uei.opennms.org/external/hyperic/alert"));
-            // TODO Figure out how to query by parameters
+            // TODO Figure out how to query by parameters (maybe necessary)
 
             Map<String,List<OnmsAlarm>> organizedAlarms = new TreeMap<String,List<OnmsAlarm>>();
 
             // Query list of outstanding alerts with remote platform identifiers
             List<OnmsAlarm> unAckdAlarms = m_alarmDao.findMatching(criteria);
 
-            // Organize the alarms according to the Hyperic system where they originated
+            // Split the list of alarms up according to the Hyperic system where they originated
             for (OnmsAlarm alarm : unAckdAlarms) {
-                String hypericSystem = alarm.getEventParms();
-                // Figure out how to parse the event parms into a list, get the platform.agent.address or platform.id
-                String key = "blah";
+                // TODO Map by platform.agent.address or platform.id?
+                // TODO If the platform.id doesn't match anything in our current config, just ignore it, maybe warn in the logs with a counter
+                String key = getPlatformIdParmValue(alarm);
                 List<OnmsAlarm> targetList = organizedAlarms.get(key);
                 if (targetList == null) {
                     targetList = new ArrayList<OnmsAlarm>();
@@ -33,49 +33,55 @@
             for (Map.Entry<String, List<OnmsAlarm>> alarmList : organizedAlarms.entrySet()) {
                 // TODO Match this string to the Hyperic URL via the config
                 String hypericSystem = alarmList.getKey();
-
-                List<OnmsAlarm> alarmsForSystem = alarmList.getValue();
-                List<String> alertIdList = new ArrayList<String>();
-                for (OnmsAlarm alarmForSystem : alarmList.getValue()) {
-                    // Construct a sane query for the Hyperic system
-                    String alertId = getAlertIdParmValue(alarmForSystem);
-                    alertIdList.add(alertId);
-                }
-
-                // Call fetchHypericAlerts() for each system
-                List<HypericAlertStatus> alertsForSystem = fetchHypericAlerts(alertIdList);
-
-                // Iterate and update any acknowledged or fixed alerts
                 List<OnmsAcknowledgment> acks = new ArrayList<OnmsAcknowledgment>();
-                for (HypericAlertStatus alert : alertsForSystem) {
-                    OnmsAlarm alarm = findAlarmForHypericAlert(alarmsForSystem, hypericSystem, alert);
-                    // If the Hyperic alert has been ack'd and the local alarm is not yet ack'd, then ack it
-                    if (alert.isAcknowledged() && alarm.getAckTime() == null) {
-                        // TODO Get the ack time from Hyperic??
-                        OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, "Ackd.HypericAckProcessor", new Date());
-                        ack.setAckAction(AckAction.ACKNOWLEDGE);
-                        ack.setLog("Acknowledged by Ackd.HypericAckProcessor");
-                        acks.add(ack);
+                try {
+
+                    List<OnmsAlarm> alarmsForSystem = alarmList.getValue();
+                    List<String> alertIdList = new ArrayList<String>();
+                    for (OnmsAlarm alarmForSystem : alarmList.getValue()) {
+                        // Construct a sane query for the Hyperic system
+                        String alertId = getAlertIdParmValue(alarmForSystem);
+                        alertIdList.add(alertId);
                     }
 
-                    // If the Hyperic alert has been fixed and the local alarm is not yet marked as CLEARED, then clear it
-                    if (alert.isFixed() && !OnmsSeverity.CLEARED.equals(alarm.getSeverity())) {
-                        // TODO Get the ack time from Hyperic??
-                        OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, "Ackd.HypericAckProcessor", new Date());
-                        ack.setAckAction(AckAction.CLEAR);
-                        ack.setLog("Cleared by Ackd.HypericAckProcessor");
-                        acks.add(ack);
-                    }
-                }
+                    // Call fetchHypericAlerts() for each system
+                    List<HypericAlertStatus> alertsForSystem = fetchHypericAlerts(hypericSystem, alertIdList);
 
-                if (acks.size() > 0) {
-                    m_ackService.processAcks(acks);
+                    // Iterate and update any acknowledged or fixed alerts
+                    for (HypericAlertStatus alert : alertsForSystem) {
+                        OnmsAlarm alarm = findAlarmForHypericAlert(alarmsForSystem, hypericSystem, alert);
+
+                        // If the Hyperic alert has been ack'd and the local alarm is not yet ack'd, then ack it
+                        if (alert.isAcknowledged() && alarm.getAckTime() == null) {
+                            // TODO Get the ack time from Hyperic??
+                            OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, "Ackd.HypericAckProcessor", new Date());
+                            ack.setAckAction(AckAction.ACKNOWLEDGE);
+                            ack.setLog("Acknowledged by Ackd.HypericAckProcessor");
+                            acks.add(ack);
+                        }
+
+                        // If the Hyperic alert has been fixed and the local alarm is not yet marked as CLEARED, then clear it
+                        if (alert.isFixed() && !OnmsSeverity.CLEARED.equals(alarm.getSeverity())) {
+                            // TODO Get the ack time from Hyperic??
+                            OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, "Ackd.HypericAckProcessor", new Date());
+                            ack.setAckAction(AckAction.CLEAR);
+                            ack.setLog("Cleared by Ackd.HypericAckProcessor");
+                            acks.add(ack);
+                        }
+                    }
+                } catch (Throwable e) {
+                    log().warn("run: threw exception when processing alarms for Hyperic system " + hypericSystem + ": " + e.getMessage());
+                    log().warn("run: " + acks.size() + " acknowledgements processed successfully before exception");
+                } finally {
+                    if (acks.size() > 0) {
+                        m_ackService.processAcks(acks);
+                    }
                 }
             }
 
             log().info("run: Finished processing Hyperic acknowledgments (" + count + " acks processed)" );
         } catch (Throwable e) {
-            log().warn("run: threw exception: "+e);
+            log().warn("run: threw exception: " + e.getMessage());
         }
     }
 
