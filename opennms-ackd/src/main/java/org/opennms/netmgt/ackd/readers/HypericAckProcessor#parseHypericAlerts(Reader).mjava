@@ -1,0 +1,52 @@
+    public static List<HypericAlertStatus> parseHypericAlerts(Reader reader) throws JAXBException, XMLStreamException {
+        List<HypericAlertStatus> retval = new ArrayList<HypericAlertStatus>();
+
+        // Instantiate a JAXB context to parse the alert status
+        JAXBContext context = JAXBContext.newInstance(new Class[] { HypericAlertStatuses.class, HypericAlertStatus.class });
+        XMLInputFactory xmlif = XMLInputFactory.newInstance();
+        XMLEventReader xmler = xmlif.createXMLEventReader(reader);
+        EventFilter filter = new EventFilter() {
+            public boolean accept(XMLEvent event) {
+                return event.isStartElement();
+            }
+        };
+        XMLEventReader xmlfer = xmlif.createFilteredReader(xmler, filter);
+        // Read up until the beginning of the root element
+        StartElement startElement = (StartElement)xmlfer.nextEvent();
+        // Fetch the root element name for {@link HypericAlertStatus} objects
+        String rootElementName = context.createJAXBIntrospector().getElementName(new HypericAlertStatuses()).getLocalPart();
+        if (rootElementName.equals(startElement.getName().getLocalPart())) {
+            Unmarshaller unmarshaller = context.createUnmarshaller();
+            // Use StAX to pull parse the incoming alert statuses
+            while (xmlfer.peek() != null) {
+                Object object = unmarshaller.unmarshal(xmler);
+                if (object instanceof HypericAlertStatus) {
+                    HypericAlertStatus alertStatus = (HypericAlertStatus)object;
+                    retval.add(alertStatus);
+                }
+            }
+        } else {
+            // Try to pull in the HTTP response to give the user a better idea of what went wrong
+            StringBuffer errorContent = new StringBuffer();
+            LineNumberReader lineReader = new LineNumberReader(reader);
+            try {
+                String line;
+                while (true) {
+                    line = lineReader.readLine();
+                    if (line == null) {
+                        break;
+                    } else {
+                        errorContent.append(line.trim());
+                    }
+                }
+            } catch (IOException e) {
+                errorContent.append("Exception while trying to print out message content: " + e.getMessage());
+            }
+
+            // Throw an exception and include the erroneous HTTP response in the exception text
+            throw new JAXBException("Found wrong root element in Hyperic XML document, expected: \"" + rootElementName + "\", found \"" + startElement.getName().getLocalPart() + "\"\n" + 
+                    errorContent.toString());
+        }
+        return retval;
+    }
+
