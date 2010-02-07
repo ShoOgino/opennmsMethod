@@ -1,40 +1,41 @@
     public void doAdd(int nodeId, ConnectionProperties cp, boolean retry) throws ProvisioningAdapterException {
-        log().debug("RANCID PROVISIONING ADAPTER CALLED addNode: nodeid: " + nodeId);
-        try {
-            final OnmsNode node = m_nodeDao.get(nodeId);                                                                                                                                                                                            
-            Assert.notNull(node, "Rancid Provisioning Adapter addNode method failed to return node for given nodeId:"+nodeId);
+        log().debug("doAdd: adding nodeid: " + nodeId);
 
-            String ipaddress = (String) m_template.execute(new TransactionCallback() {
-                public Object doInTransaction(TransactionStatus arg0) {
-                    return getSuitableIpForRancid(node);
-                }
-            });
+        final OnmsNode node = m_nodeDao.get(nodeId);                                                                                                                                                                                            
+        Assert.notNull(node, "doAdd: failed to return node for given nodeId:"+nodeId);
 
-            m_onmsNodeIpMap.putIfAbsent(nodeId, ipaddress);
+        String ipaddress = (String) m_template.execute(new TransactionCallback() {
+            public Object doInTransaction(TransactionStatus arg0) {
+                return getSuitableIpForRancid(node);
+            }
+        });
 
-
-            RancidNode rNode = getSuitableRancidNode(node);
-            
+        
+        RancidNode rNode = getSuitableRancidNode(node);
+        rNode.setStateUp(true);
+        
+        try {            
             if (m_onmsNodeRancidNodeMap.containsValue(rNode)) {
-                log().warn("Rancid Provisioning Adapter: Error Duplicate node: " + node);
-                ProvisioningAdapterException e = new ProvisioningAdapterException("Duplicate node has been provided: "+node); 
+                log().error("doAdd: Error Duplicate node: " + node);
+                ProvisioningAdapterException e = new ProvisioningAdapterException("Duplicate node has been added: "+node); 
                 sendAndThrow(nodeId, e);
                 return;
             }
-
-            rNode.setStateUp(true);
-
-            m_onmsNodeRancidNodeMap.put(Integer.valueOf(nodeId), rNode);
+            log().debug("doAdd: adding to router.db node: " + node.getLabel());
 
             RWSClientApi.createRWSRancidNode(cp, rNode);
+            m_onmsNodeIpMap.putIfAbsent(nodeId, ipaddress);
+            m_onmsNodeRancidNodeMap.put(Integer.valueOf(nodeId), rNode);
+
             RWSClientApi.createOrUpdateRWSAuthNode(cp, rNode.getAuth());
+            
                         
         } catch (ProvisioningAdapterException ae) {    
             sendAndThrow(nodeId, ae);
         } catch (Exception e) {
             cp = getStandByRWSConnection();
             if (retry && cp != null) {
-                log().info("Rancid Provisioning Adapter: retry Add on standByConn: " + cp.getUrl());
+                log().info("doAdd: retry Add on standByConn: " + cp.getUrl());
                 doAdd(nodeId, cp, false);
             } else {
                 sendAndThrow(nodeId, e);            
