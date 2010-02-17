@@ -1,18 +1,16 @@
     public void run() {
-        int count = 0;
+        List<OnmsAcknowledgment> acks = new ArrayList<OnmsAcknowledgment>();
 
         try {
             log().info("run: Processing Hyperic acknowledgments..." );
 
             // Query list of outstanding alerts with remote platform identifiers
-            List<OnmsAlarm> unAckdAlarms = fetchUnackdHypericAlarms();
+            List<OnmsAlarm> unAckdAlarms = fetchUnclearedHypericAlarms();
 
             Map<String,List<OnmsAlarm>> organizedAlarms = new TreeMap<String,List<OnmsAlarm>>();
             // Split the list of alarms up according to the Hyperic system where they originated
             for (OnmsAlarm alarm : unAckdAlarms) {
-                // TODO Map by platform.agent.address or platform.id?
-                // TODO If the platform.id doesn't match anything in our current config, just ignore it, maybe warn in the logs with a counter
-                String key = getPlatformIdParmValue(alarm);
+                String key = getAlertSourceParmValue(alarm);
                 List<OnmsAlarm> targetList = organizedAlarms.get(key);
                 if (targetList == null) {
                     targetList = new ArrayList<OnmsAlarm>();
@@ -23,12 +21,20 @@
 
             // Connect to each Hyperic system and query for the status of corresponding alerts 
             for (Map.Entry<String, List<OnmsAlarm>> alarmList : organizedAlarms.entrySet()) {
-                // TODO Match this string to the Hyperic URL via the config
                 String hypericSystem = alarmList.getKey();
-                List<OnmsAcknowledgment> acks = new ArrayList<OnmsAcknowledgment>();
+                List<OnmsAlarm> alarmsForSystem = alarmList.getValue();
+
+                // Match the platform.id to the Hyperic URL via the config
+                String hypericUrl = getUrlForHypericSource(hypericSystem);
+                if (hypericUrl == null) {
+                    // If the platform.id doesn't match anything in our current config, just ignore it, warn in the logs
+                    log().warn("Could not find Hyperic host URL for the following platform ID: " + hypericSystem);
+                    log().warn("Skipping processing of " + alarmsForSystem.size() + " alarms with that platform ID");
+                    continue;
+                }
+
                 try {
 
-                    List<OnmsAlarm> alarmsForSystem = alarmList.getValue();
                     List<String> alertIdList = new ArrayList<String>();
                     for (OnmsAlarm alarmForSystem : alarmList.getValue()) {
                         // Construct a sane query for the Hyperic system
@@ -37,7 +43,7 @@
                     }
 
                     // Call fetchHypericAlerts() for each system
-                    List<HypericAlertStatus> alertsForSystem = fetchHypericAlerts(hypericSystem, alertIdList);
+                    List<HypericAlertStatus> alertsForSystem = fetchHypericAlerts(hypericUrl, alertIdList);
 
                     // Iterate and update any acknowledged or fixed alerts
                     for (HypericAlertStatus alert : alertsForSystem) {
@@ -71,7 +77,7 @@
                 }
             }
 
-            log().info("run: Finished processing Hyperic acknowledgments (" + count + " acks processed)" );
+            log().info("run: Finished processing Hyperic acknowledgments (" + acks.size() + " acks processed)" );
         } catch (Throwable e) {
             log().warn("run: threw exception: " + e.getMessage());
         }
