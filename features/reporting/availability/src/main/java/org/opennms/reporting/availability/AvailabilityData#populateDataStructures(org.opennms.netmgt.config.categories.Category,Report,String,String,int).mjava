@@ -1,0 +1,98 @@
+    /**
+     * Populates the data structure for this category. This method only
+     * computes for monitored services in this category.
+     * 
+     * @param cat
+     *            Category
+     * @param report
+     *            Report Castor class
+     * @param format
+     *            SVG-specific/all reports
+     */
+    private void populateDataStructures(
+            org.opennms.netmgt.config.categories.Category cat, Report report,
+            String format, String monthFormat, int catIndex) throws Exception {
+        org.apache.log4j.Category log = ThreadCategory.getInstance(this.getClass());
+        if (log.isDebugEnabled())
+            log.debug("Inside populate data Structures" + catIndex);
+        report.setCatCount(catIndex);
+        log.debug("Inside populate data Structures");
+        try {
+
+            List<String> monitoredServices = new ArrayList<String>(cat.getServiceCollection());
+
+            if (m_availabilityDataService == null)
+                log.debug("DATA SERVICE IS NULL");
+            m_nodes = m_availabilityDataService.getNodes(cat, m_startTime, m_endTime);
+            
+            if (log.isDebugEnabled()) {
+                log.debug("Nodes " + m_nodes);
+            }
+            
+            // remove all the nodes that do not have outages
+            
+            ListIterator<Node> cleanNodes = m_nodes.listIterator();
+            while (cleanNodes.hasNext()) {
+                Node node = (Node) cleanNodes.next();
+                if (node != null && !node.hasOutages()) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Removing node: " + node);
+                    }
+                    cleanNodes.remove();
+                }
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("Cleaned Nodes " + m_nodes);
+            }
+            
+            TreeMap<Double, List<String>> topOffenders = getPercentNode();
+
+            if (log.isDebugEnabled()) {
+                log.debug("TOP OFFENDERS " + topOffenders);
+            }
+            if (m_nodes.size() <= 0) {
+                m_nodes = null;
+            }
+            if (m_nodes != null) {
+                AvailCalculations availCalculations = new AvailCalculations(
+                                                                            m_nodes,
+                                                                            m_endTime,
+                                                                            m_lastMonthEndTime,
+                                                                            monitoredServices,
+                                                                            report,
+                                                                            topOffenders,
+                                                                            cat.getWarning(),
+                                                                            cat.getNormal(),
+                                                                            cat.getComment(),
+                                                                            cat.getLabel(),
+                                                                            format,
+                                                                            monthFormat,
+                                                                            catIndex,
+                                                                            m_sectionIndex);
+                m_sectionIndex = availCalculations.getSectionIndex();
+                report.setSectionCount(m_sectionIndex - 1);
+            } else {
+                org.opennms.reporting.availability.Category category = new org.opennms.reporting.availability.Category();
+                category.setCatComments(cat.getComment());
+                category.setCatName(cat.getLabel());
+                category.setCatIndex(catIndex);
+                category.setNodeCount(0);
+                category.setIpaddrCount(0);
+                category.setServiceCount(0);
+                Section section = new Section();
+                section.setSectionIndex(m_sectionIndex);
+                org.opennms.reporting.availability.CatSections catSections = new org.opennms.reporting.availability.CatSections();
+                catSections.addSection(section);
+                category.addCatSections(catSections);
+                org.opennms.reporting.availability.Categories categories = report.getCategories();
+                categories.addCategory(category);
+                report.setCategories(categories);
+                report.setSectionCount(m_sectionIndex);
+                m_sectionIndex++;
+            }
+        } catch (Exception e) {
+            log.fatal("Exception has occured", e);
+            throw e;
+        }
+    }
+
