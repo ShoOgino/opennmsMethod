@@ -8,15 +8,24 @@
             List<OnmsAlarm> unAckdAlarms = fetchUnclearedHypericAlarms();
 
             Map<String,List<OnmsAlarm>> organizedAlarms = new TreeMap<String,List<OnmsAlarm>>();
+            int legacyAlarmCount = 0;
             // Split the list of alarms up according to the Hyperic system where they originated
             for (OnmsAlarm alarm : unAckdAlarms) {
                 String key = getAlertSourceParmValue(alarm);
-                List<OnmsAlarm> targetList = organizedAlarms.get(key);
-                if (targetList == null) {
-                    targetList = new ArrayList<OnmsAlarm>();
-                    organizedAlarms.put(key, targetList);
+                if (key == null || "".equals(key)) {
+                    legacyAlarmCount++;
+                } else {
+                    List<OnmsAlarm> targetList = organizedAlarms.get(key);
+                    if (targetList == null) {
+                        targetList = new ArrayList<OnmsAlarm>();
+                        organizedAlarms.put(key, targetList);
+                    }
+                    targetList.add(alarm);
                 }
-                targetList.add(alarm);
+            }
+
+            if (legacyAlarmCount > 0) {
+                log().info(String.valueOf(legacyAlarmCount) + " Hyperic alarms without an alert.source param found, these alarms will not be processed");
             }
 
             // Connect to each Hyperic system and query for the status of corresponding alerts 
@@ -49,8 +58,10 @@
                     for (HypericAlertStatus alert : alertsForSystem) {
                         OnmsAlarm alarm = findAlarmForHypericAlert(alarmsForSystem, hypericSystem, alert);
 
-                        // If the Hyperic alert has been fixed and the local alarm is not yet marked as CLEARED, then clear it
-                        if (alert.isFixed() && !OnmsSeverity.CLEARED.equals(alarm.getSeverity())) {
+                        if (alarm == null) {
+                            log().warn("Could not find the OpenNMS alarm for the following Hyperic alert: URL: \"" + hypericUrl + "\", id: " + alert.getAlertId());
+                        } else if (alert.isFixed() && !OnmsSeverity.CLEARED.equals(alarm.getSeverity())) {
+                            // If the Hyperic alert has been fixed and the local alarm is not yet marked as CLEARED, then clear it
                             OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, "Ackd.HypericAckProcessor", (alert.getFixTime() != null) ? alert.getFixTime() : new Date());
                             ack.setAckAction(AckAction.CLEAR);
                             ack.setLog(alert.getFixMessage());
@@ -74,9 +85,9 @@
                 }
             }
 
-            log().info("run: Finished processing Hyperic acknowledgments (" + acks.size() + " acks processed)" );
+            log().info("run: Finished processing Hyperic acknowledgments (" + acks.size() + " ack(s) processed for " + unAckdAlarms.size() + " alarm(s))" );
         } catch (Throwable e) {
-            log().warn("run: threw exception: " + e.getMessage());
+            log().warn("run: threw exception: " + e.getMessage(), e);
         }
     }
 
