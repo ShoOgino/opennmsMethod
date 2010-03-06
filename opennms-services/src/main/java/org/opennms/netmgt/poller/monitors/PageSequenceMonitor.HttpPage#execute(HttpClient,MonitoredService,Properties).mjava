@@ -1,0 +1,86 @@
+        void execute(HttpClient client, MonitoredService svc, Properties sequenceProperties) {
+            try {
+                URI uri = getURI(svc);
+                PageSequenceHttpMethod method = getMethod();
+                method.setURI(uri);
+
+                if (getVirtualHost(svc) != null) {
+                    method.getParams().setVirtualHost(getVirtualHost(svc));
+                }
+
+                if (getUserAgent() != null) {
+                    method.addRequestHeader("User-Agent", getUserAgent());
+                } else {
+                    method.addRequestHeader("User-Agent", "OpenNMS PageSequenceMonitor (Service name: " + svc.getSvcName() + ")");
+                }
+
+                if (m_parms.length > 0) {
+                    method.setParameters(expandParms(svc));
+                }
+
+                if (m_page.getUserInfo() != null) {
+                    String userInfo = m_page.getUserInfo();
+                    String[] streetCred = userInfo.split(":", 2);
+                    if (streetCred.length == 2) {
+                        client.getState().setCredentials(new AuthScope(AuthScope.ANY), new UsernamePasswordCredentials(streetCred[0], streetCred[1]));
+                        method.setDoAuthentication(true);
+                    }
+                }
+                
+                long startTime = System.nanoTime();
+                int code = client.executeMethod(method);
+                long endTime = System.nanoTime();
+                m_responseTime = (endTime - startTime)/1000000.0;
+
+                if (!getRange().contains(code)) {
+                    throw new PageSequenceMonitorException("response code out of range for uri:" + uri + ".  Expected " + getRange() + " but received " + code);
+                }
+
+                /*
+                 * We do the work below so we don't get this message logged
+                 * by the HTTP client at the WARN level:
+                 * 
+                 *      org.apache.commons.httpclient.HttpMethodBase: Going to
+                 *      buffer response body of large or unknown size. Using
+                 *      getResponseBodyAsStream instead is recommended.
+                 *      
+                 * Note: that warning message doesn't get presented if the
+                 * server reports the size of the document, but oftentimes
+                 * during an error (or in other cases) it will not report the
+                 * size of the result. Using the code below we ensure that
+                 * no matter what the size is, a warning won't be generated.
+                 */
+                InputStream inputStream = method.getResponseBodyAsStream();
+                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                try {
+                    IOUtils.copy(inputStream, outputStream);
+                } finally {
+                    IOUtils.closeQuietly(inputStream);
+                    IOUtils.closeQuietly(outputStream);
+                }
+                String responseString = outputStream.toString();
+
+                if (getFailurePattern() != null) {
+                    Matcher matcher = getFailurePattern().matcher(responseString);
+                    if (matcher.find()) {
+                        throw new PageSequenceMonitorException(getResolvedFailureMessage(matcher));
+                    }
+                }
+
+                if (getSuccessPattern() != null) {
+                    Matcher matcher = getSuccessPattern().matcher(responseString);
+                    if (!matcher.find()) {
+                        throw new PageSequenceMonitorException("failed to find '" + getSuccessPattern() + "' in page content at " + uri);
+                    }
+                    updateSequenceProperties(sequenceProperties, matcher);
+                }
+
+            } catch (URIException e) {
+                throw new IllegalArgumentException("unable to construct URL for page: " + e, e);
+            } catch (HttpException e) {
+                throw new PageSequenceMonitorException("HTTP Error " + e, e);
+            } catch (IOException e) {
+                throw new PageSequenceMonitorException("I/O Error " + e, e);
+            }
+        }
+

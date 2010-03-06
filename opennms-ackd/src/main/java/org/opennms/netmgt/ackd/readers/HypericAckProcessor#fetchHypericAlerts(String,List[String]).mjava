@@ -1,0 +1,49 @@
+    public static List<HypericAlertStatus> fetchHypericAlerts(String hypericUrl, List<String> alertIds) throws HttpException, IOException, JAXBException, XMLStreamException {
+        List<HypericAlertStatus> retval = new ArrayList<HypericAlertStatus>();
+
+        if (alertIds.size() < 1) {
+            return retval; 
+        }
+
+        for (int i = 0; i < alertIds.size(); i++) {
+            // Construct the query string for the HTTP operation
+            StringBuffer alertIdString = new StringBuffer();
+            alertIdString.append("?");
+            for (int j = 0; (j < ALERTS_PER_HTTP_TRANSACTION) && (i < alertIds.size()); j++,i++) {
+                if (j > 0) alertIdString.append("&");
+                // Numeric values, no need to worry about URL encoding
+                alertIdString.append("id=").append(alertIds.get(i));
+            }
+
+            HttpClient httpClient = new HttpClient();
+            HostConfiguration hostConfig = new HostConfiguration();
+
+            URI uri = new URI(hypericUrl, true);
+
+            GetMethod httpMethod = new GetMethod(uri.getURI() + alertIdString.toString());
+
+            httpClient.getParams().setParameter(HttpClientParams.SO_TIMEOUT, 3000);
+            httpClient.getParams().setParameter(HttpClientParams.USER_AGENT, "OpenNMS Ackd.HypericAckProcessor");
+            // hostConfig.getParams().setParameter(HttpClientParams.VIRTUAL_HOST, "localhost");
+
+            String userinfo = uri.getUserinfo();
+            if (userinfo != null && !"".equals(userinfo)) {
+                httpClient.getParams().setAuthenticationPreemptive(true);
+                httpClient.getState().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(userinfo));
+            }
+
+            try {
+                httpClient.executeMethod(hostConfig, httpMethod);
+
+                //Integer statusCode = httpMethod.getStatusCode();
+                //String statusText = httpMethod.getStatusText();
+                InputStream responseText = httpMethod.getResponseBodyAsStream();
+
+                retval = parseHypericAlerts(new InputStreamReader(responseText));
+            } finally{
+                httpMethod.releaseConnection();
+            }
+        }
+        return retval;
+    }
+
