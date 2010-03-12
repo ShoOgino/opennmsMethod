@@ -2,7 +2,10 @@
      * This is an attempt at testing scheduled automations.
      * @throws InterruptedException
      */
+    @Test
+    @Ignore
     public final void testConcurrency() throws InterruptedException {
+        try {
         /*
          * Test status of threads
          */
@@ -33,37 +36,42 @@
         
         //Get an alarm in the db
         bringNodeDownCreatingEvent(1);
-        Thread.sleep(5000);
+        // Sleep and wait for the alarm to be written
+        Thread.sleep(1000);
         
         /*
          * Changes to the automations to the config will
          * probably affect this.  There should be one node down
          * alarm.
          */
-        assertEquals("alarm count", 1, verifyInitialAlarmState());
+        assertEquals("event count", 3, countEvents());
+        assertEquals("alarm count", 1, countAlarms());
+        assertEquals("counter in the alarm", 1, m_jdbcTemplate.queryForInt("select counter from alarms"));
 
         // Create another node down event
         bringNodeDownCreatingEvent(1);
-        
         // Sleep and wait for the alarm to be written
-        Thread.sleep(1500);
-        assertEquals("counter in the alarm", 2, getJdbcTemplate().queryForInt("select counter from alarms"));
-                
+        Thread.sleep(1000);
+
+        // Make sure there's still one alarm...
+        assertEquals("alarm count", 1, countAlarms());
+        // ... with a counter value of 2
+        assertEquals("counter in the alarm", 2, m_jdbcTemplate.queryForInt("select counter from alarms"));
+        
         /*
          * Get the current severity, sleep long enough for the escalation
          * automation to run, then check that it was escalated.
          */
-        int currentSeverity = getJdbcTemplate().queryForInt("select severity from alarms");
+        int currentSeverity = m_jdbcTemplate.queryForInt("select severity from alarms");
         Thread.sleep(VacuumdConfigFactory.getInstance().getAutomation("autoEscalate").getInterval()+100);
-        assertEquals("alarm severity -- should have been excalated", currentSeverity+1, verifyAlarmEscalated());
+        assertEquals("alarm severity -- should have been escalated", currentSeverity+1, verifyAlarmEscalated());
         
         EventBuilder builder = new EventBuilder(EventConstants.RELOAD_VACUUMD_CONFIG_UEI, "test");
         Event e = builder.getEvent();
         m_eventdIpcMgr.sendNow(e);
-        
-        Thread.sleep(2000);
-                
+        } finally {
         //Stop what you start.
         m_vacuumd.stop();
+        }
     }
 
