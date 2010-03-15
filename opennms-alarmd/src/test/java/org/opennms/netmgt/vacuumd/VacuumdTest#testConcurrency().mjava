@@ -3,7 +3,6 @@
      * @throws InterruptedException
      */
     @Test
-    @Ignore
     public final void testConcurrency() throws InterruptedException {
         try {
         /*
@@ -34,43 +33,28 @@
         assertEquals(PausableFiber.RUNNING, m_vacuumd.getStatus());
         assertEquals(PausableFiber.RUNNING, m_vacuumd.getScheduler().getStatus());
         
-        //Get an alarm in the db
+        // Get an alarm in the DB
         bringNodeDownCreatingEvent(1);
-        // Sleep and wait for the alarm to be written
-        Thread.sleep(1000);
-        
-        /*
-         * Changes to the automations to the config will
-         * probably affect this.  There should be one node down
-         * alarm.
-         */
-        assertEquals("event count", 3, countEvents());
+        // There should be one node down alarm
+        assertEquals("count of nodeDown events", 1, m_jdbcTemplate.queryForInt("select count(*) from events where eventuei = '" + EventConstants.NODE_DOWN_EVENT_UEI + "'"));
         assertEquals("alarm count", 1, countAlarms());
-        assertEquals("counter in the alarm", 1, m_jdbcTemplate.queryForInt("select counter from alarms"));
+        assertEquals("counter in the alarm", 1, m_jdbcTemplate.queryForInt("select counter from alarms where eventuei = '" + EventConstants.NODE_DOWN_EVENT_UEI + "'"));
+        // Fetch the initial severity of the alarm
+        int currentSeverity = m_jdbcTemplate.queryForInt("select severity from alarms");
 
         // Create another node down event
         bringNodeDownCreatingEvent(1);
-        // Sleep and wait for the alarm to be written
-        Thread.sleep(1000);
-
+        assertEquals("count of nodeDown events", 2, m_jdbcTemplate.queryForInt("select count(*) from events where eventuei = '" + EventConstants.NODE_DOWN_EVENT_UEI + "'"));
         // Make sure there's still one alarm...
         assertEquals("alarm count", 1, countAlarms());
         // ... with a counter value of 2
         assertEquals("counter in the alarm", 2, m_jdbcTemplate.queryForInt("select counter from alarms"));
-        
-        /*
-         * Get the current severity, sleep long enough for the escalation
-         * automation to run, then check that it was escalated.
-         */
-        int currentSeverity = m_jdbcTemplate.queryForInt("select severity from alarms");
-        Thread.sleep(VacuumdConfigFactory.getInstance().getAutomation("autoEscalate").getInterval()+100);
-        assertEquals("alarm severity -- should have been escalated", currentSeverity+1, verifyAlarmEscalated());
-        
-        EventBuilder builder = new EventBuilder(EventConstants.RELOAD_VACUUMD_CONFIG_UEI, "test");
-        Event e = builder.getEvent();
-        m_eventdIpcMgr.sendNow(e);
+
+        // Sleep long enough for the escalation automation to run, then check that it was escalated
+        Thread.sleep(VacuumdConfigFactory.getInstance().getAutomation("autoEscalate").getInterval() + 500);
+        assertEquals("alarm severity wrong, should have been escalated", currentSeverity+1, verifyAlarmEscalated());
         } finally {
-        //Stop what you start.
+        // Stop what you start
         m_vacuumd.stop();
         }
     }
