@@ -1,0 +1,40 @@
+    private void handleReloadDaemonConfig(Event event) {
+        boolean isTarget = false;
+        List<Parm> parmCollection = event.getParms().getParmCollection();
+        for (Parm parm : parmCollection) {
+            if (EventConstants.PARM_DAEMON_NAME.equals(parm.getParmName()) && "Threshd".equalsIgnoreCase(parm.getValue().getContent())) {
+                isTarget = true;
+                break;
+            }
+        }
+        if (isTarget) {
+            String thresholdsFile = ConfigFileConstants.getFileName(ConfigFileConstants.THRESHOLDING_CONF_FILE_NAME);
+            String threshdFile = ConfigFileConstants.getFileName(ConfigFileConstants.THRESHD_CONFIG_FILE_NAME);
+            String targetFile = thresholdsFile; // Default
+            for (Parm parm : parmCollection) {
+                if (EventConstants.PARM_CONFIG_FILE_NAME.equals(parm.getParmName()) && threshdFile.equalsIgnoreCase(parm.getValue().getContent())) {
+                    targetFile = threshdFile;
+                }
+            }
+            EventBuilder ebldr = null;
+            try {
+                if (targetFile.equals(thresholdsFile))
+                    ThresholdingConfigFactory.reload();
+                if (targetFile.equals(threshdFile))
+                    ThreshdConfigFactory.reload();
+                ebldr = new EventBuilder(EventConstants.THRESHOLDCONFIG_CHANGED_EVENT_UEI, "Collectd");
+                getEventIpcManager().sendNow(ebldr.getEvent());
+                ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_SUCCESSFUL_UEI, "Statsd");
+                ebldr.addParam(EventConstants.PARM_DAEMON_NAME, "Threshd");
+            } catch (Exception e) {
+                log().error("handleReloadDaemonConfig: Error reloading configuration: " + e, e);
+                ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_FAILED_UEI, "Collectd");
+                ebldr.addParam(EventConstants.PARM_DAEMON_NAME, "Threshd");
+                ebldr.addParam(EventConstants.PARM_REASON, e.getLocalizedMessage().substring(1, 128));
+            }
+            if (ebldr != null) {
+                getEventIpcManager().sendNow(ebldr.getEvent());
+            }
+        }
+    }
+
