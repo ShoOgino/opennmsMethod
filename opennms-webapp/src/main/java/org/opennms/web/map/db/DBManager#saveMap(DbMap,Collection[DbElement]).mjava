@@ -1,0 +1,95 @@
+    public synchronized int saveMap(DbMap m, Collection<DbElement> e) throws MapsException {
+        log.debug("saving map...");
+        Connection conn = startSession();
+        final String sqlGetCurrentTimestamp = "SELECT CURRENT_TIMESTAMP";
+        final String sqlGetMapNxtId = "SELECT nextval('mapnxtid')";
+        final String sqlInsertQuery = "INSERT INTO "
+                + mapTable
+                + " (mapid, mapname, mapbackground, mapowner, mapcreatetime, mapaccess, userlastmodifies, lastmodifiedtime, mapscale, mapxoffset, mapyoffset, maptype, mapwidth, mapheight) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        final String sqlUpdateQuery = "UPDATE "
+                + mapTable
+                + " SET mapname = ?, mapbackground = ?, mapowner = ?, mapaccess = ?, userlastmodifies = ?, lastmodifiedtime = ?, mapscale = ?, mapxoffset = ?, mapyoffset = ?, maptype = ? , mapwidth = ?, mapheight = ? WHERE mapid = ?";
+        Timestamp currentTimestamp = null;
+        int nxtid = 0;
+
+        int count = -1;
+
+        try {
+            Statement stmtCT = conn.createStatement();
+            ResultSet rs = stmtCT.executeQuery(sqlGetCurrentTimestamp);
+            if (rs.next()) {
+                currentTimestamp = rs.getTimestamp(1);
+                PreparedStatement statement;
+                if (m.isNew()) {
+                    Statement stmtID = conn.createStatement();
+                    ResultSet rsStmt = stmtID.executeQuery(sqlGetMapNxtId);
+                    if (rsStmt.next()) {
+                        nxtid = rsStmt.getInt(1);
+                    }
+                    rsStmt.close();
+                    stmtID.close();
+
+                    statement = conn.prepareStatement(sqlInsertQuery);
+                    statement.setInt(1, nxtid);
+                    statement.setString(2, m.getName());
+                    statement.setString(3, m.getBackground());
+                    statement.setString(4, m.getOwner());
+                    statement.setTimestamp(5, currentTimestamp);
+                    statement.setString(6, m.getAccessMode());
+                    statement.setString(7, m.getUserLastModifies());
+                    statement.setTimestamp(8, currentTimestamp);
+                    statement.setDouble(9, m.getScale());
+                    statement.setInt(10, m.getOffsetX());
+                    statement.setInt(11, m.getOffsetY());
+                    statement.setString(12, m.getType());
+                    statement.setInt(13, m.getWidth());
+                    statement.setInt(14, m.getHeight());
+                } else {
+                    statement = conn.prepareStatement(sqlUpdateQuery);
+                    statement.setString(1, m.getName());
+                    statement.setString(2, m.getBackground());
+                    statement.setString(3, m.getOwner());
+                    statement.setString(4, m.getAccessMode());
+                    statement.setString(5, m.getUserLastModifies());
+                    statement.setTimestamp(6, currentTimestamp);
+                    statement.setDouble(7, m.getScale());
+                    statement.setInt(8, m.getOffsetX());
+                    statement.setInt(9, m.getOffsetY());
+                    statement.setString(10, m.getType());
+                    statement.setInt(11, m.getWidth());
+                    statement.setInt(12, m.getHeight());
+                    statement.setInt(13, m.getId());
+                }
+                count = statement.executeUpdate();
+                if (count == 0) {
+                    log.warn("Called saveMap() on deleted map");
+                    throw new MapsException("Called saveMap() on deleted map");
+                }
+                if (m.isNew()) {
+                    for (DbElement dbe : e) {
+                        dbe.setMapId(nxtid);
+                        saveElementInSession(dbe, conn);
+                    }
+                } else {
+                    deleteElementsOfMapInSession(m.getId(),conn);
+                    for (DbElement dbe : e) {
+                        saveElementInSession(dbe, conn);
+                    }
+                }
+
+                statement.close();
+            }
+            rs.close();
+            stmtCT.close();
+        } catch (SQLException ex) {
+            log.error("Error while saving map");
+            rollback(conn);
+            throw new MapsException("Error while saving map " + m.getId(), ex);
+        } finally {
+            endSession(conn);
+        }
+        if (m.isNew())
+                return nxtid;
+        else return m.getId();
+    }
+
