@@ -1,13 +1,54 @@
 	public void start() {
 		LogUtils.debugf(this, "starting location status service");
-		initializeLocationDao();
+		initialize();
+		final EventExecutorService service = EventExecutorServiceFactory.getInstance().getEventExecutorService(this.getRequest().getSession());
 
-		if (myLocationTimer == null) {
-			LogUtils.debugf(this, "starting update timer");
-			myLocationTimer = new Timer();
-			myLocationTimer.schedule(new LocationUpdateSenderTimerTask(), UPDATE_PERIOD, UPDATE_PERIOD);
+		if (m_timer == null) {
+			m_timer = new Timer();
+			m_timer.schedule(new TimerTask() {
+				@Override
+				public void run() {
+					if (!m_initializationComplete.get()) {
+						return;
+					}
+					if (m_lastUpdated == null) {
+						return;
+					}
+					LogUtils.debugf(this, "pushing monitor status updates");
+					final Date endDate = new Date();
+					addEvent(RemotePollerPresenter.LOCATION_EVENT_DOMAIN, new LocationsUpdatedRemoteEvent(m_locationDataService.getUpdatedLocationsBetween(m_lastUpdated, endDate)));
+					LogUtils.debugf(this, "finished pushing monitor status updates");
+
+//					final Collection<ApplicationHandler> appHandlers = new ArrayList<ApplicationHandler>();
+//					appHandlers.add(new InitialApplicationHandler(m_locationDataService, service, true));
+//					m_locationDataService.handleAllApplications(appHandlers);
+
+					m_lastUpdated = endDate;
+				}
+			}, UPDATE_PERIOD, UPDATE_PERIOD);
 		}
-		
-		myLocationTimer.schedule(new InitialSenderTimerTask(), 1000);
+
+		final TimerTask initializedTask = new TimerTask() {
+			@Override
+			public void run() {
+				pushInitializedLocations(service);
+				service.addEventUserSpecific(new UpdateCompleteRemoteEvent());
+				m_lastUpdated = new Date();
+				m_initializationComplete.set(true);
+			}
+		};
+
+		/*
+		final TimerTask uninitializedTask = new TimerTask() {
+			@Override
+			public void run() {
+				pushUninitializedLocations(service);
+				service.addEventUserSpecific(new UpdateCompleteRemoteEvent());
+				m_timer.schedule(initializedTask, PADDING_TIME);
+			}
+		};
+		*/
+
+		m_timer.schedule(initializedTask, PADDING_TIME);
 	}
 
