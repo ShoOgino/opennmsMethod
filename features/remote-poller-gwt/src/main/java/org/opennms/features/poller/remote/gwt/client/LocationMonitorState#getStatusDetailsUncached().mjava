@@ -1,0 +1,62 @@
+	protected StatusDetails getStatusDetailsUncached() {
+		// blue/unknown: If no monitors are started for a location
+		if (noMonitorsStarted()) {
+			return StatusDetails.unknown("No monitors are started for this location.");
+		}
+
+		// blue/unknown: If no monitors have reported for a location
+		if (m_locationStatuses == null || m_locationStatuses.size() == 0) {
+			return StatusDetails.unknown("No monitors have reported for this location.");
+		}
+
+		// yellow/marginal: If all but 1 non-stopped monitors are disconnected
+		if (allButOneMonitorsDisconnected()) {
+			return StatusDetails.marginal("Only 1 monitor is started, the rest are disconnected.");
+		}
+
+		Set<String> anyDown = new HashSet<String>();
+		Set<String> services = new HashSet<String>();
+		Set<String> servicesDown = new HashSet<String>();
+		for (String serviceName : m_services) {
+			boolean serviceAllDown = true;
+			boolean foundService = false;
+			for (GWTLocationSpecificStatus status : m_locationStatuses) {
+				final GWTMonitoredService monitoredService = status.getMonitoredService();
+				if (monitoredService.getServiceName().equals(serviceName)) {
+					foundService = true;
+					services.add(serviceName);
+					final GWTPollResult pollResult = status.getPollResult();
+					if (pollResult.getStatus().equalsIgnoreCase("down")) {
+						anyDown.add(serviceName);
+					} else {
+						serviceAllDown = false;
+					}
+				}
+			}
+			if (foundService && serviceAllDown) {
+				servicesDown.add(serviceName);
+			}
+		}
+
+		if (servicesDown.size() > 0) {
+			if (servicesDown.size() == services.size()) {
+				// red/down: If all started monitors report "down" for all services
+				return StatusDetails.down("All services are down on all started monitors.");
+			} else {
+				// red/down: If all started monitors report "down" for the same service
+				if (servicesDown.size() == 1) {
+					return StatusDetails.down(servicesDown.iterator().next() + " has been reported down by all monitors.");
+				} else {
+					return StatusDetails.down("The following services are reported down by all monitors: " + StringUtils.join(servicesDown, ", ") + ".");
+				}
+			}
+		}
+		
+		// yellow/marginal: If some (but not all) started monitors report "down" for the same service
+		if (anyDown.size() > 0) {
+			return StatusDetails.marginal("The following services are reported down by at least one monitor: " + StringUtils.join(anyDown, ", ") + ".");
+		}
+
+		return StatusDetails.up();
+	}
+

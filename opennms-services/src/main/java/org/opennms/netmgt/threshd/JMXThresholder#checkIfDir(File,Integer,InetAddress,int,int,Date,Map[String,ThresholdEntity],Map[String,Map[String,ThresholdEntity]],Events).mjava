@@ -1,0 +1,95 @@
+    /**
+     * Performs threshold checking on an JMX RRD interface directory.
+     * 
+     * @param directory
+     *            RRD repository directory
+     * @param nodeId
+     *            Node identifier
+     * @param primary
+     *            Primary JMX interface address
+     * @param interval
+     *            Configured thresholding interval
+     * @param range
+     *            Age before which PDP is considered out of date           
+     * @param date
+     *            Source for timestamp to be used for all generated events
+     * @param baseIfThresholdMap
+     *            Map of configured interface level ThresholdEntity objects
+     *            keyed by datasource name.
+     * @param allIfThresholdMap
+     *            Map of threshold maps indexed by ifLabel
+     * @param events
+     *            Castor events object containing any events to be generated as
+     *            a result of threshold checking.
+     * 
+     * @throws IllegalArgumentException
+     *             if path parameter is not a directory.
+     */
+    private void checkIfDir(File directory, Integer nodeId, InetAddress primary, int interval, int range, Date date, Map<String,ThresholdEntity> baseIfThresholdMap, Map<String,Map<String,ThresholdEntity>> allIfThresholdMap, Events events) throws IllegalArgumentException {
+        // Sanity Check
+        if (directory == null || nodeId == null || primary == null || date == null || baseIfThresholdMap == null || allIfThresholdMap == null || events == null) {
+            throw new IllegalArgumentException("Null parameters not permitted.");
+        }
+
+        if (log().isDebugEnabled()) {
+            log().debug("checkIfDir: threshold checking interface dir: " + directory.getAbsolutePath());
+        }
+
+        String ifLabel = directory.getName();
+        if (log().isDebugEnabled()) {
+            log().debug("checkIfDir: ifLabel=" + ifLabel);
+        }
+
+        // This is an interface directory extract the
+        // interface label from the full path name of the file
+        /*
+         * String path = directory.getAbsolutePath(); String path = directory
+         * int fileSepIndex = path.lastIndexOf(File.separatorChar); if
+         * (fileSepIndex >= 0) ifLabel = path.substring(fileSepIndex+1,
+         * path.length()); else ifLabel = path;
+         */
+
+        // Attempt to retrieve the threshold map for this interface
+        // using the ifLabel for the interface
+        Map<String, ThresholdEntity> thresholdMap = allIfThresholdMap.get(ifLabel);
+        if (thresholdMap == null) {
+            // Doesn't exist yet, go ahead and create it
+            // Must maintain a separate threshold map for
+            // each interface.
+            thresholdMap = new HashMap<String, ThresholdEntity>();
+
+            // Iterate over base interface threshold map and clone each
+            // ThresholdEntity object and add it to the threshold map.
+            // for this interface.
+            // 
+            Iterator<ThresholdEntity> iter = baseIfThresholdMap.values().iterator();
+            while (iter.hasNext()) {
+                ThresholdEntity entity = iter.next();
+                thresholdMap.put(entity.getDataSourceExpression(), entity.clone());
+            }
+
+            // Add the new threshold map for this interface
+            // to the all interfaces map.
+            allIfThresholdMap.put(ifLabel, thresholdMap);
+        }
+        
+        Map<String, String> ifDataMap = new HashMap<String, String>();
+        for(Object threshKey  :thresholdMap.keySet()) {
+            ThresholdEntity threshold = thresholdMap.get(threshKey);
+            Collection<String> requiredDatasources=threshold.getRequiredDatasources();
+            Map<String, Double> values=getThresholdValues(directory, range, interval, requiredDatasources);
+            if(values==null) {
+                continue; //Not all values were available
+            }
+            List<Event> eventList = threshold.evaluateAndCreateEvents(values, date);
+            if (eventList.size() == 0) {
+                // Nothing to do, so continue
+                continue;
+            }
+            if (ifDataMap.size() == 0 && ifLabel != null) {
+                populateIfDataMap(nodeId, ifLabel, ifDataMap);
+            }
+            completeEventListAndAddToEvents(events, eventList, nodeId, primary, ifDataMap);
+        }
+    }
+

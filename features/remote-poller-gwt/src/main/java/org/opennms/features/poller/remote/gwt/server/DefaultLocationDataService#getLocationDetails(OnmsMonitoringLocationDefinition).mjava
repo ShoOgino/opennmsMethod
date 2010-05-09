@@ -1,0 +1,43 @@
+	@Transactional
+	public LocationDetails getLocationDetails(final OnmsMonitoringLocationDefinition def) {
+		final LocationDetails ld = new LocationDetails();
+		final DefaultLocationDataService.MonitorStatusTracker mst = new DefaultLocationDataService.MonitorStatusTracker(def.getName());
+		final DefaultLocationDataService.ApplicationStatusTracker ast = new DefaultLocationDataService.ApplicationStatusTracker(def.getName());
+
+		final Set<GWTLocationMonitor> monitors = new HashSet<GWTLocationMonitor>();
+
+		for (OnmsLocationMonitor mon : m_locationDao.findByLocationDefinition(def)) {
+			monitors.add(transformLocationMonitor(mon));
+		}
+
+		final Set<ApplicationInfo> applications = new HashSet<ApplicationInfo>();
+		final Map<String,Set<OnmsMonitoredService>> services = new HashMap<String,Set<OnmsMonitoredService>>();
+		
+		for (final OnmsApplication application : m_applicationDao.findAll()) {
+			applications.add(transformApplication(m_monitoredServiceDao.findByApplication(application), application));
+		}
+
+		for (final OnmsMonitoredService service : m_monitoredServiceDao.findAll()) {
+			for (final OnmsApplication app : service.getApplications()) {
+				final String appName = app.getName();
+				Set<OnmsMonitoredService> serv = services.get(appName);
+				if (serv == null) {
+					serv = new HashSet<OnmsMonitoredService>();
+					services.put(appName, serv);
+				}
+				serv.add(service);
+			}
+		}
+
+		final Date to = new Date();
+		final Date from = new Date(to.getTime() - AVAILABILITY_MS);
+		for (OnmsLocationSpecificStatus status : m_locationDao.getStatusChangesBetween(from, to)) {
+			mst.onStatus(status);
+			ast.onStatus(status);
+		}
+
+		ld.setLocationMonitorState(new LocationMonitorState(monitors, mst.drain()));
+		ld.setApplicationState(new ApplicationState(from, to, applications, ast.drainStatuses()));
+		return ld;
+	}
+
