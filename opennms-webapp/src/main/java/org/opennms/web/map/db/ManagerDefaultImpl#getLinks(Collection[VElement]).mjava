@@ -1,5 +1,82 @@
-	public List<VLink> getLinks(Collection<VElement> elems) throws MapsException {
-    	VElement[] arrayelems = elems.toArray(new VElement[0]);
-    	return getLinks(arrayelems);
+    private List<VLink> getLinks(Collection<VElement> elems) throws MapsException {
+        if (elems == null)
+            return null;
+        String multilinkStatus = mapsPropertiesFactory.getMultilinkStatus();
+        List<VLink> links = new ArrayList<VLink>();
+
+        java.util.Map<Integer, Set<VElement>> node2Element = new HashMap<Integer, Set<VElement>>();
+
+        HashSet<Integer> allNodes = new HashSet<Integer>();
+
+        for (VElement ve : elems) {
+            for (Integer nodeid : getNodeidsOnElement(ve)) {
+                allNodes.add(nodeid);
+                Set<VElement> elements = node2Element.get(nodeid);
+                if (elements == null) {
+                    elements = new java.util.HashSet<VElement>();
+                }
+                elements.add(ve);
+                node2Element.put(nodeid, elements);
+            }
+        }
+
+        for (LinkInfo linfo : dbManager.getLinksOnElements(allNodes)) {
+            log.debug("Found link: node1:" + linfo.nodeid + " node2: "
+                    + linfo.nodeparentid);
+            log.debug("Getting linkinfo for nodeid " + linfo.nodeid);
+            
+            for (VElement first : node2Element.get(linfo.nodeid)) {
+                log.debug("Getting linkinfo for nodeid " + linfo.nodeparentid);
+                for (VElement second : node2Element.get(linfo.nodeparentid)) {
+                    if (first.hasSameIdentifier(second)) {
+                        continue;
+                    }
+                    
+                    VLink vlink = new VLink(first.getId(), first.getType(),
+                                            second.getId(), second.getType(), getLinkTypeId(linfo));
+                    int status=getLinkStatus(linfo);
+                    String statusString = getLinkStatusString(status);
+                    int index = links.indexOf(vlink);
+                    
+                    if (index != -1) {
+                        VLink alreadyIn = links.get(index);
+                        int numberOfLinks = alreadyIn.increaseLinks();
+                        log.debug("Updated " + numberOfLinks + " on Link: " + alreadyIn.getId());
+                        int numberOfLinkwithStatus = alreadyIn.increaseStatusMapLinks(statusString);
+                        log.debug("Updated Status Map: found: "+ numberOfLinkwithStatus + " links with Status: " +statusString );
+                        if ( ( multilinkStatus.equals(MapPropertiesFactory.MULTILINK_BEST_STATUS) 
+                               && status < getLinkStatusInt(alreadyIn.getLinkStatusString())
+                             ) 
+                          || ( multilinkStatus.equals(MapPropertiesFactory.MULTILINK_WORST_STATUS) 
+                               && status > getLinkStatusInt(alreadyIn.getLinkStatusString())
+                             )
+                            ) {
+                            log.debug("Upgrading with Link info becouse multilink.status=" + multilinkStatus);
+                            log.debug("updating existing the link "
+                                  + alreadyIn.toString()
+                                  + " with status "
+                                  + alreadyIn.getLinkStatusString());
+
+                            log.debug("setting link properties: "
+                                  + vlink.toString()
+                                  + " with new found status "
+                                  + vlink.getLinkStatusString());
+                            alreadyIn.setLinkStatusString(statusString);
+                            alreadyIn.setFirstNodeid(linfo.nodeid);
+                            alreadyIn.setSecondNodeid(linfo.nodeparentid);
+                        }
+                        links.set(index,alreadyIn);
+                    } else {
+                        log.debug("adding new link: " + vlink.getId() );
+                        vlink.setLinkStatusString(statusString);
+                        vlink.increaseStatusMapLinks(statusString);
+                        vlink.setFirstNodeid(linfo.nodeid);
+                        vlink.setSecondNodeid(linfo.nodeparentid);
+                        links.add(vlink);
+                    }
+                } // end second element for
+            } //end first element for
+        } // end linkinfo for
+        return links;
     }
 

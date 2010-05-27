@@ -15,7 +15,7 @@
 		severitiesMap = new HashMap<String,Severity>();
 		statusesMap = new HashMap<String,Status>();
 		availsMap = new HashMap<String,Avail>();
-		iconsMap = new HashMap<String,Icon>();
+		iconsMap = new HashMap<String,String>();
 		iconsBySysoidMap = new HashMap<String,String>();
 		bgImagesMap = new HashMap<String,String>();
 		linksMap = new HashMap<Integer,Link>();
@@ -155,6 +155,8 @@
 			String width = props.getProperty("link." + links[i]+ ".width");
 			String dasharray = props.getProperty("link." + links[i]+ ".dash-array");			
 			String snmptype = props.getProperty("link." + links[i]+ ".snmptype");			
+            String multilinkwidth = props.getProperty("link." + links[i]+ ".multilink.width");
+            String multilinkdasharray = props.getProperty("link." + links[i]+ ".multilink.dash-array");            
 			if(id==null){
 				log.error("param id for link cannot be null in map.properties: skipping link...");
 				continue;
@@ -163,13 +165,13 @@
 				log.error("param text for link cannot be null in map.properties: skipping link...");
 				continue;
 			}
+            if(width==null){
+                log.error("param width for link cannot be null in map.properties: skipping link...");
+                continue;
+            }
 			if(speed==null){
-				log.error("param speed for link cannot be null in map.properties: skipping link...");
-				continue;
-			}
-			if(width==null){
-				log.error("param width for link cannot be null in map.properties: skipping link...");
-				continue;
+				log.info("param speed for link cannot be null in map.properties: skipping link...");
+				speed="Unknown";
 			}
 				
 			int dash_arr=-1;
@@ -180,7 +182,16 @@
 			if(snmptype!=null)
 				snmp_type=WebSecurityUtils.safeParseInt(snmptype);
 
-			Link lnk = new Link(WebSecurityUtils.safeParseInt(id), speed,text,width,dash_arr,snmp_type);
+			if (multilinkwidth==null) {
+			    multilinkwidth= width;
+			}
+
+			int multilink_dasharray=dash_arr;
+            if (multilinkdasharray!=null) {
+                multilink_dasharray=WebSecurityUtils.safeParseInt(multilinkdasharray);
+            }
+
+			Link lnk = new Link(WebSecurityUtils.safeParseInt(id), speed,text,width,dash_arr,snmp_type,multilinkwidth,multilink_dasharray);
 			
 			log.debug("found link " + links[i] + " with id=" + id
 					+ ", text=" + text+ ", speed=" + speed+ ", width=" + width+ ", dash-array=" + dasharray+ "snmp-type=" + snmp_type+". Adding it.");
@@ -212,13 +223,28 @@
 			LinkStatus ls = new LinkStatus(linkStatuses[i],color,flashBool);
 			linkStatusesMap.put(linkStatuses[i], ls);
 		}		
-		
+
+        if(props.getProperty("summarylink.id")!=null){
+            summaryLink = WebSecurityUtils.safeParseInt(props.getProperty("summarylink.id"));    
+        }
+        log.debug("found summarylink.id: "+summaryLink);
+
+        if(props.getProperty("summarylink.color")!=null){
+            summaryLinkColor = props.getProperty("summarylink.color");    
+        }
+        log.debug("found summarylink.color: "+summaryLinkColor);
+
+        if(props.getProperty("max.links")!=null){
+            maxLinks = WebSecurityUtils.safeParseInt(props.getProperty("max.links"));    
+        }
+        log.debug("found max.links: "+maxLinks);
+
 		
 		if(props.getProperty("multilink.status")!=null){
 			multilinkStatus = props.getProperty("multilink.status"); 	
 		}
-		if(!multilinkStatus.equals("best") && !multilinkStatus.equals("worst")){
-			log.error("multilink.status property must be 'best' or 'worst'... using default ('best')");
+		if(!multilinkStatus.equals(MULTILINK_BEST_STATUS) && !multilinkStatus.equals(MULTILINK_IGNORE_STATUS) && !multilinkStatus.equals(MULTILINK_WORST_STATUS)){
+			log.error("multilink.status property must be 'best' or 'worst' or 'ignore' ... using default ('best')");
 			multilinkStatus=MULTILINK_BEST_STATUS;
 		}
 		log.debug("found multilink.status:"+multilinkStatus);
@@ -335,21 +361,10 @@
 			
 			String baseProperty = "icon." + icons[i] + ".";
 			
-			Icon icon = new Icon(props.getProperty(baseProperty + "filename"),
-			                     props.getProperty(baseProperty + "width"),
-			                     props.getProperty(baseProperty + "height"),
-			                     props.getProperty(baseProperty + "semaphore.radius"),
-			                     props.getProperty(baseProperty + "semaphore.x"),
-			                     props.getProperty(baseProperty + "semaphore.y"),
-			                     props.getProperty(baseProperty + "label.x"),
-			                     props.getProperty(baseProperty + "label.y"),
-			                     props.getProperty(baseProperty + "label.size"),
-			                     props.getProperty(baseProperty + "label.align")
-			                    );
-			
-			log.debug("found icon " + icons[i] + " with filename=" + icon.getFileName()
+			String filename =  props.getProperty(baseProperty + "filename");
+			log.debug("found icon " + icons[i] + " with filename=" + filename
 					+ ". Adding it.");
-			iconsMap.put(icons[i], icon);
+			iconsMap.put(icons[i], filename);
 		}
 		
 		// look up sysoid icons
@@ -376,16 +391,19 @@
 					"Required Default Icon Node not found.");
 		}
 		log.debug("default node icon: "+defaultNodeIcon);
-		
-		mapScale = props.getProperty("icon.default.scale");
-		
-		
+				
 		String defaultMapElementDimensionString = props.getProperty("icon.default.mapelementdimension");
         if (defaultMapElementDimensionString != null) {
             defaultMapElementDimension = WebSecurityUtils.safeParseInt(defaultMapElementDimensionString);
         }
         log.debug("default map element dimension: "+defaultMapElementDimension);
 
+        String useSemaphoreString = props.getProperty("use.semaphore");
+        if (useSemaphoreString != null && useSemaphoreString.equalsIgnoreCase("false"))
+            useSemaphore=false;
+        else useSemaphore = true;
+        log.debug("use semaphore: "+useSemaphoreString);
+        
 		// look up background filenames
 		String[] bg = BundleLists
 				.parseBundleList(props.getProperty("bgimages"));
@@ -397,10 +415,5 @@
 					+ ". Adding it.");
 			bgImagesMap.put(bg[i], filename);
 		}
-
-//		propertiesMaps = new Map[] { severitiesMap, statusesMap, availsMap,
-//				iconsMap, bgImagesMap};
-
-//		return (propertiesMaps);
 	}
 

@@ -1,32 +1,51 @@
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        MockUtil.println("------------ Begin Test " + getName() + " --------------------------");
+    @Before
+    public void setUp() throws Exception {
         MockLogAppender.setupLogging();
+        assertNotNull(m_mockEventIpcManager);
+        assertNotNull(m_transactionManager);
+        assertNotNull(m_nodeDao);
+        assertNotNull(m_ipInterfaceDao);
+        assertNotNull(m_serviceTypeDao);
+        
+        RrdUtils.setStrategy(RrdUtils.getSpecificStrategy(StrategyName.basicRrdStrategy));
 
-        MockNetwork m_network = new MockNetwork();
-        m_network.setCriticalService("ICMP");
-        m_network.addNode(1, "Router");
-        m_network.addInterface("127.0.0.1");
-        m_network.addService("ICMP");
+        m_testHostName = InetAddress.getLocalHost().getHostAddress();
 
-        MockDatabase m_db = new MockDatabase();
-        m_db.populate(m_network);
+        OnmsIpInterface iface = null;
+        OnmsNode testNode = null;
+        Collection<OnmsNode> testNodes = m_nodeDao.findByLabel(TEST_NODE_LABEL);
+        if (testNodes == null || testNodes.size() < 1) {
+            NetworkBuilder builder = new NetworkBuilder();
+            builder.addNode(TEST_NODE_LABEL).setId(1).setSysObjectId(".1.3.6.1.4.1.1588.2.1.1.1");
 
-        DataSourceFactory.setInstance(m_db);
-        
-        MockEventIpcManager eventIpcManager = new MockEventIpcManager();
-        
-        EventIpcManagerFactory.setIpcManager(eventIpcManager);
-        
-        //RrdConfig.loadProperties(new ByteArrayInputStream(s_rrdConfig.getBytes()));
-        RrdTestUtils.initialize();
+            builder.addSnmpInterface(m_testHostName, 1).setIfName("lo0").setPhysAddr("00:11:22:33:44");
+            builder.addSnmpInterface(m_testHostName, 2).setIfName("gif0").setPhysAddr("00:11:22:33:45").setIfType(55);
+            builder.addSnmpInterface(m_testHostName, 3).setIfName("stf0").setPhysAddr("00:11:22:33:46").setIfType(57);
 
-        SnmpPeerFactory.setInstance(new SnmpPeerFactory(new StringReader(SNMP_CONFIG)));
-        
-        initializeDatabaseSchemaConfig("/org/opennms/netmgt/config/test-database-schema.xml");
-        
-        setTransMgr();
-        setFileAnticipator();
+            InterfaceBuilder ifBldr = builder.addInterface(m_testHostName).setIsSnmpPrimary("P");
+            ifBldr.addSnmpInterface(m_testHostName, 6).setIfName("fw0").setPhysAddr("44:33:22:11:00").setIfType(144).setCollectionEnabled(true);
+
+            testNode = builder.getCurrentNode();
+            assertNotNull(testNode);
+            m_nodeDao.save(testNode);
+            m_nodeDao.flush();
+        } else {
+            testNode = testNodes.iterator().next();
+        }
+
+        Set<OnmsIpInterface> ifaces = testNode.getIpInterfaces();
+        assertEquals(1, ifaces.size());
+        iface = ifaces.iterator().next();
+
+        SnmpPeerFactory.setInstance(new SnmpPeerFactory(new ByteArrayInputStream(
+                ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<snmp-config port=\"9161\" retry=\"1\" timeout=\"1000\" read-community=\"public\" version=\"v2c\">\n"
+                + "</snmp-config>").getBytes("UTF-8") )));
+
+        SnmpCollector collector = new SnmpCollector();
+        collector.initialize(null);
+
+        m_collectionSpecification = CollectorTestUtils.createCollectionSpec("SNMP", collector, "default");
+        m_collectionAgent = DefaultCollectionAgent.create(iface.getId(), m_ipInterfaceDao, m_transactionManager);
     }
 
