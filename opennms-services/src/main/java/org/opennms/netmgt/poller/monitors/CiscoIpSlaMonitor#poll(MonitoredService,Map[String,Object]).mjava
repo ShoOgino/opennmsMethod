@@ -1,0 +1,187 @@
+    /**
+     * <P>
+     * The poll() method is responsible for polling the specified address for
+     * SNMP service availability.
+     * </P>
+     * 
+     * @param parameters
+     *            The package parameters (timeout, retry, etc...) to be used
+     *            for this poll.
+     * @param iface
+     *            The network interface to test the service on.
+     * @return The availability of the interface and if a transition event
+     *         should be supressed.
+     * @exception RuntimeException
+     *                Thrown for any uncrecoverable errors.
+     */
+    public PollStatus poll(MonitoredService svc, Map<String,Object> parameters) {
+        NetworkInterface iface = svc.getNetInterface();
+
+        String returnValue = "SNMP request failed or Cisco IP SLA tag ";
+        boolean monitorThresh = false;
+        
+        PollStatus status = PollStatus.unavailable();
+        InetAddress ipaddr = (InetAddress) iface.getAddress();
+
+        // Retrieve this interface's SNMP peer object
+        //
+        SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(ipaddr);
+        if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
+        log().debug("poll: setting SNMP peer attribute for interface " + ipaddr.getHostAddress());
+
+        // Get configuration parameters for tag to monitor
+        String adminTag = ParameterMap.getKeyedString(parameters,"admin-tag", null);
+        if (adminTag == null) {
+            status = logDown(Level.ERROR, "No IP SLA admin-tag parameter defined! ");
+            return status;
+        }
+        
+        // If no ip sla tag found, tell which ip sla tag is configured
+        returnValue += adminTag + " not found";
+        
+        // Get configuration parameter to check if threshold should monitor
+        String ignoreThreshold = ParameterMap.getKeyedString(parameters,"ignore-thresh",null);
+        if (ignoreThreshold == null) {
+            status = logDown(Level.ERROR, "No ignoreThreshold parmater defined! ");
+            return status;
+        }
+
+        // Convert threshold parameter to boolean
+        if (ignoreThreshold.equals("false")) {
+            monitorThresh = true;
+        } 
+
+        // set timeout and retries on SNMP peer object
+        //
+        agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters,"timeout",agentConfig.getTimeout()));
+        agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters,"retry",ParameterMap.getKeyedInteger(parameters,"retries",agentConfig.getRetries())));
+        agentConfig.setPort(ParameterMap.getKeyedInteger(parameters,"port",agentConfig.getPort()));
+
+        // Establish SNMP session with interface
+        try {
+            if (log().isDebugEnabled()) {
+                log().debug("poll: SnmpAgentConfig address: " + agentConfig);
+            }
+
+            // Get all configured ip sla tags
+            Map<SnmpInstId, SnmpValue> tagResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_ADMIN_TAG_OID));
+            if (tagResults == null) {
+                status = logDown(Level.ERROR,"No admin tags received! ");
+                return status;
+            }
+            
+            // Iterate over the list of configured IP SLAs
+            for (SnmpInstId ipslaInstance : tagResults.keySet()) {
+                
+                // Check if a given IP-SLA with the specific "tag" exist
+                if (tagResults.get(ipslaInstance).toString().equals(adminTag)) {
+
+                    // Get all operation sense
+                    Map<SnmpInstId, SnmpValue> operSenseResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_LATEST_OPERSENSE_OID));
+                    if (operSenseResults == null) {
+                        status = logDown(Level.ERROR,"No latest oper sense received! ");
+                        return status;
+                    }
+            
+                    // Get all operation states
+                    Map<SnmpInstId, SnmpValue> operStateResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_OPER_STATE_OID));
+                    if (operStateResults == null) {
+                        status = logDown(Level.ERROR, "No oper state received! ");
+                        return status;
+                    }
+                    
+                    // Get all configured ip sla types
+                    Map<SnmpInstId, SnmpValue> adminTypeResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_ADMIN_TYPE_OID));
+                    if (adminTypeResults == null) {
+                        status = logDown(Level.ERROR, "No ip sla types received! ");
+                        return status;
+                    }
+                    
+                    // Get all configured ip sla latest RTT
+                    Map<SnmpInstId, SnmpValue> latestRttResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_LATEST_OID));
+                    if (latestRttResults == null) {
+                        status = logDown(Level.ERROR, "No ip sla latest RTT received! ");
+                        return status;
+                    }
+                    
+                    log().debug(
+                                "poll: " + "instance=" + ipslaInstance.toInt() 
+                                        + "admin tag=" + adminTag + " value="
+                                        + tagResults.get(ipslaInstance)
+                                        + " oper state="
+                                        + operStateResults.get(ipslaInstance)
+                                        + " ignoreThreshold=" + ignoreThreshold
+                                        + " latest RTT" + latestRttResults.get(ipslaInstance));
+                    
+                    // Build return value for service down
+                    returnValue = "Cisco IP SLA tag "
+                        + adminTag
+                        + " with oper state "
+                        + resolveOperSate(operStateResults.get(ipslaInstance).toInt())
+                        + " returned with oper sense "
+                        + resolveOperSense(operSenseResults.get(ipslaInstance).toInt())
+                        + ". Configured IP SLA type is " + resolveAdminType(adminTypeResults.get(ipslaInstance).toInt())
+                        + ". Latest RTT is " + latestRttResults.get(ipslaInstance);
+                    log().debug(returnValue);
+                    
+                    // Check if thresholding is relevant
+                    if (monitorThresh
+                            && (operSenseResults.get(ipslaInstance).toInt() == RTT_MON_OPER_SENSE.OVER_THRESHOLD.value())) {
+                        
+                        // Get all configured ip sla thresholds
+                        Map<SnmpInstId, SnmpValue> threshResults = SnmpUtils.getOidValues(agentConfig,"CiscoIpSlaMonitor",SnmpObjId.get(RTT_ADMIN_THRESH_OID));
+                        if (monitorThresh && threshResults == null) {
+                            status = logDown(Level.ERROR,"No ip sla thresholds received! ");
+                            return status;
+                        }
+
+                        // Threshold monitoring
+                        log().debug(
+                                    "IP SLA: " + tagResults.get(ipslaInstance)
+                                            + " threshold exceeded.");
+                        returnValue += ". Monitoring threshold is enabled. Threshold value is " 
+                            + threshResults.get(ipslaInstance);
+                        // Configured threshold is exceeded, service unavailable
+                        return PollStatus.unavailable(returnValue);
+                    } else {
+                        /*
+                         *  Threshold should be ignored, check if OK or
+                         *  OVER_THRESHOLD.
+                         *  Over threshold means also OK, no timeout or other 
+                         *  error occurred.
+                         */
+                        if (operSenseResults.get(ipslaInstance).toInt() == RTT_MON_OPER_SENSE.OK.value()
+                                || operSenseResults.get(ipslaInstance).toInt() == RTT_MON_OPER_SENSE.OVER_THRESHOLD.value()) {
+                            log().debug("Threshold is ignored rttMonLatestOperSense: " + operSenseResults.get(ipslaInstance).toInt());
+                            status = logUp(Level.INFO, Double.parseDouble(latestRttResults.get(ipslaInstance).toString()), returnValue);
+                            // No error or connection timeout, service available
+                            return status;
+                        }
+                    }
+                } // else no configured IP SLA tag exist
+            }
+
+            // Otherwise set service down
+            status = PollStatus.unavailable(returnValue);
+
+        } catch (NullPointerException e) {
+            status = logDown(Level.WARN,
+                             "Unexpected error during SNMP poll of interface "
+                                     + ipaddr.getHostAddress(), e);
+        } catch (NumberFormatException e) {
+            status = logDown(Level.WARN,
+                             "Number operator used on a non-number "
+                                     + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            status = logDown(Level.WARN, "Invalid Snmp Criteria: "
+                    + e.getMessage());
+        } catch (Throwable t) {
+            status = logDown(Level.WARN,
+                             "Unexpected exception during SNMP poll of interface "
+                                     + ipaddr.getHostAddress(), t);
+        }
+
+        // Otherwise, the service will be unavailable.
+        return status;
+    }
+

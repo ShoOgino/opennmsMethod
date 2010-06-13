@@ -1,32 +1,31 @@
-    public PollerConfiguration getPollerConfiguration(int locationMonitorId) {
+    @Transactional(readOnly=true)
+    public PollerConfiguration getPollerConfiguration(final int locationMonitorId) {
+        try {
+			final OnmsLocationMonitor mon = m_locMonDao.get(locationMonitorId);
+			if (mon == null) {
+			    // the monitor has been deleted we'll pick this in up on the next config check
+			    return new EmptyPollerConfiguration();
+			}
 
-        OnmsLocationMonitor mon = m_locMonDao.get(locationMonitorId);
-        if (mon == null) {
-            /* the monitor has been deleted we'll pick this in up on the next
-             * config check
-             */
-            return new EmptyPollerConfiguration();
-        }
+			final Package pkg = getPollingPackageForMonitor(mon);
+			final ServiceSelector selector = m_pollerConfig.getServiceSelectorForPackage(pkg);
+			final Collection<OnmsMonitoredService> services = m_monSvcDao.findMatchingServices(selector);
+			final List<PolledService> configs = new ArrayList<PolledService>(services.size());
 
-        Package pkg = getPollingPackageForMonitor(mon);
+			LogUtils.debugf(this, "found %d services", services.size());
 
-        ServiceSelector selector = m_pollerConfig.getServiceSelectorForPackage(pkg);
+			for (final OnmsMonitoredService monSvc : services) {
+			    final Service serviceConfig = m_pollerConfig.getServiceInPackage(monSvc.getServiceName(), pkg);
+			    final long interval = serviceConfig.getInterval();
+			    final Map<String, Object> parameters = getParameterMap(serviceConfig);
+			    configs.add(new PolledService(monSvc, parameters, new OnmsPollModel(interval)));
+			}
 
-        Collection<OnmsMonitoredService> services = m_monSvcDao.findMatchingServices(selector);
-        log().debug("found " + services.size() + " services");
-
-        List<PolledService> configs = new ArrayList<PolledService>(services.size());
-
-        for (OnmsMonitoredService monSvc : services) {
-            Service serviceConfig = m_pollerConfig.getServiceInPackage(monSvc.getServiceName(), pkg);
-            long interval = serviceConfig.getInterval();
-            Map<String, Object> parameters = getParameterMap(serviceConfig);
-            configs.add(new PolledService(monSvc, parameters, new OnmsPollModel(interval)));
-        }
-
-        PolledService[] polledSvcs = configs.toArray(new PolledService[configs.size()]);
-        return new SimplePollerConfiguration(getConfigurationTimestamp(), polledSvcs);
-
-
+			Collections.sort(configs);
+			return new SimplePollerConfiguration(getConfigurationTimestamp(), configs.toArray(new PolledService[configs.size()]));
+		} catch (final Exception e) {
+			LogUtils.warnf(this, e, "An error occurred retrieving the poller configuration for location monitor ID %d", locationMonitorId);
+			return new EmptyPollerConfiguration();
+		}
     }
 

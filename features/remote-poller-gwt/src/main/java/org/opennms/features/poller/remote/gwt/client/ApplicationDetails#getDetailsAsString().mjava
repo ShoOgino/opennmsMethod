@@ -1,5 +1,80 @@
     public String getDetailsAsString() {
-        // TODO Change this up for nice details to print out.
-        return toString();
+        // service id -> location id -> outages
+        final Map<Integer, Map<Integer, List<GWTServiceOutage>>> outages = getOutages();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div id=\"applicationDetails\">\n");
+        sb.append("<dl class=\"statusContents\">\n");
+
+        Set<GWTMonitoredService> services = new TreeSet<GWTMonitoredService>(new Comparator<GWTMonitoredService>() {
+            public int compare(final GWTMonitoredService a, final GWTMonitoredService b) {
+                if (a == null) {
+                    if (b == null) return 0;
+                    return 1;
+                }
+                if (b == null) return -1;
+                return new CompareToBuilder()
+                    .append(a.getServiceName(), b.getServiceName())
+                    .append(a.getId(), b.getId())
+                    .toComparison();
+            }
+        });
+        services.addAll(m_services.values());
+        for (final GWTMonitoredService service : services) {
+            final Integer serviceId = service.getId();
+            final double serviceAvailability = getAvailability(service);
+
+            String styleName = Status.UNKNOWN.getStyle();
+            List<GWTLocationMonitor> locationsNotReporting = new ArrayList<GWTLocationMonitor>();
+
+            if (serviceAvailability == 100.0) {
+                styleName = Status.UP.getStyle();
+                Map<Integer,List<GWTServiceOutage>> serviceOutages = outages.get(serviceId);
+                if (serviceOutages != null) {
+                    for (final Integer locationId : serviceOutages.keySet()) {
+                        final List<GWTServiceOutage> locationOutages = serviceOutages.get(locationId);
+                        if (locationOutages != null) {
+                            for (final GWTServiceOutage outage : locationOutages) {
+                                if (outage.getTo().equals(m_statusTo) || outage.getTo().after(m_statusTo)) {
+                                    locationsNotReporting.add(m_monitors.get(locationId));
+                                    styleName = Status.MARGINAL.getStyle();
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                List<Interval> serviceOutageIntervals = new ArrayList<Interval>(getServiceOutageIntervals(serviceId));
+                final int size = serviceOutageIntervals.size();
+                if (size > 0) {
+                    if (serviceOutageIntervals.get(size - 1).getEndMillis() == m_statusTo.getTime()) {
+                        styleName = Status.DOWN.getStyle();
+                    } else {
+                        styleName = Status.MARGINAL.getStyle();
+                    }
+                }
+                styleName = Status.DOWN.getStyle();
+            }
+
+            final List<GWTLocationMonitor> monitors = new ArrayList<GWTLocationMonitor>(m_monitors.values());
+            Collections.sort(monitors);
+
+            sb.append("<dt class=\"").append(styleName).append(" statusDt\">").append(getSummary(service)).append("</dt>\n");
+            sb.append("<dd class=\"").append(styleName).append(" statusDd\">");
+            sb.append("Availability: ").append(Double.valueOf(serviceAvailability).intValue()).append("%");
+            if (locationsNotReporting.size() > 0) {
+                final List<String> locationString = new ArrayList<String>();
+                for (final GWTLocationMonitor monitor : locationsNotReporting) {
+                    locationString.add(monitor.getName());
+                }
+                sb.append("<br>\n").append("Location");
+                if (locationsNotReporting.size() > 1) sb.append("s");
+                sb.append(" with outages: ").append(StringUtils.join(locationString));
+            }
+            sb.append("</dd>\n");
+        }
+        sb.append("</div>\n");
+        return sb.toString();
     }
 

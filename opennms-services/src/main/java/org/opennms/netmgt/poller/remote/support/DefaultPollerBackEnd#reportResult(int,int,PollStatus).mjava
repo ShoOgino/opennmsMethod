@@ -1,29 +1,48 @@
-    public void reportResult(int locationMonitorID, int serviceId, PollStatus pollResult) {
-        if (pollResult == null) {
-            throw new IllegalArgumentException("pollResult argument cannot be null");
+    public void reportResult(final int locationMonitorId, final int serviceId, final PollStatus pollResult) {
+        final OnmsLocationMonitor locationMonitor;
+        try {
+        	locationMonitor = m_locMonDao.get(locationMonitorId);
+        } catch (final Exception e) {
+            LogUtils.infof(this, e, "Unable to report result for location monitor ID %d: Location monitor does not exist.", locationMonitorId);
+            return;
         }
-
-        OnmsLocationMonitor locationMonitor = m_locMonDao.get(locationMonitorID);
         if (locationMonitor == null) {
-            log().info("reportResult was called for location monitor ID " + locationMonitorID + " which does not exist");
+            LogUtils.infof(this, "Unable to report result for location monitor ID %d: Location monitor does not exist.", locationMonitorId);
             return;
         }
 
-        OnmsMonitoredService monSvc = m_monSvcDao.get(serviceId);
+        final OnmsMonitoredService monSvc;
+        try {
+        	monSvc = m_monSvcDao.get(serviceId);
+        } catch (final Exception e) {
+        	LogUtils.warnf(this, e, "Unable to report result for location monitor ID %d, monitored service ID %d: Monitored service does not exist.", locationMonitorId, serviceId); 
+        	return;
+        }
         if (monSvc == null) {
-            log().info("reportResult was called for service " + serviceId + " which does not exist on location monitor ID " + locationMonitorID);
+        	LogUtils.warnf(this, "Unable to report result for location monitor ID %d, monitored service ID %d: Monitored service does not exist.", locationMonitorId, serviceId); 
             return;
         }
-
-        OnmsLocationSpecificStatus newStatus = new OnmsLocationSpecificStatus(locationMonitor, monSvc, pollResult);
-
-        if (newStatus.getPollResult().getResponseTime() != null) {
-            Package pkg = getPollingPackageForMonitor(locationMonitor);
-            m_pollerConfig.saveResponseTimeData(Integer.toString(locationMonitorID), monSvc, newStatus.getPollResult().getResponseTime(), pkg);
+        if (pollResult == null) {
+        	LogUtils.warnf(this, "Unable to report result for location monitor ID %d, monitored service ID %d: Poll result is null!", locationMonitorId, serviceId);
+        	return;
         }
 
-        OnmsLocationSpecificStatus currentStatus = m_locMonDao.getMostRecentStatusChange(locationMonitor, monSvc);
+        final OnmsLocationSpecificStatus newStatus = new OnmsLocationSpecificStatus(locationMonitor, monSvc, pollResult);
 
-        processStatusChange(currentStatus, newStatus);
+        try {
+			if (newStatus.getPollResult().getResponseTime() != null) {
+			    final Package pkg = getPollingPackageForMonitor(locationMonitor);
+			    m_pollerConfig.saveResponseTimeData(Integer.toString(locationMonitorId), monSvc, newStatus.getPollResult().getResponseTime(), pkg);
+			}
+		} catch (final Exception e) {
+			LogUtils.errorf(this, e, "Unable to save response time data for location monitor ID %d, monitored service ID %d.", locationMonitorId, serviceId);
+		}
+
+		try {
+	        final OnmsLocationSpecificStatus currentStatus = m_locMonDao.getMostRecentStatusChange(locationMonitor, monSvc);
+	        processStatusChange(currentStatus, newStatus);
+		} catch (final Exception e) {
+			LogUtils.errorf(this, e, "Unable to save result for location monitor ID %d, monitored service ID %d.", locationMonitorId, serviceId);
+		}
     }
 

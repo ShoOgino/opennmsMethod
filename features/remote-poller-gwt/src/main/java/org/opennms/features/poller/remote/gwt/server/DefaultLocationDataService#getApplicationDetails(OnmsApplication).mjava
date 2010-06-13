@@ -1,21 +1,27 @@
-	@Transactional
-	public ApplicationDetails getApplicationDetails(final OnmsApplication app) {
-		final ApplicationInfo applicationInfo = getApplicationInfo(app, false);
-		List<GWTLocationSpecificStatus> statuses = new ArrayList<GWTLocationSpecificStatus>();
+    @Transactional
+    public ApplicationDetails getApplicationDetails(final OnmsApplication app) {
+        waitForGeocoding("getApplicationDetails");
 
-		final Date to = new Date();
-		final Date from = new Date(to.getTime() - AVAILABILITY_MS);
-		for (OnmsMonitoredService service : m_monitoredServiceDao.findByApplication(app)) {
-			service.getStatus();
-		}
+        final ApplicationInfo applicationInfo = getApplicationInfo(app, false);
+        List<GWTLocationSpecificStatus> statuses = new ArrayList<GWTLocationSpecificStatus>();
+        
+        final Date to = new Date();
+        final Date from = new Date(to.getTime() - AVAILABILITY_MS);
+        
+        final Collection<OnmsMonitoredService> services = m_monitoredServiceDao.findByApplication(app);
+        final List <GWTLocationMonitor> monitors = new ArrayList<GWTLocationMonitor>();
+        
+        for (final OnmsLocationMonitor monitor : m_locationDao.findByApplication(app)) {
+            monitors.add(transformLocationMonitor(monitor));
+            for (final OnmsLocationSpecificStatus locationSpecificStatus : m_locationDao.getStatusChangesForLocationBetween(from, to, monitor.getDefinitionName())) {
+                if (services.contains(locationSpecificStatus.getMonitoredService())) {
+                    statuses.add(transformLocationSpecificStatus(locationSpecificStatus));
+                }
+            }
+        }
 
-		for (final OnmsLocationMonitor monitor : m_locationDao.findByApplication(app)) {
-			for (final OnmsLocationSpecificStatus locationSpecificStatus : m_locationDao.getStatusChangesForLocationBetween(from, to, monitor.getDefinitionName())) {
-				statuses.add(transformLocationSpecificStatus(locationSpecificStatus));
-			}
-		}
-
-		ApplicationDetails details = new ApplicationDetails(applicationInfo, from, to, statuses);
-		return details;
-	}
+        ApplicationDetails details = new ApplicationDetails(applicationInfo, from, to, monitors, statuses);
+        LogUtils.warnf(this, "getApplicationDetails(%s) returning %s", app.getName(), details);
+        return details;
+    }
 

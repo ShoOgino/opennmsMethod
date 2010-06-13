@@ -1,0 +1,56 @@
+        public void detectPhysicalInterfaces(final BatchTask currentPhase) {
+            if (isAborted()) { return; }
+            SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(getAgentAddress());
+            Assert.notNull(getAgentConfigFactory(), "agentConfigFactory was not injected");
+            
+            final PhysInterfaceTableTracker physIfTracker = new PhysInterfaceTableTracker() {
+                @Override
+                public void processPhysicalInterfaceRow(PhysicalInterfaceRow row) {
+                    System.out.println("Processing row for ifIndex "+row.getIfIndex());
+                    OnmsSnmpInterface snmpIface = row.createInterfaceFromRow();
+                    snmpIface.setLastCapsdPoll(getScanStamp());
+                    
+                    List<SnmpInterfacePolicy> policies = getProvisionService().getSnmpInterfacePoliciesForForeignSource(getForeignSource() == null ? "default" : getForeignSource());
+                    for(SnmpInterfacePolicy policy : policies) {
+                        if (snmpIface != null) {
+                            snmpIface = policy.apply(snmpIface);
+                        }
+                    }
+                    
+                    if (snmpIface != null) {
+                        final OnmsSnmpInterface snmpIfaceResult = snmpIface;
+        
+                        // add call to the snmp interface collection enable policies
+        
+                        Runnable r = new Runnable() {
+                            public void run() {
+                                getProvisionService().updateSnmpInterfaceAttributes(
+                                                                                 getNodeId(),
+                                                                                 snmpIfaceResult);
+                            }
+                        };
+                        currentPhase.add(r, "write");
+                    }
+                }
+            };
+            
+            SnmpWalker walker = SnmpUtils.createWalker(agentConfig, "ifTable/ifXTable", physIfTracker);
+            walker.start();
+            
+            try {
+                walker.waitFor();
+        
+                if (walker.timedOut()) {
+                    abort("Aborting node scan : Agent timedout while scanning the interfaces table");
+                }
+                else if (walker.failed()) {
+                    abort("Aborting node scan : Agent failed while scanning the interfaces table: " + walker.getErrorMessage());
+                }
+                else {
+                    debugf(this, "Finished phase %s", currentPhase);
+                }
+            } catch (InterruptedException e) {
+                abort("Aborting node scan : Scan thread interrupted while waiting for interfaces table");
+            }
+        }
+
