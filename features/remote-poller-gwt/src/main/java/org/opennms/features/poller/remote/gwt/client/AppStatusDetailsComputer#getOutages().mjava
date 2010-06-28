@@ -1,0 +1,69 @@
+    private Map<Integer, Map<Integer, List<GWTServiceOutage>>> getOutages() {
+        // service id -> location id -> outages
+        final Map<Integer, Map<Integer, List<GWTServiceOutage>>> outages = new HashMap<Integer, Map<Integer, List<GWTServiceOutage>>>();
+        if (m_statuses == null) {
+            return outages;
+        }
+        
+        for (final GWTLocationSpecificStatus status : m_statuses) {
+            final Integer serviceId = status.getMonitoredService().getId();
+            final Integer monitorId = status.getLocationMonitor().getId();
+            GWTServiceOutage lastOutage = null;
+            Map<Integer, List<GWTServiceOutage>> serviceOutages = outages.get(serviceId);
+            if (serviceOutages != null) {
+                List<GWTServiceOutage> monitorOutages = serviceOutages.get(monitorId);
+                if (monitorOutages != null && monitorOutages.size() > 0) {
+                    lastOutage = monitorOutages.get(monitorOutages.size() - 1);
+                }
+            }
+        
+            if (lastOutage != null && lastOutage.getTo() == null) {
+                // there's an existing outage, and it's unfinished
+        
+                if (!status.getPollResult().isDown()) {
+                    // it's back up
+                    lastOutage.setTo(status.getPollResult().getTimestamp());
+                    continue;
+                }
+                // otherwise, it's still down... leave the "to" incomplete
+        
+            } else {
+                // there's no existing outage
+        
+                if (status.getPollResult().isDown()) {
+                    // but the service is down on this monitor, start a new outage
+                    lastOutage = new GWTServiceOutage();
+                    lastOutage.setService(status.getMonitoredService());
+                    lastOutage.setMonitor(status.getLocationMonitor());
+                    lastOutage.setFrom(status.getPollResult().getTimestamp());
+        
+                    if (serviceOutages == null) {
+                        serviceOutages = new HashMap<Integer, List<GWTServiceOutage>>();
+                        outages.put(serviceId, serviceOutages);
+                    }
+                    List<GWTServiceOutage> monitorOutages = serviceOutages.get(monitorId);
+                    if (monitorOutages == null) {
+                        monitorOutages = new ArrayList<GWTServiceOutage>();
+                        serviceOutages.put(monitorId, monitorOutages);
+                    }
+                    serviceOutages.get(monitorId).add(lastOutage);
+                }
+            }
+        }
+        
+        for (final Integer serviceId : outages.keySet()) {
+            for (final Integer monitorId : outages.get(serviceId).keySet()) {
+                for (GWTServiceOutage outage : outages.get(serviceId).get(monitorId)) {
+                    if (outage.getFrom() == null) {
+                        outage.setFrom(getStartTime());
+                    }
+                    if (outage.getTo() == null) {
+                        outage.setTo(getEndTime());
+                    }
+                }
+            }
+        }
+        
+        return outages;
+    }
+
