@@ -1,15 +1,25 @@
         public void run() {
-            
-            if (isNodeReady(this)) {
-                m_operationQueue.dequeueOperationForNode(m_nodeId, this);
-                try {
-                    processPendingOperationForNode(this);
-                } catch (ProvisioningAdapterException pae) {
-                    //reschedule if the adapter throws a provisioning adapter exception
-                    schedule(getExecutorService(), true);
+            try {
+                if (isNodeReady(this)) {
+                    m_operationQueue.dequeueOperationForNode(m_nodeId, this);
+                    // Synchronize here so that we can signal any interested classes that this
+                    // operation is being executed
+                    synchronized(this) {
+                        try {
+                            processPendingOperationForNode(this);
+                        } catch (ProvisioningAdapterException e) {
+                            log().warn("Exception thrown during adapter queuing, rescheduling: " + e.getMessage(), e);
+                            //reschedule if the adapter throws a provisioning adapter exception
+                            schedule(getExecutorService(), true);
+                        } finally {
+                            this.notifyAll();
+                        }
+                    }
+                } else {
+                    schedule(getExecutorService(), false);
                 }
-            } else {
-                schedule(getExecutorService(), false);
+            } catch (Throwable e) {
+                log().error("Unexpected exception during node operation: " + e.getMessage(), e);
             }
         }
 
