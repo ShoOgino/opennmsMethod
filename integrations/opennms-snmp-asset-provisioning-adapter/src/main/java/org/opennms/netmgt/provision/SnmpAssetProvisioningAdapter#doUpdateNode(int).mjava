@@ -1,0 +1,44 @@
+	/**
+	 * <p>doUpdate</p>
+	 *
+	 * @param nodeId a int.
+	 * @param retry a boolean.
+	 * @throws org.opennms.netmgt.provision.ProvisioningAdapterException if any.
+	 */
+	@Override
+	public void doUpdateNode(int nodeId) throws ProvisioningAdapterException {
+		log().debug("doUpdate: updating nodeid: " + nodeId);
+
+		final OnmsNode node = m_nodeDao.get(nodeId);
+		Assert.notNull(node, "doUpdate: failed to return node for given nodeId:"+nodeId);
+
+		InetAddress ipaddress = m_template.execute(new TransactionCallback<InetAddress>() {
+			public InetAddress doInTransaction(TransactionStatus arg0) {
+				return getIpForNode(node);
+			}
+		});
+
+		m_onmsNodeIpMap.put(nodeId, ipaddress);
+
+		SnmpAgentConfig agentConfig = null;
+		agentConfig = m_snmpConfigDao.getAgentConfig(ipaddress);
+
+		OnmsAssetRecord asset = node.getAssetRecord();
+		AssetField[] fields = m_config.getAssetFieldsForAddress(ipaddress, node.getSysObjectId());
+		for (AssetField field : fields) {
+			String value = fetchSnmpAssetString(agentConfig, field.getMibObjs(), field.getFormatString());
+			if (log().isDebugEnabled()) {
+				log().debug("doUpdate: Setting asset field \"" + field.getName() + "\" to value: " + value);
+			}
+			// Use Spring bean-accessor classes to set the field value
+			BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(asset);
+			try {
+				wrapper.setPropertyValue(field.getName(), value);
+			} catch (BeansException e) {
+				log().warn("doUpdate: Could not set property \"" + field.getName() + "\" on asset object: " + e.getMessage(), e);
+			}
+		}
+		node.setAssetRecord(asset);
+		m_nodeDao.saveOrUpdate(node);
+	}
+
