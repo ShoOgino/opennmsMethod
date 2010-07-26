@@ -1,0 +1,37 @@
+    /**
+     * <p>getStatusDetailsForApplicationOld</p>
+     *
+     * @param app a {@link org.opennms.netmgt.model.OnmsApplication} object.
+     * @return a {@link org.opennms.features.poller.remote.gwt.client.StatusDetails} object.
+     */
+    @Transactional
+    public StatusDetails getStatusDetailsForApplicationOld(final OnmsApplication app) {
+        waitForGeocoding("getStatusDetailsForApplication");
+        
+        List<GWTLocationSpecificStatus> statuses = new ArrayList<GWTLocationSpecificStatus>();
+        
+        final Date to = new Date();
+        final Date from = new Date(to.getTime() - AVAILABILITY_MS);
+        
+        final Collection<OnmsMonitoredService> services = m_monitoredServiceDao.findByApplication(app);
+        final List <GWTLocationMonitor> monitors = new ArrayList<GWTLocationMonitor>();
+        final Set<GWTMonitoredService> gwtServices = new LinkedHashSet<GWTMonitoredService>(services.size());
+        
+        for (final OnmsMonitoredService service : services) {
+            gwtServices.add(transformMonitoredService(service));
+        }
+        
+        for (final OnmsLocationMonitor monitor : m_locationDao.findByApplication(app)) {
+            monitors.add(transformLocationMonitor(monitor));
+            for (final OnmsLocationSpecificStatus locationSpecificStatus : m_locationDao.getStatusChangesForLocationBetween(from, to, monitor.getDefinitionName())) {
+                if (services.contains(locationSpecificStatus.getMonitoredService())) {
+                    statuses.add(transformLocationSpecificStatus(locationSpecificStatus));
+                }
+            }
+        }
+        
+        StatusDetails statusDetails = new AppStatusDetailsComputer(from, to, monitors, gwtServices, statuses).compute();
+        LogUtils.warnf(this, "getStatusDetailsForApplication(%s) returning %s", app.getName(), statusDetails);
+        return statusDetails;
+    }
+
