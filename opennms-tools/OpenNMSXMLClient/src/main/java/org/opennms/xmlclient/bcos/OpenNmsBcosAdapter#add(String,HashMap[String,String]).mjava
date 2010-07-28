@@ -1,0 +1,78 @@
+	/**
+	 * This method implements the bcos nagios add method. It adds the nagios service to the
+	 * node identified in the hash map.
+
+	 * @param nagiosService the service provisioned on the node identified in the requisition
+	 * @param params Hash map containing additional information to identify the interface, node and service
+	 * @return true if provisioning succeeds false if fails
+	 * 
+	 * @see com.bt.bcos.adapter.AdapterIf#add(java.lang.String, java.util.HashMap)
+	 */
+	public boolean add(String nagiosService, HashMap<String, String> params) {
+		//makes call to local adapter for platform based on IP address
+
+		log.debug("Call made to OpenNMSAdapter to add a node and service to a requisition. nagiosService=" + nagiosService);
+		log.debug("params HashMap contents");
+		Iterator<String> iterator = params.keySet().iterator();
+		while(iterator.hasNext()) {
+			String key = iterator.next().toString();  
+			String val  = params.get(key);  
+			log.debug("   Key is: " + key + "\t\t  Value is : " + val);
+		}
+
+		String description = params.get("description");
+		String machine_ident = params.get("machine_ident");
+		String ip_address= params.get("ip_address");
+
+		try {
+
+			// if requisition does not exist, this will create one. It will not add a new
+			// requisition if it already exists
+			String requisitions = onmsXmlClient.list();
+			if (!requisitions.contains("foreign-source=\""+foreign_source+"\"")) {
+				log.debug("nodeAdd() foreign source: '"+foreign_source+"' does not exist. Adding new foreign source to OpenNMS");
+				if (onmsXmlClient.requisitionAdd(foreign_source)==false) {
+					log.debug("nodeAdd() failed to add foreign source: "+foreign_source);
+					return false;
+				}
+			} else log.debug("nodeAdd() foreign source: "+foreign_source+" already exists");
+
+			// the same node can be defined in a requisition several times. We want to only have one node definition for
+			// each node. This will prevent more than one node with the same name being defined
+			if (requisitions.contains("foreign-id=\""+machine_ident+"\"")) {
+				log.debug("nodeAdd() foreign-id: '"+machine_ident+"' already exists in requisition. Remove node before adding a new one");
+				return false;
+			}
+
+			// this will add a new node with the specified interface to the requisition
+			org.opennms.client.schema.Interface vInterface= new org.opennms.client.schema.Interface();
+			vInterface.setIpAddr(ip_address);
+
+			org.opennms.client.schema.Node vNode= new org.opennms.client.schema.Node();
+			vNode.setForeignId(machine_ident);
+			vNode.setNodeLabel(machine_ident);
+			vNode.addInterface(vInterface);
+
+			java.io.Writer marshalledStr = new java.io.StringWriter();
+			vNode.marshal( marshalledStr);
+			log.debug("nodeAdd() XML message sent: "+ marshalledStr.toString().replace("<", "\n<"));
+
+			java.io.Reader data = new java.io.StringReader(marshalledStr.toString());
+			java.io.Writer output= new java.io.StringWriter();
+			URL url = new URL(opennmsUrl+requisitionCmd+"/"+foreign_source+"/nodes");
+			
+			BasicHttpMethods basicHttpMethods= new BasicHttpMethods();
+			basicHttpMethods.setLog(log);
+			basicHttpMethods.postData(data, url, output, username, password);
+
+			log.debug("OpenNMSBcosAdapter add() Reply: "+ output.toString());
+
+		} catch (Exception e){
+			log.error("OpenNMSBcosAdapter add() command error: ",e);
+			return false;
+		}
+
+		return true;
+
+	}
+
