@@ -1,0 +1,120 @@
+    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, String> parameters) throws CollectionException {
+        JdbcAgentState agentState = null;
+        if(parameters == null) {
+            log().error("Null parameters is now allowed in JdbcCollector!!");
+        }
+        
+        Connection con = null;
+        ResultSet results = null;
+        Statement stmt = null;
+        
+        try {
+            String collectionName = parameters.get("collection");
+            if (collectionName == null) {
+                //Look for the old configuration style:
+                collectionName = parameters.get("jdbc-collection");
+            }
+        
+            JdbcDataCollection collection = m_jdbcCollectionDao.getDataCollectionByName(collectionName);
+        
+            agentState = m_scheduledNodes.get(agent.getNodeId());
+            agentState.setupDatabaseConnections(parameters);
+        
+            // Load the attribute group types.
+            loadAttributeGroupList(collection);
+
+            // Load the attribute types.
+            loadAttributeTypeList(collection);
+        
+            // Create a new collection set.
+            JdbcCollectionSet collectionSet = new JdbcCollectionSet(agent);
+        
+            // Cycle through all of the queries for this collection
+            for(JdbcQuery query : collection.getQueries()) {
+                // Verify if we should check for availability of a query.
+                if (agentState.shouldCheckAvailability(query.getQueryName(), query.getRecheckInterval())) {
+                    // Check to see if the query is available.
+                    if (!isGroupAvailable(agentState, query)) {
+                        log().warn("Group is not available.");
+                        continue;
+                    }
+                }
+                
+                try {
+                    // If the query is available, lets collect it.
+                    if (agentState.groupIsAvailable(query.getQueryName())) {
+                        if(agentState.getUseDataSourceName()) {
+                            initDatabaseConnectionFactory(agentState.getDataSourceName());
+                            con = DataSourceFactory.getInstance(agentState.getDataSourceName()).getConnection();
+                        } else {
+                            con = agentState.getJdbcConnection();
+                        }
+                        stmt = agentState.createStatement(con);
+                        results = agentState.executeJdbcQuery(stmt, query);
+                    
+                        // Determine if there were any results for this query to                    
+                        if (results.isBeforeFirst() && results.isAfterLast()) {
+                            log().warn("Query '"+ query.getQueryName() + "' returned no results.");
+                            // Close the statement, but retain the connection.
+                            agentState.closeResultSet(results);
+                            agentState.closeStmt(stmt);
+                            continue;
+                        }
+                        
+                        // Determine if there are results and how many.
+                        results.last();
+                        boolean singleInstance = (results.getRow()==1)?true:false;
+                        results.beforeFirst();
+                        
+                        
+                        // Iterate through each row.
+                        while(results.next() ) {
+                            JdbcCollectionResource resource = null;
+                            
+                            // Create the appropriate resource container.
+                            if(singleInstance) {
+                                resource = new JdbcSingleInstanceCollectionResource(agent);
+                            } else {
+                                // Retrieve the name of the column to use as the instance key for multi-row queries.
+                                String instance = results.getString(query.getInstanceColumn());
+                                resource = new JdbcMultiInstanceCollectionResource(agent,instance, query.getResourceType());
+                            }
+                            
+                            for(JdbcColumn curColumn : query.getJdbcColumns()) {
+                                String columnName = null;
+                                if(curColumn.getDataSourceName() != null && !curColumn.getDataSourceName().isEmpty()) {
+                                    columnName = curColumn.getDataSourceName();
+                                } else {
+                                    columnName = curColumn.getColumnName();
+                                }
+                                
+                                JdbcCollectionAttributeType attribType = m_attribTypeList.get(curColumn.getColumnName());
+                                resource.setAttributeValue(attribType, results.getString(curColumn.getColumnName()));
+                            }
+
+                            collectionSet.getCollectionResources().add(resource);
+                        }
+                    }
+                } catch(SQLException e) {
+                    // Close the statement but retain the connection, log the exception and continue to the next query.
+                    log().warn("There was a problem executing query '" + query.getQueryName() + "' Please review the query or configuration. Reason: " + e.getMessage());
+                    agentState.closeResultSet(results);
+                    agentState.closeStmt(stmt);
+                    agentState.closeConnection(con);
+                    continue;
+                }
+            }
+            collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+            return collectionSet;
+        } finally {
+            // Make sure that when we're done we close all results, statements and connections.
+            agentState.closeResultSet(results);
+            agentState.closeStmt(stmt);
+            agentState.closeConnection(con);
+            
+            if(agentState != null) {
+                //agentState.closeAgentConnection();
+            }
+        }
+    }
+
