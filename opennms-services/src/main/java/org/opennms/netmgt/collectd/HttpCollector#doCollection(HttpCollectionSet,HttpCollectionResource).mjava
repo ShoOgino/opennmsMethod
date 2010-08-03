@@ -12,27 +12,34 @@
      */
     private void doCollection(final HttpCollectionSet collectionSet, final HttpCollectionResource collectionResource) throws HttpCollectorException {
 
-        HttpClient client = null;
-        HttpMethod method = null;
-        
+        DefaultHttpClient client = null;
+        HttpUriRequest method = null;
+
         try {
-            client = new HttpClient(buildParams(collectionSet));
+            HttpParams params = buildParams(collectionSet);
+            client = new DefaultHttpClient(params);
+            String key = "retry";
+            if (collectionSet.getParameters().containsKey("retries")) {
+                key = "retries";
+            }
+            Integer retryCount = ParameterMap.getKeyedInteger(collectionSet.getParameters(), key, DEFAULT_RETRY_COUNT);
+            client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler(retryCount, false));
             method = buildHttpMethod(collectionSet);
-            
+            method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, determineUserAgent(collectionSet, params));
+
             buildCredentials(collectionSet, client, method);
-            
+
             log().info("doCollection: collecting for client: "+client+" using method: "+method);
-            client.executeMethod(method);
+            HttpResponse response = client.execute(method);
             //Not really a persist as such; it just stores data in collectionSet for later retrieval
-            persistResponse(collectionSet, collectionResource, client, method);
-        } catch (URIException e) {
-            throw new HttpCollectorException("Error building HttpClient URI", client);
-        } catch (HttpException e) {
-            throw new HttpCollectorException("Error building HttpMethod", client);
+            persistResponse(collectionSet, collectionResource, client, response);
+        } catch (URISyntaxException e) {
+            throw new HttpCollectorException("Error building HttpClient URI");
         } catch (IOException e) {
-            throw new HttpCollectorException("IO Error retrieving page", client);
+            throw new HttpCollectorException("IO Error retrieving page");
         } finally {
-            if (method != null) method.releaseConnection();
+            // Do we need to do any cleanup?
+            // if (method != null) method.releaseConnection();
         }
     }
 
