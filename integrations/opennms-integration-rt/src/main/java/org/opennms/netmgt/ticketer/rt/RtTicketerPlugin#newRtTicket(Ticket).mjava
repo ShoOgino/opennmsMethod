@@ -1,41 +1,45 @@
-	/**
-	* Convenience method for creating a new ticket in RT
-	* 
-	* @param   ticket      the ticket details
-	* @return  the RT ticket id for the new ticket
-	*/
-	
-	private String newRtTicket(Ticket newTicket) throws PluginException {
-		
-		String rtTicketNumber = null;
-		
-		// Remove any HTML tags in the ticket details.
-		
-		Pattern tagPattern = Pattern.compile(TAG_REGEX);
-		Matcher tagMatcher = tagPattern.matcher(newTicket.getDetails());
-		String rtTicketText = tagMatcher.replaceAll("");
-		
-		StringBuilder contentBuilder = new StringBuilder("id: ticket/new\n");
-		contentBuilder.append("Queue: " + m_configDao.getQueue() + "\n");
-		contentBuilder.append("Requestor: " + m_configDao.getRequestor() + "\n");
-		contentBuilder.append("Subject: " + newTicket.getSummary() + "\n");
-		contentBuilder.append("text: " + rtTicketText + "\n");
-		
-		PostMethod post = new PostMethod(m_configDao.getBaseURL() + "/REST/1.0/edit");
+    /**
+     * Convenience method for creating a new ticket in RT
+     * 
+     * @param   ticket      the ticket details
+     * @return  the RT ticket id for the new ticket
+     */
 
-		NameValuePair[] ticketCreateParams = {
-		          new NameValuePair("content", contentBuilder.toString()),
-		          new NameValuePair("user", m_user),
-		          new NameValuePair("pass", m_password)
-		        };
-		    
-	    post.setRequestBody(ticketCreateParams);
-	    
+    private String newRtTicket(Ticket newTicket) throws PluginException {
+
+        String rtTicketNumber = null;
+
+        // Remove any HTML tags in the ticket details.
+
+        Pattern tagPattern = Pattern.compile(TAG_REGEX);
+        Matcher tagMatcher = tagPattern.matcher(newTicket.getDetails());
+        String rtTicketText = tagMatcher.replaceAll("");
+
+        StringBuilder contentBuilder = new StringBuilder("id: ticket/new\n");
+        contentBuilder.append("Queue: " + m_configDao.getQueue() + "\n");
+        contentBuilder.append("Requestor: " + m_configDao.getRequestor() + "\n");
+        contentBuilder.append("Subject: " + newTicket.getSummary() + "\n");
+        contentBuilder.append("text: " + rtTicketText + "\n");
+
+        HttpPost post = new HttpPost(m_configDao.getBaseURL() + "/REST/1.0/edit");
+
+        List<NameValuePair> params = new ArrayList<NameValuePair>();
+        params.add(new BasicNameValuePair("content", contentBuilder.toString()));
+        params.add(new BasicNameValuePair("user", m_user));
+        params.add(new BasicNameValuePair("pass", m_password));
         try {
-            if(getClient().executeMethod(post) != HttpStatus.SC_OK) {
+            UrlEncodedFormEntity entity = new UrlEncodedFormEntity(params, "UTF-8");
+            post.setEntity(entity);
+        } catch (UnsupportedEncodingException e) {
+            // Should never happen
+        }
+
+        try {
+            HttpResponse response = getClient().execute(post);
+            if(response.getStatusLine().getStatusCode() != HttpStatus.SC_OK) {
                 throw new PluginException("Received a non 200 response code from the server");
             } else {
-                String in = post.getResponseBodyAsString();
+                String in = EntityUtils.toString(response.getEntity());
                 log().debug(in);
                 Pattern okPattern = Pattern.compile("(?s) Ticket (\\d+) created");
                 Matcher matcher = okPattern.matcher(in);
@@ -45,20 +49,18 @@
                     throw new PluginException("Did not receive confirmation that ticket was updated");
                 }
             } 
-        } catch (HttpException e) {
-            log().error("HTTP exception attempting to logon to RT: " + e.getMessage());
-            e.printStackTrace();
         } catch (IOException e) {
-            log().error("IO exception attempting to logon to RT: " + e.getMessage());
+            log().error("IO exception attempting to logon to RT: " + e.getMessage(), e);
         } finally {
-            post.releaseConnection();
+            // Do we need to do any cleanup?
+            // post.releaseConnection();
         }
-		
-		if (rtTicketNumber == null) {
-		    throw new PluginException("Received no ticket number from RT");
-		} 
-		
-		return rtTicketNumber;
-		
-	}
+
+        if (rtTicketNumber == null) {
+            throw new PluginException("Received no ticket number from RT");
+        } 
+
+        return rtTicketNumber;
+
+    }
 
