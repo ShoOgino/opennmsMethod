@@ -1,0 +1,147 @@
+    /**
+     * Private utility method used by the getMibObjectList() method. This method
+     * takes a group name and a list of MibObject objects as arguments and adds
+     * all of the MibObjects associated with the group to the object list. If
+     * the passed group consists of any additional sub-groups, then this method
+     * will be called recursively for each sub-group until the entire
+     * log.debug("processGroupName: adding MIB objects from group: " +
+     * groupName); group is processed.
+     * 
+     * @param cName
+     *            Collection name
+     * @param groupName
+     *            Name of the group to process
+     * @param ifType
+     *            Interface type
+     * @param mibObjectList
+     *            List of MibObject objects being built.
+     */
+    private void processGroupName(String cName, String groupName, int ifType, List<MibObject> mibObjectList) {
+        ThreadCategory log = log();
+
+        // Using the collector name retrieve the group map
+        Map<String, Group> groupMap = getCollectionGroupMap().get(cName);
+
+        // Next use the groupName to access the Group object
+        Group group = groupMap.get(groupName);
+
+        // Verify that we have a valid Group object...generate
+        // warning message if not...
+        if (group == null) {
+            log.warn("DataCollectionConfigFactory.processGroupName: unable to retrieve group information for group name '" + groupName + "': check DataCollection.xml file.");
+            return;
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("processGroupName:  processing group: " + groupName + " groupIfType: " + group.getIfType() + " ifType: " + ifType);
+        }
+
+        // Process any sub-groups contained within this group
+        List<String> groupNameList = group.getIncludeGroupCollection();
+        Iterator<String> i = groupNameList.iterator();
+        while (i.hasNext()) {
+            // Recursive call to process sub-groups
+            processGroupName(cName, i.next(), ifType, mibObjectList);
+        }
+
+        // Add this group's objects to the object list provided
+        // that the group's ifType string does not exclude the
+        // provided ifType parm.
+        //
+        // ifType parm of -1 indicates that only node-level
+        // objects are to be added
+        //
+        // Any other ifType parm value must be compared with
+        // the group's ifType value to verify that they match
+        // (if group's ifType is "all" then the objects will
+        // automatically be added.
+        String ifTypeStr = String.valueOf(ifType);
+        String groupIfType = group.getIfType();
+
+        boolean addGroupObjects = false;
+        if (ifType == NODE_ATTRIBUTES) {
+            if (groupIfType.equals("ignore")) {
+                addGroupObjects = true;
+            }
+        } else {
+            if (groupIfType.equals("all")) {
+                addGroupObjects = true;
+            } else if (groupIfType.equals("ignore")) {
+                // Do nothing
+            } else if (ifType == ALL_IF_ATTRIBUTES) {
+                addGroupObjects = true;
+            } else {
+                // First determine if the group's ifType value contains
+                // a single type value or a list of values. In the case
+                // of a list the ifType values will be delimited by commas.
+                boolean isList = false;
+                if (groupIfType.indexOf(',') != -1)
+                    isList = true;
+
+                // Next compare the provided ifType parameter with the
+                // group's ifType value to determine if the group's OIDs
+                // should be added to the MIB object list.
+                //
+                // If the group ifType value is a single value then only
+                // a simple comparison is needed to see if there is an
+                // exact match.
+                //
+                // In the case of the group ifType value being a list
+                // of ifType values it is more complicated...each comma
+                // delimited substring which starts with the provided
+                // ifType parm must be extracted and compared until an
+                // EXACT match is found..
+                if (!isList) {
+                    if (ifTypeStr.equals(groupIfType))
+                        addGroupObjects = true;
+                } else {
+                    int tmpIndex = groupIfType.indexOf(ifTypeStr);
+                    while (tmpIndex != -1) {
+                        groupIfType = groupIfType.substring(tmpIndex);
+
+                        // get substring starting at tmpIndex to
+                        // either the end of the groupIfType string
+                        // or to the first comma after tmpIndex
+                        int nextComma = groupIfType.indexOf(',');
+
+                        String parsedType = null;
+                        if (nextComma == -1) // No comma, this is last type
+                            // value
+                        {
+                            parsedType = groupIfType;
+                        } else // Found comma
+                        {
+                            parsedType = groupIfType.substring(0, nextComma);
+                        }
+                        if (ifTypeStr.equals(parsedType)) {
+                            addGroupObjects = true;
+                            break;
+                        }
+
+                        // No more commas indicates no more ifType values to
+                        // compare...we're done
+                        if (nextComma == -1)
+                            break;
+
+                        // Get next substring and reset tmpIndex to
+                        // once again point to the first occurrence of
+                        // the ifType string parm.
+                        groupIfType = groupIfType.substring(nextComma + 1);
+                        tmpIndex = groupIfType.indexOf(ifTypeStr);
+                    }
+                }
+            }
+        }
+
+        if (addGroupObjects) {
+            if (log.isDebugEnabled()) {
+                log.debug("processGroupName: OIDs from group '" + group.getName() + ":" + group.getIfType() + "' are included for ifType: " + ifType);
+            }
+            List<MibObj> objectList = group.getMibObjCollection();
+            processObjectList(groupName, groupIfType, objectList, mibObjectList);
+        } else {
+            if (log.isDebugEnabled())
+                log.debug("processGroupName: OIDs from group '" + group.getName() + ":" + group.getIfType() + "' are excluded for ifType: " + ifType);
+        }
+    }
+
