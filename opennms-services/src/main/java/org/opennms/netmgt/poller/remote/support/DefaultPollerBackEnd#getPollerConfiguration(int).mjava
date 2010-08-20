@@ -7,23 +7,17 @@
 			    // the monitor has been deleted we'll pick this in up on the next config check
 			    return new EmptyPollerConfiguration();
 			}
-
-			final Package pkg = getPollingPackageForMonitor(mon);
-			final ServiceSelector selector = m_pollerConfig.getServiceSelectorForPackage(pkg);
-			final Collection<OnmsMonitoredService> services = m_monSvcDao.findMatchingServices(selector);
-			final List<PolledService> configs = new ArrayList<PolledService>(services.size());
-
-			LogUtils.debugf(this, "found %d services", services.size());
-
-			for (final OnmsMonitoredService monSvc : services) {
-			    final Service serviceConfig = m_pollerConfig.getServiceInPackage(monSvc.getServiceName(), pkg);
-			    final long interval = serviceConfig.getInterval();
-			    final Map<String, Object> parameters = getParameterMap(serviceConfig);
-			    configs.add(new PolledService(monSvc, parameters, new OnmsPollModel(interval)));
-			}
-
-			Collections.sort(configs);
-			return new SimplePollerConfiguration(getConfigurationTimestamp(), configs.toArray(new PolledService[configs.size()]));
+			
+            String pollingPackageName = getPackageName(mon);
+            
+            ConcurrentHashMap<String, SimplePollerConfiguration> cache = m_configCache.get();
+            SimplePollerConfiguration pollerConfiguration = cache.get(pollingPackageName);
+            if (pollerConfiguration == null) {
+                pollerConfiguration = createPollerConfiguration(mon, pollingPackageName);
+                cache.putIfAbsent(pollingPackageName, pollerConfiguration);
+            }
+            
+            return pollerConfiguration;
 		} catch (final Exception e) {
 			LogUtils.warnf(this, e, "An error occurred retrieving the poller configuration for location monitor ID %d", locationMonitorId);
 			return new EmptyPollerConfiguration();
