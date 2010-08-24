@@ -1,4 +1,4 @@
-	private static String fetchSnmpAssetString(SnmpAgentConfig agentConfig, MibObjs mibObjs, String formatString) {
+	private static String fetchSnmpAssetString(SnmpAgentConfig agentConfig, MibObjs mibObjs, String formatString) throws MissingFormatArgumentException {
 
 		List<String> aliases = new ArrayList<String>();
 		List<SnmpObjId> objs = new ArrayList<SnmpObjId>();
@@ -10,26 +10,34 @@
 		SnmpValue[] values = SnmpUtils.get(agentConfig, objs.toArray(new SnmpObjId[0]));
 		if (values.length == aliases.size()) {
 			Properties substitutions = new Properties();
+			boolean foundAValue = false;
 			for (int i = 0; i < values.length; i++) {
+				if (SnmpValue.SNMP_NO_SUCH_OBJECT == values[i].getType()) {
+					// No value for this OID
+					continue;
+				}
+				foundAValue = true;
 				substitutions.setProperty(aliases.get(i), values[i].toString());
 			}
-			if (log().isDebugEnabled()) {
+
+			if (!foundAValue) {
+				if (log().isDebugEnabled()) {
+					log().debug("fetchSnmpAssetString: Failed to fetch any SNMP values for system " + agentConfig.toString());
+				}
+				throw new MissingFormatArgumentException("fetchSnmpAssetString: Failed to fetch any SNMP values for system " + agentConfig.toString());
+			} else {
 				log().debug("fetchSnmpAssetString: Fetched asset properties from SNMP agent:\n" + formatPropertiesAsString(substitutions));
 			}
+
 			if (objs.size() != substitutions.size()) {
 				String props = formatPropertiesAsString(substitutions);
 				log().warn("fetchSnmpAssetString: Unexpected number of properties returned from SNMP GET:\n" + props);
 			}
 
-			try {
-				return PropertiesUtils.substitute(formatString, substitutions);
-			} catch (MissingFormatArgumentException e) {
-				log().warn("fetchSnmpAssetString: Insufficient SNMP parameters returned to satisfy format string: " + formatString);
-				return formatString;
-			}
+			return PropertiesUtils.substitute(formatString, substitutions);
 		} else {
 			log().warn("fetchSnmpAssetString: Invalid number of SNMP parameters returned: " + values.length + " != " + aliases.size());
-			return formatString;
+			throw new MissingFormatArgumentException("fetchSnmpAssetString: Invalid number of SNMP parameters returned: " + values.length + " != " + aliases.size());
 		}
 	}
 
