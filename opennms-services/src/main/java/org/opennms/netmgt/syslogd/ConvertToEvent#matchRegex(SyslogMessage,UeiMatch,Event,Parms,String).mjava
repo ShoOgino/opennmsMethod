@@ -1,0 +1,57 @@
+    private static boolean matchRegex(final SyslogMessage message, final UeiMatch uei, final Event event, final Parms eventParms, final String discardUei) throws MessageDiscardedException {
+        boolean traceEnabled = LogUtils.isTraceEnabled(ConvertToEvent.class);
+        final String expression = uei.getMatch().getExpression();
+        final Pattern msgPat = getPattern(expression);
+        final Matcher msgMat;
+        if (msgPat == null) {
+            LogUtils.debugf(ConvertToEvent.class, "Unable to create pattern for expression '%s'", expression);
+            return false;
+        } else {
+            msgMat = msgPat.matcher(message.getFullText());
+        }
+        if ((msgMat != null) && (msgMat.find())) {
+            if (discardUei.equals(uei.getUei())) {
+                LogUtils.debugf(ConvertToEvent.class, "Specified UEI '%s' is same as discard-uei, discarding this message.", uei.getUei());
+                throw new MessageDiscardedException();
+            }
+
+            Parm eventParm = null;
+            Value parmValue = null;
+
+            // We matched a UEI
+            event.setUei(uei.getUei());
+            if (msgMat.groupCount() > 0 && uei.getMatch().isDefaultParameterMapping()) {
+                if (traceEnabled) LogUtils.tracef(ConvertToEvent.class, "Doing default parameter mappings for this regex match.");
+                for (int groupNum = 1; groupNum <= msgMat.groupCount(); groupNum++) {
+                    if (traceEnabled) LogUtils.tracef(ConvertToEvent.class, "Added parm 'group%d' with value '%s' to Syslogd event based on regex match group", groupNum, msgMat.group(groupNum));
+                    eventParm = new Parm();
+                    eventParm.setParmName("group"+groupNum);
+                    parmValue = new Value();
+                    parmValue.setContent(msgMat.group(groupNum));
+                    eventParm.setValue(parmValue);
+                    eventParms.addParm(eventParm);
+                }
+            }
+            if (msgMat.groupCount() > 0 && uei.getParameterAssignmentCount() > 0) {
+                if (traceEnabled) LogUtils.tracef(ConvertToEvent.class, "Doing user-specified parameter assignments for this regex match.");
+                for (ParameterAssignment assignment : uei.getParameterAssignmentCollection()) {
+                    eventParm = new Parm();
+                    eventParm.setParmName(assignment.getParameterName());
+                    parmValue = new Value();
+                    String vettedValue = msgMat.group(assignment.getMatchingGroup());
+                    if (vettedValue == null)
+                        vettedValue = "";
+                    parmValue.setContent(vettedValue);
+                    eventParm.setValue(parmValue);
+                    eventParms.addParm(eventParm);
+                    if (traceEnabled) LogUtils.tracef(ConvertToEvent.class, "Added parm '%s' with value '%s' to Syslogd event based on user-specified parameter assignment", eventParm.getParmName(), parmValue.getContent());
+                }
+            }
+            // I think we want to stop processing here so the first
+            // ueiMatch wins, right?
+            return true;
+        }
+        if (traceEnabled) LogUtils.tracef(ConvertToEvent.class, "Message '%s' did not regex-match pattern '%s'", message.getMessage(), expression);
+        return false;
+    }
+
