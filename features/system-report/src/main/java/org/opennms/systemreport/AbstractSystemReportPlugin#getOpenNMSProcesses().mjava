@@ -1,0 +1,116 @@
+    protected Set<Integer> getOpenNMSProcesses() {
+        LogUtils.debugf(this, "getOpenNMSProcesses()");
+        final Set<Integer> processes = new HashSet<Integer>();
+    
+        final String jps = findBinary("jps");
+        
+        LogUtils.debugf(this, "jps = %s", jps);
+    
+        DataInputStream input = null;
+        PsParser parser = null;
+        PipedInputStream pis = null;
+        PipedOutputStream output = new PipedOutputStream();
+        DefaultExecutor executor = new DefaultExecutor();
+        executor.setWatchdog(new ExecuteWatchdog(5000));
+    
+        if (jps != null) {
+            CommandLine command = CommandLine.parse(jps + " -v");
+            PumpStreamHandler streamHandler = new PumpStreamHandler(output, System.err);
+    
+            try {
+            LogUtils.tracef(this, "executing '%s'", command.toString());
+                pis = new PipedInputStream(output);
+                input = new DataInputStream(pis);
+                parser = new PsParser(input, "opennms_bootstrap.jar", "status", 0);
+                parser.start();
+                executor.setStreamHandler(streamHandler);
+                int exitValue = executor.execute(command);
+                IOUtils.closeQuietly(output);
+                parser.join();
+                processes.addAll(parser.getProcesses());
+                LogUtils.tracef(this, "finished '%s'", command.toString());
+                
+                if (exitValue != 0) {
+                    LogUtils.debugf(this, "error running '%s': exit value was %d", command.toString(), exitValue);
+                }
+            } catch (final Exception e) {
+                LogUtils.debugf(this, e, "Failed to run '%s'", command.toString());
+            } finally {
+                IOUtils.closeQuietly(input);
+                IOUtils.closeQuietly(pis);
+                IOUtils.closeQuietly(output);
+            }
+        }
+    
+        LogUtils.tracef(this, "looking for ps");
+        final String ps = findBinary("ps");
+        if (ps != null) {
+            
+            // try Linux/Mac style
+            CommandLine command = CommandLine.parse(ps + " aww -o pid -o args");
+            output = new PipedOutputStream();
+            PumpStreamHandler streamHandler = new PumpStreamHandler(output, System.err);
+    
+            try {
+                LogUtils.debugf(this, "executing '%s'", command.toString());
+                pis = new PipedInputStream(output);
+                input = new DataInputStream(pis);
+                parser = new PsParser(input, "opennms_bootstrap.jar", "status", 0);
+                parser.start();
+                executor.setStreamHandler(streamHandler);
+                int exitValue = executor.execute(command);
+                IOUtils.closeQuietly(output);
+                parser.join(MAX_PROCESS_WAIT);
+                processes.addAll(parser.getProcesses());
+                LogUtils.tracef(this, "finished '%s'", command.toString());
+                
+                if (exitValue != 0) {
+                    LogUtils.debugf(this, "error running '%s': exit value was %d", command.toString(), exitValue);
+                }
+            } catch (final Exception e) {
+                LogUtils.debugf(this, e, "error running '%s'", command.toString());
+            } finally {
+                IOUtils.closeQuietly(input);
+                IOUtils.closeQuietly(pis);
+                IOUtils.closeQuietly(output);
+            }
+    
+            if (processes.size() == 0) {
+                // try Solaris style
+                command = CommandLine.parse(ps + " -ea -o pid -o args");
+                output = new PipedOutputStream();
+                streamHandler = new PumpStreamHandler(output, System.err);
+    
+                try {
+                    LogUtils.debugf(this, "executing '%s'", command.toString());
+                    pis = new PipedInputStream(output);
+                    input = new DataInputStream(pis);
+                    parser = new PsParser(input, "opennms_bootstrap.jar", "status", 0);
+                    parser.start();
+                    executor.setStreamHandler(streamHandler);
+                    int exitValue = executor.execute(command);
+                    IOUtils.closeQuietly(output);
+                    parser.join(MAX_PROCESS_WAIT);
+                    processes.addAll(parser.getProcesses());
+                    LogUtils.tracef(this, "finished '%s'", command.toString());
+                    
+                    if (exitValue != 0) {
+                        LogUtils.debugf(this, "error running '%s': exit value was %d", command.toString(), exitValue);
+                    }
+                } catch (final Exception e) {
+                    LogUtils.debugf(this, e, "error running '%s'", command.toString());
+                } finally {
+                    IOUtils.closeQuietly(input);
+                    IOUtils.closeQuietly(pis);
+                    IOUtils.closeQuietly(output);
+                }
+            }
+        }
+    
+        if (processes.size() == 0) {
+            LogUtils.warnf(this, "Unable to find any OpenNMS processes.");
+        }
+    
+        return processes;
+    }
+
