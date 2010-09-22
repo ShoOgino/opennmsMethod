@@ -1,0 +1,60 @@
+	private void initializeVlanClassNames() throws IOException, MarshalException, ValidationException {
+		final Vlans vlans = m_config.getVlans();
+		if (vlans == null) {
+		    LogUtils.infof(this, "no vlans found in config");
+		}
+
+        final List<String> excludedOids = new ArrayList<String>();
+		for (final Vendor vendor : vlans.getVendorCollection()) {
+		    final SnmpObjectId curRootSysOid = new SnmpObjectId(vendor.getSysoidRootMask());
+		    final String curClassName = vendor.getClassName();
+
+			for (final String specific : vendor.getSpecific()) {
+			    final SnmpObjectId oidMask = new SnmpObjectId(specific);
+				oidMask.prepend(curRootSysOid);
+				m_oidMask2VlanclassName.put(oidMask.toString(), curClassName);
+				LogUtils.debugf(this, "getClassNames:  adding class %s for oid %s", curClassName, oidMask.toString());
+			}
+
+			for (final ExcludeRange excludeRange : vendor.getExcludeRangeCollection()) {
+			    final SnmpObjectId snmpBeginOid = new SnmpObjectId(excludeRange.getBegin());
+			    final SnmpObjectId snmpEndOid = new SnmpObjectId(excludeRange.getEnd());
+				final SnmpObjectId snmpRootOid = getRootOid(snmpBeginOid);
+				if (snmpBeginOid.getLength() == snmpEndOid.getLength() && snmpRootOid.isRootOf(snmpEndOid)) {
+				    final SnmpObjectId snmpCurOid = new SnmpObjectId(snmpBeginOid);
+					while (snmpCurOid.compare(snmpEndOid) <= 0) {
+						excludedOids.add(snmpCurOid.toString());
+						LogUtils.debugf(this, "getClassNames:  signing excluded class %s for oid %s", curClassName, curRootSysOid.toString().concat(snmpCurOid.toString()));
+						int lastCurCipher = snmpCurOid.getLastIdentifier();
+						lastCurCipher++;
+						int[] identifiers = snmpCurOid.getIdentifiers();
+						identifiers[identifiers.length - 1] = lastCurCipher;
+						snmpCurOid.setIdentifiers(identifiers);
+					}
+				}
+			}
+
+			for (final IncludeRange includeRange : vendor.getIncludeRangeCollection()) {
+			    final SnmpObjectId snmpBeginOid = new SnmpObjectId(includeRange.getBegin());
+				final SnmpObjectId snmpEndOid = new SnmpObjectId(includeRange.getEnd());
+				final SnmpObjectId rootOid = getRootOid(snmpBeginOid);
+				if (snmpBeginOid.getLength() == snmpEndOid.getLength() && rootOid.isRootOf(snmpEndOid)) {
+					final SnmpObjectId snmpCurOid = new SnmpObjectId(snmpBeginOid);
+					while (snmpCurOid.compare(snmpEndOid) <= 0) {
+						if (!excludedOids.contains(snmpBeginOid.toString())) {
+							final SnmpObjectId oidMask = new SnmpObjectId(snmpBeginOid);
+							oidMask.prepend(curRootSysOid);
+							m_oidMask2VlanclassName.put(oidMask.toString(), curClassName);
+							LogUtils.debugf(this, "getClassNames:  adding class %s for oid %s", curClassName, oidMask.toString());
+						}
+						int lastCipher = snmpBeginOid.getLastIdentifier();
+						lastCipher++;
+						int[] identifiers = snmpBeginOid.getIdentifiers();
+						identifiers[identifiers.length - 1] = lastCipher;
+						snmpCurOid.setIdentifiers(identifiers);
+					}
+				}
+			}
+		}
+	}
+

@@ -5,8 +5,9 @@
      * @param pkg a org$opennms$netmgt$config$linkd$Package object.
      * @return a boolean.
      */
-    public synchronized boolean interfaceInPackageRange(String iface, org.opennms.netmgt.config.linkd.Package pkg) {
-    
+    public synchronized boolean interfaceInPackageRange(final String iface, final org.opennms.netmgt.config.linkd.Package pkg) {
+        if (pkg == null) return false;
+
         //
         // Ensure that the interface is in the specific list or
         // that it is in the include range and is not excluded
@@ -15,51 +16,58 @@
         boolean has_range_include = false;
         boolean has_range_exclude = false;
  
+        long addr = IPSorter.convertToLong(iface);
+
         // if there are NO include ranges then treat act as if the user include
         // the range 0.0.0.0 - 255.255.255.255
         has_range_include = pkg.getIncludeRangeCount() == 0 && pkg.getSpecificCount() == 0;
-        
-        long addr = IPSorter.convertToLong(iface);
-        Enumeration<IncludeRange> eincs = pkg.enumerateIncludeRange();
-        while (!has_range_include && eincs.hasMoreElements()) {
-            IncludeRange rng = eincs.nextElement();
-            long start = IPSorter.convertToLong(rng.getBegin());
-            if (addr > start) {
-                long end = IPSorter.convertToLong(rng.getEnd());
-                if (addr <= end) {
-                    has_range_include = true;
-                }
-            } else if (addr == start) {
-                has_range_include = true;
+
+        // Specific wins; if we find one, return immediately.
+        for (final String spec : pkg.getSpecificCollection()) {
+            final long speca = IPSorter.convertToLong(spec);
+            if (speca == addr) {
+                has_specific = true;
+                break;
             }
         }
-    
-        Enumeration<String> espec = pkg.enumerateSpecific();
-        while (!has_specific && espec.hasMoreElements()) {
-            long speca = IPSorter.convertToLong(espec.nextElement());
-            if (speca == addr)
-                has_specific = true;
+        if (has_specific) return true;
+
+        for (final String url : pkg.getIncludeUrlCollection()) {
+            has_specific = interfaceInUrl(iface, url);
+            if (has_specific) break;
         }
-    
-        Enumeration<String> eurl = pkg.enumerateIncludeUrl();
-        while (!has_specific && eurl.hasMoreElements()) {
-            has_specific = interfaceInUrl(iface, eurl.nextElement());
+        if (has_specific) return true;
+
+        if (!has_range_include) {
+            for (final IncludeRange rng : pkg.getIncludeRangeCollection()) {
+                final long start = IPSorter.convertToLong(rng.getBegin());
+                if (addr > start) {
+                    final long end = IPSorter.convertToLong(rng.getEnd());
+                    if (addr <= end) {
+                        has_range_include = true;
+                        break;
+                    }
+                } else if (addr == start) {
+                    has_range_include = true;
+                    break;
+                }
+            }
         }
-    
-        Enumeration<ExcludeRange> eex = pkg.enumerateExcludeRange();
-        while (!has_range_exclude && !has_specific && eex.hasMoreElements()) {
-            ExcludeRange rng = eex.nextElement();
+
+        for (final ExcludeRange rng : pkg.getExcludeRangeCollection()) {
             long start = IPSorter.convertToLong(rng.getBegin());
             if (addr > start) {
                 long end = IPSorter.convertToLong(rng.getEnd());
                 if (addr <= end) {
                     has_range_exclude = true;
+                    break;
                 }
             } else if (addr == start) {
                 has_range_exclude = true;
+                break;
             }
         }
-    
-        return has_specific || (has_range_include && !has_range_exclude);
+
+        return has_range_include && !has_range_exclude;
     }
 
