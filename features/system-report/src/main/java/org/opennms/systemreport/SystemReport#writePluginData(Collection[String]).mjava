@@ -1,0 +1,73 @@
+    private void writePluginData(final Collection<String> plugins) {
+        initializeSpring();
+
+        SystemReportFormatter formatter = null;
+        for (final SystemReportFormatter f : getFormatters()) {
+            if (m_format.equals(f.getName())) {
+                formatter = f;
+                break;
+            }
+        }
+        if (formatter == null) {
+            LogUtils.errorf(this, "Unknown format '%s'!", m_format);
+            System.exit(1);
+        }
+
+        formatter.setOutput(m_output);
+
+        OutputStream stream = null;
+        if (formatter.needsOutputStream()) {
+            if (m_output.equals("-")) {
+                stream = System.out;
+            } else {
+                try {
+                    final File f = new File(m_output);
+                    f.delete();
+                    stream = new FileOutputStream(f, false);
+                } catch (final FileNotFoundException e) {
+                    LogUtils.errorf(SystemReport.class, e, "Unable to write to '%s'", m_output);
+                    System.exit(1);
+                }
+            }
+
+            if (m_output.equals("-") && !formatter.canStdout()) {
+                LogUtils.errorf(this, "%s formatter does not support writing to STDOUT!", formatter.getName());
+                System.exit(1);
+            }
+
+            formatter.setOutputStream(stream);
+        }
+
+        final int pluginSize = plugins.size();
+        final Map<String,SystemReportPlugin> pluginMap = new HashMap<String,SystemReportPlugin>();
+        for (final SystemReportPlugin plugin : getPlugins()) {
+            final String name = plugin.getName();
+            if (pluginSize == 0) plugins.add(name);
+            pluginMap.put(name, plugin);
+        }
+
+        try {
+            formatter.begin();
+            if (stream != null) stream.flush();
+            for (final String pluginName : plugins) {
+                if (!pluginMap.containsKey(pluginName)) {
+                    LogUtils.warnf(this, "No plugin named '%s' found, skipping.", pluginName);
+                } else {
+                    try {
+                        formatter.write(pluginMap.get(pluginName));
+                    } catch (final Exception e) {
+                        LogUtils.errorf(this, e, "An error occurred calling plugin '%s'", pluginName);
+                    }
+                    if (stream != null) stream.flush();
+                }
+            }
+            formatter.end();
+            if (stream != null) stream.flush();
+        } catch (final Exception e) {
+            LogUtils.errorf(this, e, "An error occurred writing plugin data to output.");
+            System.exit(1);
+        }
+
+        IOUtils.closeQuietly(stream);
+    }
+

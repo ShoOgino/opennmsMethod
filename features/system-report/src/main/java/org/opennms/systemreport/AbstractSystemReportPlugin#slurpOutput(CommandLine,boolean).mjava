@@ -1,0 +1,42 @@
+    protected String slurpOutput(CommandLine command, boolean ignoreExitCode) {
+        LogUtils.debugf(this, "running: %s", command.toString());
+    
+        final Map<String,String> environment = new HashMap<String,String>(System.getenv());
+        environment.put("COLUMNS", "2000");
+        DataInputStream input = null;
+        PipedInputStream pis = null;
+        OutputSuckingParser parser = null;
+        String topOutput = null;
+        final DefaultExecutor executor = new DefaultExecutor();
+    
+        final PipedOutputStream output = new PipedOutputStream();
+        PumpStreamHandler streamHandler = new PumpStreamHandler(output, output);
+        executor.setWatchdog(new ExecuteWatchdog(MAX_PROCESS_WAIT));
+        executor.setStreamHandler(streamHandler);
+    
+        try {
+            LogUtils.tracef(this, "executing '%s'", command.toString());
+            pis = new PipedInputStream(output);
+            input = new DataInputStream(pis);
+            parser = new OutputSuckingParser(input);
+            parser.start();
+            int exitValue = executor.execute(command, environment);
+            IOUtils.closeQuietly(output);
+            parser.join(MAX_PROCESS_WAIT);
+            if (!ignoreExitCode && exitValue != 0) {
+                LogUtils.debugf(this, "error running '%s': exit value was %d", command.toString(), exitValue);
+            } else {
+                topOutput = parser.getOutput();
+            }
+            LogUtils.tracef(this, "finished '%s'", command.toString());
+        } catch (final Exception e) {
+            LogUtils.debugf(this, e, "Failed to run '%s'", command.toString());
+        } finally {
+            IOUtils.closeQuietly(output);
+            IOUtils.closeQuietly(input);
+            IOUtils.closeQuietly(pis);
+        }
+        
+        return topOutput;
+    }
+
