@@ -1,9 +1,42 @@
-    /** {@inheritDoc} */
-    public OnmsResource getResourceById(String id) {
-        try {
-            return loadResourceById(id);
-        } catch (ObjectRetrievalFailureException e) {
-            return null;
+    /**
+     * Fetch a specific resource by string ID.
+     * @return Resource or null if resource cannot be found.
+     * @throws IllegalArgumentException When the resource ID string does not match the expected regex pattern
+     * @throws ObjectRetrievalFailureException If any exceptions are thrown while searching for the resource
+     */
+    public OnmsResource getResourceById(String id) throws IllegalArgumentException, ObjectRetrievalFailureException {
+        OnmsResource resource = null;
+
+        Pattern p = Pattern.compile("([^\\[]+)\\[([^\\]]*)\\](?:\\.|$)");
+        Matcher m = p.matcher(id);
+        StringBuffer sb = new StringBuffer();
+        
+        while (m.find()) {
+            String resourceTypeName = DefaultResourceDao.decode(m.group(1));
+            String resourceName = DefaultResourceDao.decode(m.group(2));
+
+            try {
+                if (resource == null) {
+                    resource = getTopLevelResource(resourceTypeName, resourceName);
+                } else {
+                    resource = getChildResource(resource, resourceTypeName, resourceName);
+                }
+            } catch (Throwable e) {
+                throw new ObjectRetrievalFailureException(OnmsResource.class, id, "Could not get resource for resource ID '" + id + "'", e);
+            }
+            
+            m.appendReplacement(sb, "");
         }
+        
+        m.appendTail(sb);
+        
+        if (sb.length() > 0) {
+            throw new IllegalArgumentException("resource ID '" + id
+                                               + "' does not match pattern '"
+                                               + p.toString() + "' at '"
+                                               + sb + "'");
+        }
+        
+        return resource;
     }
 
