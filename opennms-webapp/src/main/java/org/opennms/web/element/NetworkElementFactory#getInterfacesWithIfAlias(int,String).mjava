@@ -1,53 +1,13 @@
-    /**
-     * Returns all non-deleted Interfaces on the specified node that
-     * contain the given string in an ifAlias
-     *
-     * @Param nodeId
-     *               The nodeId of the node we are looking at
-     * @Param ifAlias
-     *               the ifAlias string we are looking for
-     * @return intfs
-     *               the Interfaces with a matching ifAlias
-     * @param nodeId a int.
-     * @param ifAlias a {@link java.lang.String} object.
-     * @throws java.sql.SQLException if any.
-     */
-    public static Interface[] getInterfacesWithIfAlias(int nodeId, String ifAlias) throws SQLException {
-        if (ifAlias == null) {
-            throw new IllegalArgumentException("Cannot take null parameter ifAlias");
-        }
-
-        Interface[] intfs = null;
-        final DBUtils d = new DBUtils(NetworkElementFactory.class);
-        try {
-            Connection conn = Vault.getDbConnection();
-            d.watch(conn);
-            StringBuffer buffer = new StringBuffer("%");
-            buffer.append(ifAlias);
-            buffer.append("%");
-
-            PreparedStatement stmt = null;
-            if(nodeId > 0) {
-                stmt = conn.prepareStatement("SELECT * FROM IPINTERFACE WHERE NODEID = ? AND IFINDEX IN (SELECT SNMPIFINDEX FROM SNMPINTERFACE WHERE SNMPIFALIAS ILIKE ? AND IPINTERFACE.NODEID=SNMPINTERFACE.NODEID) AND ISMANAGED != 'D'");
-                d.watch(stmt);
-                stmt.setInt(1, nodeId);
-                stmt.setString(2, buffer.toString());
-            } else {
-                stmt = conn.prepareStatement("SELECT * FROM IPINTERFACE WHERE IPINTERFACE.IFINDEX IN (SELECT SNMPIFINDEX FROM SNMPINTERFACE WHERE SNMPIFALIAS ILIKE ? AND IPINTERFACE.NODEID=SNMPINTERFACE.NODEID) AND IPINTERFACE.ISMANAGED != 'D' ORDER BY IPINTERFACE.NODEID");
-                d.watch(stmt);
-                stmt.setString(1, buffer.toString());
-            }
-            ResultSet rs = stmt.executeQuery();
-            d.watch(rs);
-            
-            intfs = rs2Interfaces(rs);
-
-            augmentInterfacesWithSnmpData(intfs, conn);
-
-        } finally {
-            d.cleanUp();
-        }
-
-        return intfs;
+    public Interface[] getInterfacesWithIfAlias(int nodeId, String ifAlias) {
+        
+        OnmsCriteria criteria = new OnmsCriteria(OnmsIpInterface.class);
+        criteria.createAlias("node", "node");
+        criteria.createAlias("snmpInterface", "snmpIface");
+        criteria.createAlias("node.assetRecord", "assetRecord");
+        criteria.add(Restrictions.eq("node.id", nodeId));
+        criteria.add(Restrictions.ilike("snmpIface.ifAlias", ifAlias, MatchMode.ANYWHERE));
+        criteria.add(Restrictions.ne("isManaged", "D"));
+        
+        return onmsIpInterfaces2InterfaceArray(m_ipInterfaceDao.findMatching(criteria));
     }
 

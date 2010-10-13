@@ -11,39 +11,23 @@
      *
      * @param ifServiceId a int.
      * @return a {@link org.opennms.web.element.Service} object.
-     * @throws java.sql.SQLException if any.
      */
-    public static Service getService(int ifServiceId) throws SQLException {
-        Service service = null;
-        final DBUtils d = new DBUtils(NetworkElementFactory.class);
-        try {
-            Connection conn = Vault.getDbConnection();
-            d.watch(conn);
-            // big hack here, I'm relying on the fact that the ifservices.status
-            // field uses 'A' as active, and thus should always turn up before
-            // any
-            // historically deleted services
-            PreparedStatement stmt = conn.prepareStatement("SELECT IFSERVICES.*, SERVICE.SERVICENAME FROM IFSERVICES, SERVICE WHERE IFSERVICES.SERVICEID=SERVICE.SERVICEID AND IFSERVICES.ID=? ORDER BY IFSERVICES.STATUS");
-            d.watch(stmt);
-            stmt.setInt(1, ifServiceId);
-            ResultSet rs = stmt.executeQuery();
-            d.watch(rs);
-
-            Service[] services = rs2Services(rs);
-
-            // only take the first service, which should be the active service,
-            // cause we're sorting by status in the SQL statement above; if
-            // there
-            // are no active services, then the first deleted service will be
-            // returned,
-            // which is what we want
-            if (services.length > 0) {
-                service = services[0];
-            }
-        } finally {
-            d.cleanUp();
+    public Service getService(int ifServiceId) {
+        OnmsCriteria criteria = new OnmsCriteria(OnmsMonitoredService.class);
+        criteria.createAlias("ipInterface", "ipIface", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("ipIface.node", "node", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("ipIface.snmpInterface", "snmpIface",  OnmsCriteria.LEFT_JOIN);
+        criteria.add(Restrictions.eq("id", ifServiceId));
+        criteria.addOrder(Order.asc("status"));
+        
+        List<OnmsMonitoredService> monSvcs = m_monSvcDao.findMatching(criteria);
+        
+        if(monSvcs.size() > 0) {
+            return onmsMonitoredService2Service(monSvcs.get(0));
+        }else {
+            return null;
         }
-
-        return service;
+        
+        
     }
 

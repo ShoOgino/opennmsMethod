@@ -13,45 +13,26 @@
      * @param ipAddress a {@link java.lang.String} object.
      * @param serviceId a int.
      * @return a {@link org.opennms.web.element.Service} object.
-     * @throws java.sql.SQLException if any.
      */
-    public static Service getService(int nodeId, String ipAddress, int serviceId) throws SQLException {
+    public Service getService(int nodeId, String ipAddress, int serviceId) {
         if (ipAddress == null) {
             throw new IllegalArgumentException("Cannot take null parameters.");
         }
-
-        Service service = null;
-        final DBUtils d = new DBUtils(NetworkElementFactory.class);
-        try {
-            Connection conn = Vault.getDbConnection();
-            d.watch(conn);
-            // big hack here, I'm relying on the fact that the ifservices.status
-            // field uses 'A' as active, and thus should always turn up before
-            // any
-            // historically deleted services
-            PreparedStatement stmt = conn.prepareStatement("SELECT IFSERVICES.*, SERVICE.SERVICENAME FROM IFSERVICES, SERVICE WHERE IFSERVICES.SERVICEID=SERVICE.SERVICEID AND IFSERVICES.NODEID=? AND IFSERVICES.IPADDR=? AND IFSERVICES.SERVICEID=? ORDER BY IFSERVICES.STATUS");
-            d.watch(stmt);
-            stmt.setInt(1, nodeId);
-            stmt.setString(2, ipAddress);
-            stmt.setInt(3, serviceId);
-            ResultSet rs = stmt.executeQuery();
-            d.watch(rs);
-            
-            Service[] services = rs2Services(rs);
-
-            // only take the first service, which should be the active service,
-            // cause we're sorting by status in the SQL statement above; if
-            // there
-            // are no active services, then the first deleted service will be
-            // returned,
-            // which is what we want
-            if (services.length > 0) {
-                service = services[0];
-            }
-        } finally {
-            d.cleanUp();
+        OnmsCriteria criteria = new OnmsCriteria(OnmsMonitoredService.class);
+        criteria.createAlias("ipInterface", "ipIface", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("ipIface.node", "node", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("serviceType", "serviceType", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("ipIface.snmpInterface", "snmpIface", OnmsCriteria.LEFT_JOIN);
+        criteria.add(Restrictions.eq("node.id", nodeId));
+        criteria.add(Restrictions.eq("ipIface.ipAddress", ipAddress));
+        criteria.add(Restrictions.eq("serviceType.id", serviceId));
+        
+        List<OnmsMonitoredService> monSvcs = m_monSvcDao.findMatching(criteria);
+        if(monSvcs.size() > 0) {
+            return onmsMonitoredService2Service(monSvcs.get(0));
+        }else {
+            return null;
         }
-
-        return service;
+        
     }
 

@@ -3,28 +3,22 @@
      *
      * @param includeSNMP a boolean.
      * @return an array of {@link org.opennms.web.element.Interface} objects.
-     * @throws java.sql.SQLException if any.
      */
-    public static Interface[] getAllManagedIpInterfaces(boolean includeSNMP) throws SQLException {
-        Interface[] intfs = null;
-        final DBUtils d = new DBUtils(NetworkElementFactory.class);
-        try {
-            Connection conn = Vault.getDbConnection();
-            d.watch(conn);
-            Statement stmt = conn.createStatement();
-            d.watch(stmt);
-            ResultSet rs = stmt.executeQuery("SELECT * FROM IPINTERFACE WHERE IPINTERFACE.ISMANAGED != 'D' AND IPINTERFACE.IPADDR != '0.0.0.0' AND IPINTERFACE.IPADDR IS NOT NULL ORDER BY IPHOSTNAME, NODEID, IPADDR");
-            d.watch(rs);
-            
-            intfs = rs2Interfaces(rs);
-
-            if(includeSNMP) {
-                augmentInterfacesWithSnmpData(intfs, conn);
-            }            
-        } finally {
-            d.cleanUp();
+    public Interface[] getAllManagedIpInterfaces(boolean includeSNMP) {
+        OnmsCriteria criteria = new OnmsCriteria(OnmsIpInterface.class);
+        criteria.createAlias("snmpInterface", "snmpInterface", OnmsCriteria.LEFT_JOIN);
+        criteria.createAlias("node", "node");
+        criteria.add(Restrictions.ne("isManaged", "D"));
+        criteria.add(Restrictions.ne("ipAddress", "0.0.0.0"));
+        criteria.add(Restrictions.isNotNull("ipAddress"));
+        criteria.addOrder(Order.asc("ipHostName"));
+        criteria.addOrder(Order.asc("node.id"));
+        criteria.addOrder(Order.asc("ipAddress"));
+        
+        if(!includeSNMP) {
+            return onmsIpInterfaces2InterfaceArray(m_ipInterfaceDao.findMatching(criteria));
+        }else {
+            return onmsIpInterfaces2InterfaceArrayWithSnmpData(m_ipInterfaceDao.findMatching(criteria));
         }
-
-        return intfs;
     }
 
