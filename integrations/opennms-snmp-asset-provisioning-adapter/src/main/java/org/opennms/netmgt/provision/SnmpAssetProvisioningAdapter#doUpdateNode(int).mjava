@@ -6,40 +6,44 @@
 	 * @throws org.opennms.netmgt.provision.ProvisioningAdapterException if any.
 	 */
 	@Override
-	public void doUpdateNode(int nodeId) throws ProvisioningAdapterException {
-		log().debug("doUpdate: updating nodeid: " + nodeId);
+	public void doUpdateNode(final int nodeId) throws ProvisioningAdapterException {
+	    log().debug("doUpdate: updating nodeid: " + nodeId);
 
 		final OnmsNode node = m_nodeDao.get(nodeId);
 		Assert.notNull(node, "doUpdate: failed to return node for given nodeId:"+nodeId);
 
-		InetAddress ipaddress = m_template.execute(new TransactionCallback<InetAddress>() {
-			public InetAddress doInTransaction(TransactionStatus arg0) {
+		final InetAddress ipaddress = m_template.execute(new TransactionCallback<InetAddress>() {
+			public InetAddress doInTransaction(final TransactionStatus arg0) {
 				return getIpForNode(node);
 			}
 		});
 
-		SnmpAgentConfig agentConfig = m_snmpConfigDao.getAgentConfig(ipaddress);
+		final SnmpAgentConfig agentConfig = m_snmpConfigDao.getAgentConfig(ipaddress);
 
-		OnmsAssetRecord asset = node.getAssetRecord();
-		AssetField[] fields = m_config.getAssetFieldsForAddress(ipaddress, node.getSysObjectId());
-		for (AssetField field : fields) {
-			try {
-				String value = fetchSnmpAssetString(agentConfig, field.getMibObjs(), field.getFormatString());
-				if (log().isDebugEnabled()) {
-					log().debug("doUpdate: Setting asset field \"" + field.getName() + "\" to value: " + value);
-				}
-				// Use Spring bean-accessor classes to set the field value
-				BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(asset);
-				try {
-					wrapper.setPropertyValue(field.getName(), value);
-				} catch (BeansException e) {
-					log().warn("doUpdate: Could not set property \"" + field.getName() + "\" on asset object: " + e.getMessage(), e);
-				}
-			} catch (MissingFormatArgumentException e) {
-				// This exception is thrown if the SNMP operation fails or an incorrect number of
-				// parameters is returned by the agent or because of a misconfiguration.
-				log().warn("doUpdate: Could not set value for asset field \"" + field.getName() + "\": " + e.getMessage(), e);
-			}
+		final OnmsAssetRecord asset = node.getAssetRecord();
+		m_config.getReadLock().lock();
+		try {
+    		for (AssetField field : m_config.getAssetFieldsForAddress(ipaddress, node.getSysObjectId())) {
+    			try {
+    				String value = fetchSnmpAssetString(agentConfig, field.getMibObjs(), field.getFormatString());
+    				if (log().isDebugEnabled()) {
+    					log().debug("doUpdate: Setting asset field \"" + field.getName() + "\" to value: " + value);
+    				}
+    				// Use Spring bean-accessor classes to set the field value
+    				BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(asset);
+    				try {
+    					wrapper.setPropertyValue(field.getName(), value);
+    				} catch (BeansException e) {
+    					log().warn("doUpdate: Could not set property \"" + field.getName() + "\" on asset object: " + e.getMessage(), e);
+    				}
+    			} catch (MissingFormatArgumentException e) {
+    				// This exception is thrown if the SNMP operation fails or an incorrect number of
+    				// parameters is returned by the agent or because of a misconfiguration.
+    				log().warn("doUpdate: Could not set value for asset field \"" + field.getName() + "\": " + e.getMessage(), e);
+    			}
+    		}
+		} finally {
+		    m_config.getReadLock().unlock();
 		}
 		node.setAssetRecord(asset);
 		m_nodeDao.saveOrUpdate(node);

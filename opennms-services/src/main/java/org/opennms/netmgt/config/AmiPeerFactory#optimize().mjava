@@ -6,144 +6,145 @@
      *
      * @throws UnknownHostException
      */
-    private static void optimize() throws UnknownHostException {
-        ThreadCategory log = log();
-
-        // First pass: Remove empty definition elements
-        for (Iterator<Definition> definitionsIterator = m_config.getDefinitionCollection().iterator(); definitionsIterator.hasNext();) {
-            Definition definition = definitionsIterator.next();
-            if (definition.getSpecificCount() == 0
-                && definition.getRangeCount() == 0) {
-                if (log.isDebugEnabled())
-                    log.debug("optimize: Removing empty definition element");
-                definitionsIterator.remove();
-            }
-        }
-
-        // Second pass: Replace single IP range elements with specific elements
-        for (Definition definition : m_config.getDefinitionCollection()) {
-            for (Iterator<Range> rangesIterator = definition.getRangeCollection().iterator(); rangesIterator.hasNext();) {
-                Range range = rangesIterator.next();
-                if (range.getBegin().equals(range.getEnd())) {
-                    definition.addSpecific(range.getBegin());
-                    rangesIterator.remove();
+    private void optimize() throws UnknownHostException {
+        getWriteLock().lock();
+        
+        try {
+            // First pass: Remove empty definition elements
+            for (final Iterator<Definition> definitionsIterator = m_config.getDefinitionCollection().iterator(); definitionsIterator.hasNext();) {
+                final Definition definition = definitionsIterator.next();
+                if (definition.getSpecificCount() == 0
+                    && definition.getRangeCount() == 0) {
+                    LogUtils.debugf(this, "optimize: Removing empty definition element");
+                    definitionsIterator.remove();
                 }
             }
-        }
-
-        // Third pass: Sort specific and range elements for improved XML
-        // readability and then combine them into fewer elements where possible
-        for (Definition definition : m_config.getDefinitionCollection()) {
-            // Sort specifics
-            TreeMap<Integer,String> specificsMap = new TreeMap<Integer,String>();
-            for (String specific : definition.getSpecificCollection()) {
-                specificsMap.put(new Integer(new IPv4Address(specific).getAddress()), specific.trim());
-            }
-
-            // Sort ranges
-            TreeMap<Integer,Range> rangesMap = new TreeMap<Integer,Range>();
-            for (Range range : definition.getRangeCollection()) {
-                rangesMap.put(new IPv4Address(range.getBegin()).getAddress(), range);
-            }
-
-            // Combine consecutive specifics into ranges
-            Integer priorSpecific = null;
-            Range addedRange = null;
-            for (Integer specific : specificsMap.keySet()) {
-                if (priorSpecific == null) {
-                    priorSpecific = specific;
-                    continue;
-                }
-
-                int specificInt = specific.intValue();
-                int priorSpecificInt = priorSpecific.intValue();
-
-                if (specificInt == priorSpecificInt + 1) {
-                    if (addedRange == null) {
-                        addedRange = new Range();
-                        addedRange.setBegin(IPv4Address.addressToString(priorSpecificInt));
-                        rangesMap.put(priorSpecific, addedRange);
-                        specificsMap.remove(priorSpecific);
-                    }
-
-                    addedRange.setEnd(IPv4Address.addressToString(specificInt));
-                    specificsMap.remove(specific);
-                }
-                else {
-                    addedRange = null;
-                }
-
-                priorSpecific = specific;
-            }
-
-            // Move specifics to ranges
-            for (Integer specific : new ArrayList<Integer>(specificsMap.keySet())) {
-                int specificInt = specific.intValue();
-                for (Integer begin : new ArrayList<Integer>(rangesMap.keySet())) {
-                    int beginInt = begin.intValue();
-
-                    if (specificInt < beginInt - 1) {
-                        continue;
-                    }
-
-                    Range range = rangesMap.get(begin);
-
-                    int endInt = new IPv4Address(range.getEnd()).getAddress();
-
-                    if (specificInt > endInt + 1)
-                        continue;
-
-                    if (specificInt >= beginInt && specificInt <= endInt) {
-                        specificsMap.remove(specific);
-                        break;
-                    }
-
-                    if (specificInt == beginInt - 1) {
-                        rangesMap.remove(begin);
-                        rangesMap.put(specific, range);
-                        range.setBegin(IPv4Address.addressToString(specificInt));
-                        specificsMap.remove(specific);
-                        break;
-                    }
-
-                    if (specificInt == endInt + 1) {
-                        range.setEnd(IPv4Address.addressToString(specificInt));
-                        specificsMap.remove(specific);
-                        break;
-                    }
-                }
-            }
-
-            // Combine consecutive ranges
-            Range priorRange = null;
-            int priorBegin = 0;
-            int priorEnd = 0;
-            for (Iterator<Integer> rangesIterator = rangesMap.keySet().iterator(); rangesIterator.hasNext();) {
-                Integer rangeKey = rangesIterator.next();
-
-                Range range = rangesMap.get(rangeKey);
-
-                int begin = rangeKey.intValue();
-                int end = new IPv4Address(range.getEnd()).getAddress();
-
-                if (priorRange != null) {
-                    if (begin - priorEnd <= 1) {
-                        priorRange.setBegin(IPv4Address.addressToString (Math.min(priorBegin, begin)));
-                        priorRange.setEnd(IPv4Address.addressToString (Math.max(priorEnd, end)));
-
+    
+            // Second pass: Replace single IP range elements with specific elements
+            for (Definition definition : m_config.getDefinitionCollection()) {
+                for (Iterator<Range> rangesIterator = definition.getRangeCollection().iterator(); rangesIterator.hasNext();) {
+                    Range range = rangesIterator.next();
+                    if (range.getBegin().equals(range.getEnd())) {
+                        definition.addSpecific(range.getBegin());
                         rangesIterator.remove();
-                        continue;
                     }
                 }
-
-                priorRange = range;
-                priorBegin = begin;
-                priorEnd = end;
             }
-
-            // Update changes made to sorted maps
-            definition.setSpecific(specificsMap.values().toArray(new String[0]));
-            definition.setRange(rangesMap.values().toArray(new Range[0]));
+    
+            // Third pass: Sort specific and range elements for improved XML
+            // readability and then combine them into fewer elements where possible
+            for (final Definition definition : m_config.getDefinitionCollection()) {
+                // Sort specifics
+                final TreeMap<Integer,String> specificsMap = new TreeMap<Integer,String>();
+                for (final String specific : definition.getSpecificCollection()) {
+                    specificsMap.put(new Integer(new IPv4Address(specific).getAddress()), specific.trim());
+                }
+    
+                // Sort ranges
+                final TreeMap<Integer,Range> rangesMap = new TreeMap<Integer,Range>();
+                for (final Range range : definition.getRangeCollection()) {
+                    rangesMap.put(new IPv4Address(range.getBegin()).getAddress(), range);
+                }
+    
+                // Combine consecutive specifics into ranges
+                Integer priorSpecific = null;
+                Range addedRange = null;
+                for (final Integer specific : specificsMap.keySet()) {
+                    if (priorSpecific == null) {
+                        priorSpecific = specific;
+                        continue;
+                    }
+    
+                    final int specificInt = specific.intValue();
+                    final int priorSpecificInt = priorSpecific.intValue();
+    
+                    if (specificInt == priorSpecificInt + 1) {
+                        if (addedRange == null) {
+                            addedRange = new Range();
+                            addedRange.setBegin(IPv4Address.addressToString(priorSpecificInt));
+                            rangesMap.put(priorSpecific, addedRange);
+                            specificsMap.remove(priorSpecific);
+                        }
+    
+                        addedRange.setEnd(IPv4Address.addressToString(specificInt));
+                        specificsMap.remove(specific);
+                    }
+                    else {
+                        addedRange = null;
+                    }
+    
+                    priorSpecific = specific;
+                }
+    
+                // Move specifics to ranges
+                for (final Integer specific : new ArrayList<Integer>(specificsMap.keySet())) {
+                    final int specificInt = specific.intValue();
+                    for (final Integer begin : new ArrayList<Integer>(rangesMap.keySet())) {
+                        final int beginInt = begin.intValue();
+    
+                        if (specificInt < beginInt - 1) {
+                            continue;
+                        }
+    
+                        final Range range = rangesMap.get(begin);
+    
+                        final int endInt = new IPv4Address(range.getEnd()).getAddress();
+    
+                        if (specificInt > endInt + 1)
+                            continue;
+    
+                        if (specificInt >= beginInt && specificInt <= endInt) {
+                            specificsMap.remove(specific);
+                            break;
+                        }
+    
+                        if (specificInt == beginInt - 1) {
+                            rangesMap.remove(begin);
+                            rangesMap.put(specific, range);
+                            range.setBegin(IPv4Address.addressToString(specificInt));
+                            specificsMap.remove(specific);
+                            break;
+                        }
+    
+                        if (specificInt == endInt + 1) {
+                            range.setEnd(IPv4Address.addressToString(specificInt));
+                            specificsMap.remove(specific);
+                            break;
+                        }
+                    }
+                }
+    
+                // Combine consecutive ranges
+                Range priorRange = null;
+                int priorBegin = 0;
+                int priorEnd = 0;
+                for (final Iterator<Integer> rangesIterator = rangesMap.keySet().iterator(); rangesIterator.hasNext();) {
+                    final Integer rangeKey = rangesIterator.next();
+                    final Range range = rangesMap.get(rangeKey);
+                    final int begin = rangeKey.intValue();
+                    final int end = new IPv4Address(range.getEnd()).getAddress();
+    
+                    if (priorRange != null) {
+                        if (begin - priorEnd <= 1) {
+                            priorRange.setBegin(IPv4Address.addressToString (Math.min(priorBegin, begin)));
+                            priorRange.setEnd(IPv4Address.addressToString (Math.max(priorEnd, end)));
+    
+                            rangesIterator.remove();
+                            continue;
+                        }
+                    }
+    
+                    priorRange = range;
+                    priorBegin = begin;
+                    priorEnd = end;
+                }
+    
+                // Update changes made to sorted maps
+                definition.setSpecific(specificsMap.values().toArray(new String[0]));
+                definition.setRange(rangesMap.values().toArray(new Range[0]));
+            }
+        } finally {
+            getWriteLock().unlock();
         }
     }
 

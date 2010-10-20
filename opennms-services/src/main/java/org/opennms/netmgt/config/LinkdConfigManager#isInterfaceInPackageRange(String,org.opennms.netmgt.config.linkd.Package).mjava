@@ -1,0 +1,71 @@
+    public boolean isInterfaceInPackageRange(final String iface, final org.opennms.netmgt.config.linkd.Package pkg) {
+        if (pkg == null) return false;
+
+        //
+        // Ensure that the interface is in the specific list or
+        // that it is in the include range and is not excluded
+        //
+        boolean has_specific = false;
+        boolean has_range_include = false;
+        boolean has_range_exclude = false;
+ 
+        getReadLock().lock();
+        try {
+            long addr = InetAddressUtils.toIpAddrLong(iface);
+    
+            // if there are NO include ranges then treat act as if the user include
+            // the range 0.0.0.0 - 255.255.255.255
+            has_range_include = pkg.getIncludeRangeCount() == 0 && pkg.getSpecificCount() == 0;
+    
+            // Specific wins; if we find one, return immediately.
+            for (final String spec : pkg.getSpecificCollection()) {
+                final long speca = InetAddressUtils.toIpAddrLong(spec);
+                if (speca == addr) {
+                    has_specific = true;
+                    break;
+                }
+            }
+            if (has_specific) return true;
+    
+            for (final String url : pkg.getIncludeUrlCollection()) {
+                has_specific = isInterfaceInUrl(iface, url);
+                if (has_specific) break;
+            }
+            if (has_specific) return true;
+    
+            if (!has_range_include) {
+                for (final IncludeRange rng : pkg.getIncludeRangeCollection()) {
+                    final long start = InetAddressUtils.toIpAddrLong(rng.getBegin());
+                    if (addr > start) {
+                        final long end = InetAddressUtils.toIpAddrLong(rng.getEnd());
+                        if (addr <= end) {
+                            has_range_include = true;
+                            break;
+                        }
+                    } else if (addr == start) {
+                        has_range_include = true;
+                        break;
+                    }
+                }
+            }
+    
+            for (final ExcludeRange rng : pkg.getExcludeRangeCollection()) {
+                long start = InetAddressUtils.toIpAddrLong(rng.getBegin());
+                if (addr > start) {
+                    long end = InetAddressUtils.toIpAddrLong(rng.getEnd());
+                    if (addr <= end) {
+                        has_range_exclude = true;
+                        break;
+                    }
+                } else if (addr == start) {
+                    has_range_exclude = true;
+                    break;
+                }
+            }
+    
+            return has_range_include && !has_range_exclude;
+        } finally {
+            getReadLock().unlock();
+        }
+    }
+
