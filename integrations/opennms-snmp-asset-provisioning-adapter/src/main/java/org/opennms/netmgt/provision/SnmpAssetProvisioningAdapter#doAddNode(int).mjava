@@ -6,7 +6,7 @@
 	 * @throws org.opennms.netmgt.provision.ProvisioningAdapterException if any.
 	 */
 	@Override
-	public void doAddNode(int nodeId) throws ProvisioningAdapterException {
+	public void doAddNode(final int nodeId) throws ProvisioningAdapterException {
 		log().debug("doAdd: adding nodeid: " + nodeId);
 
 		final OnmsNode node = m_nodeDao.get(nodeId);
@@ -21,28 +21,32 @@
 		SnmpAgentConfig agentConfig = null;
 		agentConfig = m_snmpConfigDao.getAgentConfig(ipaddress);
 
-		OnmsAssetRecord asset = node.getAssetRecord();
-		AssetField[] fields = m_config.getAssetFieldsForAddress(ipaddress, node.getSysObjectId());
-		for (AssetField field : fields) {
-			try {
-				String value = fetchSnmpAssetString(agentConfig, field.getMibObjs(), field.getFormatString());
-				if (log().isDebugEnabled()) {
-					log().debug("doAdd: Setting asset field \"" + field.getName() + "\" to value: " + value);
-				}
-				// Use Spring bean-accessor classes to set the field value
-				BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(asset);
-				try {
-					wrapper.setPropertyValue(field.getName(), value);
-				} catch (BeansException e) {
-					log().warn("doAdd: Could not set property \"" + field.getName() + "\" on asset object: " + e.getMessage(), e);
-				}
-			} catch (MissingFormatArgumentException e) {
-				// This exception is thrown if the SNMP operation fails or an incorrect number of
-				// parameters is returned by the agent or because of a misconfiguration.
-				log().warn("doAdd: Could not set value for asset field \"" + field.getName() + "\": " + e.getMessage(), e);
-			}
+		final OnmsAssetRecord asset = node.getAssetRecord();
+		m_config.getReadLock().lock();
+		try {
+		    for (final AssetField field : m_config.getAssetFieldsForAddress(ipaddress, node.getSysObjectId())) {
+    			try {
+    			    final String value = fetchSnmpAssetString(agentConfig, field.getMibObjs(), field.getFormatString());
+    				if (log().isDebugEnabled()) {
+    					log().debug("doAdd: Setting asset field \"" + field.getName() + "\" to value: " + value);
+    				}
+    				// Use Spring bean-accessor classes to set the field value
+    				final BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(asset);
+    				try {
+    					wrapper.setPropertyValue(field.getName(), value);
+    				} catch (final BeansException e) {
+    					log().warn("doAdd: Could not set property \"" + field.getName() + "\" on asset object: " + e.getMessage(), e);
+    				}
+    			} catch (final MissingFormatArgumentException e) {
+    				// This exception is thrown if the SNMP operation fails or an incorrect number of
+    				// parameters is returned by the agent or because of a misconfiguration.
+    				log().warn("doAdd: Could not set value for asset field \"" + field.getName() + "\": " + e.getMessage(), e);
+    			}
+    		}
+		} finally {
+		    m_config.getReadLock().unlock();
 		}
-		node.setAssetRecord(asset);
-		m_nodeDao.saveOrUpdate(node);
+        node.setAssetRecord(asset);
+        m_nodeDao.saveOrUpdate(node);
 	}
 

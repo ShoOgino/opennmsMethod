@@ -1,74 +1,75 @@
-    private synchronized SnmpAgentConfig getAgentConfig(InetAddress agentInetAddress, int requestedSnmpVersion) {
+    private SnmpAgentConfig getAgentConfig(InetAddress agentInetAddress, int requestedSnmpVersion) {
+        SnmpPeerFactory.getReadLock().lock();
+        try {
+            if (m_config == null) {
+                final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
+                if (requestedSnmpVersion == VERSION_UNSPECIFIED) {
+                    agentConfig.setVersion(SnmpAgentConfig.DEFAULT_VERSION);
+                } else {
+                    agentConfig.setVersion(requestedSnmpVersion);
+                }
 
-        if (m_config == null) {
-            SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
-            if (requestedSnmpVersion == VERSION_UNSPECIFIED) {
-                agentConfig.setVersion(SnmpAgentConfig.DEFAULT_VERSION);
-            } else {
-                agentConfig.setVersion(requestedSnmpVersion);
+                return agentConfig;
             }
-            
+
+            final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
+
+            // Now set the defaults from the m_config
+            setSnmpAgentConfig(agentConfig, new Definition(), requestedSnmpVersion);
+
+            // Attempt to locate the node
+            DEFLOOP: for (final Definition def : m_config.getDefinitionCollection()) {
+                // check the specifics first
+                for (final String saddr : def.getSpecificCollection()) {
+                    try {
+                        final InetAddress addr = InetAddress.getByName(saddr);
+                        if (addr.equals(agentConfig.getAddress())) {
+                            setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                            break DEFLOOP;
+                        }
+                    } catch (final UnknownHostException e) {
+                        LogUtils.warnf(this, e, "SnmpPeerFactory: could not convert host %s to InetAddress", saddr);
+                    }
+                }
+
+                // check the ranges
+                //
+                final long lhost = InetAddressUtils.toIpAddrLong(agentConfig.getAddress());
+                for (final Range rng : def.getRangeCollection()) {
+                    try {
+                        final InetAddress begin = InetAddress.getByName(rng.getBegin());
+                        final InetAddress end = InetAddress.getByName(rng.getEnd());
+
+                        final long start = InetAddressUtils.toIpAddrLong(begin);
+                        final long stop = InetAddressUtils.toIpAddrLong(end);
+
+                        if (start <= lhost && lhost <= stop) {
+                            setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                            break DEFLOOP;
+                        }
+                    } catch (final UnknownHostException e) {
+                        LogUtils.warnf(this, e, "SnmpPeerFactory: could not convert host(s) %s - %s to InetAddress", rng.getBegin(), rng.getEnd());
+                    }
+                }
+
+                // check the matching ip expressions
+                for (final String ipMatch : def.getIpMatchCollection()) {
+                    if (IPLike.matches(agentInetAddress.getHostAddress(), ipMatch)) {
+                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                        break DEFLOOP;
+                    }
+                }
+
+            } // end DEFLOOP
+
+            if (agentConfig == null) {
+                final Definition def = new Definition();
+                setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+            }
+
             return agentConfig;
+        } finally {
+            SnmpPeerFactory.getReadLock().unlock();
         }
-        
-        SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
-        
-        //Now set the defaults from the m_config
-        setSnmpAgentConfig(agentConfig, new Definition(), requestedSnmpVersion);
-
-        // Attempt to locate the node
-        //
-        DEFLOOP: for (Definition def: m_config.getDefinitionCollection()) {
-            // check the specifics first
-            //
-            for (String saddr : def.getSpecificCollection()) {
-                try {
-                    InetAddress addr = InetAddress.getByName(saddr);
-                    if (addr.equals(agentConfig.getAddress())) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                } catch (UnknownHostException e) {
-                    log().warn("SnmpPeerFactory: could not convert host " + saddr + " to InetAddress", e);
-                }
-            }
-
-            // check the ranges
-            //
-            long lhost = InetAddressUtils.toIpAddrLong(agentConfig.getAddress());
-            for (Range rng : def.getRangeCollection()) {
-                try {
-                    InetAddress begin = InetAddress.getByName(rng.getBegin());
-                    InetAddress end = InetAddress.getByName(rng.getEnd());
-
-                    long start = InetAddressUtils.toIpAddrLong(begin);
-                    long stop = InetAddressUtils.toIpAddrLong(end);
-
-                    if (start <= lhost && lhost <= stop) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                } catch (UnknownHostException e) {
-                    log().warn("SnmpPeerFactory: could not convert host(s) " + rng.getBegin() + " - " + rng.getEnd() + " to InetAddress", e);
-                }
-            }
-            
-            // check the matching ip expressions
-            for (String ipMatch : def.getIpMatchCollection()) {
-                if (IPLike.matches(agentInetAddress.getHostAddress(), ipMatch)) {
-                    setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                    break DEFLOOP;
-                }
-            }
-            
-        } // end DEFLOOP
-
-        if (agentConfig == null) {
-            Definition def = new Definition();
-            setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-        }
-
-        return agentConfig;
-
     }
 

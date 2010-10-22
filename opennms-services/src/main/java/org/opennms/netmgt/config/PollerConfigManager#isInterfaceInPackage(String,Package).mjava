@@ -1,0 +1,80 @@
+    /**
+     * {@inheritDoc}
+     *
+     * This method is used to determine if the named interface is included in
+     * the passed package definition. If the interface belongs to the package
+     * then a value of true is returned. If the interface does not belong to the
+     * package a false value is returned.
+     *
+     * <strong>Note: </strong>Evaluation of the interface against a package
+     * filter will only work if the IP is already in the database.
+     */
+    public boolean isInterfaceInPackage(final String iface, final Package pkg) {
+        boolean filterPassed = false;
+    
+        // get list of IPs in this package
+        final List<String> ipList = m_pkgIpMap.get(pkg);
+        if (ipList != null && ipList.size() > 0) {
+            filterPassed = ipList.contains(iface);
+        }
+
+        LogUtils.debugf(this, "interfaceInPackage: Interface %s passed filter for package %s?: %s", iface, pkg.getName(), Boolean.valueOf(filterPassed));
+    
+        if (!filterPassed) return false;
+    
+        //
+        // Ensure that the interface is in the specific list or
+        // that it is in the include range and is not excluded
+        //
+        boolean has_specific = false;
+        boolean has_range_include = false;
+        boolean has_range_exclude = false;
+ 
+        // if there are NO include ranges then treat act as if the user include
+        // the range 0.0.0.0 - 255.255.255.255
+        has_range_include = pkg.getIncludeRangeCount() == 0 && pkg.getSpecificCount() == 0;
+        
+        final long addr = InetAddressUtils.toIpAddrLong(iface);
+
+        for (final IncludeRange rng : pkg.getIncludeRangeCollection()) {
+            final long start = InetAddressUtils.toIpAddrLong(rng.getBegin());
+            if (addr > start) {
+                final long end = InetAddressUtils.toIpAddrLong(rng.getEnd());
+                if (addr <= end) {
+                    has_range_include = true;
+                }
+            } else if (addr == start) {
+                has_range_include = true;
+            }
+        }
+
+        for (final String spec : pkg.getSpecificCollection()) {
+            long speca = InetAddressUtils.toIpAddrLong(spec);
+            if (speca == addr) {
+                has_specific = true;
+                break;
+            }
+        }
+    
+        for (final String includeUrl : pkg.getIncludeUrlCollection()) {
+            if (interfaceInUrl(iface, includeUrl)) {
+                has_specific = true;
+                break;
+            }
+        }
+
+        for (final ExcludeRange rng : pkg.getExcludeRangeCollection()) {
+            final long start = InetAddressUtils.toIpAddrLong(rng.getBegin());
+            if (addr > start) {
+                final long end = InetAddressUtils.toIpAddrLong(rng.getEnd());
+                if (addr <= end) {
+                    has_range_exclude = true;
+                }
+            } else if (addr == start) {
+                has_range_exclude = true;
+            }
+        }
+    
+        return has_specific || (has_range_include && !has_range_exclude);
+    }
+

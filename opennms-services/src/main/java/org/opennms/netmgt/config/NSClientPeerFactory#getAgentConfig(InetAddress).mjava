@@ -4,71 +4,72 @@
      * @param agentInetAddress a {@link java.net.InetAddress} object.
      * @return a {@link org.opennms.netmgt.poller.nsclient.NSClientAgentConfig} object.
      */
-    public synchronized NSClientAgentConfig getAgentConfig(InetAddress agentInetAddress) {
-
-        if (m_config == null) {
-            NSClientAgentConfig agentConfig = new NSClientAgentConfig(agentInetAddress);
-            return agentConfig;
-        }
+    public NSClientAgentConfig getAgentConfig(final InetAddress agentInetAddress) {
+        getReadLock().lock();
         
-        NSClientAgentConfig agentConfig = new NSClientAgentConfig(agentInetAddress);
-        
-        //Now set the defaults from the m_config
-        setNSClientAgentConfig(agentConfig, new Definition());
-
-        // Attempt to locate the node
-        DEFLOOP: for (Definition def : m_config.getDefinitionCollection()) {
-            // check the specifics first
-
-            for (String saddr : def.getSpecificCollection()) {
-                try {
-                    InetAddress addr = InetAddress.getByName(saddr);
-                    if (addr.equals(agentConfig.getAddress())) {
+        try {
+            if (m_config == null) {
+                return new NSClientAgentConfig(agentInetAddress);
+            }
+            
+            final NSClientAgentConfig agentConfig = new NSClientAgentConfig(agentInetAddress);
+            
+            //Now set the defaults from the m_config
+            setNSClientAgentConfig(agentConfig, new Definition());
+    
+            // Attempt to locate the node
+            DEFLOOP: for (final Definition def : m_config.getDefinitionCollection()) {
+                // check the specifics first
+    
+                for (final String saddr : def.getSpecificCollection()) {
+                    try {
+                        final InetAddress addr = InetAddress.getByName(saddr);
+                        if (addr.equals(agentConfig.getAddress())) {
+                            setNSClientAgentConfig(agentConfig, def);
+                            break DEFLOOP;
+                        }
+                    } catch (final UnknownHostException e) {
+                        LogUtils.warnf(this, e, "NSClientPeerFactory: could not convert host %s to InetAddress", saddr);
+                    }
+                }
+    
+                // check the ranges
+                //
+                final long lhost = InetAddressUtils.toIpAddrLong(agentConfig.getAddress());
+                for (final Range rng : def.getRangeCollection()) {
+                    try {
+                        final InetAddress begin = InetAddress.getByName(rng.getBegin());
+                        final InetAddress end = InetAddress.getByName(rng.getEnd());
+    
+                        final long start = InetAddressUtils.toIpAddrLong(begin);
+                        final long stop = InetAddressUtils.toIpAddrLong(end);
+    
+                        if (start <= lhost && lhost <= stop) {
+                            setNSClientAgentConfig(agentConfig, def);
+                            break DEFLOOP;
+                        }
+                    } catch (final UnknownHostException e) {
+                        LogUtils.warnf(this, e, "NSClientPeerFactory: could not convert host(s) %s - %s to InetAddress", rng.getBegin(), rng.getEnd());
+                    }
+                }
+                
+                // check the matching IP expressions
+                for (final String ipMatch : def.getIpMatchCollection()) {
+                    if (IPLike.matches(agentInetAddress.getHostAddress(), ipMatch)) {
                         setNSClientAgentConfig(agentConfig, def);
                         break DEFLOOP;
                     }
-                } catch (UnknownHostException e) {
-                    log().warn("NSClientPeerFactory: could not convert host " + saddr + " to InetAddress", e);
                 }
+                
+            } // end DEFLOOP
+    
+            if (agentConfig == null) {
+                setNSClientAgentConfig(agentConfig, new Definition());
             }
-
-            // check the ranges
-            //
-            long lhost = InetAddressUtils.toIpAddrLong(agentConfig.getAddress());
-            for (Range rng : def.getRangeCollection()) {
-                try {
-                    InetAddress begin = InetAddress.getByName(rng.getBegin());
-                    InetAddress end = InetAddress.getByName(rng.getEnd());
-
-                    long start = InetAddressUtils.toIpAddrLong(begin);
-                    long stop = InetAddressUtils.toIpAddrLong(end);
-
-                    if (start <= lhost && lhost <= stop) {
-                        setNSClientAgentConfig(agentConfig, def );
-                        break DEFLOOP;
-                    }
-                } catch (UnknownHostException e) {
-                    log().warn("NSClientPeerFactory: could not convert host(s) " + rng.getBegin() + " - " + rng.getEnd() + " to InetAddress", e);
-                }
-            }
-            
-            // check the matching IP expressions
-            for (String ipMatch : def.getIpMatchCollection()) {
-                if (IPLike.matches(agentInetAddress.getHostAddress(), ipMatch)) {
-                    setNSClientAgentConfig(agentConfig, def);
-                    break DEFLOOP;
-                }
-            }
-            
-        } // end DEFLOOP
-
-        if (agentConfig == null) {
-
-            Definition def = new Definition();
-            setNSClientAgentConfig(agentConfig, def);
+    
+            return agentConfig;
+        } finally {
+            getReadLock().unlock();
         }
-
-        return agentConfig;
-
     }
 

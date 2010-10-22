@@ -4,32 +4,41 @@
      * @return a {@link java.util.List} object.
      */
     public List<IPPollAddress> getSpecifics() {
-        List<IPPollAddress> specifics = new LinkedList<IPPollAddress>();
+        final List<IPPollAddress> specifics = new LinkedList<IPPollAddress>();
     
-        Enumeration<Specific> specificEntries = getConfiguration().enumerateSpecific();
-        while (specificEntries.hasMoreElements()) {
-            Specific s = specificEntries.nextElement();
-    
-            long timeout = 800L;
-            if (s.hasTimeout()) {
-                timeout = s.getTimeout();
-            } else if (getConfiguration().hasTimeout()) {
-                timeout = getConfiguration().getTimeout();
+        getReadLock().lock();
+        
+        try {
+            Long defaultTimeout = null;
+            Integer defaultRetries = null;
+            if (getConfiguration().hasTimeout()) defaultTimeout = getConfiguration().getTimeout();
+            if (getConfiguration().hasRetries()) defaultRetries = getConfiguration().getRetries();
+
+            for (final Specific s : getConfiguration().getSpecificCollection()) {
+        
+                long timeout = 800L;
+                if (s.hasTimeout()) {
+                    timeout = s.getTimeout();
+                } else if (defaultTimeout != null) {
+                    timeout = defaultTimeout;
+                }
+        
+                int retries = 3;
+                if (s.hasRetries()) {
+                    retries = s.getRetries();
+                } else if (defaultRetries != null) {
+                    retries = defaultRetries;
+                }
+        
+                try {
+                    specifics.add(new IPPollAddress(s.getContent(), timeout, retries));
+                } catch (final UnknownHostException uhE) {
+                    LogUtils.warnf(this, uhE, "Failed to convert address %s", s.getContent());
+                }
             }
-    
-            int retries = 3;
-            if (s.hasRetries()) {
-                retries = s.getRetries();
-            } else if (getConfiguration().hasRetries()) {
-                retries = getConfiguration().getRetries();
-            }
-    
-            try {
-                specifics.add(new IPPollAddress(s.getContent(), timeout, retries));
-            } catch (UnknownHostException uhE) {
-                ThreadCategory.getInstance(getClass()).warn("Failed to convert address " + s.getContent(), uhE);
-            }
+            return specifics;
+        } finally {
+            getReadLock().unlock();
         }
-        return specifics;
     }
 

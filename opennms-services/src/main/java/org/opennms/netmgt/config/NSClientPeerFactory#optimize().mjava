@@ -4,29 +4,20 @@
      * TODO This really should be pulled up into PeerFactory somehow, but I'm not sure how (given that "Definition" is different for both
      * Snmp and NSClient.  Maybe some sort of visitor methodology would work.  The basic logic should be fine as it's all IP address manipulation
      */
-    private static void optimize() throws UnknownHostException {
-        ThreadCategory log = log();
-
+    private void optimize() throws UnknownHostException {
         // First pass: Remove empty definition elements
-        for (Iterator<Definition> definitionsIterator =
-                 m_config.getDefinitionCollection().iterator();
-             definitionsIterator.hasNext();) {
-            Definition definition = definitionsIterator.next();
-            if (definition.getSpecificCount() == 0
-                && definition.getRangeCount() == 0) {
-                if (log.isDebugEnabled()) {
-                    log.debug("optimize: Removing empty definition element");
-                }
+        for (final Iterator<Definition> definitionsIterator = m_config.getDefinitionCollection().iterator(); definitionsIterator.hasNext();) {
+            final Definition definition = definitionsIterator.next();
+            if (definition.getSpecificCount() == 0 && definition.getRangeCount() == 0) {
+                LogUtils.debugf(this, "optimize: Removing empty definition element");
                 definitionsIterator.remove();
             }
         }
 
         // Second pass: Replace single IP range elements with specific elements
-        for (Definition definition : m_config.getDefinitionCollection()) {
-            for (Iterator<Range> rangesIterator =
-                     definition.getRangeCollection().iterator();
-                 rangesIterator.hasNext();) {
-                Range range = rangesIterator.next();
+        for (final Definition definition : m_config.getDefinitionCollection()) {
+            for (final Iterator<Range> rangesIterator = definition.getRangeCollection().iterator(); rangesIterator.hasNext();) {
+                final Range range = rangesIterator.next();
                 if (range.getBegin().equals(range.getEnd())) {
                     definition.addSpecific(range.getBegin());
                     rangesIterator.remove();
@@ -36,31 +27,30 @@
 
         // Third pass: Sort specific and range elements for improved XML
         // readability and then combine them into fewer elements where possible
-        for (Definition definition : m_config.getDefinitionCollection()) {
+        for (final Definition definition : m_config.getDefinitionCollection()) {
             // Sort specifics
-            TreeMap<Integer, String> specificsMap = new TreeMap<Integer, String>();
-            for (String specific : definition.getSpecificCollection()) {
-                specificsMap.put(new Integer(new IPv4Address(specific).getAddress()),
-                                 specific.trim());
+            final TreeMap<Integer, String> specificsMap = new TreeMap<Integer, String>();
+            for (final String specific : definition.getSpecificCollection()) {
+                specificsMap.put(Integer.valueOf(new IPv4Address(specific).getAddress()), specific.trim());
             }
 
             // Sort ranges
-            TreeMap<Integer, Range> rangesMap = new TreeMap<Integer, Range>();
-            for (Range range : definition.getRangeCollection()) {
+            final TreeMap<Integer, Range> rangesMap = new TreeMap<Integer, Range>();
+            for (final Range range : definition.getRangeCollection()) {
                 rangesMap.put(new IPv4Address(range.getBegin()).getAddress(), range);
             }
 
             // Combine consecutive specifics into ranges
             Integer priorSpecific = null;
             Range addedRange = null;
-            for (Integer specific : specificsMap.keySet()) {
+            for (final Integer specific : specificsMap.keySet()) {
                 if (priorSpecific == null) {
                     priorSpecific = specific;
                     continue;
                 }
 
-                int specificInt = specific.intValue();
-                int priorSpecificInt = priorSpecific.intValue();
+                final int specificInt = specific.intValue();
+                final int priorSpecificInt = priorSpecific.intValue();
 
                 if (specificInt == priorSpecificInt + 1) {
                     if (addedRange == null) {
@@ -82,38 +72,35 @@
             }
 
             // Move specifics to ranges
-            for (Integer specific : specificsMap.keySet()) {
-                int specificInt = specific.intValue();
-                for (Integer begin : rangesMap.keySet()) {
-                    int beginInt = begin.intValue();
-
-                    if (specificInt < beginInt - 1) {
+            for (final Integer specific : specificsMap.keySet()) {
+                for (final Integer begin : rangesMap.keySet()) {
+                    if (specific < begin - 1) {
                         continue;
                     }
 
-                    Range range = rangesMap.get(begin);
+                    final Range range = rangesMap.get(begin);
 
                     int endInt = new IPv4Address(range.getEnd()).getAddress();
 
-                    if (specificInt > endInt + 1) {
+                    if (specific > endInt + 1) {
                         continue;
                     }
 
-                    if (specificInt >= beginInt && specificInt <= endInt) {
+                    if (specific >= begin && specific <= endInt) {
                         specificsMap.remove(specific);
                         break;
                     }
 
-                    if (specificInt == beginInt - 1) {
+                    if (specific == begin - 1) {
                         rangesMap.remove(begin);
                         rangesMap.put(specific, range);
-                        range.setBegin(IPv4Address.addressToString(specificInt));
+                        range.setBegin(IPv4Address.addressToString(specific));
                         specificsMap.remove(specific);
                         break;
                     }
 
-                    if (specificInt == endInt + 1) {
-                        range.setEnd(IPv4Address.addressToString(specificInt));
+                    if (specific == endInt + 1) {
+                        range.setEnd(IPv4Address.addressToString(specific));
                         specificsMap.remove(specific);
                         break;
                     }
@@ -124,22 +111,17 @@
             Range priorRange = null;
             int priorBegin = 0;
             int priorEnd = 0;
-            for (Iterator<Integer> rangesIterator = rangesMap.keySet().iterator();
-                 rangesIterator.hasNext();) {
-                Integer rangeKey = rangesIterator.next();
+            for (final Iterator<Integer> rangesIterator = rangesMap.keySet().iterator(); rangesIterator.hasNext();) {
+                final Integer begin = rangesIterator.next();
 
-                Range range = rangesMap.get(rangeKey);
+                final Range range = rangesMap.get(begin);
 
-                int begin = rangeKey.intValue();
-                int end = new IPv4Address(range.getEnd()).getAddress();
+                final int end = new IPv4Address(range.getEnd()).getAddress();
 
                 if (priorRange != null) {
                     if (begin - priorEnd <= 1) {
-                        priorRange.setBegin(IPv4Address.addressToString
-                                             (Math.min(priorBegin, begin)));
-                        priorRange.setEnd(IPv4Address.addressToString
-                                           (Math.max(priorEnd, end)));
-
+                        priorRange.setBegin(IPv4Address.addressToString(Math.min(priorBegin, begin)));
+                        priorRange.setEnd(IPv4Address.addressToString(Math.max(priorEnd, end)));
                         rangesIterator.remove();
                         continue;
                     }
