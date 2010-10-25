@@ -1,0 +1,83 @@
+    @Before
+    public void setUp() throws RrdException, IOException {
+        File file = new File("target/rrd/mo_calls.jrb");
+        if(file.exists()) {
+            file.delete();
+        }
+        
+        File file2 = new File("target/rrd/mt_calls.jrb");
+        if(file2.exists()) {
+            file2.delete();
+        }
+        
+        new File("target/rrd").mkdirs();
+        new File("target/reports").mkdirs();
+        
+        long now = System.currentTimeMillis();
+        long end = now/MILLIS_PER_DAY*MILLIS_PER_DAY + (MILLIS_PER_HOUR * 4);
+        long start = end - MILLIS_PER_DAY;
+        m_startDate = new Date(start);
+        System.out.println("startDate: " + m_startDate.getTime()/1000);
+        m_endDate = new Date(end);
+        System.out.println("endDate: " + m_endDate.getTime()/1000);
+        
+        RrdDef rrdDef = new RrdDef("target/rrd/mo_calls.jrb", (start/1000) - 600000, 300);
+        rrdDef.addDatasource("DS:mo_call_attempts:COUNTER:600:0:U");
+        rrdDef.addDatasource("DS:mo_call_completes:COUNTER:600:0:U");
+        rrdDef.addDatasource("DS:mo_mins_carried:COUNTER:600:0:U");
+        rrdDef.addDatasource("DS:mo_calls_active:GAUGE:600:0:U");
+        rrdDef.addArchive("RRA:AVERAGE:0.5:1:288");
+        
+        RrdDef rrdDef2 = new RrdDef("target/rrd/mt_calls.jrb", (start/1000) - 600000 , 300);
+        rrdDef2.addDatasource("DS:mt_call_attempts:COUNTER:600:0:U");
+        rrdDef2.addDatasource("DS:mt_call_completes:COUNTER:600:0:U");
+        rrdDef2.addDatasource("DS:mt_mins_carried:COUNTER:600:0:U");
+        rrdDef2.addDatasource("DS:mt_calls_active:GAUGE:600:0:U");
+        rrdDef2.addArchive("RRA:AVERAGE:0.5:1:288");
+        
+        RrdDb rrd1 = new RrdDb(rrdDef);
+        RrdDb rrd2 = new RrdDb(rrdDef2);
+        
+        Function bigSine = new Sin(start, 15, -10, MILLIS_PER_DAY);
+        Function smallSine = new Sin(start, 7, 5, MILLIS_PER_DAY);
+        Function moSuccessRate = new Cos(start, .5, .3, MILLIS_PER_DAY);
+        Function mtSuccessRate = new Cos(start, .5, -.2, 2*MILLIS_PER_DAY);
+        
+        Function moAttempts = new Counter(0, bigSine);
+        Function moCompletes = new Counter(0, new Times(moSuccessRate, bigSine));
+        
+        Function mtAttempts = new Counter(0, smallSine);
+        Function mtCompletes = new Counter(0, new Times(mtSuccessRate, smallSine));
+
+        int count = 0;
+        for(long timestamp = start - 300000; timestamp<= end; timestamp += 300000){
+            System.out.println("timestamp: " + new Date(timestamp));
+            
+            
+            Sample sample = rrd1.createSample(timestamp/1000);
+            double attemptsVal = moAttempts.evaluate(timestamp);
+            double completesVal = moCompletes.evaluate(timestamp);
+            
+            System.out.println("Attempts: " + attemptsVal + " Completes " + completesVal);
+            sample.setValue("mo_call_attempts", attemptsVal);
+            sample.setValue("mo_call_completes", completesVal);
+            sample.setValue("mo_mins_carried", 32 * count);
+            sample.setValue("mo_calls_active", 2);
+            
+            sample.update();
+            
+            Sample sample2 = rrd2.createSample(timestamp/1000); 
+            sample2.setValue("mt_call_attempts", mtAttempts.evaluate(timestamp));
+            sample2.setValue("mt_call_completes", mtCompletes.evaluate(timestamp));
+            sample2.setValue("mt_mins_carried", 16 * count);
+            sample2.setValue("mt_calls_active", 1);
+            
+            sample2.update();
+            
+            count++;
+        }
+        
+        rrd1.close();
+        rrd2.close();
+    }
+
