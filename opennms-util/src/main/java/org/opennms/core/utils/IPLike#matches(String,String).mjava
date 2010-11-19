@@ -1,18 +1,61 @@
-   /**
-    * <p>matches</p>
-    *
-    * @param address a {@link java.lang.String} object.
-    * @param pattern a {@link java.lang.String} object.
-    * @return a boolean.
-    */
-   public static boolean matches(String address, String pattern) {
-       String hostOctets[] = address.split("\\.", 0);
-       String matchOctets[] = pattern.split("\\.", 0);
-       for (int i = 0; i < 4; i++) {
-           if (!matchNumericListOrRange(hostOctets[i], matchOctets[i])) {
-               return false;
-           }
-       }
-       return true;
-   }
+    /**
+     * <p>matches</p>
+     *
+     * @param address a {@link java.lang.String} object.
+     * @param pattern a {@link java.lang.String} object.
+     * @return a boolean.
+     */
+    public static boolean matches(String address, String pattern) {
+        String[] hostOctets = null;
+        String[] matchOctets = null;
+        RangeMatcher matcher = null;
+        int numberOfOctets = 4;
+
+        if (address.indexOf(':') >= 0) {
+            // First try and match the scope identifier
+            String[] patternAndScope = pattern.split("%");
+            pattern = patternAndScope[0];
+            String[] addressAndScope = address.split("%");
+            address = addressAndScope[0];
+            if (patternAndScope.length < 2) {
+                // Do nothing; there was no pattern specified for the scope identifier
+            } else if (patternAndScope.length == 2) {
+                if (addressAndScope.length < 2) {
+                    return false;
+                } else if (addressAndScope.length == 2) {
+                    // Assume that scope identifiers are always decimal
+                    if (!matchNumericListOrRange(addressAndScope[1], patternAndScope[1], new DecimalRangeMatcher())) {
+                        return false;
+                    }
+                } else {
+                    throw new IllegalArgumentException("Illegal scope identifier in address: " + address);
+                }
+            } else {
+                throw new IllegalArgumentException("Illegal scope identifier filter: " + pattern);
+            }
+
+            hostOctets = address.split("\\:", 0);
+            matchOctets = pattern.split("\\:", 0);
+            numberOfOctets = 8;
+            matcher = new HexRangeMatcher();
+        } else {
+            hostOctets = address.split("\\.", 0);
+            matchOctets = pattern.split("\\.", 0);
+            numberOfOctets = 4;
+            matcher = new DecimalRangeMatcher();
+        }
+
+        if (hostOctets.length != numberOfOctets) {
+            throw new IllegalArgumentException("Malformatted IP address: " + address);
+        } else if (matchOctets.length != numberOfOctets) {
+            throw new IllegalArgumentException("Malformatted IPLIKE match expression: " + pattern);
+        }
+
+        for (int i = 0; i < numberOfOctets; i++) {
+            if (!matchNumericListOrRange(hostOctets[i], matchOctets[i], matcher)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
