@@ -1,0 +1,80 @@
+	protected static void parseCsv(String fname, String outDir) throws IOException {
+		File csv = new File(fname);
+		BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(csv)));
+		
+		String line = null;
+		int lineNum = 0;
+		while ((line = br.readLine()) != null) {
+			lineNum++;
+			if (line != null && line.startsWith("#")) {
+				continue;
+			}
+			String[] fields = line.split(",", 6);
+			int commas = fields.length;
+			if (commas != 6) {
+				System.out.println("Error on line: "+Integer.toString(lineNum)+". Found "+Integer.toString(commas)+" fields and expected 6");
+				continue;
+			}
+			
+			m_fsr = new FilesystemForeignSourceRepository();
+			m_fsr.setRequisitionPath(outDir);
+			
+			RequisitionData rd;
+			try {
+				rd = new RequisitionData(fields);
+			} catch (Exception e) {
+				System.err.println(e);
+				continue;
+			}
+			
+			System.out.println("Line "+Integer.toString(lineNum)+":"+rd.toString());
+
+			Requisition r;
+			String foreignSource = rd.getForeignSource();
+			
+			r = m_fsr.getRequisition(foreignSource);
+			
+			if (r== null) {
+				r = new Requisition(foreignSource);
+			}
+			
+			System.err.println("Creating/Updating requistion: "+foreignSource);
+			
+			r.updateDateStamp();
+			
+			RequisitionMonitoredServiceCollection services = new RequisitionMonitoredServiceCollection();
+			services.add(new RequisitionMonitoredService("ICMP"));
+			services.add(new RequisitionMonitoredService("SNMP"));
+			
+			RequisitionInterface iface = new RequisitionInterface();
+			iface.setDescr("mgmt-if");
+			iface.setIpAddr(rd.getPrimaryIp());
+			iface.setManaged(true);
+			iface.setSnmpPrimary("P");
+			iface.setStatus(Integer.valueOf(1));
+			iface.setMonitoredServices(services);
+			
+			RequisitionInterfaceCollection ric = new RequisitionInterfaceCollection();
+			ric.add(iface);
+			
+			RequisitionAssetCollection rac = new RequisitionAssetCollection();
+			rac.add(new RequisitionAsset("Comment", "Customer: "+rd.getCustomerName()));
+			//rac.add(new RequisitionAsset("CustomerID", rd.getCustomerId()));
+			
+			//add categories
+			
+			RequisitionNode rn = new RequisitionNode();
+			rn.setAssets(rac);
+			rn.setBuilding(foreignSource);
+			rn.setCategories(null);
+			rn.setForeignId(rd.getForeignId());
+			rn.setInterfaces(ric);
+			rn.setNodeLabel(rd.getNodeLabel());
+			
+			r.insertNode(rn);
+			m_fsr.save(r);
+			
+		}
+		br.close();
+	}
+
