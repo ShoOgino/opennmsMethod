@@ -1,0 +1,63 @@
+    private SupportResults createTicket(final HttpServletRequest request) {
+        final HttpSession session = request.getSession();
+
+        final RequestTracker rt = (RequestTracker)session.getAttribute("requestTracker");
+
+        // get ticket and user information
+        final String subject = request.getParameter("subject").trim();
+        String body = request.getParameter("text").trim();
+        final String includeReport = request.getParameter("include-report");
+        final boolean report  = Boolean.parseBoolean(includeReport);
+        LogUtils.debugf(this, "include report?: %s (parsed as %s)", includeReport, new Boolean(report));
+
+        final RTUser user = rt.getUserInfo(rt.getUsername());
+
+        String email = user.getEmail();
+        if (email == null || "".equals(email)) {
+            email = m_configDao.getRequestor();
+        }
+
+        final Long queueId = m_configDao.getQueueId();
+        RTQueue queue = new RTQueue(0, "Unknown");
+        try {
+            queue = rt.getQueue(queueId);
+        } catch (final RequestTrackerException e) {
+            LogUtils.warnf(this, "Unable to determine queue for queue ID %s", queueId.toString());
+        }
+
+        // create report if necessary
+        if (report) {
+            final FtpSystemReportFormatter formatter = new FtpSystemReportFormatter();
+            final String url = m_configDao.getFtpBaseURL() + "/" + queue.getName() + "-" + user.getUsername() + "-" + UUID.randomUUID() + ".zip";
+            formatter.setOutput(url);
+
+            formatter.begin();
+            for (final SystemReportPlugin plugin : m_systemReport.getPlugins()) {
+                if (plugin.getName().equals("Logs")) continue;
+                
+                formatter.write(plugin);
+            }
+            formatter.end();
+
+            body = body.concat("\n\nSystem report is available at: " + url + "\n");
+        }
+
+        
+        final SupportResults results = new SupportResults();
+        results.setNeedsLogin(false);
+        results.setUsername(rt.getUsername());
+        results.setQueue(queue.getName());
+
+        final RTTicket ticket = new RTTicket(queue.getName(), email, subject, body);
+        try {
+            final long id = rt.createTicket(ticket);
+            results.setSuccess(true);
+            results.setMessage("New ticket created: <a href=\"" + m_configDao.getBaseURL() + "/Ticket/Display.html?id=" + id + "\">" + id + "</a>");
+        } catch (final RequestTrackerException e) {
+            LogUtils.warnf(this, e, "Unable to create ticket %s", ticket);
+            results.setSuccess(false);
+            results.setMessage("Unable to create ticket: " + e.getLocalizedMessage());
+        }
+        return results;
+    }
+

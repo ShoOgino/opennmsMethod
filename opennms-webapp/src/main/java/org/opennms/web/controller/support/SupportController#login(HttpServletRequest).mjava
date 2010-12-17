@@ -1,0 +1,53 @@
+    private SupportResults login(final HttpServletRequest request) {
+        final String username = request.getParameter("username").trim();
+        final String password = request.getParameter("password").trim();
+
+        final RequestTracker rt = new RequestTracker(m_configDao.getBaseURL(), username, password, m_configDao.getTimeout(), m_configDao.getRetry());
+        LogUtils.debugf(this, "tracker = %s", rt);
+
+        final SupportResults results = new SupportResults();
+        results.setUsername(username);
+
+        RTQueue queue = null;
+
+        try {
+            
+            // First, check if the currently configured queue exists
+            Long queueId = m_configDao.getQueueId();
+            if (queueId != null) {
+                queue = rt.getQueue(queueId);
+            }
+
+            // If not, try to find a default queue
+            if (queue == null || !queue.isAccessible()) {
+                queue = rt.getFirstPublicQueueForUser(username);
+                LogUtils.warnf(this, "If more than one queue was found for user %s, the first was used.  (%s)", username, queue);
+
+                m_configDao.setQueueId(queue.getId());
+            } else {
+                LogUtils.debugf(this, "Existing queue found in support.properties (%s), will not overwrite.", m_configDao.getQueueId().toString());
+            }
+
+            m_configDao.setUsername(username);
+            m_configDao.setPassword(password);
+            m_configDao.save();
+            
+            final HttpSession session = request.getSession(true);
+            session.setAttribute("username", username);
+            session.setAttribute("password", password);
+            session.setAttribute("requestTracker", rt);
+
+            results.setSuccess(true);
+            results.setNeedsLogin(false);
+            results.setMessage("Logged in successfully.");
+            results.setQueue(queue.getName());
+            return results;
+        } catch (final Exception e) {
+            LogUtils.warnf(this, e, "Unable to log in user " + username);
+            results.setSuccess(false);
+            results.setNeedsLogin(true);
+            results.setMessage("Unable to log in: " + e.getLocalizedMessage());
+            return results;
+        }
+    }
+

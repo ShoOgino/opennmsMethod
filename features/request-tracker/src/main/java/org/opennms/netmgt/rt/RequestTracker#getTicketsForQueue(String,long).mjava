@@ -1,0 +1,60 @@
+    public List<RTTicket> getTicketsForQueue(final String queueName, long limit) {
+        getSession();
+
+        final GetMethod get = new GetMethod(m_baseURL + "/REST/1.0/search/ticket");
+        final NameValuePair[] ticketGetParams = {
+            new NameValuePair("query", "Queue='" + queueName + "' AND Status='open'"),
+            new NameValuePair("format", "i"),
+            new NameValuePair("orderby", "-id")
+        };
+        get.setQueryString(ticketGetParams);
+
+        final List<RTTicket> tickets = new ArrayList<RTTicket>();
+        final List<Long> ticketIds = new ArrayList<Long>();
+
+        try {
+            final int responseCode = getClient().executeMethod(get);
+            if (responseCode != HttpStatus.SC_OK) {
+                throw new RequestTrackerException("Received a non-200 response code from the server: " + responseCode);
+            } else {
+                final String in = get.getResponseBodyAsString();
+                if (in.contains("does not exist.")) {
+                    return null;
+                }
+                InputStreamReader isr = null;
+                BufferedReader br = null;
+                try {
+                    isr = new InputStreamReader(get.getResponseBodyAsStream());
+                    br = new BufferedReader(isr);
+                    String line = null;
+                    do {
+                        line = br.readLine();
+                        if (line != null && line.startsWith("ticket/")) {
+                            ticketIds.add(Long.parseLong(line.replace("ticket/", "")));
+                        }
+                    } while (line != null);
+                } catch (final Exception e) {
+                    throw new RequestTrackerException("Unable to read ticket IDs from query.", e);
+                } finally {
+                    IOUtils.closeQuietly(br);
+                    IOUtils.closeQuietly(isr);
+                }
+            }
+        } catch (final Exception e) {
+            LogUtils.errorf(this, e, "An exception occurred while getting tickets for queue " + queueName);
+            return null;
+        } finally {
+            get.releaseConnection();
+        }
+
+        for (final Long id : ticketIds) {
+            try {
+                tickets.add(getTicket(id, false));
+            } catch (final RequestTrackerException e) {
+                LogUtils.warnf(this, e, "Unable to retrieve ticket.");
+            }
+        }
+
+        return tickets;
+    }
+

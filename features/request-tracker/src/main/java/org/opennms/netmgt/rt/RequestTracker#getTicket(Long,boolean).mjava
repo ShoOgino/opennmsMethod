@@ -1,0 +1,49 @@
+    public RTTicket getTicket(final Long ticketId, boolean getTextAttachment) throws RequestTrackerException {
+        getSession();
+
+        Map<String, String> attributes = getTicketAttributes(ticketId.toString());
+
+        RTTicket ticket = new RTTicket();
+        if (attributes == null)
+            throw new RequestTrackerException("received no ticket attributes back from RT");
+        final String id = attributes.remove("id").replace("ticket/", "");
+        if (id != null && id.length() > 0) {
+            ticket.setId(Long.valueOf(id));
+        }
+        ticket.setQueue(attributes.remove("queue"));
+        ticket.setCreated(attributes.remove("created"));
+        ticket.setSubject(attributes.remove("subject"));
+        ticket.setText(attributes.remove("text"));
+        ticket.setStatus(attributes.remove("status"));
+
+        if (attributes.containsKey("requestors")) {
+            for (final String requestor : attributes.remove("requestors").split("\\s*,\\s*")) {
+                ticket.addRequestor(requestor);
+            }
+        } else if (attributes.containsKey("requestor")) {
+            ticket.setRequestor(attributes.remove("requestor"));
+        }
+        if (LogUtils.isTraceEnabled(this)) {
+            if (attributes.size() > 0) {
+                LogUtils.tracef(this, "unhandled RT ticket attributes: %s", attributes.keySet().toString());
+            }
+        }
+
+        if (ticket.getText() == null || ticket.getText().equals("") && getTextAttachment) {
+            attributes = getTicketAttributes(ticketId + "/attachments");
+            if (attributes.containsKey("attachments")) {
+                final Matcher matcher = m_inTokensPattern.matcher(attributes.get("attachments"));
+                matcher.find();
+                final String attachmentId = matcher.group(1);
+                if (attachmentId != null && !"".equals(attachmentId)) {
+                    attributes = getTicketAttributes(ticketId + "/attachments/" + attachmentId);
+                    if (attributes.containsKey("content")) {
+                        ticket.setText(attributes.remove("content"));
+                    }
+                }
+                LogUtils.debugf(this, "attachment ID = %s", attachmentId);
+            }
+        }
+        return ticket;
+    }
+
