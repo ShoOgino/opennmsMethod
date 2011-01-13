@@ -5,11 +5,42 @@
                 while (!m_stopped) {
                     try {
                         final Socket s = m_socket.accept();
-                        Thread t;
-                        t = new Thread(new Runnable() {
+                        final Thread t = new Thread(new Runnable() {
                             public void run() {
                                 try {
-                                    handleTCPRequest(s);
+                                    try {
+                                        final InputStream is = s.getInputStream();
+                                        final DataInputStream dataIn = new DataInputStream(is);
+                                        final int inLength = dataIn.readUnsignedShort();
+                                        final byte[] in = new byte[inLength];
+                                        dataIn.readFully(in);
+
+                                        final Message query;
+                                        byte[] response = null;
+                                        try {
+                                            query = new Message(in);
+                                            LogUtils.debugf(this, "received query: %s", query);
+                                            response = generateReply(query, in, in.length, s);
+                                        } catch (final IOException e) {
+                                            response = formerrMessage(in);
+                                        }
+                                        LogUtils.debugf(this, "returned response: %s", response == null? null : new Message(response));
+                                        if (response != null) {
+                                            final DataOutputStream dataOut = new DataOutputStream(s.getOutputStream());
+                                            dataOut.writeShort(response.length);
+                                            dataOut.write(response);
+                                        }
+                                    } catch (final SocketTimeoutException e) {
+                                        throw e;
+                                    } catch (final IOException e) {
+                                        LogUtils.warnf(this, e, "error while processing socket");
+                                    } finally {
+                                        try {
+                                            s.close();
+                                        } catch (final IOException e) {
+                                            LogUtils.warnf(this, e, "unable to close TCP socket");
+                                        }
+                                    }
                                 } catch (final SocketTimeoutException e) {
                                     if (LogUtils.isTraceEnabled(this)) {
                                         LogUtils.tracef(this, e, "timed out waiting for request");
@@ -24,7 +55,7 @@
                         }
                     }
                 }
-            } catch (IOException e) {
+            } catch (final IOException e) {
                 LogUtils.warnf(this, e, "unable to serve socket on %s", addrport(m_addr, m_port));
             } finally {
                 try {
