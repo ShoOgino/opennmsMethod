@@ -1,0 +1,63 @@
+	public boolean isPlatformIPv6Ready() {
+			if (Platform.isWindows()) {
+				String[] requiredHotfixes = { "978338", "947369" };
+
+				final String architecture = System.getenv("PROCESSOR_ARCHITECTURE");
+				final String rawVersion = getStringFromRegistry("CurrentVersion");
+				if (rawVersion == null) {
+					error(null, "Unable to determine Windows version from the registry.");
+					return false;
+				}
+				final Float version = Float.valueOf(rawVersion);
+				if (version < 5.1f) {
+					error(null, "You must be running at least Windows Vista (32-bit) or Windows XP Professional Service Pack 2 (64-bit), but Windows kernel version is only %.1f!", version);
+					return false;
+				}
+				final String rawBuild = getStringFromRegistry("CurrentBuildNumber");
+				Integer build = 0;
+				if (rawBuild != null) {
+					build = Integer.valueOf(rawBuild);
+				}
+				final String csdVersion = getStringFromRegistry("CSDVersion");
+				Integer servicePack = 0;
+				if (csdVersion != null) {
+					final Matcher m = SERVICE_PACK_PATTERN.matcher(csdVersion);
+					if (m.matches()) {
+						servicePack = Integer.valueOf(m.group(1));
+					}
+				}
+
+				// Windows XP
+				if (version < 6.0f) {
+					boolean ok = true;
+					final String productName = getStringFromRegistry("ProductName");
+					if (architecture.equals("x86")) {
+						if (productName == null || !productName.contains("Server 2003")) {
+							error(null, "OpenNMS does not support 32-bit Windows XP.");
+							ok = false;
+						}
+					}
+
+					if (servicePack < 2) {
+						error(null, "OpenNMS requires Service Pack 2 or higher on Windows XP.");
+						ok = false;
+					}
+
+					for (final String hotfix : requiredHotfixes) {
+						if (!keyExists(WinReg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Hotfix\\KB" + hotfix)) {
+							error(null, "OpenNMS requires HotFix KB" + hotfix + " to be installed for IPv6 to function properly on Windows XP or Windows Server 2003." +
+									"  To install it, see the following link: http://support.microsoft.com/?kbid=" + hotfix);
+							ok = false;
+						}
+					}
+					if (!ok) {
+						error(null, "One or more HotFixes was not found.  Please install them and try again.");
+						return false;
+					}
+				}
+				debug(null, "Windows NT version %.1f, build %d (service pack %d)", version, build, servicePack);
+				return true;
+			}
+		return false;
+	}
+
