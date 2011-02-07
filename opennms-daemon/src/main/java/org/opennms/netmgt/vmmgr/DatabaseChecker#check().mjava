@@ -1,10 +1,49 @@
     /**
-     * <p>check</p>
+     * <p>Check whether the data sources in opennms-datasources.xml are valid.</p>
      *
-     * @throws java.sql.SQLException if any.
+     * @throws MissingDataSourceException A required data source was not found in opennms-datasources.xml.
+     * @throws InvalidDataSourceException A required data source could not be connected to.
      */
-    public void check() throws SQLException {
-    	Connection c = DriverManager.getConnection(m_driverUrl, m_driverUser, m_driverPass);
-    	c.close();
+    public void check() throws MissingDataSourceException, InvalidDataSourceException {
+
+        // First, check to make sure the required datasources are there.
+        boolean dataSourcesFound = true;
+        for (final String dataSource : m_required) {
+            if (!m_dataSources.containsKey(dataSource)) {
+                LogUtils.errorf(this, "Required data source '%s' is missing from opennms-datasources.xml", dataSource);
+                dataSourcesFound = false;
+            }
+        }
+        if (!dataSourcesFound) {
+            throw new MissingDataSourceException("OpenNMS is missing one or more data sources required for startup.");
+        }
+
+        // Then, check for the optional ones so we can warn about them going missing.
+        for (final String dataSource : m_optional) {
+            if (!m_dataSources.containsKey(dataSource)) {
+                LogUtils.infof(this, "Data source '%s' is missing from opennms-datasources.xml", dataSource);
+            }
+        }
+        
+        // Finally, try connecting to all data sources, and warn or error as appropriate.
+        for (final JdbcDataSource dataSource : m_dataSources.values()) {
+            final String name = dataSource.getName();
+            if (!m_required.contains(name) && !m_optional.contains(name)) {
+                LogUtils.warnf(this, "Unknown datasource '%s' was found.", name);
+            }
+            try {
+                final Connection connection = DriverManager.getConnection(dataSource.getUrl(), dataSource.getUserName(), dataSource.getPassword());
+                connection.close();
+            } catch (final SQLException e) {
+                final String errorMessage = "Unable to connect to data source '%s' with username '%s', check opennms-datasources.xml and your database permissions.";
+                if (m_required.contains(name)) {
+                    LogUtils.errorf(this, errorMessage, name, dataSource.getUserName());
+                    throw new InvalidDataSourceException("Data source '" + name + "' failed.", e);
+                } else {
+                    LogUtils.warnf(this, errorMessage, name, dataSource.getUserName());
+                }
+            }
+        }
+
     }
 
