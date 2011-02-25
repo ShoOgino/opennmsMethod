@@ -1,0 +1,61 @@
+    protected void createMockRrds() throws Exception {
+        initializeRrd(m_sineFull, new String[] { "a", "b" }, new String[] { "1:4032", "12:1488", "288:366" });
+        initializeRrd(m_variation, new String[] { "a", "b" }, new String[] { "1:4032", "12:1488", "288:366" });
+        initializeRrd(m_sineSource, new String[] { "a" }, new String[] { "1:8928", "12:8784" });
+        initializeRrd(m_overlapping, new String[] { "c", "d", "a" }, new String[] { "1:4032", "12:1488", "288:366" });
+
+        RrdDb sineFull    = new RrdDb(m_sineFull);
+        RrdDb sineSource  = new RrdDb(m_sineSource);
+        RrdDb variation   = new RrdDb(m_variation);
+        RrdDb overlapping = new RrdDb(m_overlapping);
+
+        long start = (m_baseTime - (SECONDS_PER_DAY * 56L));
+        Function bigSine = new Sin(start, 15, -10, SECONDS_PER_DAY * 7L);
+        Function smallSine = new Sin(start, 7, 5, SECONDS_PER_DAY * 2L);
+
+        Function bigSineCounter = new Counter(0, bigSine);
+        Function smallSineCounter = new Counter(0, smallSine);
+
+        long timestamp = start - 300L;
+        for(; timestamp <= (m_baseTime - (SECONDS_PER_DAY * 28L)); timestamp += 300L) {
+            Sample sample = sineSource.createSample(timestamp);
+            double value = bigSineCounter.evaluate(timestamp);
+            sample.setValue("a", value);
+            sample.update();
+        }
+        for(; timestamp <= m_baseTime; timestamp += 300L) {
+            Sample sample = sineFull.createSample(timestamp);
+            double value = smallSineCounter.evaluate(timestamp);
+            sample.setValue("a", value);
+            sample.update();
+        }
+
+        final long end = getMidnightInSeconds(m_baseTime);
+        start = (end - SECONDS_PER_YEAR);
+        Function sequence = new AverageSequence(300, 10);
+        Function sequenceCounter = new Counter(0, sequence);
+        Function overlappingSequence = new AverageSequence(300, 20);
+        Function overlappingCounter = new Counter(0, overlappingSequence);
+        timestamp = start - 300L;
+        for (; timestamp <= end; timestamp += 300L) {
+            Sample sample = variation.createSample(timestamp);
+            double value = sequenceCounter.evaluate(timestamp);
+            sample.setValue("a", value);
+            sample.update();
+            
+            sample = overlapping.createSample(timestamp);
+            value = overlappingCounter.evaluate(timestamp);
+            sample.setValue("d", Double.NaN);
+            if (((timestamp % 1200) / 300) < 2) {
+                sample.setValue("a", value);
+            }
+            sample.setValue("c", value);
+            sample.update();
+        }
+        
+        sineFull.close();
+        sineSource.close();
+        variation.close();
+        overlapping.close();
+    }
+

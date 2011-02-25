@@ -1,0 +1,33 @@
+    public void write(final RrdEntry entry) throws IOException, RrdException {
+        final Sample s = m_rrd.createSample(entry.getTimestamp());
+        final double[] values = new double[entry.getDsNames().size()];
+        int i = 0;
+        for (final String dsName : entry.getDsNames()) {
+            if (dsName != null) {
+                Double value = entry.getValue(dsName);
+                final Datasource dataSource = m_rrd.getDatasource(dsName);
+                if (value != null) {
+                    if (dataSource.getDsType().equals("COUNTER")) {
+                        final double counterValue = getLastValue(dsName) + (value * m_step);
+                        if (Double.isInfinite(counterValue)) {
+                            // if we've overrun the counter, calculate our own counter loop
+                            final BigDecimal bigValue = BigDecimal.valueOf(value);
+                            final BigDecimal bigLastValue = BigDecimal.valueOf(getLastValue(dsName));
+                            final BigDecimal bigStep = BigDecimal.valueOf(m_step);
+                            final BigDecimal newValue = bigLastValue.multiply(bigStep).add(bigValue).subtract(m_doubleMax);
+                            value = newValue.doubleValue();
+                        } else {
+                            value = counterValue;
+                        }
+                    }
+                    values[i] = value;
+                    setLastValue(dsName, value);
+                }
+            }
+            i++;
+        }
+        s.setValues(values);
+//        LogUtils.debugf(this, "writing sample to %s: %s", outputRrd, s);
+        s.update();
+    }
+
