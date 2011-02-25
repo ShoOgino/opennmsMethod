@@ -1,0 +1,41 @@
+    private void createMockVariationRrds(final RrdBackendFactory factory) throws RrdException, IOException {
+        final long end = getMidnightInSeconds(m_baseTime);
+        initializeRrd(m_variation, new String[] { "a", "b" }, new String[] { "1:4032", "12:1488", "288:366" });
+        initializeRrd(m_overlapping, new String[] { "c", "d", "a" }, new String[] { "1:4032", "12:1488", "288:366" });
+
+        final RrdDb variation;
+        final RrdDb overlapping;
+        if (factory == null) {
+            variation   = new RrdDb(m_variation);
+            overlapping = new RrdDb(m_overlapping);
+        } else {
+            variation   = new RrdDb(m_variation.getAbsolutePath(), factory);
+            overlapping = new RrdDb(m_overlapping.getAbsolutePath(), factory);
+        }
+
+        final long start = (end - SECONDS_PER_YEAR);
+        final Function sequence = new AverageSequence(300, 10);
+        final Function sequenceCounter = new Counter(0, sequence);
+        final Function overlappingSequence = new AverageSequence(300, 20);
+        final Function overlappingCounter = new Counter(0, overlappingSequence);
+        long timestamp = start - 300L;
+        for (; timestamp <= end; timestamp += 300L) {
+            final Sample variationSample = variation.createSample(timestamp);
+            final double variationValue = sequenceCounter.evaluate(timestamp);
+            variationSample.setValue("a", variationValue);
+            variationSample.update();
+            
+            final Sample overlappingSample = overlapping.createSample(timestamp);
+            final double overlappingValue = overlappingCounter.evaluate(timestamp);
+            overlappingSample.setValue("d", Double.NaN);
+            if (((timestamp % 1200) / 300) < 2) {
+                overlappingSample.setValue("a", overlappingValue);
+            }
+            overlappingSample.setValue("c", overlappingValue);
+            overlappingSample.update();
+        }
+        
+        variation.close();
+        overlapping.close();
+    }
+
