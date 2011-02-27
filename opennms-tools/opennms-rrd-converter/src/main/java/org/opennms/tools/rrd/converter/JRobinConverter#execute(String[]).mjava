@@ -1,6 +1,6 @@
     public void execute(final String[] args) throws ParseException, ConverterException, RrdException {
         if (args.length == 0) {
-            System.err.println(new Date() + ": no directory specified!");
+            LogUtils.errorf(this, "no files or directories specified!");
             System.exit(1);
         }
 
@@ -19,58 +19,45 @@
         final Set<File> rrds = Collections.synchronizedSet(new TreeSet<File>());
 
         if (cmd.hasOption("h")) {
-            new HelpFormatter().printHelp("jrobin-converter", options);
+            new HelpFormatter().printHelp("jrobin-converter [options] [file-or-directory1] [...file-or-directoryN]", options);
             System.exit(1);
         }
         if (cmd.getArgList().size() == 0) {
             LogUtils.infof(this, "No files or directories specified!  Exiting.");
             System.exit(0);
         }
-        int argCount = 0;
-        int total = cmd.getArgList().size();
-        for (final Object arg : cmd.getArgList()) {
-            LogUtils.infof(this, "Scanning %s for storeByGroup data (%d/%d)", arg, ++argCount, total);
-            final File f = new File((String)arg);
-            if (f.exists()) {
-                if (f.isDirectory()) {
-                    rrds.addAll(findGroupRrds(f));
-                } else {
-                    rrds.add(f);
-                }
-            }
-        }
 
         int threads = 5;
         if (cmd.hasOption("t")) {
             try {
-                Integer t = Integer.valueOf(cmd.getOptionValue("t"));
-                threads = t;
+                threads = Integer.valueOf(cmd.getOptionValue("t"));
             } catch (final NumberFormatException e) {
                 LogUtils.warnf(JRobinConverter.class, e, "failed to format -t %s to a number", cmd.getOptionValue("t"));
             }
         }
+        final ExecutorService executor = Executors.newFixedThreadPool(threads);
 
-        if (rrds.size() == 0) {
+        for (final Object arg : cmd.getArgList()) {
+            LogUtils.infof(this, "Scanning %s for storeByGroup data (%d RRDs found)", arg, m_total.get());
+            final File f = new File((String)arg);
+            if (f.exists()) {
+                if (f.isDirectory()) {
+                    rrds.addAll(findGroupRrds(f));
+                    for (final File rrdFile : findGroupRrds(f)) {
+                        consolidateRrd(executor, rrdFile);
+                    }
+                } else {
+                    consolidateRrd(executor, f);
+                }
+            }
+        }
+        LogUtils.infof(this, "Finished scanning for storeByGroup RRDs (%d RRDs found)", m_total.get());
+
+        if (m_total.get() == 0) {
             System.err.println(new Date() + ": error, no storeByGroup RRDs found!");
             System.exit(1);
         }
         
-        try {
-            final ExecutorService executor = Executors.newFixedThreadPool(threads);
-            JRobinConsolidationRunnable.setTotal(rrds.size());
-            int count = 1;
-            for (final File rrdFile : rrds) {
-                executor.execute(new JRobinConsolidationRunnable(rrdFile, count++, this));
-                try {
-                    Thread.sleep(10);
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            executor.shutdown();
-        } catch (final Exception e) {
-            System.err.println(new Date() + ": error while converting RRDs");
-            e.printStackTrace();
-        }
+        executor.shutdown();
     }
 
