@@ -16,21 +16,48 @@
             return;
         }
 
-        File cfgFile = ConfigFileConstants.getFile(ConfigFileConstants.OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
-        final C3P0ConnectionFactory dataSource = new C3P0ConnectionFactory(cfgFile.getPath(), dsName);
-        
+        String factoryClass = null;
+        final File cfgFile = ConfigFileConstants.getFile(ConfigFileConstants.OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+    	FileInputStream fileInputStream = null;
+    	try {
+    		fileInputStream = new FileInputStream(cfgFile);
+    		final DataSourceConfiguration dsc = CastorUtils.unmarshal(DataSourceConfiguration.class, fileInputStream, CastorUtils.PRESERVE_WHITESPACE);
+    		factoryClass = dsc.getFactory();
+    	} finally {
+    		IOUtils.closeQuietly(fileInputStream);
+    	}
+
+    	final String configPath = cfgFile.getPath();
+    	ClosableDataSource dataSource = null;
+		final String defaultClassName = DEFAULT_FACTORY_CLASS.getName();
+    	try {
+    		final Class<?> clazz = Class.forName(factoryClass);
+    		final Constructor<?> constructor = clazz.getConstructor(new Class<?>[] { String.class, String.class });
+    		dataSource = (ClosableDataSource)constructor.newInstance(new Object[] { configPath, dsName });
+    	} catch (final Throwable t) {
+    		LogUtils.debugf(DataSourceFactory.class, t, "Unable to load %s, falling back to the default dataSource (%s)", factoryClass, defaultClassName);
+    		try {
+				final Constructor<?> constructor = ((Class<?>) DEFAULT_FACTORY_CLASS).getConstructor(new Class<?>[] { String.class, String.class });
+				dataSource = (ClosableDataSource)constructor.newInstance(new Object[] { configPath, dsName });
+			} catch (final Throwable cause) {
+				LogUtils.errorf(DataSourceFactory.class, cause, "Unable to load %s.", DEFAULT_FACTORY_CLASS.getName());
+				throw new SQLException("Unable to load " + defaultClassName + ".", cause);
+			}
+    	}
+
+    	final ClosableDataSource runnableDs = dataSource;
         m_closers.add(new Runnable() {
             public void run() {
                 try {
-                    dataSource.close();
-                } catch (Throwable e) {
-                    ThreadCategory.getInstance(DataSourceFactory.class).info("Unabled to close datasource " + dsName + ": " + e, e);
+                    runnableDs.close();
+                } catch (final Throwable cause) {
+                	LogUtils.infof(DataSourceFactory.class, cause, "Unable to close datasource %s.", dsName);
                 }
             }
         });
         
         // Springframework provided proxies that make working with transactions much easier
-        LazyConnectionDataSourceProxy lazyProxy = new LazyConnectionDataSourceProxy(dataSource);
+        final LazyConnectionDataSourceProxy lazyProxy = new LazyConnectionDataSourceProxy(dataSource);
         
         setInstance(dsName, lazyProxy);
     }
