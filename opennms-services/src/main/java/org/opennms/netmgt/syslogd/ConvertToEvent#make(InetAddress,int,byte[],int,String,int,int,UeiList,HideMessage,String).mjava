@@ -67,15 +67,17 @@
             throw new MessageDiscardedException(String.format("Unable to parse '%s'", e.m_eventXML));
         }
         // Build a basic event out of the syslog message
+        final String priorityTxt = SyslogDefs.getPriorityName(message.getSeverity());
+        final String facilityTxt = SyslogDefs.getFacilityName(message.getFacility());
 
-        final Event event = new Event();
-        event.setSource("syslogd");
+        EventBuilder bldr = new EventBuilder("uei.opennms.org/syslogd/" + facilityTxt + "/" + priorityTxt, "syslogd");
+        bldr.setCreationTime(message.getDate());
 
         // Set event host
         try {
-            event.setHost(InetAddress.getLocalHost().getHostName());
+            bldr.setHost(InetAddress.getLocalHost().getHostName());
         } catch (UnknownHostException uhE) {
-            event.setHost("unresolved.host");
+            bldr.setHost("unresolved.host");
             LogUtils.warnf(ConvertToEvent.class, uhE, "Failed to resolve local hostname.");
         }
 
@@ -84,23 +86,14 @@
             // Set nodeId
             long nodeId = SyslogdIPMgr.getNodeId(hostAddress);
             if (nodeId != -1) {
-                event.setNodeid(nodeId);
+                bldr.setNodeid(nodeId);
             }
 
-            event.setInterface(hostAddress);
+            bldr.setInterface(hostAddress);
         }
+        
+        bldr.setLogDest("logndisplay");
 
-        event.setCreationTime(EventConstants.formatToString(message.getDate()));
-        event.setTime(EventConstants.formatToString(new Date()));
-        final Logmsg logmsg = new Logmsg();
-        logmsg.setDest("logndisplay");
-
-        final String priorityTxt = SyslogDefs.getPriorityName(message.getSeverity());
-        final String facilityTxt = SyslogDefs.getFacilityName(message.getFacility());
-
-        //Check for UEI matching or allow a simple standard one.
-
-        event.setUei("uei.opennms.org/syslogd/" + facilityTxt + "/" + priorityTxt);
 
         // We will also here find out if, the host needs to
         // be replaced, the message matched to a UEI, and
@@ -119,11 +112,6 @@
         * node to match against nodeId.
          */
 
-        // We will need these shortly
-        final Parms eventParms = new Parms();
-        Parm eventParm = null;
-        Value parmValue = null;
-        
         Pattern msgPat = null;
         Matcher msgMat = null;
 
@@ -137,11 +125,11 @@
         } else {
             for (final UeiMatch uei : ueiMatch) {
                 if (uei.getMatch().getType().equals("substr")) {
-                    if (matchSubstring(discardUei, event, fullText, uei)) {
+                    if (matchSubstring(discardUei, bldr, fullText, uei)) {
                 	    break;
                 	}
                 } else if (uei.getMatch().getType().equals("regex")) {
-                    if (matchRegex(message, uei, event, eventParms, discardUei)) {
+                    if (matchRegex(message, uei, bldr, discardUei)) {
                         break;
                     }
                 }
@@ -183,60 +171,23 @@
         }
 
         // Using parms provides configurability.
-        logmsg.setContent(message.getMessage());
-        event.setLogmsg(logmsg);
+        bldr.setLogMessage(message.getMessage());
 
-        // Add appropriate parms
-        eventParm = new Parm();
-        eventParm.setParmName("syslogmessage");
-        parmValue = new Value();
-        parmValue.setContent(message.getMessage());
-        eventParm.setValue(parmValue);
-        eventParms.addParm(eventParm);
-
-        eventParm = new Parm();
-        eventParm.setParmName("severity");
-        parmValue = new Value();
-        parmValue.setContent("" + priorityTxt);
-        eventParm.setValue(parmValue);
-        eventParms.addParm(eventParm);
-
-        eventParm = new Parm();
-        eventParm.setParmName("timestamp");
-        parmValue = new Value();
-        parmValue.setContent(message.getSyslogFormattedDate());
-        eventParm.setValue(parmValue);
-        eventParms.addParm(eventParm);
-
+        bldr.addParam("syslogmessage", message.getMessage());
+        bldr.addParam("severity", "" + priorityTxt);
+        bldr.addParam("timestamp", message.getSyslogFormattedDate());
+        
         if (message.getProcessName() != null) {
-            eventParm = new Parm();
-            eventParm.setParmName("process");
-            parmValue = new Value();
-            parmValue.setContent(message.getProcessName());
-            eventParm.setValue(parmValue);
-            eventParms.addParm(eventParm);
+            bldr.addParam("process", message.getProcessName());
         }
 
-        eventParm = new Parm();
-        eventParm.setParmName("service");
-        parmValue = new Value();
-        parmValue.setContent("" + facilityTxt);
-        eventParm.setValue(parmValue);
-        eventParms.addParm(eventParm);
+        bldr.addParam("service", "" + facilityTxt);
 
         if (message.getProcessId() != null) {
-            eventParm = new Parm();
-            eventParm.setParmName("processid");
-            parmValue = new Value();
-            parmValue.setContent(message.getProcessId().toString());
-            eventParm.setValue(parmValue);
-            eventParms.addParm(eventParm);
+            bldr.addParam("processid", message.getProcessId().toString());
         }
 
-        // Good thing(TM)
-        event.setParms(eventParms);
-
-        e.m_event = event;
+        e.m_event = bldr.getEvent();
         return e;
     }
 
