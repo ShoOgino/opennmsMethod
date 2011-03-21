@@ -4,39 +4,25 @@
      * @param migration a {@link org.opennms.core.schema.Migration} object.
      * @throws org.opennms.core.schema.MigrationException if any.
      */
-    public void migrate(Migration migration) throws MigrationException {
-        Connection connection;
-        Database database;
-
-        SpringFileOpener sfo = new SpringFileOpener();
-        sfo.setResourceLoader(getMigrationResourceLoader(migration));
+    public void migrate(final Migration migration) throws MigrationException {
+        Connection connection = null;
 
         try {
             connection = m_dataSource.getConnection();
-        } catch (Throwable e) {
-            throw new MigrationException("unable to get a database connection from the datasource", e);
-        }
+            final DatabaseConnection dbConnection = new JdbcConnection(connection);
 
-        try {
-            database = DatabaseFactory.getInstance().findCorrectDatabaseImplementation(connection);
-        } catch (Throwable e) {
-            cleanUpDatabase(connection, null, null);
-            throw new MigrationException("unable to determine the Liquibase database object", e);
-        }
+            final Liquibase liquibase = new Liquibase( migration.getChangeLog(), new SpringResourceAccessor(), dbConnection );
+            liquibase.setChangeLogParameter("install.database.admin.user", migration.getAdminUser());
+            liquibase.setChangeLogParameter("install.database.admin.password", migration.getAdminPassword());
+            liquibase.setChangeLogParameter("install.database.user", migration.getDatabaseUser());
+            liquibase.getDatabase().setDefaultSchemaName(migration.getSchemaName());
 
-        Liquibase liquibase = new Liquibase( migration.getChangeLog(), sfo, database );
-        liquibase.setChangeLogParameterValue("install.database.admin.user", migration.getAdminUser());
-        liquibase.setChangeLogParameterValue("install.database.admin.password", migration.getAdminPassword());
-        liquibase.setChangeLogParameterValue("install.database.user", migration.getDatabaseUser());
-
-        final String contexts = System.getProperty("opennms.contexts", "production");
-        try {
+            final String contexts = System.getProperty("opennms.contexts", "production");
             liquibase.update(contexts);
-        } catch (Throwable e) {
-            cleanUpDatabase(connection, null, null);
-            throw new MigrationException("unable to update the database", e);
+        } catch (final Throwable e) {
+            throw new MigrationException("unable to migrate the database", e);
+        } finally {
+        	cleanUpDatabase(connection, null, null);
         }
-
-        cleanUpDatabase(connection, null, null);
     }
 
