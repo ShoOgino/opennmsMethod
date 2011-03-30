@@ -1,0 +1,38 @@
+    private PollStatus pollDNS(TimeoutTracker timeoutTracker, int port, InetAddress addr, String lookup) {
+            for (timeoutTracker.reset(); timeoutTracker.shouldRetry(); timeoutTracker.nextAttempt()) {
+                try {
+                    timeoutTracker.startAttempt();
+                    
+                    Lookup l = new Lookup(lookup);
+                    SimpleResolver resolver = new SimpleResolver(addr.getHostAddress());
+                    resolver.setPort(port);
+                    double timeout = timeoutTracker.getSoTimeout()/1000;
+                    resolver.setTimeout((timeout < 1 ? 1 : (int) timeout));
+                    l.setResolver(resolver);
+                    l.run();
+
+                    double responseTime = timeoutTracker.elapsedTimeInMillis();
+                    if(l.getResult() == Lookup.SUCCESSFUL) {
+                        return logUp(Level.DEBUG, responseTime, "valid DNS request received, responseTime= " + responseTime + "ms");
+                    }else if(l.getResult() == Lookup.HOST_NOT_FOUND) {
+                        System.err.println(l.getErrorString());
+                        return logUp(Level.DEBUG, responseTime, "host not found on DNS, responseTime= " + responseTime + "ms");
+                    }else if(l.getResult() == Lookup.TRY_AGAIN) {
+                        if(!timeoutTracker.shouldRetry()) {
+                            return logDown(Level.DEBUG, "Never received valid DNS response for address: " + addr);
+                        }
+                    }else if(l.getResult() == Lookup.TYPE_NOT_FOUND) {
+
+                    }else if(l.getResult() == Lookup.UNRECOVERABLE) {
+                        System.err.println(l.getErrorString());
+                        return logDown(Level.DEBUG, "Never received valid DNS response for address: " + addr);
+                    }
+
+                } catch (IOException ex) {
+                    return logDown(Level.WARN, "IOException while polling address: " + addr + " " + ex.getMessage(), ex);
+                }
+            }
+       
+        return logDown(Level.DEBUG, "Never received valid DNS response for address: " + addr);
+    }
+
