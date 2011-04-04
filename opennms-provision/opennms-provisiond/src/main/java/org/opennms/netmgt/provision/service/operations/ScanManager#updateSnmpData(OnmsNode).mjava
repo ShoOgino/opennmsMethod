@@ -1,34 +1,37 @@
-    void updateSnmpData(OnmsNode node) {
+    void updateSnmpData(final OnmsNode node) {
         
         try {
 
             m_systemGroup = new SystemGroup(m_address);
 
-            Set<SnmpInstId> ipAddrs = new TreeSet<SnmpInstId>();
-            for(OnmsIpInterface iface : node.getIpInterfaces()) {
-                // @ipv6
-                InetAddress addr = iface.getIpAddress();
-//                if (addr instanceof Inet4Address) {
-                    ipAddrs.add(new SnmpInstId(InetAddressUtils.str(addr)));
-//                }
+            final Set<SnmpInstId> ipAddrs = new TreeSet<SnmpInstId>();
+            final Set<InetAddress> ipAddresses = new HashSet<InetAddress>();
+
+            for(final OnmsIpInterface iface : node.getIpInterfaces()) {
+            	final InetAddress addr = iface.getIpAddress();
+
+            	if (addr != null && addr instanceof Inet4Address) {
+            		ipAddrs.add(new SnmpInstId(InetAddressUtils.toOid(addr)));
+            	}
+
+            	ipAddresses.add(addr);
             }
 
             m_ipAddrTable = new IpAddrTable(m_address, ipAddrs);
+            m_ipAddressTable = IpAddressTable.createTable(m_address, ipAddresses);
 
-            SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(m_address);
-            SnmpWalker walker = SnmpUtils.createWalker(agentConfig, "system/ipAddrTable", m_systemGroup, m_ipAddrTable);
+            final SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(m_address);
+            SnmpWalker walker = SnmpUtils.createWalker(agentConfig, "system/ipAddrTable/ipAddressTable", m_systemGroup, m_ipAddrTable, m_ipAddressTable);
+
             walker.start();
-
             walker.waitFor();
 
-            Set<SnmpInstId> ifIndices = new TreeSet<SnmpInstId>();
+            final Set<SnmpInstId> ifIndices = new TreeSet<SnmpInstId>();
 
-            for(Integer ifIndex : m_ipAddrTable.getIfIndices()) {
+            for(final Integer ifIndex : m_ipAddrTable.getIfIndices()) {
                 ifIndices.add(new SnmpInstId(ifIndex));
             }
 
-
-            
             m_ifTable = new IfTable(m_address, ifIndices);
             m_ifXTable = new IfXTable(m_address, ifIndices);
 
@@ -39,18 +42,21 @@
 
             m_systemGroup.updateSnmpDataForNode(node);
         
-            for(SnmpInstId ifIndex : ifIndices) {
+            for(final SnmpInstId ifIndex : ifIndices) {
                 m_ifTable.updateSnmpInterfaceData(node, ifIndex.toInt());
             }
 
-            for(SnmpInstId ifIndex : ifIndices) {
+            for(final SnmpInstId ifIndex : ifIndices) {
                 m_ifXTable.updateSnmpInterfaceData(node, ifIndex.toInt());
             }
 
-            for(SnmpInstId ipAddr : ipAddrs) {   
+            for(final SnmpInstId ipAddr : ipAddrs) {   
                 m_ipAddrTable.updateIpInterfaceData(node, ipAddr.toString());
             }
 
+            for (final InetAddress addr : ipAddresses) {
+            	m_ipAddressTable.updateIpInterfaceData(node, InetAddressUtils.str(addr));
+            }
         } catch (final InterruptedException e) {
             LogUtils.infof(this, e, "thread interrupted while updating SNMP data");
             Thread.currentThread().interrupt();
