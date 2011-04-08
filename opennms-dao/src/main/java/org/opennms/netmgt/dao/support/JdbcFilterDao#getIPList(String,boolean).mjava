@@ -1,62 +1,55 @@
     private List<String> getIPList(final String rule, final boolean filterDeleted) throws FilterParseException {
+    	final List<String> resultList = new ArrayList<String>();
+        String sqlString;
+
         LogUtils.debugf(this, "Filter.getIPList(%s)", rule);
 
-        return m_transactionTemplate.execute(new TransactionCallback<List<String>>() {
+        // get the database connection
+        Connection conn = null;
+        final DBUtils d = new DBUtils(getClass());
+        try {
+            // parse the rule and get the sql select statement
+            sqlString = getSQLStatement(rule);
+            if (filterDeleted) {
+            	if (!sqlString.contains("isManaged")) {
+            		sqlString += " AND ipInterface.isManaged != 'D'";
+            	}
+            }
 
-			@Override
-			public List<String> doInTransaction(final TransactionStatus status) {
-		    	final List<String> resultList = new ArrayList<String>();
+            conn = getDataSource().getConnection();
+            d.watch(conn);
 
-		        // get the database connection
-		        Connection conn = null;
-		        final DBUtils d = new DBUtils(getClass());
-		        try {
-		            // parse the rule and get the sql select statement
-		            String sqlString = getSQLStatement(rule);
-		            if (filterDeleted) {
-		            	if (!sqlString.contains("isManaged")) {
-		            		sqlString += " AND ipInterface.isManaged != 'D'";
-		            	}
-		            }
+            LogUtils.debugf(this, "Filter.getIPList(%s): SQL statement: %s", rule, sqlString);
 
-		            conn = DataSourceUtils.getConnection(getDataSource());
+            // execute query and return the list of ip addresses
+            final Statement stmt = conn.createStatement();
+            d.watch(stmt);
 
-		            LogUtils.debugf(this, "Filter.getIPList(%s): SQL statement: %s", rule, sqlString);
+            final ResultSet rset = stmt.executeQuery(sqlString);
+            d.watch(rset);
 
-		            // execute query and return the list of ip addresses
-		            final Statement stmt = conn.createStatement();
-		            d.watch(stmt);
+            // fill up the array list if the result set has values
+            if (rset != null) {
+                // Iterate through the result and build the array list
+                while (rset.next()) {
+                    resultList.add(InetAddressUtils.normalize(rset.getString(1)));
+                }
+            }
 
-		            final ResultSet rset = stmt.executeQuery(sqlString);
-		            d.watch(rset);
+        } catch (final FilterParseException e) {
+            LogUtils.warnf(this, e, "Filter Parse Exception occurred getting IP List.");
+            throw new FilterParseException("Filter Parse Exception occurred getting IP List: " + e.getLocalizedMessage(), e);
+        } catch (final SQLException e) {
+            LogUtils.warnf(this, e, "SQL Exception occurred getting IP List.");
+            throw new FilterParseException("SQL Exception occurred getting IP List: " + e.getLocalizedMessage(), e);
+        } catch (final Throwable e) {
+            LogUtils.errorf(this, e, "Exception getting database connection.");
+            throw new UndeclaredThrowableException(e);
+        } finally {
+            d.cleanUp();
+        }
 
-		            // fill up the array list if the result set has values
-		            if (rset != null) {
-		                // Iterate through the result and build the array list
-		                while (rset.next()) {
-		                    resultList.add(InetAddressUtils.normalize(rset.getString(1)));
-		                }
-		            }
-
-		        } catch (final FilterParseException e) {
-		            LogUtils.warnf(this, e, "Filter Parse Exception occurred getting IP List.");
-		            throw new FilterParseException("Filter Parse Exception occurred getting IP List: " + e.getLocalizedMessage(), e);
-		        } catch (final SQLException e) {
-		            LogUtils.warnf(this, e, "SQL Exception occurred getting IP List.");
-		            throw new FilterParseException("SQL Exception occurred getting IP List: " + e.getLocalizedMessage(), e);
-		        } catch (final Throwable e) {
-		            LogUtils.errorf(this, e, "Exception getting database connection.");
-		            throw new UndeclaredThrowableException(e);
-		        } finally {
-		            d.cleanUp();
-		        	if (conn != null) {
-		        		DataSourceUtils.releaseConnection(conn, getDataSource());
-		        	}
-		        }
-
-		        LogUtils.debugf(this, "Filter.getIPList(%s): resultList = %s", rule, resultList);
-		        return resultList;
-			}
-		});
+        LogUtils.debugf(this, "Filter.getIPList(%s): resultList = %s", rule, resultList);
+        return resultList;
     }
 
