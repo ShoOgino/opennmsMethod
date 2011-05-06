@@ -1,0 +1,71 @@
+    /**
+     * After a mailbox has been opened, search through the retrieved messages
+     * for a matching subject.
+     * 
+     * @param mailParms
+     * @param mailFolder
+     * @return a PollStatus indicative of the success of matching a subject or just retieving
+     *         mail folder contents... dependent on configuration.
+     */
+    private PollStatus processMailSubject(final MailTransportParameters mailParms, final Folder mailFolder) {
+        PollStatus status = PollStatus.unknown();
+        try {
+        	final String subject = computeMatchingSubject(mailParms);
+            if (mailFolder.isOpen() && subject != null) {
+            	final Message[] mailMessages = mailFolder.getMessages();
+                final SearchTerm searchTerm = new SubjectTerm(subject);
+                final SearchTerm deleteTerm = new HeaderTerm(MTM_HEADER_KEY, m_headerValue);
+
+                LogUtils.debugf(this, "searchMailSubject: searching %d message(s) for subject '%s'", mailMessages.length, subject);
+
+                boolean delete = false;
+                boolean found = false;
+                for (int i = 1; i <= mailMessages.length; i++) {
+                	final Message mailMessage = mailFolder.getMessage(i);
+
+                	LogUtils.debugf(this, "searchMailSubject: retrieved message subject '%s'", mailMessage.getSubject());
+
+                    if (mailMessage.match(searchTerm)) {
+                        found = true;
+                        LogUtils.debugf(this, "searchMailSubject: message with subject '%s' found.", subject);
+                        
+                        if (mailParms.isEnd2EndTestInProgress()) {
+                            if (!delete) LogUtils.debugf(this, "searchMailSubject: flagging message with subject '%s' for deletion for end2end test.", subject);
+                            delete = true;
+                        }
+                    }
+
+                	final boolean deleteAllMail = mailParms.getReadTest().isDeleteAllMail();
+					final boolean foundMTMHeader = mailMessage.match(deleteTerm);
+					LogUtils.debugf(this, "searchMailSubject: deleteAllMail = %s, MTM header found = %s", Boolean.toString(deleteAllMail), Boolean.toString(foundMTMHeader));
+					
+					if (deleteAllMail) {
+						if (!delete) LogUtils.debugf(this, "searchMailSubject: flagging message with subject '%s' for deletion because deleteAllMail is set.", subject);
+						delete = true;
+					} else if (foundMTMHeader) {
+						if (!delete) LogUtils.debugf(this, "searchMailSubject: flagging message with subject '%s' for deletion because we sent it (found header %s=%s)", subject, MTM_HEADER_KEY, m_headerValue);
+						delete = true;
+					}
+					
+					if (delete) {
+						mailMessage.setFlag(Flag.DELETED, true);
+					}
+                	
+                	// since we want to delete old messages matchin MTM_HEADER_KEY, we can't break early
+                	// if (found) break;
+                }
+
+                if (!found) {
+                	LogUtils.debugf(this, "searchMailSubject: message with subject: '%s' NOT found.", subject);
+                    status = PollStatus.down("searchMailSubject: matching test message: '"+subject+"', not found.");
+                } else {
+                    status = PollStatus.available();
+                }
+            }
+        } catch (final MessagingException e) {
+            return PollStatus.down(e.getLocalizedMessage());
+        }
+
+        return status;
+    }
+
