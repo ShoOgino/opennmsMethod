@@ -1,0 +1,54 @@
+	private InetAddress determineProxyAddress(Map<String, Object> parameters, MonitoredService svc) {
+		LogUtils.debugf(getClass(), "Determining the proxy address on which to set up the ciscoPingEntry for target interface %s", svc.getAddress());
+		OnmsNode proxyNode = null;
+		InetAddress proxyAddress = null;
+		String proxyNodeId = ParameterMap.getKeyedString(parameters, PARM_PROXY_NODE_ID, null);
+		String proxyNodeFS = ParameterMap.getKeyedString(parameters, PARM_PROXY_FOREIGN_SOURCE, null);
+		String proxyNodeFI = ParameterMap.getKeyedString(parameters, PARM_PROXY_FOREIGN_ID, null);
+		
+		String rawProxyIpAddr = ParameterMap.getKeyedString(parameters, PARM_PROXY_IP_ADDR, null);
+		String proxyIpAddr = rawProxyIpAddr;
+		if (rawProxyIpAddr != null) {
+			proxyIpAddr = PropertiesUtils.substitute(rawProxyIpAddr, getServiceProperties(svc));
+			LogUtils.debugf(getClass(), "Expanded value '%s' of parameter %s to '%s' for service %s on interface %s", rawProxyIpAddr, PARM_PROXY_IP_ADDR, proxyIpAddr, svc.getSvcName(), svc.getAddress());
+		}
+		
+		/* If we have a foreign-source and foreign-id, short circuit to use that */
+		if (proxyNodeFS != null && !proxyNodeFS.equals("") && proxyNodeFI != null && !proxyNodeFI.equals("")) {
+			LogUtils.debugf(getClass(), "Trying to look up proxy node with foreign-source %s, foreign-id %s for target interface %s", proxyNodeFS, proxyNodeFI, svc.getAddress());
+			proxyNode = s_nodeDao.findByForeignId(proxyNodeFS, proxyNodeFI);
+			LogUtils.debugf(getClass(), "Found a node via foreign-source / foreign-id '%s'/'%s' to use as proxy", proxyNodeFS, proxyNodeFI);
+			if (proxyNode != null && proxyNode.getPrimaryInterface() != null) proxyAddress = proxyNode.getPrimaryInterface().getInetAddress();
+		}
+		if (proxyAddress != null) {
+			LogUtils.infof(getClass(), "Using address %s from node '%s':'%s' as proxy for service '%s' on interface %s", proxyAddress, proxyNodeFS, proxyNodeFI, svc.getSvcName(), svc.getIpAddr());
+			return proxyAddress;
+		}
+		
+		/* No match with foreign-source / foreign-id?  Try with a node ID */
+		if (proxyNodeId != null && Integer.valueOf(proxyNodeId) != null) {
+			LogUtils.debugf(getClass(), "Trying to look up proxy node with database ID %d for target interface %s", proxyNodeId, svc.getAddress());
+			proxyNode = s_nodeDao.get(Integer.valueOf(proxyNodeId));
+			if (proxyNode != null && proxyNode.getPrimaryInterface() != null) proxyAddress = proxyNode.getPrimaryInterface().getInetAddress();
+		}
+		if (proxyAddress != null) {
+			LogUtils.infof(getClass(), "Using address %s from node with DBID %s as proxy for service '%s' on interface %s", proxyAddress, proxyNodeId, svc.getSvcName(), svc.getIpAddr());
+			return proxyAddress;
+		}
+		
+		/* No match with any node criteria?  Try for a plain old IP address. */
+		LogUtils.infof(getClass(), "Trying to use address %s as proxy-ping agent address for target interface %s", proxyIpAddr, svc.getAddress());
+		try {
+			if (!"".equals(proxyIpAddr) && InetAddress.getByName(proxyIpAddr) != null) {
+				proxyAddress = InetAddress.getByName(proxyIpAddr);
+			}
+		} catch (UnknownHostException uhe) {}
+		if (proxyAddress != null) {
+			LogUtils.infof(getClass(), "Using address %s (user-specified) as proxy for service '%s' on interface %s", proxyAddress, svc.getSvcName(), svc.getIpAddr());
+			return proxyAddress;
+		}
+		
+		LogUtils.errorf(getClass(), "Unable to determine proxy address for service '%s' on interface '%s'. The poll will be unable to proceed.", svc.getSvcName(), svc.getIpAddr());
+		return null;
+	}
+
