@@ -1,0 +1,51 @@
+	public static Schema getValidatorFor(final Class<?> clazz) {
+		LogUtils.tracef(clazz, "finding XSD for class %s", clazz);
+
+		final ValidateUsing schemaFileAnnotation = clazz.getAnnotation(ValidateUsing.class);
+		if (schemaFileAnnotation == null || schemaFileAnnotation.value() == null) {
+			LogUtils.debugf(clazz, "no XSD found for class %s", clazz.getSimpleName());
+			return null;
+		}
+		
+		final String schemaFileName = schemaFileAnnotation.value();
+		InputStream schemaInputStream = null;
+		try {
+			final SchemaFactory factory = SchemaFactory.newInstance("http://www.w3.org/2001/XMLSchema");
+			if (schemaInputStream == null) {
+				final File schemaFile = new File(System.getProperty("opennms.home") + "/share/xsds/" + schemaFileName);
+				if (schemaFile.exists()) {
+					LogUtils.debugf(clazz, "using file %s", schemaFile);
+					schemaInputStream = new FileInputStream(schemaFile);
+				};
+			}
+			if (schemaInputStream == null) {
+				final File schemaFile = new File("target/xsds/" + schemaFileName);
+				if (schemaFile.exists()) {
+					LogUtils.debugf(clazz, "using file %s", schemaFile);
+					schemaInputStream = new FileInputStream(schemaFile);
+				};
+			}
+			if (schemaInputStream == null) {
+				final URL schemaResource = Thread.currentThread().getContextClassLoader().getResource("xsds/" + schemaFileName);
+//				final URL schemaResource = clazz.getClassLoader().getResource("xsds/" + schemaFileName);
+				if (schemaResource == null) {
+					LogUtils.debugf(clazz, "Unable to load resource xsds/%s from the classpath.", schemaFileName);
+				} else {
+					LogUtils.debugf(clazz, "using resource %s from classpath", schemaResource);
+					schemaInputStream = schemaResource.openStream();
+				}
+			}
+			if (schemaInputStream == null) {
+				LogUtils.debugf(clazz, "Did not find a suitable XSD.  Skipping.");
+				return null;
+			}
+			final Schema schema = factory.newSchema(new StreamSource(schemaInputStream));
+			return schema;
+		} catch (final Throwable t) {
+			LogUtils.warnf(clazz, t, "an error occurred while attempting to load %s for validation", schemaFileName);
+			return null;
+		} finally {
+			IOUtils.closeQuietly(schemaInputStream);
+		}
+	}
+
