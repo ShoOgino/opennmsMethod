@@ -1,34 +1,36 @@
     /** {@inheritDoc} */
-    public OnmsIpInterface updateIpInterfaceAttributes(Integer nodeId, OnmsIpInterface scannedIface) {
-        if (scannedIface.getSnmpInterface() != null && scannedIface.getSnmpInterface().getIfIndex() != null) {
-            scannedIface.setSnmpInterface(updateSnmpInterfaceAttributes(nodeId, scannedIface.getSnmpInterface()));
+    @Transactional
+    public OnmsIpInterface updateIpInterfaceAttributes(final Integer nodeId, final OnmsIpInterface scannedIface) {
+    	final OnmsSnmpInterface snmpInterface = scannedIface.getSnmpInterface();
+        if (snmpInterface != null && snmpInterface.getIfIndex() != null) {
+            scannedIface.setSnmpInterface(updateSnmpInterfaceAttributes(nodeId, snmpInterface));
         }
         
-        OnmsIpInterface dbIface = m_ipInterfaceDao.findByNodeIdAndIpAddress(nodeId, InetAddressUtils.str(scannedIface.getIpAddress()));
-        debug("Updating interface attributes for %s for node %d with ip %s", dbIface, nodeId, InetAddressUtils.str(scannedIface.getIpAddress()));
+        final OnmsIpInterface dbIface = m_ipInterfaceDao.findByNodeIdAndIpAddress(nodeId, str(scannedIface.getIpAddress()));
+        debugf(this, "Updating interface attributes for DB interface %s for node %d with ip %s", dbIface, nodeId, str(scannedIface.getIpAddress()));
         if (dbIface != null) {
             if(dbIface.isManaged() && !scannedIface.isManaged()){
-                Set<OnmsMonitoredService> monSvcs = dbIface.getMonitoredServices();
+            	final Set<OnmsMonitoredService> monSvcs = dbIface.getMonitoredServices();
                 
-                for(OnmsMonitoredService monSvc : monSvcs ){
+                for(final OnmsMonitoredService monSvc : monSvcs){
                     monSvc.visit(new DeleteEventVisitor(m_eventForwarder));
                 }
                 monSvcs.clear();
             }
             
             dbIface.mergeInterfaceAttributes(scannedIface);
-            info("Updating IpInterface %s", dbIface);
+            infof(this, "Updating IpInterface %s", dbIface);
             m_ipInterfaceDao.update(dbIface);
             m_ipInterfaceDao.flush();
             return dbIface;
         } else {
-            OnmsNode dbNode = m_nodeDao.load(nodeId);
+        	final OnmsNode dbNode = m_nodeDao.load(nodeId);
             assertNotNull(dbNode, "no node found with nodeId %d", nodeId);
             // for performance reasons we don't add the ip interface to the node so we avoid loading all the interfaces
             // setNode only sets the node in the interface
             scannedIface.setNode(dbNode);
             saveOrUpdate(scannedIface);
-            AddEventVisitor visitor = new AddEventVisitor(m_eventForwarder);
+            final AddEventVisitor visitor = new AddEventVisitor(m_eventForwarder);
             scannedIface.visit(visitor);
             m_ipInterfaceDao.flush();
             return scannedIface;
