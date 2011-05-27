@@ -3,16 +3,26 @@
      */
     private Double getCounterValue(String id, Double current) {
         if (m_localCache.containsKey(id) == false) {
-            Double last = s_cache.get(id);
+            CacheEntry last = s_cache.get(id);
             if (log().isDebugEnabled()) {
-                log().debug("getCounterValue: id=" + id + ", last=" + last + ", current=" + current);
+                log().debug("getCounterValue: id=" + id + ", last=" + 
+                		(last==null ? last : last.value +"@"+last.timestamp) + 
+                		", current=" + current);
             }
-            s_cache.put(id, current);
+            s_cache.put(id, new CacheEntry(m_collectionTimestamp, current));
             if (last == null) {
                 m_localCache.put(id, Double.NaN);
                 log().info("getCounterValue: unknown last value, ignoring current");
             } else {                
-                Double delta = current.doubleValue() - last.doubleValue();
+            	if ( m_collectionTimestamp == null ) {
+            		//If you get this, you need to ensure you passed a non-null timestamp to the constructor.  
+            		// This usually comes from the CollectionSet that is being visited.
+                    log().error("getCounterValue: Haven't got a collection timestamp while calculating a counter for key "+ id + " on " + m_resource
+                    		+".  This is a programmer error and should be reported");
+            		return null;
+            	} 
+            	
+                Double delta = current.doubleValue() - last.value.doubleValue();
                 // wrapped counter handling(negative delta), rrd style
                 if (delta < 0) {
                     double newDelta = delta.doubleValue();
@@ -23,12 +33,20 @@
                         // try 64-bit adjustment
                         newDelta += Math.pow(2, 64) - Math.pow(2, 32);
                     }
-                    log().info("getCounterValue: " + id + "(counter) wrapped counter adjusted last=" + last + ", current=" + current + ", olddelta=" + delta + ", newdelta=" + newDelta);
+                    log().info("getCounterValue: " + id + 
+                    		"(counter) wrapped counter adjusted last=" + 
+                    		last.value +"@"+last.timestamp +
+                    		", current=" + current + 
+                    		", olddelta=" + delta + 
+                    		", newdelta=" + newDelta);
                     delta = newDelta;
                 }
-                m_localCache.put(id, delta);
+                //Get the interval between when this current collection was taken, and the last time this
+                // value was collected (and had a counter rate calculated for it)
+                long interval = ( m_collectionTimestamp.getTime() - last.timestamp.getTime() ) / 1000;
+                m_localCache.put(id, delta / interval);
             }
         }
-        return m_localCache.get(id) / m_interval;
+        return m_localCache.get(id);
     }
 
