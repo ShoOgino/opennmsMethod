@@ -15,7 +15,7 @@
         }
 
         try {
-            int nodeId = WebSecurityUtils.safeParseInt(nodeIdString);
+            final int nodeId = WebSecurityUtils.safeParseInt(nodeIdString);
             NodeLabel oldLabel = NodeLabel.retrieveLabel(nodeId);
             NodeLabel newLabel = null;
 
@@ -27,9 +27,33 @@
                 throw new ServletException("Unexpected labeltype value: " + labelType);
             }
 
-            NodeLabel.assignLabel(nodeId, newLabel);
+            WebApplicationContext beanFactory = WebApplicationContextUtils.getWebApplicationContext(getServletContext());
+            TransactionTemplate transactionTemplate = beanFactory.getBean(TransactionTemplate.class);
+            final RequisitionRestService requisitionService = beanFactory.getBean(RequisitionRestService.class);
+            final NodeDao nodeDao = beanFactory.getBean(NodeDao.class);
+
+            final String newNodeLabel = newLabel.getLabel();
+            String foreignSource = transactionTemplate.execute(new TransactionCallback<String>() {
+                public String doInTransaction(TransactionStatus status) {
+                    OnmsNode node = nodeDao.get(nodeId);
+                    if (node.getForeignSource() != null && node.getForeignId() != null) {
+                        MultivaluedMapImpl params = new MultivaluedMapImpl();
+                        params.putSingle("node-label", newNodeLabel);
+                        requisitionService.updateNode(node.getForeignSource(), node.getForeignId(), params);
+                        return node.getForeignSource();
+                    }
+                    return null;
+                }
+            });
+
             this.sendLabelChangeEvent(nodeId, oldLabel, newLabel);
-            response.sendRedirect(Util.calculateUrlBase(request, "element/node.jsp?node=" + nodeIdString));
+
+            if (foreignSource != null) {
+                response.sendRedirect(Util.calculateUrlBase(request, "admin/nodelabelProvisioned.jsp?node=" + nodeIdString + "&foreignSource=" + foreignSource));
+            } else {
+                NodeLabel.assignLabel(nodeId, newLabel);
+                response.sendRedirect(Util.calculateUrlBase(request, "element/node.jsp?node=" + nodeIdString));
+            }
         } catch (SQLException e) {
             throw new ServletException("Database exception", e);
         } catch (Throwable e) {

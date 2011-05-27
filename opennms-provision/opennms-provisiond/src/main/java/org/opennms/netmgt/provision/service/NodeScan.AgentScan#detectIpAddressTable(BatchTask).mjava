@@ -1,0 +1,43 @@
+        public void detectIpAddressTable(final BatchTask currentPhase) {
+        	final OnmsNode node = getNode();
+
+			// mark all provisioned interfaces as 'in need of scanning' so we can mark them
+            // as scanned during ipAddrTable processing
+            final Set<InetAddress> provisionedIps = new HashSet<InetAddress>();
+            if (getForeignSource() != null) {
+                for(final OnmsIpInterface provisioned : node.getIpInterfaces()) {
+                    provisionedIps.add(provisioned.getIpAddress());
+                }
+            }
+            
+            final IPAddressTableTracker ipAddressTracker = new IPAddressTableTracker() {
+            	@Override
+            	public void processIPAddressRow(final IPAddressRow row) {
+            		final String ipAddress = row.getIpAddress();
+					infof(this, "Processing IPAddress table row with ipAddr %s", ipAddress);
+            		
+            		if (!ipAddress.startsWith("127.0.0.") && !ipAddress.equals("0000:0000:0000:0000:0000:0000:0000:0001")) {
+                        // mark any provisioned interface as scanned
+                        provisionedIps.remove(ipAddress);
+
+                        OnmsIpInterface iface = row.createInterfaceFromRow();
+                        iface.setIpLastCapsdPoll(getScanStamp());
+                        iface.setIsManaged("M");
+
+                        final List<IpInterfacePolicy> policies = getProvisionService().getIpInterfacePoliciesForForeignSource(getForeignSource() == null ? "default" : getForeignSource());
+                        for(final IpInterfacePolicy policy : policies) {
+                            if (iface != null) {
+                                iface = policy.apply(iface);
+                            }
+                        }
+    
+                        if (iface != null) {
+                            currentPhase.add(ipUpdater(currentPhase, iface), "write");
+                        }
+            		}
+            	}
+            };
+
+            walkTable(currentPhase, provisionedIps, ipAddressTracker);
+        }
+
