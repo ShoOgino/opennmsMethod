@@ -1,0 +1,60 @@
+    /**
+     * Test that adding a "include.directory" property to the main graph config file
+     * will cause included files to be read on reload of the main config file
+     * (early code didn't do this right)
+     * @throws Exception
+     */
+    public void testAddingIncludeDirectory() throws Exception {
+        /*
+         * We're not going to use the anticipator functionality, but it's
+         * handy for handling temporary directories.
+         */
+        FileAnticipator fa = new FileAnticipator();
+
+        try {
+            File rootFile = fa.tempFile("snmp-graph.properties");
+
+                        
+            Writer writer = new OutputStreamWriter(new FileOutputStream(rootFile), "UTF-8");
+            writer.write(s_prefab);
+            writer.close();
+            
+            HashMap<String, Resource> perfConfig = new HashMap<String, Resource>();
+            perfConfig.put("performance", new FileSystemResource(rootFile));
+            PropertiesGraphDao dao = createPropertiesGraphDao(perfConfig, s_emptyMap);
+
+            assertNotNull(dao.getPrefabGraph("mib2.bits"));
+            try {
+                PrefabGraph mib2errors = dao.getPrefabGraph("mib2.errors");
+                fail("Should have thrown an ObjectRetrievalFailureException retrieving graph " + mib2errors);
+            } catch (ObjectRetrievalFailureException e) {
+                
+            }
+            
+            //Wait long enough to make the FileReloadContainers do their thing reliably
+            Thread.sleep(1100);
+
+            //Now create the new graph in a sub-directory, and rewrite the rootFile with an include.directory property 
+            File graphDirectory = fa.tempDir("snmp-graph.properties.d");
+            File graphErrors = fa.tempFile(graphDirectory, "mib2.errors.properties");
+            
+            graphDirectory.mkdir();
+            writer = new OutputStreamWriter(new FileOutputStream(graphErrors), "UTF-8");
+            writer.write(s_separateErrorsGraph);
+            writer.close();
+            
+            writer = new OutputStreamWriter(new FileOutputStream(rootFile), "UTF-8");
+            writer.write(s_prefab.replace("output.mime", "include.directory=snmp-graph.properties.d\n" +
+            		"output.mime"));
+            writer.close();
+            
+            assertNotNull(dao.getPrefabGraph("mib2.bits")); //Just checking the reload didn't lose existing graphs
+            assertNotNull(dao.getPrefabGraph("mib2.errors")); //This is the core: this graph should have been picked up
+         
+          
+        } finally {
+            fa.deleteExpected();
+            fa.tearDown();
+        }            
+    }
+

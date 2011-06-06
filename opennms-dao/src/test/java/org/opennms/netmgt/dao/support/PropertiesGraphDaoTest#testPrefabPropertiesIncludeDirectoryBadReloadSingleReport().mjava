@@ -1,0 +1,64 @@
+    /**
+     * Test that reloading a badly formatted single report doens't overwrite a previously functioning
+     * report.  
+     * 
+     * NB: It should still complain with an Error log.  Should there be an event as well?
+     * @throws Exception
+     */
+    public void testPrefabPropertiesIncludeDirectoryBadReloadSingleReport() throws Exception {
+        //We're expecting an ERROR log, and will be most disappointed if
+        // we don't get it.  Turn off the default check in runTest
+        testSpecificLoggingTest = true;
+        /*
+         * We're not going to use the anticipator functionality, but it's
+         * handy for handling temporary directories.
+         */
+        FileAnticipator fa = new FileAnticipator();
+        
+        try {
+            File rootFile = fa.tempFile("snmp-graph.properties");
+            File graphDirectory = fa.tempDir("snmp-graph.properties.d");
+            File graphBits = fa.tempFile(graphDirectory, "mib2.bits.properties");
+
+            Writer writer = new OutputStreamWriter(new FileOutputStream(rootFile), "UTF-8");
+            writer.write(s_baseIncludePrefab);
+            writer.close();
+            
+            graphDirectory.mkdir();
+            writer = new OutputStreamWriter(new FileOutputStream(graphBits), "UTF-8");
+            writer.write(s_separateBitsGraph);
+            writer.close();
+       
+            
+            HashMap<String, Resource> perfConfig = new HashMap<String, Resource>();
+            perfConfig.put("performance", new FileSystemResource(rootFile));
+            PropertiesGraphDao dao = createPropertiesGraphDao(perfConfig, s_emptyMap);
+            
+            
+            PrefabGraph graph = dao.getPrefabGraph("mib2.bits");
+            assertNotNull("could not get mib2.bits report", graph);
+            assertEquals("ifSpeed", graph.getExternalValues()[0]);
+
+            Thread.sleep(1100);
+
+            writer = new OutputStreamWriter(new FileOutputStream(graphBits), "UTF-8");
+            //Two changes:
+            // 1) Remove a required property; this should break the reading of the new file
+            // 2) Change the externalvalues attribute name; we shouldn't see that new name after the reload
+            writer.write(s_separateBitsGraph.replace("report.name", "report.fluggle").replace("ifSpeed", "anotherExternalValue"));
+            writer.close();
+            
+            graph = dao.getPrefabGraph("mib2.bits");
+            assertNotNull("could not get mib2.bits report after rewriting config file", graph);
+            assertEquals("ifSpeed", graph.getExternalValues()[0]);
+            
+            //There should have been an error log about the reload failure 
+            MockLogAppender.assertLogAtLevel(Level.ERROR); 
+
+            
+        } finally {
+            fa.deleteExpected();
+            fa.tearDown();
+        }
+    }
+
