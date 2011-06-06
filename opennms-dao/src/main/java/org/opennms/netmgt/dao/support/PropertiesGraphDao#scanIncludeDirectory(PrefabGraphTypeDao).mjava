@@ -1,0 +1,43 @@
+    private void scanIncludeDirectory(PrefabGraphTypeDao type) throws IOException {
+        Resource includeDirectoryResource = type.getIncludeDirectoryResource();
+
+        if (includeDirectoryResource != null) {
+            File includeDirectory = includeDirectoryResource.getFile();
+            // Include all the files in the directory, knowing that the
+            // format is slightly different (no report name required in
+            // each property name, and report.id is expected)
+            FilenameFilter propertyFilesFilter = new FilenameFilter() {
+                @Override
+                public boolean accept(File dir, String name) {
+                    return (name.endsWith(".properties"));
+                }
+            };
+            File[] propertyFiles = includeDirectory.listFiles(propertyFilesFilter);
+
+            for (File file : propertyFiles) {
+                Properties props = new Properties();
+                InputStream fileIn = new FileInputStream(file);
+                try {
+                    props.load(fileIn);
+                } finally {
+                    IOUtils.closeQuietly(fileIn);
+                }
+
+                try {
+                    List<PrefabGraph> subGraphs = loadPrefabGraphDefinitions(type,
+                                                                             props);
+                    for (PrefabGraph graph : subGraphs) {
+                        type.addPrefabGraph(new FileReloadContainer<PrefabGraph>(
+                                                                                 graph,
+                                                                                 new FileSystemResource(
+                                                                                                        file),
+                                                                                 type.getCallback()));
+                    }
+                } catch (DataAccessResourceFailureException e) {
+                    log().error("Problem while attempting to load "+file+":",e);
+                }
+            }
+        }
+        type.setLastIncludeScan(System.currentTimeMillis());
+    }
+
