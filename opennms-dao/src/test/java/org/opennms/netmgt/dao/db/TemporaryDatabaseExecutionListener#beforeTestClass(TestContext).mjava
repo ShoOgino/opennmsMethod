@@ -1,29 +1,50 @@
 	@Override
 	public void beforeTestClass(final TestContext testContext) {
-		JUnitTemporaryDatabase classJtd = testContext.getTestClass().getAnnotation(JUnitTemporaryDatabase.class);
-		TemporaryDatabase classDs = (classJtd == null ? null : createNewDatabase(classJtd));
+		// Fire up a thread pool for each CPU to create test databases
+		ExecutorService pool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+		
+		List<Future<TemporaryDatabase>> futures = new ArrayList<Future<TemporaryDatabase>>();
+		final JUnitTemporaryDatabase classJtd = testContext.getTestClass().getAnnotation(JUnitTemporaryDatabase.class);
+		Future<TemporaryDatabase> classDs = null;
+		if (classJtd == null) {
+			classDs = null;
+		} else {
+			classDs = pool.submit(new CreateNewDatabaseCallable(classJtd));
+		}
 		if (classJtd != null && classJtd.reuseDatabase() == false) {
-		    m_createNewDatabases = true;
+			m_createNewDatabases = true;
 		}
 		for (Method method : testContext.getTestClass().getMethods()) {
 			if (method != null) {
-				JUnitTemporaryDatabase methodJtd = method.getAnnotation(JUnitTemporaryDatabase.class);
+				final JUnitTemporaryDatabase methodJtd = method.getAnnotation(JUnitTemporaryDatabase.class);
 				boolean methodHasTest = method.getAnnotation(Test.class) != null;
 				if (methodHasTest) {
 					// If there is a method-specific annotation, use it to create the temporary database
 					if (methodJtd != null) {
 						// Create a new database based on the method-specific annotation
-						m_databases.add(createNewDatabase(methodJtd));
+						futures.add(pool.submit(new CreateNewDatabaseCallable(methodJtd)));
 					} else if (classJtd != null) {
 						if (m_createNewDatabases) {
 							// Create a new database based on the test class' annotation
-							m_databases.add(createNewDatabase(classJtd));
+							futures.add(pool.submit(new CreateNewDatabaseCallable(classJtd)));
 						} else {
 							// Reuse the database based on the test class' annotation
-							m_databases.add(classDs);
+							futures.add(classDs);
 						}
 					}
 				}
+			}
+		}
+
+		for (Future<TemporaryDatabase> db : futures) {
+			try {
+				m_databases.add(db.get());
+			} catch (InterruptedException e) {
+				System.err.printf("TemporaryDatabaseExecutionListener: error while creating database: %s\n", e.getMessage());
+				e.printStackTrace(System.err);
+			} catch (ExecutionException e) {
+				System.err.printf("TemporaryDatabaseExecutionListener: error while creating database: %s\n", e.getMessage());
+				e.printStackTrace(System.err);
 			}
 		}
 	}
