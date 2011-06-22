@@ -1,0 +1,64 @@
+    @Before
+    public void setUp() throws Exception {
+        ipInterfaceDao = EasyMock.createMock(IpInterfaceDao.class);
+        String localhost = InetAddress.getLocalHost().getHostAddress();
+        OnmsDistPoller distPoller = new OnmsDistPoller("localhost", localhost);
+        NetworkBuilder builder = new NetworkBuilder(distPoller);
+        builder.addNode("myNode");
+        builder.addInterface(localhost).setIsManaged("M").setIsSnmpPrimary("P");
+        OnmsNode node = builder.getCurrentNode();
+        node.setId(1);
+        OnmsIpInterface ipInterface = node.getIpInterfaces().iterator().next();
+        EasyMock.expect(ipInterfaceDao.load(1)).andReturn(ipInterface).anyTimes();
+        EasyMock.replay(ipInterfaceDao);
+
+        Package pkg = new Package();
+        pkg.setName("junitTestPackage");
+        Filter filter = new Filter();
+        filter.setContent("IPADDR != '0.0.0.0'");
+        pkg.setFilter(filter);
+        Service service = new Service();
+        service.setName("SNMP");
+        pkg.addService(service);
+        CollectdPackage collectdPkg = new CollectdPackage(pkg, "localhost", false);
+        Map<String, Object> map = new TreeMap<String, Object>();
+        List<org.opennms.netmgt.config.collectd.Parameter> params = collectdPkg.getService("SNMP").getParameterCollection();
+        for (org.opennms.netmgt.config.collectd.Parameter p : params) {
+            map.put(p.getKey(), p.getValue());
+        }
+        map.put("collection", "default");
+        serviceParams = new ServiceParameters(map);
+
+        PlatformTransactionManager ptm = new MockPlatformTransactionManager();
+        CollectionAgent agent = DefaultCollectionAgent.create(1, ipInterfaceDao, ptm);
+        OnmsSnmpCollection snmpCollection = new OnmsSnmpCollection(agent, serviceParams);
+
+        org.opennms.netmgt.config.datacollection.ResourceType rt = new org.opennms.netmgt.config.datacollection.ResourceType();
+        rt.setName("myResourceType");
+        StorageStrategy storageStrategy = new StorageStrategy();
+        storageStrategy.setClazz("org.opennms.netmgt.dao.support.IndexStorageStrategy");
+        rt.setStorageStrategy(storageStrategy);
+        PersistenceSelectorStrategy persistenceSelectorStrategy = new PersistenceSelectorStrategy();
+        persistenceSelectorStrategy.setClazz("org.opennms.netmgt.collectd.PersistRegexSelectorStrategy");
+        Parameter param = new Parameter();
+        param.setKey(PersistRegexSelectorStrategy.MATCH_EXPRESSION);
+        param.setValue("#name matches '^agalue.*$'");
+        persistenceSelectorStrategy.addParameter(param);
+        rt.setPersistenceSelectorStrategy(persistenceSelectorStrategy);
+        GenericIndexResourceType resourceType = new GenericIndexResourceType(agent, snmpCollection, rt);
+
+        resourceA = new GenericIndexResource(resourceType, rt.getName(), new SnmpInstId("1.2.3.4.5.6.7.8.9.1.1"));
+        
+        AttributeGroupType groupType = new AttributeGroupType("mib2-interfaces", "all");
+        MibObject mibObject = new MibObject();
+        mibObject.setOid(".1.2.3.4.5.6.7.8.9.2.1");
+        mibObject.setInstance("1");
+        mibObject.setAlias("name");
+        mibObject.setType("string");
+        StringAttributeType attributeType = new StringAttributeType(resourceType, snmpCollection.getName(), mibObject, groupType);
+        SnmpValue snmpValue = new Snmp4JValueFactory().getOctetString("agalue rules!".getBytes());
+        resourceA.setAttributeValue(attributeType, snmpValue);
+        
+        resourceB = new GenericIndexResource(resourceType, rt.getName(), new SnmpInstId("1.2.3.4.5.6.7.8.9.1.2"));
+    }
+
