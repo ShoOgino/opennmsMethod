@@ -1,21 +1,40 @@
     @Override
-    public OnmsSnmpInterface upsert(int nodeId, OnmsSnmpInterface snmpInterface, int sleep) {
-        OnmsSnmpInterface dbSnmpIface = m_snmpInterfaceDao.findByNodeIdAndIfIndex(nodeId, snmpInterface.getIfIndex());
-        debugf(this, "nodeId = %d, ifIndex = %d, dbSnmpIface = %s", nodeId, snmpInterface.getIfIndex(), dbSnmpIface);
-        if (dbSnmpIface != null) {
-            return update(snmpInterface, dbSnmpIface);
-        } else {
-            try {
-                return insert(nodeId, snmpInterface);
-            } catch (DataIntegrityViolationException e) {
-                dbSnmpIface = m_snmpInterfaceDao.findByNodeIdAndIfIndex(nodeId, snmpInterface.getIfIndex());
+    public OnmsSnmpInterface upsert(final int nodeId, final OnmsSnmpInterface snmpInterface, final int sleep) {
+        UpsertTemplate<OnmsSnmpInterface, SnmpInterfaceDao> upzerter = new UpsertTemplate<OnmsSnmpInterface, SnmpInterfaceDao>(m_transactionManager, m_snmpInterfaceDao) {
+            
+            @Override
+            public OnmsSnmpInterface query() {
+                OnmsSnmpInterface dbSnmpIface = m_snmpInterfaceDao.findByNodeIdAndIfIndex(nodeId, snmpInterface.getIfIndex());
                 sleep(sleep);
-                if (dbSnmpIface != null) {
-                    return update(snmpInterface, dbSnmpIface);
-                } else {
-                    throw e;
-                }
+                return dbSnmpIface;
             }
-        }
+            
+            @Override
+            public OnmsSnmpInterface doUpdate(OnmsSnmpInterface dbSnmpIface) {
+                // update the interface that was found
+                debugf(this, "nodeId = %d, ifIndex = %d, dbSnmpIface = %s", nodeId, snmpInterface.getIfIndex(), dbSnmpIface);
+                dbSnmpIface.mergeSnmpInterfaceAttributes(snmpInterface);
+                infof(this, "Updating SnmpInterface %s", dbSnmpIface);
+                m_snmpInterfaceDao.update(dbSnmpIface);
+                m_snmpInterfaceDao.flush();
+                return dbSnmpIface;
+            }
+            
+            @Override
+            public OnmsSnmpInterface doInsert() {
+                // add the interface to the node, if it wasn't found
+                final OnmsNode dbNode = m_nodeDao.get(nodeId);
+                // for performance reasons we don't add the snmp interface to the node so we avoid loading all the interfaces
+                // setNode only sets the node in the interface
+                snmpInterface.setNode(dbNode);
+                infof(this, "Saving SnmpInterface %s", snmpInterface);
+                m_snmpInterfaceDao.save(snmpInterface);
+                m_snmpInterfaceDao.flush();
+                return snmpInterface;
+            }
+
+        };
+        
+        return upzerter.execute();
     }
 

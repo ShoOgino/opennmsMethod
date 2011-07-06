@@ -1,38 +1,54 @@
     /** {@inheritDoc} */
     @Transactional
     public OnmsNode createUndiscoveredNode(final String ipAddress) {
-        if (m_nodeDao.findByForeignSourceAndIpAddress(FOREIGN_SOURCE_FOR_DISCOVERED_NODES, ipAddress).size() > 0) {
-            return null;
+        
+        OnmsNode node = new UpsertTemplate<OnmsNode, NodeDao>(m_transactionManager, m_nodeDao) {
+
+            @Override
+            protected OnmsNode query() {
+                List<OnmsNode> nodes = m_nodeDao.findByForeignSourceAndIpAddress(FOREIGN_SOURCE_FOR_DISCOVERED_NODES, ipAddress);
+                return nodes.size() > 0 ? nodes.get(0) : null;
+            }
+
+            @Override
+            protected OnmsNode doUpdate(OnmsNode existingNode) {
+                // we found an existing node so exit by returning null;
+                return null;
+            }
+
+            @Override
+            protected OnmsNode doInsert() {
+                final Date now = new Date();
+                
+                final String hostname = getHostnameForIp(ipAddress);
+                
+                // @ipv6
+                final OnmsNode node = new OnmsNode(createDistPollerIfNecessary("localhost", "127.0.0.1"));
+                node.setLabel(hostname == null ? ipAddress : hostname);
+                node.setLabelSource(hostname == null ? "A" : "H");
+                node.setForeignSource(FOREIGN_SOURCE_FOR_DISCOVERED_NODES);
+                node.setType("A");
+                node.setLastCapsdPoll(now);
+                
+                final OnmsIpInterface iface = new OnmsIpInterface(ipAddress, node);
+                iface.setIsManaged("M");
+                iface.setIpHostName(hostname);
+                iface.setIsSnmpPrimary(PrimaryType.NOT_ELIGIBLE);
+                iface.setIpLastCapsdPoll(now);
+                
+                m_nodeDao.save(node);
+                m_nodeDao.flush();
+                return node;
+            }
+        }.execute();
+        
+        if (node != null) {
+            
+            // we do this here rather than in the doInsert method because
+            // the doInsert may abort
+            node.visit(new AddEventVisitor(m_eventForwarder));
         }
         
-        /*
-         * We set the capsd polls to now so since the new suspect scan includes
-         * a regular node scan.  This prevents a simultaneous node scan from being
-         * started when the nodeAdded event comes in but still allows it to be
-         * scheduled for a scan according to the default foreignSource schedule
-         */
-        final Date now = new Date();
-        
-        final String hostname = getHostnameForIp(ipAddress);
-        
-        // @ipv6
-        final OnmsNode node = new OnmsNode(createDistPollerIfNecessary("localhost", "127.0.0.1"));
-        node.setLabel(hostname == null ? ipAddress : hostname);
-        node.setLabelSource(hostname == null ? "A" : "H");
-        node.setForeignSource(FOREIGN_SOURCE_FOR_DISCOVERED_NODES);
-        node.setType("A");
-        node.setLastCapsdPoll(now);
-        
-        final OnmsIpInterface iface = new OnmsIpInterface(ipAddress, node);
-        iface.setIsManaged("M");
-        iface.setIpHostName(hostname);
-        iface.setIsSnmpPrimary(PrimaryType.NOT_ELIGIBLE);
-        iface.setIpLastCapsdPoll(now);
-        
-        m_nodeDao.save(node);
-        m_nodeDao.flush();
-        
-        node.visit(new AddEventVisitor(m_eventForwarder));
         return node;
         
     }
