@@ -1,6 +1,8 @@
         public void detectIpAddressTable(final BatchTask currentPhase) {
         	final OnmsNode node = getNode();
 
+            debugf(this, "Attempting to scan the IPAddress table for node %s", node);
+
 			// mark all provisioned interfaces as 'in need of scanning' so we can mark them
             // as scanned during ipAddrTable processing
             final Set<InetAddress> provisionedIps = new HashSet<InetAddress>();
@@ -9,18 +11,40 @@
                     provisionedIps.add(provisioned.getIpAddress());
                 }
             }
-            
+
             final IPAddressTableTracker ipAddressTracker = new IPAddressTableTracker() {
             	@Override
             	public void processIPAddressRow(final IPAddressRow row) {
             		final String ipAddress = row.getIpAddress();
 					infof(this, "Processing IPAddress table row with ipAddr %s", ipAddress);
-            		
-            		if (ipAddress != null && !ipAddress.startsWith("127.0.0.") && !ipAddress.equals("0000:0000:0000:0000:0000:0000:0000:0001")) {
-                        // mark any provisioned interface as scanned
-                        provisionedIps.remove(ipAddress);
 
-                        OnmsIpInterface iface = row.createInterfaceFromRow();
+					final InetAddress address = addr(ipAddress);
+
+					// skip if it's any number of unusual/local address types
+					if (address == null) return;
+					if (address.isAnyLocalAddress()) {
+						debugf(this, "%s.isAnyLocalAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isLinkLocalAddress()) {
+						debugf(this, "%s.isLinkLocalAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isLoopbackAddress()) {
+						debugf(this, "%s.isLoopbackAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isMulticastAddress()) {
+						debugf(this, "%s.isMulticastAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+
+                    // mark any provisioned interface as scanned
+                    provisionedIps.remove(ipAddress);
+
+                    OnmsIpInterface iface = row.createInterfaceFromRow();
+
+                    if (iface != null) {
                         iface.setIpLastCapsdPoll(getScanStamp());
                         iface.setIsManaged("M");
 
@@ -30,11 +54,11 @@
                                 iface = policy.apply(iface);
                             }
                         }
-    
+                        
                         if (iface != null) {
                             currentPhase.add(ipUpdater(currentPhase, iface), "write");
                         }
-            		}
+                    }
             	}
             };
 

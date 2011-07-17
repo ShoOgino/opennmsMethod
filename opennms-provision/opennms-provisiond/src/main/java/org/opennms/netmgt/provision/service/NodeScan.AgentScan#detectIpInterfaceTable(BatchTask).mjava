@@ -1,6 +1,8 @@
         public void detectIpInterfaceTable(final BatchTask currentPhase) {
         	final OnmsNode node = getNode();
 
+            debugf(this, "Attempting to scan the IPInterface table for node %s", node);
+
 			// mark all provisioned interfaces as 'in need of scanning' so we can mark them
             // as scanned during ipAddrTable processing
             final Set<InetAddress> provisionedIps = new HashSet<InetAddress>();
@@ -15,29 +17,50 @@
             	public void processIPInterfaceRow(final IPInterfaceRow row) {
             		final String ipAddress = row.getIpAddress();
             		infof(this, "Processing IPInterface table row with ipAddr %s for node %d/%s/%s", ipAddress, node.getId(), node.getForeignSource(), node.getForeignId());
-            		if (ipAddress != null && !ipAddress.startsWith("127.0.0.") && !ipAddress.equals("0000:0000:0000:0000:0000:0000:0000:0001")) {
 
-                        // mark any provisioned interface as scanned
-                        provisionedIps.remove(ipAddress);
+					final InetAddress address = addr(ipAddress);
 
-                        // save the interface
-                        OnmsIpInterface iface = row.createInterfaceFromRow();
-                        iface.setIpLastCapsdPoll(getScanStamp());
+					// skip if it's any number of unusual/local address types
+					if (address == null) return;
+					if (address.isAnyLocalAddress()) {
+						debugf(this, "%s.isAnyLocalAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isLinkLocalAddress()) {
+						debugf(this, "%s.isLinkLocalAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isLoopbackAddress()) {
+						debugf(this, "%s.isLoopbackAddress() == true, Skipping.", ipAddress);
+						return;
+					}
+					if (address.isMulticastAddress()) {
+						debugf(this, "%s.isMulticastAddress() == true, Skipping.", ipAddress);
+						return;
+					}
 
-                        // add call to the ip interface is managed policies
-                        iface.setIsManaged("M");
+                    // mark any provisioned interface as scanned
+                    provisionedIps.remove(ipAddress);
 
-                        final List<IpInterfacePolicy> policies = getProvisionService().getIpInterfacePoliciesForForeignSource(getForeignSource() == null ? "default" : getForeignSource());
-                        for(final IpInterfacePolicy policy : policies) {
-                            if (iface != null) {
-                                iface = policy.apply(iface);
-                            }
-                        }
-    
-                        if (iface != null) {
-                            currentPhase.add(ipUpdater(currentPhase, iface), "write");
-                        }
-    
+                    // save the interface
+                    OnmsIpInterface iface = row.createInterfaceFromRow();
+                    
+                    if (iface != null) {
+	                    iface.setIpLastCapsdPoll(getScanStamp());
+	
+	                    // add call to the ip interface is managed policies
+	                    iface.setIsManaged("M");
+	
+	                    final List<IpInterfacePolicy> policies = getProvisionService().getIpInterfacePoliciesForForeignSource(getForeignSource() == null ? "default" : getForeignSource());
+	                    for(final IpInterfacePolicy policy : policies) {
+	                        if (iface != null) {
+	                            iface = policy.apply(iface);
+	                        }
+	                    }
+	
+	                    if (iface != null) {
+	                        currentPhase.add(ipUpdater(currentPhase, iface), "write");
+	                    }
                     }
                 }
             };
