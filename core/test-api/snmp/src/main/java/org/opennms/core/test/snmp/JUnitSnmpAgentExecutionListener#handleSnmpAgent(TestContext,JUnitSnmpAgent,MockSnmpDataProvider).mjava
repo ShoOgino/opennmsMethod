@@ -1,0 +1,69 @@
+    private void handleSnmpAgent(final TestContext testContext, final JUnitSnmpAgent config, MockSnmpDataProvider provider) throws UnknownHostException, InterruptedException {
+        if (config == null) return;
+
+        String factoryClassName = "unknown";
+        try {
+	        final SnmpAgentConfigFactory factory = testContext.getApplicationContext().getBean("snmpPeerFactory", SnmpAgentConfigFactory.class);
+	        factoryClassName = factory.getClass().getName();
+        } catch (final Throwable t) {
+        	// ignore
+        }
+		if (!factoryClassName.contains("ProxySnmpAgentConfigFactory")) {
+        	LogUtils.warnf(this, "SNMP Peer Factory (%s) is not the ProxySnmpAgentConfigFactory -- did you forget to include applicationContext-proxy-snmp.xml?", factoryClassName);
+        }
+
+        final String useMockSnmpStrategy = System.getProperty(USE_STRATEGY_PROPERTY, useMockSnmpStrategyDefault.toString());
+        LogUtils.debugf(this, "handleSnmpAgent(testContext, %s, %s)", config, useMockSnmpStrategy);
+
+        String host = config.host();
+        if (host == null || "".equals(host)) {
+            /*
+             * NOTE: This call produces different results on different platforms so make
+             * sure your client code is aware of this. If you use the {@link ProxySnmpAgentConfigFactory}
+             * by including the <code>classpath:/META-INF/opennms/applicationContext-proxy-snmp.xml</code>
+             * Spring context, you probably won't need to deal with this. It will override the
+             * SnmpPeerFactory with the correct values.
+             * 
+             * Linux: 127.0.0.1
+             * Mac OS: primary external interface
+             */
+            host = str(InetAddress.getLocalHost());
+            //host = "127.0.0.1";
+        }
+        
+        final ResourceLoader loader = new DefaultResourceLoader();
+        final Resource resource = loader.getResource(config.resource());
+
+        // NOTE: The default value for config.port is specified inside {@link JUnitSnmpAgent}
+    	final InetAddress hostAddress = addr(host);
+        final int port = config.port();
+		final SnmpAgentAddress agentAddress = new SnmpAgentAddress(hostAddress, port);
+    	
+    	final InetAddress localHost = InetAddress.getLocalHost();
+    	final SnmpAgentConfigProxyMapper mapper = SnmpAgentConfigProxyMapper.getInstance();
+
+    	SnmpAgentAddress listenAddress = null;
+
+    	// try to find an unused port on localhost
+    	int mappedPort = 1161;
+    	do {
+    		listenAddress = new SnmpAgentAddress(localHost, mappedPort++);
+    	} while (mapper.contains(listenAddress));
+
+		if (Boolean.valueOf(useMockSnmpStrategy)) {
+			// map to itself  =)
+	    	mapper.addProxy(hostAddress, agentAddress);
+		} else {
+	    	mapper.addProxy(hostAddress, listenAddress);
+
+	    	LogUtils.debugf(this, "creating MockSnmpAgent on %s for 'real' address %s", listenAddress, agentAddress);
+            final MockSnmpAgent agent = MockSnmpAgent.createAgentAndRun(resource, str(listenAddress.getAddress()) + "/" + listenAddress.getPort());
+
+            @SuppressWarnings("unchecked")
+			final Map<SnmpAgentAddress,MockSnmpAgent> agents = (Map<SnmpAgentAddress,MockSnmpAgent>)testContext.getAttribute(AGENT_KEY);
+            agents.put(agentAddress, agent);
+        }
+
+		provider.setDataForAddress(agentAddress, resource);
+    }
+
