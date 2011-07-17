@@ -1,16 +1,19 @@
     // fail if we take more than five minutes
     @Test(timeout=300000)
     @JUnitTemporaryDatabase // Relies on records created in @Before so we need a fresh database
-    @JUnitSnmpAgent(resource="classpath:snmpTestData3.properties")
     @Transactional
+    @JUnitSnmpAgents({
+    	@JUnitSnmpAgent(host="172.20.2.201", port=161, resource="classpath:snmpTestData3.properties"),
+    	@JUnitSnmpAgent(host="172.20.2.202", port=161, resource="classpath:snmpTestData4.properties"),
+    	@JUnitSnmpAgent(host="172.20.2.204", port=161, resource="classpath:snmpTestData4.properties")
+    })
     public void testImportAddrThenChangeAddr() throws Exception {
-        
         importFromResource("classpath:/requisition_then_scan2.xml");
 
-        List<OnmsNode> nodes = getNodeDao().findAll();
-        OnmsNode node = nodes.get(0);
+        final List<OnmsNode> nodes = getNodeDao().findAll();
+        final OnmsNode node = nodes.get(0);
 
-        NodeScan scan = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
+        final NodeScan scan = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
         
         runScan(scan);
         
@@ -18,12 +21,14 @@
         
         assertEquals(2, getInterfaceDao().countAll());
 
-        m_agent.updateValuesFromResource(m_resourceLoader.getResource("classpath:snmpTestData4.properties"));
+        System.err.println("-------------------------------------------------------------------------");
+
+        m_mockSnmpDataProvider.setDataForAddress(new SnmpAgentAddress(InetAddressUtils.addr("172.20.2.201"), 161), m_resourceLoader.getResource("classpath:snmpTestData4.properties"));
         
         importFromResource("classpath:/requisition_primary_addr_changed.xml");
-        
-        NodeScan scan2 = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
-        
+
+        final NodeScan scan2 = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
+
         runScan(scan2);
         
         m_nodeDao.flush();
@@ -34,7 +39,7 @@
         //Verify node count
         assertEquals(1, getNodeDao().countAll());
         
-        System.err.println(getInterfaceDao().findAll());
+        LogUtils.debugf(this, "found: %s", getInterfaceDao().findAll());
         
         //Verify ipinterface count
         assertEquals(2, getInterfaceDao().countAll());
@@ -54,7 +59,5 @@
 
         //Verify node count
         assertEquals(0, getNodeDao().countAll());
-        
-        
     }
 
