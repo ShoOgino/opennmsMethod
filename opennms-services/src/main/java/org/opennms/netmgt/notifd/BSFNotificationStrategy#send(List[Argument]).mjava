@@ -1,0 +1,70 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.notifd.NotificationStrategy#send(java.util.List)
+     */
+    @Override
+    public int send(List<Argument> arguments) {
+        m_arguments = arguments;
+        String fileName = getFileName();
+        String lang = getLangClass();
+        String engine = getBsfEngine();
+        String extensions[] = getFileExtensions();
+
+        LogUtils.infof(this, "Loading notification script from file '%s'", fileName);
+        File scriptFile = new File(fileName);
+        BSFManager bsfManager = new BSFManager();
+        int returnCode = -1;
+
+        try {
+
+            if(lang==null) lang = BSFManager.getLangFromFilename(fileName);
+
+            // Declare some beans that can be used inside the script                    
+            HashMap<String,String> results = new HashMap<String,String>();
+            bsfManager.declareBean("results", results, HashMap.class);
+            declareBeans(bsfManager);
+
+            if(engine != null && lang != null && extensions != null && extensions.length > 0 ){
+                BSFManager.registerScriptingEngine(lang, engine, extensions);
+            }
+
+            if(scriptFile.exists() && scriptFile.canRead()){   
+                String code = IOUtils.getStringFromReader(new InputStreamReader(new FileInputStream(scriptFile), "UTF-8"));
+
+                // Check foot before firing
+                checkAberrantScriptBehaviors(code);
+
+                // Execute the script
+                bsfManager.exec(lang, "BSFNotificationStrategy", 0, 0, code);
+
+                // Check whether the script finished successfully
+                if ("OK".equals(results.get("status"))) {
+                    LogUtils.infof(this, "Execution succeeded and successful status passed back for script '%s'", scriptFile);
+                    returnCode = 0;
+                } else {
+                    LogUtils.warnf(this, "Execution succeeded for script '%s', but script did not indicate successful notification by putting an entry into the 'results' bean with key 'status' and value 'OK'", scriptFile);
+                    returnCode = -1;
+                }
+            } else {
+                LogUtils.warnf(this, "Cannot locate or read BSF script file '%s'. Returning failure indication.", fileName);
+                returnCode = -1;
+            }
+        } catch (BSFException e) {
+            LogUtils.warnf(this, e, "Execution of script '%s' failed with BSFException: %s", scriptFile, e.getMessage());
+            returnCode = -1;
+        } catch (FileNotFoundException e){
+            LogUtils.warnf(this, "Could not find BSF script file '%s'.", fileName);
+            returnCode = -1;
+        } catch (IOException e) {
+            LogUtils.warnf(this, e, "Execution of script '%s' failed with IOException: %s", scriptFile, e.getMessage());
+            returnCode = -1;
+        } catch (Throwable e) {
+            // Catch any RuntimeException throws
+            LogUtils.warnf(this, e, "Execution of script '%s' failed with unexpected throwable: %s", scriptFile, e.getMessage());
+            returnCode = -1;
+        } finally { 
+            bsfManager.terminate();
+        }
+
+        return returnCode;
+    }
+
