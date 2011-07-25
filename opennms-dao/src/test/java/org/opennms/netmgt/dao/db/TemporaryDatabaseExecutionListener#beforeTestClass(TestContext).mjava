@@ -1,19 +1,21 @@
 	@Override
-	public void beforeTestClass(final TestContext testContext) {
-		// Fire up a thread pool for each CPU to create test databases
+	public void beforeTestClass(final TestContext testContext) throws Exception {
+				// Fire up a thread pool for each CPU to create test databases
 		ExecutorService pool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 		
-		List<Future<TemporaryDatabase>> futures = new ArrayList<Future<TemporaryDatabase>>();
 		final JUnitTemporaryDatabase classJtd = testContext.getTestClass().getAnnotation(JUnitTemporaryDatabase.class);
-		Future<TemporaryDatabase> classDs = null;
-		if (classJtd == null) {
-			classDs = null;
-		} else {
+
+		final Future<TemporaryDatabase> classDs;
+		if (classJtd != null) {
 			classDs = pool.submit(new CreateNewDatabaseCallable(classJtd));
+			if (classJtd.reuseDatabase() == false) {
+				m_createNewDatabases = true;
+			}
+		} else {
+			classDs = null;
 		}
-		if (classJtd != null && classJtd.reuseDatabase() == false) {
-			m_createNewDatabases = true;
-		}
+
+		List<Future<TemporaryDatabase>> futures = new ArrayList<Future<TemporaryDatabase>>();
 		for (Method method : testContext.getTestClass().getMethods()) {
 			if (method != null) {
 				final JUnitTemporaryDatabase methodJtd = method.getAnnotation(JUnitTemporaryDatabase.class);
@@ -22,13 +24,18 @@
 					// If there is a method-specific annotation, use it to create the temporary database
 					if (methodJtd != null) {
 						// Create a new database based on the method-specific annotation
-						futures.add(pool.submit(new CreateNewDatabaseCallable(methodJtd)));
+						Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(methodJtd));
+						Assert.notNull(submit, "pool.submit(new CreateNewDatabaseCallable(methodJtd = " + methodJtd + ")");
+						futures.add(submit);
 					} else if (classJtd != null) {
 						if (m_createNewDatabases) {
 							// Create a new database based on the test class' annotation
-							futures.add(pool.submit(new CreateNewDatabaseCallable(classJtd)));
+							Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(classJtd));
+							Assert.notNull(submit, "pool.submit(new CreateNewDatabaseCallable(classJtd = " + classJtd + ")");
+							futures.add(submit);
 						} else {
 							// Reuse the database based on the test class' annotation
+							Assert.notNull(classDs, "classDs");
 							futures.add(classDs);
 						}
 					}
@@ -37,15 +44,7 @@
 		}
 
 		for (Future<TemporaryDatabase> db : futures) {
-			try {
-				m_databases.add(db.get());
-			} catch (InterruptedException e) {
-				System.err.printf("TemporaryDatabaseExecutionListener: error while creating database: %s\n", e.getMessage());
-				e.printStackTrace(System.err);
-			} catch (ExecutionException e) {
-				System.err.printf("TemporaryDatabaseExecutionListener: error while creating database: %s\n", e.getMessage());
-				e.printStackTrace(System.err);
-			}
+			m_databases.add(db.get());
 		}
 	}
 
