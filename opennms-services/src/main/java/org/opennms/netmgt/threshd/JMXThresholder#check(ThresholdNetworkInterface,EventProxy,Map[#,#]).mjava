@@ -1,0 +1,108 @@
+    /**
+     * {@inheritDoc}
+     *
+     * Perform threshold checking.
+     */
+    public int check(ThresholdNetworkInterface iface, EventProxy eproxy, Map<?,?> parameters) {
+        ThreadCategory log = log();
+        String dsDir = serviceName;
+
+        String port         = ParameterMap.getKeyedString( parameters, "port",           null);
+        String friendlyName = ParameterMap.getKeyedString( parameters, "friendly-name",  port);
+        int range = ParameterMap.getKeyedInteger( parameters, "range",  DEFAULT_RANGE);
+        
+        if (useFriendlyName) {
+            dsDir = friendlyName;
+        }
+
+        InetAddress primary = (InetAddress) iface.getAddress();
+
+        // Get configuration parameters
+        String groupName = ParameterMap.getKeyedString(parameters, "thresholding-group", serviceName);
+        int    interval  = ParameterMap.getKeyedInteger(parameters, "interval", DEFAULT_INTERVAL);
+
+        final String hostAddress = InetAddressUtils.str(primary);
+		if (log.isDebugEnabled()) {
+            log.debug("check: service= " + serviceName.toUpperCase() + " address= " + hostAddress + " thresholding-group=" + groupName + " interval=" + interval + "mS range =  " + range + " mS");
+        }
+
+        // RRD Repository attribute
+        String repository = (String) iface.getAttribute(RRD_REPOSITORY_KEY);
+        if (log.isDebugEnabled()) {
+            log.debug("check: rrd repository=" + repository);
+        }
+
+        // Nodeid attribute
+        Integer nodeId = (Integer) iface.getAttribute(NODE_ID_KEY);
+
+        // node and interface ThresholdEntity map attributes
+        Map<Object,ThresholdEntity> nodeMap   = (Map<Object,ThresholdEntity>) iface.getAttribute(NODE_THRESHOLD_MAP_KEY);
+        Map<String,ThresholdEntity> baseIfMap = (Map<String,ThresholdEntity>) iface.getAttribute(BASE_IF_THRESHOLD_MAP_KEY);
+        Map<String,Map<String,ThresholdEntity>> allIfMap  = (Map<String, Map<String, ThresholdEntity>>)iface.getAttribute(ALL_IF_THRESHOLD_MAP_KEY);
+
+        // -----------------------------------------------------------
+        // 
+        // Perform node-level threshold checking
+        //
+        // -----------------------------------------------------------
+
+        // Get File object representing the node directory
+        File nodeDirectory = new File(repository + File.separator + nodeId.toString() + File.separator + dsDir);
+        //if (!RrdFileConstants.isValidRRDNodeDir(nodeDirectory)) {
+        //    log.error("Node directory for " + nodeDirectory + " does not exist or is not a valid RRD node directory.");
+        //    log.error("Threshold checking failed for primary " + serviceName + " interface " + InetAddressUtils.str(primary));
+        //}
+
+        // Create empty Events object to hold any threshold
+        // events generated during the thresholding check...
+        Events events = new Events();
+
+        // Date stamp for all outgoing events
+        Date dateStamp = new Date();
+
+        try {
+            checkNodeDir(nodeDirectory, nodeId, primary, range, interval, dateStamp, nodeMap, events);
+        } catch (IllegalArgumentException e) {
+            log.info("check: Threshold checking failed for primary " + serviceName + " interface " + hostAddress + ": " + e, e);
+            return THRESHOLDING_FAILED;
+        }
+
+        // -----------------------------------------------------------
+        // 
+        // Perform interface-level threshold checking
+        //
+        // -----------------------------------------------------------
+
+        // Iterate over node directory contents and call
+        // checkInterfaceDirectory() for any/all RRD interface
+        // directories.
+        File[] files = nodeDirectory.listFiles(RrdFileConstants.INTERFACE_DIRECTORY_FILTER);
+        if (files != null) {
+            for (int i = 0; i < files.length; i++) {
+                try {
+                    // Found interface directory...
+                    checkIfDir(files[i], nodeId, primary, interval, range, dateStamp, baseIfMap, allIfMap, events);
+                } catch (IllegalArgumentException e) {
+                    log.info("check: Threshold checking failed for primary " + serviceName + " interface " + hostAddress + ": " + e, e);
+                    return THRESHOLDING_FAILED;
+                }
+            }
+        }
+
+        // Send created events
+        if (events.getEventCount() > 0) {
+            try {
+                Log eventLog = new Log();
+                eventLog.setEvents(events);
+                eproxy.send(eventLog);
+            } catch (EventProxyException e) {
+                log.warn("check: Failed sending threshold events via event proxy: " + e, e);
+                return THRESHOLDING_FAILED;
+            }
+        }
+
+        // return the status of the threshold check
+        return THRESHOLDING_SUCCEEDED;
+        
+    }
+
