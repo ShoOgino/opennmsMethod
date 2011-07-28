@@ -1,0 +1,44 @@
+    protected void processVlanTable(final LinkableNode node, final SnmpCollection snmpcoll, final Connection dbConn, final Timestamp scanTime) throws SQLException {
+        LogUtils.debugf(this, "processVlanTable: Starting VLAN table processing.");
+
+        final List<OnmsVlan> vlans = new ArrayList<OnmsVlan>();
+
+        for (final SnmpTableEntry ent : snmpcoll.getVlanTable().getEntries()) {
+            final Integer vlanIndex = ent.getInt32(VlanCollectorEntry.VLAN_INDEX);
+
+            if (vlanIndex == null || vlanIndex < 0) {
+                LogUtils.debugf(this, "processVlanTable: VLAN ifIndex was invalid (%d).  Skipping.", vlanIndex);
+                continue;
+            }
+
+            String vlanName = ent.getDisplayString(VlanCollectorEntry.VLAN_NAME);
+            if (vlanName == null) {
+                LogUtils.debugf(this, "processVlanTable: No VLAN name found.  Setting to 'default-%s'.", vlanIndex);
+                vlanName = "default-" + vlanIndex;
+            }
+
+            Integer vlanType = ent.getInt32(VlanCollectorEntry.VLAN_TYPE);
+            if (vlanType == null) {
+                vlanType = DbVlanEntry.VLAN_TYPE_UNKNOWN;
+            }
+
+            Integer vlanStatus = ent.getInt32(VlanCollectorEntry.VLAN_STATUS);
+            if (vlanStatus == null) {
+                vlanStatus = DbVlanEntry.VLAN_STATUS_UNKNOWN;
+            }
+
+            final OnmsNode onmsNode = getNode(node.getNodeId());
+            final OnmsVlan vlan = new OnmsVlan(vlanIndex, vlanName, vlanStatus, vlanType);
+            vlan.setLastPollTime(scanTime);
+            vlan.setNode(onmsNode);
+            vlan.setStatus(DbVlanEntry.STATUS_ACTIVE);
+            vlans.add(vlan);
+
+            LogUtils.debugf(this, "processVlanTable: Saving VLAN entry: %s", vlan);
+
+            saveVlan(dbConn, vlan);
+
+        }
+        node.setVlans(vlans);
+    }
+

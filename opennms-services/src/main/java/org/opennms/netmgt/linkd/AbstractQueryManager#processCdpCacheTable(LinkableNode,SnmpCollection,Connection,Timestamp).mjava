@@ -1,0 +1,71 @@
+    protected void processCdpCacheTable(final LinkableNode node, final SnmpCollection snmpcoll, final Connection dbConn, final Timestamp scanTime) throws SQLException {
+        LogUtils.debugf(this, "processCdpCacheTable: Starting CDP cache table processing.");
+        List<CdpInterface> cdpInterfaces = new ArrayList<CdpInterface>();
+
+        for (final CdpCacheTableEntry cdpEntry : snmpcoll.getCdpCacheTable().getEntries()) {
+            final int cdpAddrType = cdpEntry.getCdpCacheAddressType();
+
+            if (cdpAddrType != CDP_ADDRESS_TYPE_IP_ADDRESS) {
+                LogUtils.warnf(this, "processCdpCacheTable: CDP address type not valid: %d", cdpAddrType);
+                continue;
+            }
+
+            final InetAddress cdpTargetIpAddr = cdpEntry.getCdpCacheAddress();
+            final String hostAddress = InetAddressUtils.str(cdpTargetIpAddr);
+
+            if (cdpTargetIpAddr == null || cdpTargetIpAddr.isLoopbackAddress() || hostAddress.equals("0.0.0.0")) {
+                LogUtils.debugf(this, "processCdpCacheTable: IP address is not valid: %s", hostAddress);
+                continue;
+            }
+
+            LogUtils.debugf(this, "processCdpCacheTable: IP address found: %s", hostAddress);
+
+            final int cdpIfIndex = cdpEntry.getCdpCacheIfIndex();
+
+            if (cdpIfIndex < 0) {
+                LogUtils.debugf(this, "processCdpCacheTable: ifIndex not valid: %d", cdpIfIndex);
+                continue;
+            }
+
+            LogUtils.debugf(this, "processCdpCacheTable: ifIndex found: %d", cdpIfIndex);
+
+            final String cdpTargetDevicePort = cdpEntry.getCdpCacheDevicePort();
+
+            if (cdpTargetDevicePort == null) {
+                LogUtils.warnf(this, "processCdpCacheTable: Target device port not found. Skipping.");
+                continue;
+            }
+
+            LogUtils.debugf(this, "processCdpCacheTable: Target device port name found: %s", cdpTargetDevicePort);
+
+            int targetCdpNodeId = -1;
+
+            if (!cdpTargetIpAddr.isLoopbackAddress() && hostAddress.equals("0.0.0.0")) {
+                targetCdpNodeId = getNodeidFromIp(dbConn, cdpTargetIpAddr);
+            }
+
+            if (targetCdpNodeId == -1) {
+                LogUtils.warnf(this, "processCdpCacheTable: No node ID found: interface not added to linkable SNMP node. Skipping.");
+                sendNewSuspectEvent(cdpTargetIpAddr, snmpcoll.getTarget(), snmpcoll.getPackageName());
+                continue;
+            }
+
+            final int cdpTargetIfindex = getIfIndexByName(dbConn, targetCdpNodeId, cdpTargetDevicePort);
+
+            if (cdpTargetIfindex == -1) {
+                LogUtils.warnf(this, "processCdpCacheTable: No valid target ifIndex found: interface not added to linkable SNMP node. Skipping.");
+                continue;
+            }
+
+            final CdpInterface cdpIface = new CdpInterface(cdpIfIndex);
+            cdpIface.setCdpTargetNodeId(targetCdpNodeId);
+            cdpIface.setCdpTargetIpAddr(cdpTargetIpAddr);
+            cdpIface.setCdpTargetIfIndex(cdpTargetIfindex);
+
+            LogUtils.debugf(this, "processCdpCacheTable: Adding interface to linkable SNMP node: %s", cdpIface);
+
+            cdpInterfaces.add(cdpIface);
+        }
+        node.setCdpInterfaces(cdpInterfaces);
+    }
+

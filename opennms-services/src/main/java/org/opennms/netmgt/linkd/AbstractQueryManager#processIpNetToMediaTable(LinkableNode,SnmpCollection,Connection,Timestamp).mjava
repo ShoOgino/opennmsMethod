@@ -1,0 +1,63 @@
+    protected void processIpNetToMediaTable(final LinkableNode node, final SnmpCollection snmpcoll, final Connection dbConn, final Timestamp scanTime) throws SQLException {
+        LogUtils.debugf(this, "processIpNetToMediaTable: Starting IP net to media table processing.");
+        // the AtInterfaces used by LinkableNode where to save info
+        final List<OnmsAtInterface> atInterfaces = new ArrayList<OnmsAtInterface>();
+
+        for (final IpNetToMediaTableEntry ent : snmpcoll.getIpNetToMediaTable().getEntries()) {
+
+            final int ifindex = ent.getIpNetToMediaIfIndex();
+
+            if (ifindex < 0) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: invalid ifindex %s", ifindex);
+                continue;
+            }
+
+            final InetAddress ipaddress = ent.getIpNetToMediaNetAddress();
+            final String hostAddress = InetAddressUtils.str(ipaddress);
+
+            if (ipaddress == null || ipaddress.isLoopbackAddress() || hostAddress.equals("0.0.0.0")) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: invalid IP: %s", hostAddress);
+                continue;
+            }
+
+            final String physAddr = ent.getIpNetToMediaPhysAddress();
+
+            if (physAddr == null || physAddr.equals("000000000000") || physAddr.equalsIgnoreCase("ffffffffffff")) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: invalid MAC address %s for IP %s", physAddr, hostAddress);
+                continue;
+            }
+
+            LogUtils.debugf(this, "processIpNetToMediaTable: trying save ipNetToMedia info: IP address %s, MAC address %s, ifIndex %d", hostAddress, physAddr, ifindex);
+
+            // get an At interface but without setting mac address
+            final OnmsAtInterface at = getAtInterfaceForAddress(dbConn, ipaddress, node);
+            if (at == null) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: no node found for IP address %s.", hostAddress);
+                sendNewSuspectEvent(ipaddress, snmpcoll.getTarget(), snmpcoll.getPackageName());
+                continue;
+            }
+
+            at.setSourceNodeId(node.getNodeId());
+
+            if (at.getMacAddress() != null && !at.getMacAddress().equals(physAddr)) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: Setting MAC address to %s but it used to be '%s' (IP Address = %s, ifIndex = %d)", physAddr, at.getMacAddress(), hostAddress, ifindex);
+            }
+            at.setMacAddress(physAddr);
+
+            if (at.getIfIndex() != null && !at.getIfIndex().equals(ifindex)) {
+                LogUtils.warnf(this, "processIpNetToMediaTable: Setting ifIndex to %d but it used to be '%s' (IP Address = %s, MAC = %s)", ifindex, at.getIfIndex(), hostAddress, physAddr);
+            }
+            at.setIfIndex(ifindex);
+
+            at.setLastPollTime(scanTime);
+            at.setStatus(DbAtInterfaceEntry.STATUS_ACTIVE);
+
+            // add AtInterface to list of valid interfaces
+            atInterfaces.add(at);
+
+            saveAtInterface(dbConn, at);
+        }
+        // set AtInterfaces in LinkableNode
+        node.setAtInterfaces(atInterfaces);
+    }
+

@@ -1,0 +1,47 @@
+    protected void processDot1StpPortTable(final LinkableNode node, final SnmpCollection snmpcoll, final Connection dbConn, final Timestamp scanTime, final OnmsVlan vlan, final SnmpVlanCollection snmpVlanColl) throws SQLException {
+        LogUtils.debugf(this, "processDot1StpPortTable: Starting dot1StpPort table processing.");
+        
+        for (final Dot1dStpPortTableEntry dot1dstpptentry : snmpVlanColl.getDot1dStpPortTable().getEntries()) {
+
+            final int stpport = dot1dstpptentry.getDot1dStpPort();
+
+            if (stpport == -1) {
+                LogUtils.warnf(this, "processDot1StpPortTable: Found invalid STP port. Skipping.");
+                continue;
+            }
+
+            final OnmsNode onmsNode = getNode(node.getNodeId());
+            if (onmsNode == null) {
+                LogUtils.debugf(this, "no node found!");
+                continue;
+            }
+
+            final OnmsStpInterface stpInterface = new OnmsStpInterface(onmsNode, stpport, vlan.getVlanId());
+            stpInterface.setStatus(DbStpNodeEntry.STATUS_ACTIVE);
+            stpInterface.setLastPollTime(scanTime);
+
+            String stpPortDesignatedBridge = dot1dstpptentry.getDot1dStpPortDesignatedBridge();
+            String stpPortDesignatedPort = dot1dstpptentry.getDot1dStpPortDesignatedPort();
+
+            if (stpPortDesignatedBridge == null || stpPortDesignatedBridge.equals("0000000000000000")) {
+                LogUtils.warnf(this, "processDot1StpPortTable: Designated bridge (%s) is invalid. Skipping.", stpPortDesignatedBridge);
+                stpPortDesignatedBridge = "0000000000000000";
+            } else if (stpPortDesignatedPort == null || stpPortDesignatedPort.equals("0000")) {
+                LogUtils.warnf(this, "processDot1StpPortTable: Designated port (%s) is invalid. Skipping.", stpPortDesignatedPort);
+                stpPortDesignatedPort = "0000";
+            } else {
+                stpInterface.setStpPortState(dot1dstpptentry.getDot1dStpPortState());
+                stpInterface.setStpPortPathCost(dot1dstpptentry.getDot1dStpPortPathCost());
+                stpInterface.setStpPortDesignatedBridge(stpPortDesignatedBridge);
+                stpInterface.setStpPortDesignatedRoot(dot1dstpptentry.getDot1dStpPortDesignatedRoot());
+                stpInterface.setStpPortDesignatedCost(dot1dstpptentry.getDot1dStpPortDesignatedCost());
+                stpInterface.setStpPortDesignatedPort(stpPortDesignatedPort);
+                node.addStpInterface(stpInterface);
+            }
+
+            if (snmpcoll.getSaveStpInterfaceTable()) {
+                saveStpInterface(dbConn, stpInterface);
+            }
+        }
+    }
+
