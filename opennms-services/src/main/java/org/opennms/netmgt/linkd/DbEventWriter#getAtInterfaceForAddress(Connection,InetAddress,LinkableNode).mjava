@@ -1,0 +1,50 @@
+    protected OnmsAtInterface getAtInterfaceForAddress(final Connection dbConn, final InetAddress ipaddr, final LinkableNode node) throws SQLException {
+
+        final String hostAddress = str(ipaddr);
+		if (ipaddr.isLoopbackAddress() || hostAddress.equals("0.0.0.0")) return null;
+
+        int atnodeid = -1;
+        int atifindex = -1;
+        OnmsAtInterface ati = null;
+
+        final String ipQuery = "SELECT node.nodeid,ipinterface.ifindex FROM node LEFT JOIN ipinterface ON node.nodeid = ipinterface.nodeid WHERE nodetype = 'A' AND ipaddr = ?";
+        
+        final DBUtils d = new DBUtils(getClass());
+        try {
+        	final PreparedStatement stmt;
+        	
+    		// old style, first node matching ipinterface address only
+    		stmt = dbConn.prepareStatement(ipQuery);
+            d.watch(stmt);
+            stmt.setString(1, hostAddress);
+            LogUtils.debugf(this, "getAtInterfaceForAddress: executing SQL Statement " + ipQuery + " with ip address=" + hostAddress);
+
+        	final ResultSet rs = stmt.executeQuery();
+            d.watch(rs);
+    
+            if (!rs.next()) {
+                return null;
+            }
+    
+            atnodeid = rs.getInt("nodeid");
+            if (rs.wasNull()) { return null; }
+            // save info for DiscoveryLink
+            final OnmsNode onmsNode = m_nodeDao.get(atnodeid);
+            ati = new OnmsAtInterface(onmsNode, hostAddress);
+    
+            // get ifindex if exists
+            atifindex = rs.getInt("ifindex");
+            if (rs.wasNull()) {
+                LogUtils.infof(this, "getAtInterfaceForAddress: nodeid " + atnodeid + " no ifindex (-1) found for ipaddress " + ipaddr + ".");
+            } else {
+                LogUtils.infof(this, "getAtInterfaceForAddress: nodeid " + atnodeid + " ifindex " + atifindex + " found for ipaddress " + ipaddr + ".");
+                ati.setIfIndex(atifindex);
+            }
+        } finally {
+            d.cleanUp();
+        }
+
+        return ati;
+
+    }
+
