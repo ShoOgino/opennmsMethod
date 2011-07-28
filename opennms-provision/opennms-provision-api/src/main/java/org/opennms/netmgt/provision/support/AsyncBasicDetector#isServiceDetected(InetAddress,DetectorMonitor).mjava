@@ -1,29 +1,42 @@
     /** {@inheritDoc} */
     @Override
     public DetectFuture isServiceDetected(final InetAddress address, final DetectorMonitor monitor) throws Exception {
-        m_connector = s_connectorFactory.getConnector();
+    	
+        final DetectFuture detectFuture = new DefaultDetectFuture(this);
         
-        final DetectFuture future = new DefaultDetectFuture(this);
+        // Set this up here because it can throw an Exception, which we want
+        // to throw now, not in initializeSession
+        final SSLContext c = createClientSSLContext();
         
-        // Set connect timeout.
-        m_connector.setConnectTimeoutMillis( getTimeout() );
-        m_connector.setHandler( createDetectorHandler(future) );
-        
-        if(isUseSSLFilter()) {
-            final SslFilter filter = new SslFilter(createClientSSLContext());
-            filter.setUseClientMode(true);
-            m_connector.getFilterChain().addFirst("SSL", filter);
-        }
-        
-        m_connector.getFilterChain().addLast( "logger", getLoggingFilter() != null ? getLoggingFilter() : new LoggingFilter() );
-        m_connector.getFilterChain().addLast( "codec", getProtocolCodecFilter());
-        m_connector.getSessionConfig().setIdleTime( IdleStatus.READER_IDLE, getIdleTime() );
+        // Create an IoSessionInitializer that will configure this individual
+        // session. Previously, all this was done on a new Connector each time
+        // but that was leaking file handles all over the place. This way gives
+        // us per-connection settings without the overhead of creating new
+        // Connectors each time
+        IoSessionInitializer<ConnectFuture> init = new IoSessionInitializer<ConnectFuture>() {
 
-        // Start communication
-        final InetSocketAddress socketAddress = new InetSocketAddress(address, getPort());
-        final ConnectFuture cf = m_connector.connect( socketAddress );
-        cf.addListener(retryAttemptListener( m_connector, future, socketAddress, getRetries() ));
-        
-        return future;
+			public void initializeSession(IoSession session, ConnectFuture future) {
+				// Add filters to the session
+		        if(isUseSSLFilter()) {
+		            final SslFilter filter = new SslFilter(c);
+		            filter.setUseClientMode(true);
+		            session.getFilterChain().addFirst("SSL", filter);
+		        }			
+		        session.getFilterChain().addLast( "logger", getLoggingFilter() != null ? getLoggingFilter() : new LoggingFilter() );
+		        session.getFilterChain().addLast( "codec", getProtocolCodecFilter());
+		        session.getConfig().setIdleTime(IdleStatus.READER_IDLE, getIdleTime());
+		        // Give the session an IoHandler that will get everything delegated to it
+		        // by the SessionDelegateIoHandler
+		        session.setAttribute( IoHandler.class, createDetectorHandler(detectFuture) );
+			}
+		};
+
+		// Start communication
+		final InetSocketAddress socketAddress = new InetSocketAddress(address, getPort());
+    	m_connectionFactory = ConnectionFactory.getFactory(getTimeout());
+		final ConnectFuture cf = m_connectionFactory.connect(socketAddress, init);
+		cf.addListener(retryAttemptListener( m_connectionFactory, detectFuture, socketAddress, init, getRetries() ));
+ 
+        return detectFuture;
     }
 
