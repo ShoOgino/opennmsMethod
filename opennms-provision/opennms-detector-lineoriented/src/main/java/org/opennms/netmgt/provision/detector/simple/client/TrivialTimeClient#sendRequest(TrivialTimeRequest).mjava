@@ -1,0 +1,44 @@
+    @Override
+    public TrivialTimeResponse sendRequest(TrivialTimeRequest request) throws IOException, Exception {
+        boolean gotTime = false;
+        int remoteTime = 0;
+        int localTime = 0;
+        for (int i = 0; i < retries && !gotTime; i++) {
+            // Try to read from the socket
+            byte[] timeBytes = new byte[4];
+            ByteBuffer timeByteBuffer = ByteBuffer.wrap(timeBytes);
+            int bytesRead = 0;
+
+            if (isTcp()) {
+                bytesRead = tcpSocket.getInputStream().read(timeBytes);
+            }
+
+            if (isUdp()) {
+                // Send an empty datagram per RFC868
+                udpSocket.send(udpPacket);
+                DatagramPacket timePacket = new DatagramPacket(timeBytes, timeBytes.length);
+                // Try to receive a response from the remote socket
+                udpSocket.receive(timePacket);
+                bytesRead = timePacket.getLength();
+            }
+
+            if (bytesRead != 4)
+                continue;
+            if (log().isDebugEnabled()) {
+                log().debug("sendRequest: " + protocol + " bytes read = " + bytesRead);
+            }
+
+            try {
+                remoteTime = timeByteBuffer.getInt();
+            } catch (BufferUnderflowException bue) {
+                log().error("Encountered buffer underflow while reading time from remote socket.");
+                remoteTime = 0;
+                continue; // to next iteration of for() loop
+            }
+
+            localTime = (int)(System.currentTimeMillis() / 1000) - EPOCH_ADJ_FACTOR;
+            gotTime = true;
+        }
+        return gotTime ? new TrivialTimeResponse(remoteTime, localTime, allowedSkew) : new TrivialTimeResponse();
+    }
+
