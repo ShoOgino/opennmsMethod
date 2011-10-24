@@ -11,12 +11,7 @@
         List<RouterInterface> routeInterfaces = new ArrayList<RouterInterface>();
 
         for (final SnmpStore ent : entries) {
-            final Integer ifindex = ent.getInt32(IpRouteCollectorEntry.IP_ROUTE_IFINDEX);
-
-            if (ifindex == null || ifindex < 0) {
-                LogUtils.warnf(this, "processRouteTable: Not valid ifIndex %s. Skipping.", ifindex);
-                continue;
-            }
+            Integer ifindex = ent.getInt32(IpRouteCollectorEntry.IP_ROUTE_IFINDEX);
 
             final InetAddress nexthop = ent.getIPAddress(IpRouteCollectorEntry.IP_ROUTE_NXTHOP);
 
@@ -36,6 +31,29 @@
             if (routemask == null) {
                 LogUtils.warnf(this, "processRouteTable: route mask not found. Skipping.");
                 continue;
+            }
+
+            if (ifindex == null || ifindex < 0) {
+                LogUtils.warnf(this, "processRouteTable: Not valid ifIndex %s. Skipping.", ifindex);
+                continue;
+            } else if (ifindex == 0) {
+                // According to the RFC, if the ifindex is zero (0) then this indicates that no
+                // particular interface was specified. We need to figure out the ifindex in that case.
+                /*
+                inetCidrRouteIfIndex OBJECT-TYPE
+                   SYNTAX InterfaceIndexOrZero
+                   DESCRIPTION
+                       "The ifIndex value that identifies the local interface
+                       through which the next hop of this route should be
+                       reached.  A value of 0 is valid and represents the
+                       scenario where no interface is specified."
+                   ::= { inetCidrRouteEntry 7 }
+                */
+                ifindex = getIfIndexFromRouteTableEntries(nexthop, entries);
+                if (ifindex < 1) {
+                    LogUtils.warnf(this, "processRouteTable: Not valid ifIndex %s. Skipping.", ifindex);
+                    continue;
+                }
             }
 
             LogUtils.debugf(this, "processRouteTable: parsing routeDest/routeMask/nextHop: %s/%s/%s - ifIndex = %d", str(routedest), str(routemask), str(nexthop), ifindex);
