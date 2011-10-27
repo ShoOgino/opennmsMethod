@@ -1,19 +1,37 @@
         private String getNetMask() {
-        	final SnmpValue value = getValue(IP_ADDRESS_PREFIX_INDEX);
-        	
-        	final SnmpObjId netmaskRef = value.toSnmpObjId().getInstance(IP_ADDRESS_PREFIX_ORIGIN_INDEX);
-        	
-        	final int[] rawIds = netmaskRef.getIds();
-        	final int addressType = rawIds[1];
-        	final int addressLength = rawIds[2];
-        	final InetAddress address = getInetAddress(rawIds, 3, addressLength);
-        	final int mask = rawIds[rawIds.length - 1];
+            final SnmpValue value = getValue(IP_ADDRESS_PREFIX_INDEX);
 
-			if (addressType == TYPE_IPV4 || addressType == TYPE_IPV6) {
-				return str(address) + "/" + mask;
-        	} else {
-        		LogUtils.warnf(this, "unknown address type, expected 1 (IPv4) or 2 (IPv6), but got %d", addressType);
-        		return null;
-        	}
+            final SnmpInstId netmaskRef = value.toSnmpObjId().getInstance(IP_ADDRESS_PREFIX_ORIGIN_INDEX);
+
+            final int[] rawIds = netmaskRef.getIds();
+            final int addressType = rawIds[1];
+            final int mask = rawIds[rawIds.length - 1];
+            int addressLength = rawIds[2];
+            int addressIndex = 3;
+            // Begin NMS-4906 Lame Force 10 agent!
+            if (addressType == TYPE_IPV4 && rawIds.length != 1+6+1) {
+                LogUtils.warnf(this, "BAD AGENT: Does not conform to RFC 4001 Section 4.1 Table Indexing!!! Report them immediately.  Making a best guess!");
+                addressIndex = rawIds.length - (4+1);
+                addressLength = 4;
+            }
+            if (addressType == TYPE_IPV6 && rawIds.length != 1+18+1) {
+                LogUtils.warnf(this, "BAD AGENT: Does not conform to RFC 4001 Section 4.1 Table Indexing!!! Report them immediately.  Making a best guess!");
+                addressIndex = rawIds.length - (16 + 1);
+                addressLength = 16;
+            }
+            // End NMS-4906 Lame Force 10 agent!
+            if (addressIndex < 0 || addressIndex + addressLength > rawIds.length) {
+                LogUtils.warnf(this, "BAD AGENT: Returned instanceId %s does not enough bytes to contain address!. Skipping.", netmaskRef);
+                return null;
+            }
+
+            final InetAddress address = getInetAddress(rawIds, addressIndex, addressLength);
+
+            if (addressType == TYPE_IPV4 || addressType == TYPE_IPV6) {
+                return str(address) + "/" + mask;
+            } else {
+                LogUtils.warnf(this, "unknown address type, expected 1 (IPv4) or 2 (IPv6), but got %d", addressType);
+                return null;
+            }
         }
 

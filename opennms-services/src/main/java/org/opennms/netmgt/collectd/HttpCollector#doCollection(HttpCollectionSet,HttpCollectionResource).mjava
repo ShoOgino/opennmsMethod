@@ -18,6 +18,18 @@
         try {
             HttpParams params = buildParams(collectionSet);
             client = new DefaultHttpClient(params);
+            if ("https".equals(collectionSet.getUriDef().getUrl().getScheme())) {
+                final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
+                final Scheme https = registry.getScheme("https");
+
+                // Override the trust validation with a lenient implementation
+                final SSLSocketFactory factory = new SSLSocketFactory(SSLContext.getInstance(PageSequenceMonitor.EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+
+                final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
+                // This will replace the existing "https" schema
+                registry.register(lenient);
+            }
+
             String key = "retry";
             if (collectionSet.getParameters().containsKey("retries")) {
                 key = "retries";
@@ -37,6 +49,8 @@
             throw new HttpCollectorException("Error building HttpClient URI");
         } catch (IOException e) {
             throw new HttpCollectorException("IO Error retrieving page");
+        } catch (NoSuchAlgorithmException e) {
+            throw new HttpCollectorException("Could not find EmptyKeyRelaxedTrustSSLContext to allow connection to untrusted HTTPS hosts");
         } finally {
             // Do we need to do any cleanup?
             // if (method != null) method.releaseConnection();

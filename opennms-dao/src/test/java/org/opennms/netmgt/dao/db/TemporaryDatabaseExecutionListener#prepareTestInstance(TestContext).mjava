@@ -3,11 +3,26 @@
 		System.err.println(String.format("TemporaryDatabaseExecutionListener.prepareTestInstance(%s)", testContext));
 		final JUnitTemporaryDatabase jtd = findAnnotation(testContext);
 
-		if (jtd == null) return;
+		if (jtd == null) {
+			return;
+		}
 
 		m_database = m_databases.remove();
-		final LazyConnectionDataSourceProxy proxy = new LazyConnectionDataSourceProxy(m_database);
+		final PooledDataSource pooledDataSource = (PooledDataSource)DataSources.pooledDataSource(m_database);
+
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+		    @Override
+		    public void run() {
+		        try { pooledDataSource.close(); }
+		        catch (final Throwable t) { LogUtils.debugf(this, t, "failed to close pooled data source"); }
+		    }
+		});
+
+		final LazyConnectionDataSourceProxy proxy = new LazyConnectionDataSourceProxy(pooledDataSource);
 		DataSourceFactory.setInstance(proxy);
+		
+		testContext.setAttribute("org.opennms.netmgt.dao.db.TemporaryDatabaseExecutionListener.pooledDataSource", pooledDataSource);
 		System.err.println(String.format("TemporaryDatabaseExecutionListener.prepareTestInstance(%s) prepared db %s", testContext, m_database.toString()));
+        System.err.println("Temporary Database Name: " + m_database.getTestDatabase());
 	}
 
