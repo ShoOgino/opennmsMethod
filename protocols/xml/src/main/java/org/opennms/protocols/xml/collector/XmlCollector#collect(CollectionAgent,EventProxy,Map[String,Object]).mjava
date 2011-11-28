@@ -2,57 +2,29 @@
      * @see org.opennms.netmgt.collectd.ServiceCollector#collect(org.opennms.netmgt.collectd.CollectionAgent, org.opennms.netmgt.model.events.EventProxy, java.util.Map)
      */
     public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, Object> parameters) throws CollectionException {
-        // Create a new collection set.
-        XmlCollectionSet collectionSet = new XmlCollectionSet(agent);
-        collectionSet.setCollectionTimestamp(new Date());
-        collectionSet.setStatus(ServiceCollector.COLLECTION_UNKNOWN);
-
         if (parameters == null) {
-            log().error("Null parameters is now allowed in XML Collector!!");
-            return collectionSet;
+            throw new CollectionException("Null parameters is now allowed in XML Collector!");
         }
-
-        // FIXME Instantiate the parser and execute it
-        try {            
+        try {
+            // Getting XML Collection
             String collectionName = ParameterMap.getKeyedString(parameters, "collection", null);
             if (collectionName == null) {
-                //Look for the old configuration style:
                 collectionName = ParameterMap.getKeyedString(parameters, "xml-collection", null);
             }
-
+            if (collectionName == null) {
+                throw new CollectionException("Parameter collection is required for the XML Collector!");
+            }
             log().debug("collect: collecting XML data using collection " + collectionName);
             XmlDataCollection collection = m_xmlCollectionDao.getDataCollectionByName(collectionName);
-
-            // Load the attribute group types.
-            loadAttributes(collection);
-
-            for (XmlSource source : collection.getXmlSources()) {
-                // Retrieve the XML data
-                Document doc = getXmlDocument(agent, source);
-
-                // Cycle through all of the queries for this collection
-                XPath xpath = XPathFactory.newInstance().newXPath();
-                for (XmlGroup group : source.getXmlGroups()) {
-                    log().debug("collect: getting resources for XML group " + group.getName() + " using XPATH " + group.getResourceXpath());
-                    NodeList resourceList = (NodeList) xpath.evaluate(group.getResourceXpath(), doc, XPathConstants.NODESET);
-                    for (int j = 0; j < resourceList.getLength(); j++) {
-                        Node resource = resourceList.item(j);
-                        Node resourceName = (Node) xpath.evaluate(group.getKeyXpath(), resource, XPathConstants.NODE);
-                        log().debug("collect: processing XML resource " + resourceName);
-                        XmlCollectionResource collectionResource = getCollectionResource(agent, resourceName.getNodeValue(), group.getResourceType());
-                        for (XmlObject object : group.getXmlObjects()) {
-                            String value = (String) xpath.evaluate(object.getXpath(), resource, XPathConstants.STRING);
-                            collectionResource.setAttributeValue(m_attribTypeList.get(object.getName()), value);
-                        }
-                        collectionSet.getCollectionResources().add(collectionResource);
-                    }
-                }
+            if (collection == null) {
+                throw new CollectionException("XML Collection " + collectionName +" does not exist.");
             }
-            collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
-            return collectionSet;
+
+            // Filling XML CollectionSet
+            m_collectionHandler.setRrdRepository(getRrdRepository(collectionName));
+            return m_collectionHandler.collect(agent, collection, parameters);
         } catch (Exception e) {
-            collectionSet.setStatus(ServiceCollector.COLLECTION_FAILED);
-            throw new CollectionException("Can't collect XML data.", e);
+            throw new CollectionException("Can't collect XML data because " + e.getMessage(), e);
         }
     }
 
