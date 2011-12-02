@@ -1,0 +1,39 @@
+	@Override
+	public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) 
+	{
+		PollStatus serviceStatus = PollStatus.unavailable("Poll not completed yet");
+		TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_SEQUENCE_RETRY, DEFAULT_TIMEOUT);
+	    
+		for(tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt()) {
+		    String seleniumTestFilename = getGroovyFilename( parameters );
+    		try {
+    	        
+                Map<String, Number> responseTimes = new HashMap<String, Number>();
+                responseTimes.put("response-time", Double.NaN);
+                
+                tracker.startAttempt();
+                Result result = runTest( getBaseUrl(parameters, svc), getTimeout(parameters), createGroovyClass( seleniumTestFilename ) );
+                double responseTime = tracker.elapsedTimeInMillis();
+                responseTimes.put("response-time", responseTime);
+                
+                if(result.wasSuccessful()) {
+                    serviceStatus = PollStatus.available();
+                    serviceStatus.setProperties(responseTimes);
+                }else {
+                    serviceStatus = PollStatus.unavailable( getFailureMessage( result, svc ));
+                }
+            } catch (CompilationFailedException e) {
+                serviceStatus = PollStatus.unavailable("Selenium page sequence attempt on:" + svc.getIpAddr() + " failed : selenium-test compilation error " + e.getMessage());
+                logDown(Level.DEBUG, "Selenium sequence failed: CompilationFailedException" + e.getMessage());
+            } catch (IOException e) {
+                serviceStatus = PollStatus.unavailable("Selenium page sequence attempt on " + svc.getIpAddr() + " failed: IOException occurred, failed to find selenium-test: " + seleniumTestFilename);
+                logDown(Level.DEBUG, "Selenium sequence failed: IOException: " + e.getMessage());
+            } catch (Exception e) {
+                serviceStatus = PollStatus.unavailable("Selenium page sequence attempt on " + svc.getIpAddr() + " failed:\n" + e.getMessage());
+                logDown(Level.DEBUG, "Selenium sequence failed: Exception: " + e.getMessage());
+            }
+		}
+	    
+		return serviceStatus;
+	}
+
