@@ -11,18 +11,23 @@
      * 		An appropriate Factory
      */
     public static ConnectionFactory getFactory(int timeoutInMillis) {
-    	LogUtils.debugf(ConnectionFactory.class, "Creating a ConnectionFactory for timeout %d, there are already %d factories", timeoutInMillis, s_connectorPool.size());
-    	if (s_availableConnectors != null) {
-    		s_availableConnectors.acquireUninterruptibly();
-    	}
-    	synchronized (s_connectorPool) {
-        	ConnectionFactory w = s_connectorPool.get(timeoutInMillis);
-        	if (w == null) {
-        		w = new ConnectionFactory(timeoutInMillis);
-        		s_connectorPool.put(timeoutInMillis, w);
-        	}
-        	w.m_references++;
-        	return w;
-		}
+        if (s_availableConnectors != null) {
+            s_availableConnectors.acquireUninterruptibly();
+        }
+        ConnectionFactory factory = s_connectorPool.get(timeoutInMillis);
+        if (factory == null) {
+            LogUtils.debugf(ConnectionFactory.class, "Creating a ConnectionFactory for timeout %d, there are already %d factories", timeoutInMillis, s_connectorPool.size());
+            ConnectionFactory newFactory = new ConnectionFactory(timeoutInMillis);
+            factory = s_connectorPool.putIfAbsent(timeoutInMillis, newFactory);
+            // If there was no previous value for the factory in the map...
+            if (factory == null) {
+                // ...then use the new value.
+                factory = newFactory;
+            } else {
+                LogUtils.debugf(ConnectionFactory.class, "ConnectionFactory for timeout %d was already created in another thread!", timeoutInMillis);
+            }
+        }
+        factory.m_references++;
+        return factory;
     }
 
