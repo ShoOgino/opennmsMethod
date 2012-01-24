@@ -11,11 +11,43 @@
      * 		Initialiser for the IoSession
      * @return
      * 		ConnectFuture from a Mina connect call
+     * @throws IOException 
      */
-    public ConnectFuture connect(SocketAddress destination, IoSessionInitializer<? extends ConnectFuture> init) {
-    	if (s_availableConnections != null) {
-    		s_availableConnections.acquireUninterruptibly();
-    	}
-    	return m_connector.connect(destination, init);
+    public ConnectFuture connect(SocketAddress destination, IoSessionInitializer<? extends ConnectFuture> init) throws IOException {
+        if (s_availableConnections != null) {
+            s_availableConnections.acquireUninterruptibly();
+        }
+        for (int retries = 0; retries < s_connectionExecutionRetries; retries++) { 
+            try {
+                synchronized (m_connector) {
+                    return m_connector.connect(destination, init);
+                }
+            } catch (RejectedExecutionException e) {
+                LogUtils.debugf(this, "Caught exception, retrying: %s", e);
+                synchronized (m_connector) {
+                    m_connector.dispose();
+                    /*
+                    while (!m_connector.isDisposed()) {
+                        try { Thread.sleep(10); } catch (InterruptedException ex) {}
+                    }
+                    */
+                    m_connector = getSocketConnector();
+                    try { Thread.sleep(10); } catch (InterruptedException ex) {}
+                }
+            } catch (IllegalStateException e) {
+                LogUtils.debugf(this, "Caught exception, retrying: %s", e);
+                synchronized (m_connector) {
+                    m_connector.dispose();
+                    /*
+                    while (!m_connector.isDisposed()) {
+                        try { Thread.sleep(10); } catch (InterruptedException ex) {}
+                    }
+                    */
+                    m_connector = getSocketConnector();
+                    try { Thread.sleep(10); } catch (InterruptedException ex) {}
+                }
+            }
+        }
+        throw new IOException("Could not connect to socket because of excessive RejectedExecutionExceptions");
     }
 
