@@ -1,18 +1,24 @@
     @Test
     @Transactional
     public void testReportResults() throws InterruptedException {
-        m_jdbcTemplate.execute("INSERT INTO node (nodeId, nodeCreateTime) VALUES (1, now())");
-        m_jdbcTemplate.execute("INSERT INTO ipInterface (id, nodeId, ipAddr)  VALUES (1, 1, '192.168.1.1')");
-        m_jdbcTemplate.execute("INSERT INTO service (serviceId, serviceName) VALUES (1, 'HTTP')");
-        m_jdbcTemplate.execute("INSERT INTO ifServices (id, nodeId, ipAddr, serviceId, ipInterfaceId) VALUES (1, 1, '192.168.1.1', 1, 1)");
+        final OnmsNode node = new OnmsNode(m_distPollerDao.findAll().get(0), "foo");
+        final OnmsIpInterface iface = new OnmsIpInterface("192.168.1.1", node);
+        OnmsServiceType serviceType = m_serviceTypeDao.findByName("HTTP");
+        if (serviceType == null) {
+            serviceType = new OnmsServiceType("HTTP");
+            m_serviceTypeDao.save(serviceType);
+            m_serviceTypeDao.flush();
+        }
+        final OnmsMonitoredService service = new OnmsMonitoredService(iface, serviceType);
+        iface.setMonitoredServices(Collections.singleton(service));
+        m_nodeDao.save(node);
+        m_nodeDao.flush();
         
-        int locationMonitorId = m_backEnd.registerLocationMonitor("RDU");
-        int serviceId = findServiceId();
-        
-        String ipAddr = queryForString("select ipaddr from ifservices where id = ?", serviceId);
-        
+        final int locationMonitorId = m_backEnd.registerLocationMonitor("RDU");
+        final int serviceId = service.getId();
+
         // make sure there is no rrd data
-        File rrdFile = new File("target/test-data/distributed/"+locationMonitorId+"/"+ipAddr+"/http" + RrdUtils.getExtension());
+        final File rrdFile = new File("target/test-data/distributed/"+locationMonitorId+"/"+ InetAddressUtils.str(iface.getIpAddress()) +"/http" + RrdUtils.getExtension());
         if (rrdFile.exists()) {
             rrdFile.delete();
         }
@@ -23,7 +29,15 @@
         Thread.sleep(1000);
         m_backEnd.reportResult(locationMonitorId, serviceId, PollStatus.unavailable());
 
-        assertEquals(2, queryForInt("select count(*) from location_specific_status_changes where locationMonitorId = ?", locationMonitorId));
+        final Collection<OnmsLocationSpecificStatus> statuses = m_locationMonitorDao.getStatusChangesForLocationBetween(new Date(0L), new Date(), "RDU");
+        assertEquals(2, statuses.size());
+
+        final Iterator<OnmsLocationSpecificStatus> statusIterator = statuses.iterator();
+        final OnmsLocationSpecificStatus status1 = statusIterator.next();
+        final OnmsLocationSpecificStatus status2 = statusIterator.next();
+
+        assertEquals(Double.valueOf(1234D), status1.getPollResult().getResponseTime());
+        assertNull(status2.getPollResult().getResponseTime());
 
         assertTrue("rrd file doesn't exist at " + rrdFile.getAbsolutePath(), rrdFile.exists());
     }
