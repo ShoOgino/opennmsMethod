@@ -1,63 +1,72 @@
-    /** {@inheritDoc} */
-    public String run(HashMap<String, Object> reportParms, String reportId) throws ReportException {
+    /**
+     * {@inheritDoc}
+     */
+    public String run(HashMap<String, Object> reportParms, String reportId)
+            throws ReportException {
         String baseDir = System.getProperty("opennms.report.dir");
         JasperReport jasperReport = null;
         String outputFileName = null;
-        String sourceFileName = m_jasperReportConfigDao.getTemplateLocation(reportId);
+
+        // TODO TAK: What is about jrReportParms?
         HashMap<String, Object> jrReportParms;
 
-        if (sourceFileName != null) {
+        try {
+            jasperReport = JasperCompileManager.compileReport(m_globalReportRepository.getTemplateStream(reportId));
+        } catch (JRException e) {
+            log.error("unable to compile jasper report", e);
+            throw new ReportException("unable to compile jasperReport", e);
+        }
+
+        jrReportParms = buildJRparameters(reportParms,
+                jasperReport.getParameters());
+
+        // Find sub reports and provide sub reports as parameter
+        jrReportParms.putAll(buildSubreport(reportId, jasperReport));
+
+        outputFileName = new String(baseDir + "/" + jasperReport.getName()
+                + new SimpleDateFormat("-MMddyyyy-HHmm").format(new Date())
+                + ".jrprint");
+        log.debug("jrprint output file: " + outputFileName);
+
+        if ("jdbc".equalsIgnoreCase(m_globalReportRepository.getEngine(reportId))) {
+            Connection connection;
+            try {
+                connection = DataSourceFactory.getDataSource().getConnection();
+                JasperFillManager.fillReportToFile(jasperReport,
+                        outputFileName,
+                        reportParms, connection);
+
+                connection.close();
+            } catch (SQLException e) {
+                log.error("sql exception getting or closing datasource ", e);
+                throw new ReportException(
+                        "sql exception getting or closing datasource",
+                        e);
+            } catch (JRException e) {
+                log.error("jasper report exception ", e);
+                throw new ReportException(
+                        "unable to run emptyDataSource jasperReport",
+                        e);
+            }
+        } else if (m_globalReportRepository.getEngine(reportId).equals("null")) {
 
             try {
-                jasperReport = JasperCompileManager.compileReport(System.getProperty("opennms.home")
-                        + "/etc/report-templates/" + sourceFileName);
+
+                JasperFillManager.fillReportToFile(jasperReport,
+                        outputFileName,
+                        reportParms,
+                        new JREmptyDataSource());
             } catch (JRException e) {
-                log.error("unable to compile jasper report", e);
-                throw new ReportException("unable to compile jasperReport", e);
-            }
-
-            jrReportParms = buildJRparameters(reportParms,
-                                              jasperReport.getParameters());
-
-            outputFileName = new String(baseDir + "/"
-                    + jasperReport.getName() + new SimpleDateFormat("-MMddyyyy-HHmm").format(new Date()) + ".jrprint");
-            log.debug("jrpcml output file: " + outputFileName);
-            if (m_jasperReportConfigDao.getEngine(reportId).equals("jdbc")) {
-                Connection connection;
-                try {
-                    connection = DataSourceFactory.getDataSource().getConnection();
-                    JasperFillManager.fillReportToFile(jasperReport, outputFileName, reportParms, connection);
-                    
-                    connection.close();
-                } catch (SQLException e) {
-                    log.error("sql exception getting or closing datasource ",
-                              e);
-                    throw new ReportException(
-                                              "sql exception getting or closing datasource",
-                                              e);
-                } catch (JRException e) {
-                    log.error("jasper report exception ", e);
-                    throw new ReportException(
-                                              "unable to run emptyDataSource jasperReport",
-                                              e);
-                }
-            } else if (m_jasperReportConfigDao.getEngine(reportId).equals("null")) {
-                
-                try {
-                    
-                    JasperFillManager.fillReportToFile(jasperReport, outputFileName, reportParms, new JREmptyDataSource());
-                } catch (JRException e) {
-                    log.error("jasper report exception ", e);
-                    throw new ReportException(
-                                              "unable to run emptyDataSource jasperReport",
-                                              e);
-                }
-
-            } else {
+                log.error("jasper report exception ", e);
                 throw new ReportException(
-                                          "no suitable datasource configured for reportId: "
-                                                  + reportId);
+                        "unable to run emptyDataSource jasperReport",
+                        e);
             }
+
+        } else {
+            throw new ReportException(
+                    "no suitable datasource configured for reportId: "
+                            + reportId);
         }
 
         return outputFileName;
