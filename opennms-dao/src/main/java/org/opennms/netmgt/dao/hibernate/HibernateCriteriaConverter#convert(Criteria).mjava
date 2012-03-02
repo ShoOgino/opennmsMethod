@@ -1,0 +1,56 @@
+	@Override
+	public DetachedCriteria convert(final Criteria criteria) {
+		// final CriteriaImpl hibernateCriteria = new CriteriaImpl(criteria.getCriteriaClass().getName(), null);
+		DetachedCriteria hibernateCriteria = DetachedCriteria.forClass(criteria.getCriteriaClass());
+
+		final List<Alias> joins = criteria.getAliases();
+		addJoinsToCriteria(joins, hibernateCriteria);
+		
+		if (criteria.getMatchType().equals("any")) {
+			final Restriction restriction = new OrRestriction(criteria.getRestrictions().toArray(EMPTY_RESTRICTION_ARRAY));
+			hibernateCriteria.add(restriction.toCriterion());
+		} else {
+			for (final Restriction restriction : criteria.getRestrictions()) {
+				hibernateCriteria.add(restriction.toCriterion());
+			}
+		}
+
+		if (criteria.isDistinct()) {
+			hibernateCriteria.setProjection(Projections.distinct(Projections.id()));
+			
+			final DetachedCriteria newCriteria = DetachedCriteria.forClass(criteria.getCriteriaClass());
+			newCriteria.add(Subqueries.propertyIn("id", hibernateCriteria));
+
+			// re-add these so they're available from the "outside" objects
+			// is this really necessary?  skipping seems to work fine
+			// addJoinsToCriteria(joins, newCriteria);
+
+			hibernateCriteria = newCriteria;
+		}
+		
+		for (final Entry<String,FetchType> fetchType : criteria.getFetchTypes().entrySet()) {
+			switch(fetchType.getValue()) {
+				case DEFAULT:
+					hibernateCriteria.setFetchMode(fetchType.getKey(), FetchMode.DEFAULT);
+				case EAGER:
+					hibernateCriteria.setFetchMode(fetchType.getKey(), FetchMode.JOIN);
+				case LAZY:
+					hibernateCriteria.setFetchMode(fetchType.getKey(), FetchMode.SELECT);
+				default:
+					hibernateCriteria.setFetchMode(fetchType.getKey(), FetchMode.DEFAULT);
+			}
+		}
+		
+		for (final org.opennms.core.criteria.Order order : criteria.getOrders()) {
+			final org.hibernate.criterion.Order hibernateOrder;
+			if (order.asc()) {
+				hibernateOrder = org.hibernate.criterion.Order.asc(order.getAttribute());
+			} else {
+				hibernateOrder = org.hibernate.criterion.Order.desc(order.getAttribute());
+			}
+			hibernateCriteria.addOrder(hibernateOrder);
+		}
+
+		return hibernateCriteria;
+	}
+
