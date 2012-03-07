@@ -2,6 +2,7 @@
 		final MultivaluedMap<String, String> params = new MultivaluedMapImpl();
 	    params.putAll(p);
 
+	    builder.distinct();
 	    builder.limit(DEFAULT_LIMIT);
 
     	if (params.containsKey("limit")) {
@@ -32,9 +33,6 @@
 			}
 		}
 
-        // Set default ordering
-	    builder.orderBy("lastEventTime").desc();
-
 	    final String query = removeParameter(params, "query");
 	    if (query != null) builder.sql(query);
 
@@ -53,6 +51,7 @@
 		wrapper.registerCustomEditor(OnmsSeverity.class, new OnmsSeverityTypeEditor());
 
 		final String comparatorParam = removeParameter(params, "comparator", "eq").toLowerCase();
+		final Criteria currentCriteria = builder.toCriteria();
 
 		for (final String key : params.keySet()) {
 			for (final String paramValue : params.get(key)) {
@@ -61,15 +60,29 @@
 				} else if ("notnull".equalsIgnoreCase(paramValue)) {
 					builder.isNotNull(key);
 				} else {
-					final Object value;
-					if ("node.id".equals(key)) {
-						value = Integer.valueOf(paramValue);
-					} else if (comparatorParam.equals("contains") || comparatorParam.equals("iplike") || comparatorParam.equals("ilike") || comparatorParam.equals("like")) {
+					Object value;
+					Class<?> type = Object.class;
+                    try {
+                        type = currentCriteria.getType(key);
+                    } catch (final IntrospectionException e) {
+                        LogUtils.debugf(this, "Unable to determine type for key %s", key);
+                    }
+                    if (type == null) {
+                        type = Object.class;
+                    }
+                    LogUtils.warnf(this, "comparator = %s, key = %s, propertyType = %s", comparatorParam, key, type);
+
+                    if (comparatorParam.equals("contains") || comparatorParam.equals("iplike") || comparatorParam.equals("ilike") || comparatorParam.equals("like")) {
 						value = paramValue;
 					} else {
-						value = convertIfNecessary(wrapper, key, paramValue);
+				        LogUtils.debugf(this, "convertIfNecessary(%s, %s)", key, paramValue);
+				        try {
+                            value = wrapper.convertIfNecessary(paramValue, type);
+                        } catch (final Throwable t) {
+                            LogUtils.debugf(this, t, "failed to introspect (key = %s, value = %s)", key, paramValue);
+                            value = paramValue;
+                        }
 					}
-    				LogUtils.warnf(this, "comparator = %s, key = %s, propertyType = %s", comparatorParam, key, wrapper.getPropertyType(key));
 
 					try {
 	    				final Method m = builder.getClass().getMethod(comparatorParam, String.class, Object.class);
