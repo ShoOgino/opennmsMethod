@@ -8,33 +8,36 @@
 	            	return;
 	            }
 
-	            final Map<SnmpObjId,SnmpValue> responses = new LinkedHashMap<SnmpObjId,SnmpValue>();
+	            List<MockVarBind> responses = new ArrayList<MockVarBind>(m_oids.size());
+	            		
+	            int errorStatus = 0;
+	            int errorIndex = 0;
+	            int index = 1; // snmp index start at 1
 	            for (final SnmpObjId oid : m_oids) {
-	                responses.put(m_container.findNextOidForOid(oid), m_container.findNextValueForOid(oid));
+	            	SnmpObjId nextOid = m_container.findNextOidForOid(oid);
+	            	if (nextOid == null) { 
+		            	LogUtils.debugf(this, "No OID following %s", oid);
+	            		if (m_snmpVersion == SnmpAgentConfig.VERSION1) {
+	            			if (errorStatus == 0) { // for V1 only record the index of the first failing varbind
+	            				errorStatus = CollectionTracker.NO_SUCH_NAME_ERR;
+	            				errorIndex = index;
+	            			}
+	            		}
+            			responses.add(new MockVarBind(oid, MockSnmpValue.END_OF_MIB));
+	            	} else {
+	            		responses.add(new MockVarBind(nextOid, m_container.findValueForOid(nextOid)));
+	            	}
+	            	index++;
 	            }
 
-	            if (processErrors(0, 0)) {
-	            	LogUtils.debugf(this, "Errors while handling responses... Whaaaat?");
-	            } else {
-	            	LogUtils.debugf(this, "Handling %d responses.", responses.size());
-	                for (final Map.Entry<SnmpObjId,SnmpValue> entry : responses.entrySet()) {
-	                	processResponse(entry.getKey(), entry.getValue());
+	            if (!processErrors(errorStatus, errorIndex)) {
+	            	LogUtils.debugf(this, "Responding with PDU of size %d.", responses.size());
+	            	for(MockVarBind vb : responses) {
+	                	processResponse(vb.getOid(), vb.getValue());
 	                }
-	            }
+	            } 
 				buildAndSendNextPdu();
-				/*
-	            m_executor.submit(new Runnable() {
-					@Override
-					public void run() {
-			            try {
-							buildAndSendNextPdu();
-						} catch (final Exception e) {
-							LogUtils.debugf(this, e, "Failed to build and send next PDU.");
-				            handleFatalError(e);
-						}
-					}
-	            });
-	            */
+
 	        } catch (final Throwable t) {
 	            handleFatalError(t);
 	        }
