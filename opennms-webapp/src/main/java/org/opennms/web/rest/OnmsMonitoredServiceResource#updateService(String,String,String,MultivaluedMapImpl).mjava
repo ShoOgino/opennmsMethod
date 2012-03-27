@@ -11,24 +11,29 @@
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Path("{service}")
     public Response updateService(@PathParam("nodeCriteria") String nodeCriteria, @PathParam("ipAddress") String ipAddress, @PathParam("service") String serviceName, MultivaluedMapImpl params) {
-        OnmsNode node = m_nodeDao.get(nodeCriteria);
-        if (node == null) throw getException(Status.BAD_REQUEST, "addService: can't find node " + nodeCriteria);
-        OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
-        if (intf == null) throw getException(Status.BAD_REQUEST, "addService: can't find ip interface on " + nodeCriteria + "@" + ipAddress);
-        OnmsMonitoredService service = intf.getMonitoredServiceByServiceType(serviceName);
-        if (service == null) throw getException(Status.BAD_REQUEST, "addService: can't find service " + serviceName + " on " + nodeCriteria + "@" + ipAddress);
-
-        log().debug("updateService: updating service " + service);
-        BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(service);
-        for(String key : params.keySet()) {
-            if (wrapper.isWritableProperty(key)) {
-                String stringValue = params.getFirst(key);
-                Object value = wrapper.convertIfNecessary(stringValue, (Class<?>)wrapper.getPropertyType(key));
-                wrapper.setPropertyValue(key, value);
+        getWriteLock().lock();
+        try {
+            OnmsNode node = m_nodeDao.get(nodeCriteria);
+            if (node == null) throw getException(Status.BAD_REQUEST, "addService: can't find node " + nodeCriteria);
+            OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
+            if (intf == null) throw getException(Status.BAD_REQUEST, "addService: can't find ip interface on " + nodeCriteria + "@" + ipAddress);
+            OnmsMonitoredService service = intf.getMonitoredServiceByServiceType(serviceName);
+            if (service == null) throw getException(Status.BAD_REQUEST, "addService: can't find service " + serviceName + " on " + nodeCriteria + "@" + ipAddress);
+    
+            log().debug("updateService: updating service " + service);
+            BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(service);
+            for(String key : params.keySet()) {
+                if (wrapper.isWritableProperty(key)) {
+                    String stringValue = params.getFirst(key);
+                    Object value = wrapper.convertIfNecessary(stringValue, (Class<?>)wrapper.getPropertyType(key));
+                    wrapper.setPropertyValue(key, value);
+                }
             }
+            log().debug("updateSservice: service " + service + " updated");
+            m_serviceDao.saveOrUpdate(service);
+            return Response.ok().build();
+        } finally {
+            getWriteLock().unlock();
         }
-        log().debug("updateSservice: service " + service + " updated");
-        m_serviceDao.saveOrUpdate(service);
-        return Response.ok().build();
     }
 
