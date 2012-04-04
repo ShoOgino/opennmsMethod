@@ -1,13 +1,6 @@
-	private NCSComponent addOrUpdateComponents(final ComponentIdentifier id, final NCSComponent component, final boolean deleteOrphans) {
-		LogUtils.debugf(this, "addOrUpdateComponents: %s (deletOrphans=%s)", id, deleteOrphans);
-
+	private NCSComponent addOrUpdateComponents(final ComponentIdentifier id, final NCSComponent component, final ComponentEventQueue ceq, final boolean deleteOrphans) {
 		final Set<NCSComponent> subcomponents = new LinkedHashSet<NCSComponent>();
 		
-		for (final NCSComponent subcomponent : component.getSubcomponents()) {
-			final NCSComponent updatedComponent = addOrUpdateComponents(getIdentifier(subcomponent), subcomponent, deleteOrphans);
-			subcomponents.add(updatedComponent);
-		}
-
 		final NCSComponent existing = new UpsertTemplate<NCSComponent, NCSComponentDao>(m_transactionManager, m_componentDao) {
 			@Override
 			protected NCSComponent query() {
@@ -16,19 +9,25 @@
 
 			@Override
 			protected NCSComponent doInsert() {
+				for (final NCSComponent subcomponent : component.getSubcomponents()) {
+					final NCSComponent updatedComponent = addOrUpdateComponents(getIdentifier(subcomponent), subcomponent, ceq, deleteOrphans);
+					subcomponents.add(updatedComponent);
+				}
+
 				component.setSubcomponents(subcomponents);
 				m_componentDao.save(component);
-				try {
-					sendComponentAdded(component);
-				} catch (final EventProxyException e) {
-					throw new RecoverableDataAccessException("update completed, but unable to send componentAdded event", e);
-				}
+				ceq.componentAdded(getIdentifier(component));
 				return component;
 			}
 			
 			@Override
 			protected NCSComponent doUpdate(final NCSComponent dbObj) {
-				if (deleteOrphans) deleteOrphanedComponents(getIdentifiers(dbObj.getSubcomponents()), getIdentifiers(subcomponents));
+				for (final NCSComponent subcomponent : component.getSubcomponents()) {
+					final NCSComponent updatedComponent = addOrUpdateComponents(getIdentifier(subcomponent), subcomponent, ceq, deleteOrphans);
+					subcomponents.add(updatedComponent);
+				}
+
+				if (deleteOrphans) deleteOrphanedComponents(getIdentifiers(dbObj.getSubcomponents()), getIdentifiers(subcomponents), ceq);
 
 				dbObj.setName(component.getName());
 				dbObj.setVersion(component.getVersion());
@@ -39,11 +38,7 @@
 				dbObj.setAttributes(component.getAttributes());
 				dbObj.setSubcomponents(subcomponents);
 				m_componentDao.update(dbObj);
-				try {
-					sendComponentUpdated(dbObj);
-				} catch (final EventProxyException e) {
-					throw new RecoverableDataAccessException("update completed, but unable to send componentUpdated event", e);
-				}
+				ceq.componentUpdated(getIdentifier(dbObj));
 				return dbObj;
 			}
 
