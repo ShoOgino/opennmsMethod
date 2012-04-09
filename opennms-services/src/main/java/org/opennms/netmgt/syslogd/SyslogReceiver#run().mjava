@@ -1,6 +1,7 @@
     /**
      * The execution context.
      */
+    @Override
     public void run() {
         // get the context
         m_context = Thread.currentThread();
@@ -46,15 +47,14 @@
 
             try {
                 if (!ioInterrupted) {
-                    log.debug("Wating on a datagram to arrive");
+                    log.debug("Waiting on a datagram to arrive");
                 }
 
                 DatagramPacket pkt = new DatagramPacket(buffer, length);
                 m_dgSock.receive(pkt);
 
                 //SyslogConnection *Must* copy packet data and InetAddress as DatagramPacket is a mutable type
-                Thread worker = new Thread(new SyslogConnection(pkt, m_matchPattern, m_hostGroup, m_messageGroup, m_UeiList, m_HideMessages, m_discardUei), SyslogConnection.class.getSimpleName());
-                worker.start();
+                WaterfallExecutor.waterfall(m_executors, new SyslogConnection(pkt, m_matchPattern, m_hostGroup, m_messageGroup, m_UeiList, m_HideMessages, m_discardUei));
                 ioInterrupted = false; // reset the flag
             } catch (SocketTimeoutException e) {
                 ioInterrupted = true;
@@ -62,6 +62,12 @@
             } catch (InterruptedIOException e) {
                 ioInterrupted = true;
                 continue;
+            } catch (ExecutionException e) {
+                log.error("Task execution failed in " + this.getClass().getSimpleName(), e);
+                break;
+            } catch (InterruptedException e) {
+                log.error("Task interrupted in " + this.getClass().getSimpleName(), e);
+                break;
             } catch (IOException e) {
                 log.error("An I/O exception occured on the datagram receipt port, exiting", e);
                 break;

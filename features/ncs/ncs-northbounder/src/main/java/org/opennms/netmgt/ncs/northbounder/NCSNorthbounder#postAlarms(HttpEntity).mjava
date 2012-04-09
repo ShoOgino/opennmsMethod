@@ -1,0 +1,63 @@
+	private void postAlarms(HttpEntity entity) {
+		//Need a configuration bean for these
+        
+        int connectionTimeout = 3000;
+        int socketTimeout = 3000;
+        Integer retryCount = Integer.valueOf(3);
+        
+        HttpVersion httpVersion = determineHttpVersion(m_config.getHttpVersion());        
+        String policy = CookiePolicy.BROWSER_COMPATIBILITY;
+        
+        URI uri = m_config.getURI();
+        
+        DefaultHttpClient client = new DefaultHttpClient(buildParams(httpVersion, connectionTimeout,
+                socketTimeout, policy, m_config.getVirtualHost()));
+        
+        client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler(retryCount, false));
+        
+        if ("https".equals(uri.getScheme())) {
+            final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
+            final Scheme https = registry.getScheme("https");
+
+            // Override the trust validation with a lenient implementation
+            SSLSocketFactory factory = null;
+            
+            try {
+                factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+            } catch (Throwable e) {
+                throw new NorthbounderException(e);
+            }
+
+            final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
+            // This will replace the existing "https" schema
+            registry.register(lenient);
+        }
+        
+        HttpEntityEnclosingRequestBase method = m_config.getMethod().getRequestMethod(uri);
+
+        method.setEntity(entity);
+            
+        method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, m_config.getUserAgent());
+
+        HttpResponse response = null;
+        try {
+            response = client.execute(method);
+        } catch (ClientProtocolException e) {
+            throw new NorthbounderException(e);
+        } catch (IOException e) {
+            throw new NorthbounderException(e);
+        }
+        
+        if (response != null) {
+            int code = response.getStatusLine().getStatusCode();
+            HttpResponseRange range = new HttpResponseRange("200-399");
+            if (!range.contains(code)) {
+                System.err.println("response code out of range for uri:" + uri + ".  Expected " + range + " but received " + code);
+                throw new NorthbounderException("response code out of range for uri:" + uri + ".  Expected " + range + " but received " + code);
+            }
+        }
+        
+        System.err.println(response != null ? response.getStatusLine().getReasonPhrase() : "Response was null");
+        LogUtils.debugf(this, response != null ? response.getStatusLine().getReasonPhrase() : "Response was null");
+	}
+

@@ -1,0 +1,30 @@
+	@Override
+	@Transactional
+	public NCSComponent addSubcomponent(final String type, final String foreignSource, final String foreignId, final NCSComponent subComponent, final boolean deleteOrphans) {
+		final ComponentIdentifier id = new ComponentIdentifier(type, foreignSource, foreignId);
+		final ComponentIdentifier subComponentId = getIdentifier(subComponent);
+		
+		LogUtils.debugf(this, "addSubcomponent(%s, %s, %s, %s, %s)", type, foreignSource, foreignId, subComponentId, Boolean.valueOf(deleteOrphans));
+
+		final ComponentEventQueue ceq = new ComponentEventQueue();
+		final NCSComponent component = getComponent(id);
+
+		if (component == null) {
+			throw new ObjectRetrievalFailureException(NCSComponent.class, "Unable to locate component with type=" + type + ", foreignSource=" + foreignSource + ", foreignId=" + foreignId);
+		}
+
+		final NCSComponent updatedSubComponent = addOrUpdateComponents(subComponentId, subComponent, ceq, deleteOrphans);
+		component.addSubcomponent(updatedSubComponent);
+		
+		m_componentDao.update(component);
+		ceq.componentUpdated(id);
+
+		try {
+			ceq.sendAll(m_eventProxy);
+		} catch (final EventProxyException e) {
+			LogUtils.warnf(this, e, "Component %s added to %s, but an error occured while sending add/delete/update events.", subComponentId, id);
+		}
+
+		return getComponent(id);
+	}
+

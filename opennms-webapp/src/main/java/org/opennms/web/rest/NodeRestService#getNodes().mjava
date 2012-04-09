@@ -6,24 +6,38 @@
     @GET
     @Produces({MediaType.APPLICATION_XML, MediaType.APPLICATION_JSON})
     public OnmsNodeList getNodes() {
-        OnmsNodeList coll = new OnmsNodeList(m_nodeDao.findMatching(getQueryFilters(m_uriInfo.getQueryParameters())));
-
-        //For getting totalCount
-        OnmsCriteria criteria = new OnmsCriteria(OnmsNode.class);
-        addFiltersToCriteria(m_uriInfo.getQueryParameters(), criteria, OnmsNode.class);
-        criteria.createAlias("snmpInterfaces", "snmpInterface", CriteriaSpecification.LEFT_JOIN);
-        criteria.createAlias("ipInterfaces", "ipInterface", CriteriaSpecification.LEFT_JOIN);
-        criteria.setProjection(
-                Projections.distinct(
-                        Projections.projectionList().add(
-                                Projections.alias( Projections.property("id"), "id" )
-                        )
-                )
-        );
-        OnmsCriteria rootCriteria = new OnmsCriteria(OnmsNode.class);
-        rootCriteria.add(Subqueries.propertyIn("id", criteria.getDetachedCriteria()));
-        coll.setTotalCount(m_nodeDao.countMatching(rootCriteria));
-
-        return coll;
+        readLock();
+        
+        try {
+            final CriteriaBuilder builder = new CriteriaBuilder(OnmsNode.class);
+            builder.alias("snmpInterfaces", "snmpInterface", JoinType.LEFT_JOIN);
+            builder.alias("ipInterfaces", "ipInterface", JoinType.LEFT_JOIN);
+    
+            final MultivaluedMap<String, String> params = m_uriInfo.getQueryParameters();
+            final String type = params.getFirst("type");
+    
+            applyQueryFilters(params, builder);
+            builder.orderBy("label").asc();
+            
+            final Criteria crit = builder.toCriteria();
+    
+            if (type == null) {
+                final List<Restriction> restrictions = new ArrayList<Restriction>(crit.getRestrictions());
+                restrictions.add(Restrictions.ne("type", "D"));
+                crit.setRestrictions(restrictions);
+            }
+            
+            final OnmsNodeList coll = new OnmsNodeList(m_nodeDao.findMatching(crit));
+            
+            crit.setLimit(null);
+            crit.setOffset(null);
+            crit.setOrders(new ArrayList<Order>());
+    
+            coll.setTotalCount(m_nodeDao.countMatching(crit));
+    
+            return coll;
+        } finally {
+            readUnlock();
+        }
     }
 
