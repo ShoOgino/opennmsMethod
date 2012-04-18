@@ -1,0 +1,62 @@
+    /**
+     * Connect to a remote socket. If org.opennms.netmgt.provision.maxConcurrentConnections
+     * is set, this may block until a connection slot is available.
+     * <p>
+     * You must dispose both the ConnectionFactory and ConncetFuture when done
+     * by calling {@link #dispose(ConnectionFactory, ConnectFuture)}.
+     * 
+     * @param remoteAddress
+     * 		Destination address
+     * @param init
+     * 		Initialiser for the IoSession
+     * @return
+     * 		ConnectFuture from a Mina connect call
+     * @throws IOException 
+     */
+    public ConnectFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, IoSessionInitializer<? extends ConnectFuture> init) throws IOException {
+        if (s_availableConnections != null) {
+            s_availableConnections.acquireUninterruptibly();
+        }
+        for (int retries = 0; retries < s_connectionExecutionRetries; retries++) { 
+            synchronized (m_connectorMutex) {
+                if (m_connector == null) {
+                    // Sanity check for null connector instance
+                    LogUtils.warnf(this, "Found a null NioSocketConnector, creating a new one");
+                    m_connector = getSocketConnector(m_timeout);
+                    continue;
+                } else if (m_connector.isDisposed() || m_connector.isDisposing()) {
+                    /*
+                     * There appears to be a bug in MINA that allows newly-created NioSocketConnectors
+                     * to internally reference an executor that is already shutting down. We need to
+                     * check for this state and recreate the connector if necessary.
+                     * 
+                     * @see http://issues.opennms.org/browse/NMS-4846
+                     */
+                    LogUtils.warnf(this, "Found a disposed NioSocketConnector, creating a new one");
+                    m_connector = getSocketConnector(m_timeout);
+                    continue;
+                }
+                try {
+                    /*
+                     * Use the 3-argument call to connect(). If you use the 2-argument version without
+                     * the localhost port, the call will end up doing a name lookup which seems to fail
+                     * intermittently in unit tests.
+                     *
+                     * @see http://issues.opennms.org/browse/NMS-5309
+                     */
+                    return m_connector.connect(remoteAddress, localAddress, init);
+                } catch (Throwable e) {
+                    LogUtils.debugf(this, e, "Caught exception on factory %s, retrying: %s", this, e);
+                    m_connector.dispose(true);
+                    /*
+                    while(!m_connector.isDisposed()) {
+                        try { Thread.sleep(10); } catch (InterruptedException ex) {}
+                    }
+                    */
+                    m_connector = getSocketConnector(m_timeout);
+                }
+            }
+        }
+        throw new IOException("Could not connect to socket because of excessive RejectedExecutionExceptions");
+    }
+
