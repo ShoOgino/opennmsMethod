@@ -1,0 +1,32 @@
+        @Override
+        public void operationComplete(ChannelFuture future) {
+            final Throwable cause = future.getCause();
+
+            if(cause instanceof IOException) {
+                if (m_retries == 0) {
+                    LogUtils.infof(this, "Service %s detected false",getServiceName());
+                    future.setFailure(new ServiceDetectionFailedException());
+                } else {
+                    LogUtils.infof(this, "Connection exception occurred %s for service %s, retrying attempt %d", cause, getServiceName(), m_retries);
+                    // Get an ephemeral port on the localhost interface
+                    final InetSocketAddress localAddress = new InetSocketAddress(InetAddressUtils.getLocalHostAddress(), 0);
+
+                    // Disconnect the channel
+                    //future.getChannel().disconnect().awaitUninterruptibly();
+                    //future.getChannel().unbind().awaitUninterruptibly();
+
+                    // Remove the current RetryChannelHandler
+                    future.removeListener(this);
+                    // Add a new listener with 1 fewer retry
+                    LogUtils.errorf(this, "RETRIES %d", m_retries);
+                    future.addListener(new RetryChannelFutureListener(m_remoteAddress, m_retries - 1));
+                    // Reconnect the channel
+                    future.getChannel().bind(localAddress);
+                    future.getChannel().connect(m_remoteAddress);
+                }
+            } else if(cause instanceof Throwable) {
+                LogUtils.infof(this, cause, "Threw a Throwable and detection is false for service %s", getServiceName());
+                future.setFailure(new ServiceDetectionFailedException());
+            } 
+        }
+
