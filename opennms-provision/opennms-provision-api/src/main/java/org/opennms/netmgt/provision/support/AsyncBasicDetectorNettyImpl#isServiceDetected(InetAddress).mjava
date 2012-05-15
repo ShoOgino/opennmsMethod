@@ -1,0 +1,43 @@
+    /** {@inheritDoc} */
+    @Override
+    public final DetectFuture isServiceDetected(final InetAddress address) {
+
+        DetectFuture detectFuture = new DetectFutureFailedImpl(this, new IllegalStateException());
+
+        try {
+            ClientBootstrap bootstrap = new ClientBootstrap(m_factory);
+
+            bootstrap.setPipelineFactory(new ChannelPipelineFactory() {
+                public ChannelPipeline getPipeline() throws Exception {
+                    ChannelPipeline retval = Channels.pipeline();
+
+                    // Upstream handlers
+                    //retval.addLast("retryHandler", new RetryChannelHandler());
+                    appendToPipeline(retval);
+
+                    // Downstream handlers
+                    retval.addLast("detectorHandler", getDetectorHandler(getConversation()));
+                    if (isUseSSLFilter()) {
+                        // Use a relaxed SSL context
+                        retval.addLast("sslHandler", new SslHandler(createClientSSLContext().createSSLEngine()));
+                    }
+
+                    return retval;
+                }
+            });
+
+            bootstrap.setOption("tcpNoDelay", true);
+            bootstrap.setOption("keepAlive", true);
+
+            SocketAddress remoteAddress = new InetSocketAddress(address, getPort());
+            ChannelFuture future = bootstrap.connect(remoteAddress);
+            future.addListener(new RetryChannelFutureListener(remoteAddress, this.getRetries()));
+            detectFuture = new DetectFutureNettyImpl(this, future);
+
+        } catch (Throwable e) {
+            detectFuture = new DetectFutureFailedImpl(this, e);
+        }
+
+        return detectFuture;
+    }
+
