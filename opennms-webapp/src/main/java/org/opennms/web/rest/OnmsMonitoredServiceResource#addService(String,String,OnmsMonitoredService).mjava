@@ -9,31 +9,37 @@
     @POST
     @Consumes(MediaType.APPLICATION_XML)
     public Response addService(@PathParam("nodeCriteria") String nodeCriteria, @PathParam("ipAddress") String ipAddress, OnmsMonitoredService service) {
-        OnmsNode node = m_nodeDao.get(nodeCriteria);
-        if (node == null) throw getException(Status.BAD_REQUEST, "addService: can't find node " + nodeCriteria);
-        OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
-        if (intf == null) throw getException(Status.BAD_REQUEST, "addService: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
-        if (service == null) throw getException(Status.BAD_REQUEST, "addService: service object cannot be null");
-        if (service.getServiceName() == null) throw getException(Status.BAD_REQUEST, "addService: service must have a name");
-        OnmsServiceType serviceType = m_serviceTypeDao.findByName(service.getServiceName());
-        if (serviceType == null)  {
-            log().info("addService: creating service type " + service.getServiceName());
-            serviceType = new OnmsServiceType(service.getServiceName());
-            m_serviceTypeDao.save(serviceType);
-        }
-        service.setServiceType(serviceType);
-        service.setIpInterface(intf);
-        log().debug("addService: adding service " + service);
-        m_serviceDao.save(service);
-        
-        Event e = EventUtils.createNodeGainedServiceEvent(getClass().getName(), node.getId(), intf.getIpAddress(), 
-                service.getServiceName(), node.getLabel(), node.getLabelSource(), node.getSysName(), node.getSysDescription());
+        writeLock();
         
         try {
-            m_eventProxy.send(e);
-        } catch (EventProxyException ex) {
-            throw getException(Status.BAD_REQUEST, ex.getMessage());
+            OnmsNode node = m_nodeDao.get(nodeCriteria);
+            if (node == null) throw getException(Status.BAD_REQUEST, "addService: can't find node " + nodeCriteria);
+            OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
+            if (intf == null) throw getException(Status.BAD_REQUEST, "addService: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
+            if (service == null) throw getException(Status.BAD_REQUEST, "addService: service object cannot be null");
+            if (service.getServiceName() == null) throw getException(Status.BAD_REQUEST, "addService: service must have a name");
+            OnmsServiceType serviceType = m_serviceTypeDao.findByName(service.getServiceName());
+            if (serviceType == null)  {
+                log().info("addService: creating service type " + service.getServiceName());
+                serviceType = new OnmsServiceType(service.getServiceName());
+                m_serviceTypeDao.save(serviceType);
+            }
+            service.setServiceType(serviceType);
+            service.setIpInterface(intf);
+            log().debug("addService: adding service " + service);
+            m_serviceDao.save(service);
+            
+            Event e = EventUtils.createNodeGainedServiceEvent(getClass().getName(), node.getId(), intf.getIpAddress(), 
+                    service.getServiceName(), node.getLabel(), node.getLabelSource(), node.getSysName(), node.getSysDescription());
+            
+            try {
+                m_eventProxy.send(e);
+            } catch (EventProxyException ex) {
+                throw getException(Status.BAD_REQUEST, ex.getMessage());
+            }
+            return Response.ok().build();
+        } finally {
+            writeUnlock();
         }
-        return Response.ok().build();
     }
 

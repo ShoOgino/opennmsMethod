@@ -5,69 +5,66 @@
     public void testIncludeNewFileMalformedContentThenFixed() throws Exception {
         //Don't do the normal checking of logging for worse than warning; we expect an error or two to be logged, and that's fine
         testSpecificLoggingTest = true;
-        FileAnticipator fa = new FileAnticipator();
+
+        File rootFile = m_fileAnticipator.tempFile("snmp-graph.properties");
+
+        m_outputStream = new FileOutputStream(rootFile);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_baseIncludePrefab);
+        m_writer.close();
+        m_outputStream.close();
+        
+        File graphDirectory = m_fileAnticipator.tempDir("snmp-graph.properties.d");
+        graphDirectory.mkdir();
+
+        HashMap<String, Resource> perfConfig = new HashMap<String, Resource>();
+        perfConfig.put("performance", new FileSystemResource(rootFile));
+        PropertiesGraphDao dao = createPropertiesGraphDao(perfConfig, s_emptyMap);
 
         try {
-            File rootFile = fa.tempFile("snmp-graph.properties");
-
-                        
-            Writer writer = new OutputStreamWriter(new FileOutputStream(rootFile), "UTF-8");
-            writer.write(s_baseIncludePrefab);
-            writer.close();
+            PrefabGraph mib2errors = dao.getPrefabGraph("mib2.errors");
+            fail("Should have thrown an ObjectRetrievalFailureException retrieving graph " + mib2errors);
+        } catch (ObjectRetrievalFailureException e) {
             
-            File graphDirectory = fa.tempDir("snmp-graph.properties.d");
-            graphDirectory.mkdir();
+        }
 
-            HashMap<String, Resource> perfConfig = new HashMap<String, Resource>();
-            perfConfig.put("performance", new FileSystemResource(rootFile));
-            PropertiesGraphDao dao = createPropertiesGraphDao(perfConfig, s_emptyMap);
+        //Now create the new graph in a sub-directory but make it malformed; make sure it isn't loaded
+        File graphErrors = m_fileAnticipator.tempFile(graphDirectory, "mib2.errors.properties");
+        m_outputStream = new FileOutputStream(graphErrors);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_separateErrorsGraph.replace("report.id", "report.noid"));
+        m_writer.close();
+        m_outputStream.close();
 
-            try {
-                PrefabGraph mib2errors = dao.getPrefabGraph("mib2.errors");
-                fail("Should have thrown an ObjectRetrievalFailureException retrieving graph " + mib2errors);
-            } catch (ObjectRetrievalFailureException e) {
-                
-            }
-
-            //Now create the new graph in a sub-directory but make it malformed; make sure it isn't loaded
-            File graphErrors = fa.tempFile(graphDirectory, "mib2.errors.properties");
-            writer = new OutputStreamWriter(new FileOutputStream(graphErrors), "UTF-8");
-            writer.write(s_separateErrorsGraph.replace("report.id",
-                                                       "report.noid"));
-            writer.close();
-
-            //Wait longer than the rescan timeout on the include directory
-            Thread.sleep(1100);
-            
-            //Confirm that the graph still hasn't been loaded (because it was munted)
-            try {
-                PrefabGraph mib2errors = dao.getPrefabGraph("mib2.errors");
-                fail("Should have thrown an ObjectRetrievalFailureException retrieving graph " + mib2errors);
-            } catch (ObjectRetrievalFailureException e) {
-                
-            }
-            
-            //Now set the include rescan interval to a large number, rewrite the graph correctly, and check
-            // that the file is loaded (and we don't have to wait for the rescan interval)
-           dao.findPrefabGraphTypeByName("performance").setIncludeDirectoryRescanInterval(300000); //5 minutes
-           writer = new OutputStreamWriter(new FileOutputStream(graphErrors), "UTF-8");
-           writer.write(s_separateErrorsGraph);
-           writer.close();
+        //Wait longer than the rescan timeout on the include directory
+        Thread.sleep(1100);
         
-           //Just make sure any timestamps will be at least 1 second old, just to be sure
-           Thread.sleep(1100);
+        //Confirm that the graph still hasn't been loaded (because it was munted)
+        try {
+            PrefabGraph mib2errors = dao.getPrefabGraph("mib2.errors");
+            fail("Should have thrown an ObjectRetrievalFailureException retrieving graph " + mib2errors);
+        } catch (ObjectRetrievalFailureException e) {
+            
+        }
+        
+        //Now set the include rescan interval to a large number, rewrite the graph correctly, and check
+        // that the file is loaded (and we don't have to wait for the rescan interval)
+       dao.findPrefabGraphTypeByName("performance").setIncludeDirectoryRescanInterval(300000); //5 minutes
+       m_outputStream = new FileOutputStream(graphErrors);
+       m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+       m_writer.write(s_separateErrorsGraph);
+       m_writer.close();
+       m_outputStream.close();
+    
+       //Just make sure any timestamps will be at least 1 second old, just to be sure
+       Thread.sleep(1100);
 
-           //And now the graph should have loaded
-           try {
-               assertNotNull(dao.getPrefabGraph("mib2.errors")); //This is the core: this graph should have been picked up
-           } catch (Exception e) {
-               //Catch exceptions and fail explicitly, because that's a failure, not an "error"
-               fail("Should not have gotten an exception fetching the graph");
-           }
-
-        } finally {
-            fa.deleteExpected();
-            fa.tearDown();
-        }            
+       //And now the graph should have loaded
+       try {
+           assertNotNull(dao.getPrefabGraph("mib2.errors")); //This is the core: this graph should have been picked up
+       } catch (Exception e) {
+           //Catch exceptions and fail explicitly, because that's a failure, not an "error"
+           fail("Should not have gotten an exception fetching the graph");
+       }
     }
 

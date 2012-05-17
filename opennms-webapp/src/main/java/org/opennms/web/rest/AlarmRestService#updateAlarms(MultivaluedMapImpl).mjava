@@ -7,19 +7,49 @@
 	@Transactional
 	@Consumes(MediaType.APPLICATION_FORM_URLENCODED)
 	public void updateAlarms(final MultivaluedMapImpl formProperties) {
-
-		Boolean ack=false;
-		if(formProperties.containsKey("ack")) {
-			ack="true".equals(formProperties.getFirst("ack"));
+	    writeLock();
+	    
+	    try {
+			final String ackValue = formProperties.getFirst("ack");
 			formProperties.remove("ack");
-		}
-		
-		final CriteriaBuilder builder = getCriteriaBuilder(formProperties, false);
-		builder.distinct();
-		builder.limit(0);
-		builder.offset(0);
-		for (final OnmsAlarm alarm : m_alarmDao.findMatching(builder.toCriteria())) {
-			processAlarmAck(alarm, ack);
-		}
+			final String escalateValue = formProperties.getFirst("escalate");
+			formProperties.remove("escalate");
+			final String clearValue = formProperties.getFirst("clear");
+			formProperties.remove("clear");
+
+			final CriteriaBuilder builder = getCriteriaBuilder(formProperties, false);
+    		builder.distinct();
+    		builder.limit(0);
+    		builder.offset(0);
+
+    		final String ackUser = formProperties.containsKey("ackUser")? formProperties.getFirst("ackUser") : m_securityContext.getUserPrincipal().getName();
+    		formProperties.remove("ackUser");
+			assertUserCredentials(ackUser);
+
+    		for (final OnmsAlarm alarm : m_alarmDao.findMatching(builder.toCriteria())) {
+        		final OnmsAcknowledgment acknowledgement = new OnmsAcknowledgment(alarm, ackUser);
+        		acknowledgement.setAckAction(AckAction.UNSPECIFIED);
+        		if (ackValue != null) {
+        			if (Boolean.parseBoolean(ackValue)) {
+	        			acknowledgement.setAckAction(AckAction.ACKNOWLEDGE);
+	        		} else {
+	        			acknowledgement.setAckAction(AckAction.UNACKNOWLEDGE);
+	        		}
+        		} else if (escalateValue != null) {
+        			if (Boolean.parseBoolean(escalateValue)) {
+        				acknowledgement.setAckAction(AckAction.ESCALATE);
+        			}
+        		} else if (clearValue != null) {
+        			if (Boolean.parseBoolean(clearValue)) {
+        				acknowledgement.setAckAction(AckAction.CLEAR);
+        			}
+        		} else {
+        			throw new IllegalArgumentException("Must supply one of the 'ack', 'escalate', or 'clear' parameters, set to either 'true' or 'false'.");
+        		}
+        		m_ackService.processAck(acknowledgement);
+    		}
+	    } finally {
+	        writeUnlock();
+	    }
 	}
 

@@ -2,11 +2,10 @@
      * <p>getMBeanServerConnection</p>
      *
      * @param propertiesMap a {@link java.util.Map} object.
-     * @param address a {@link java.net.InetAddress} object.
+     * @param address       a {@link java.net.InetAddress} object.
      * @return a {@link org.opennms.protocols.jmx.connectors.Jsr160ConnectionWrapper} object.
      */
-    public static Jsr160ConnectionWrapper getMBeanServerConnection(Map<?,?> propertiesMap, InetAddress address)
-    {
+    public static Jsr160ConnectionWrapper getMBeanServerConnection(Map<?, ?> propertiesMap, InetAddress address) {
         Jsr160ConnectionWrapper connectionWrapper = null;
 
         JMXServiceURL url = null;
@@ -17,24 +16,37 @@
         String urlPath = ParameterMap.getKeyedString(propertiesMap, "urlPath", "");
         String sunCacao = ParameterMap.getKeyedString(propertiesMap, "sunCacao", "false");
 
-        log.debug("JMX: " + factory + " - service:" + protocol + "//" + InetAddressUtils.str(address) + ":" + port + urlPath);
+        // RMI and JMXMP use different URL schemes
+        try {
+            if (protocol.equalsIgnoreCase("jmxmp")) {
 
-        if (factory.equals("SASL"))
-        {
-            try
-            {
+                // Create an JMXMP connector client and
+                // connect it to the JMXMP connector server
+                //
+                url = new JMXServiceURL(protocol, InetAddressUtils.str(address), port, urlPath);
+            } else {
+                // Fallback, building a URL for RMI
+                url = new JMXServiceURL("service:jmx:" + protocol + ":///jndi/" + protocol + "://" + InetAddressUtils.str(address) + ":" + port + urlPath);
+            }
+        } catch (MalformedURLException e) {
+            log.error("JMXServiceURL exception: " + url + ". Error message: " + e.getMessage());
+        }
+        log.debug("Set JMXServiceURL: " + url);
+
+        // configure and create Simple Authentication and Security Layer
+        if (factory.equals("SASL")) {
+            try {
                 String username = ParameterMap.getKeyedString(propertiesMap, "username", null);
                 String password = ParameterMap.getKeyedString(propertiesMap, "password", null);
 
                 HashMap<String, Object> env = new HashMap<String, Object>();
 
-                while (true)
-                {
+                // TODO: We can have a deadlock here
+                while (true) {
                     AnyServerX509TrustManager tm;
                     KeyStore ks;
 
-                    try
-                    {
+                    try {
                         ks = KeyStore.getInstance(KeyStore.getDefaultType());
                         TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
                         tmf.init(ks);
@@ -44,9 +56,7 @@
                         ctx.init(null, new TrustManager[]{tm}, null);
                         SSLSocketFactory ssf = ctx.getSocketFactory();
                         env.put("jmx.remote.tls.socket.factory", ssf);
-                    }
-                    catch (Throwable e)
-                    {
+                    } catch (Throwable e) {
                         log.error("Something bad occured: " + e.getMessage());
                         throw e;
                     }
@@ -60,35 +70,22 @@
                     env.put("jmx.remote.profiles", "TLS SASL/PLAIN");
                     env.put("jmx.remote.credentials", creds);
 
-                    // Create an JMXMP connector client and
-                    // connect it to the JMXMP connector server
-                    //
-                    url = new JMXServiceURL(protocol, InetAddressUtils.str(address), port, urlPath);
-
                     JMXConnector connector = JMXConnectorFactory.newJMXConnector(url, null);
 
                     // Connect and invoke an operation on the remote MBeanServer
-                    try
-                    {
+                    try {
                         connector.connect(env);
-                    }
-                    catch (SSLException e)
-                    {
-                        continue;
-                    }
-                    catch (SecurityException x)
-                    {
-                        log.error("Security exception: bad credentials");
-                        throw x;
+                    } catch (SSLException e) {
+                        log.warn("SSLException occured. Error message: " + e.getMessage());
+                    } catch (SecurityException x) {
+                        log.error("Security exception: bad credentials. Error message: " + x.getMessage());
                     }
                     MBeanServerConnection connection = connector.getMBeanServerConnection();
                     connectionWrapper = new Jsr160ConnectionWrapper(connector, connection);
                     break;
                 }
-            }
-            catch (Throwable e)
-            {
-                log.error("Unable to get MBeanServerConnection: " + url);
+            } catch (Throwable e) {
+                log.error("Unable to get MBeanServerConnection: " + url + ". Error message: " + e.getMessage());
             }
         }
         return connectionWrapper;
