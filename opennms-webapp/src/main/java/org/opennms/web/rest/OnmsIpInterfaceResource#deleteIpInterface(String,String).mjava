@@ -8,28 +8,34 @@
     @DELETE
     @Path("{ipAddress}")
     public Response deleteIpInterface(@PathParam("nodeCriteria") final String nodeCriteria, @PathParam("ipAddress") final String ipAddress) {
-        final OnmsNode node = m_nodeDao.get(nodeCriteria);
-        if (node == null) {
-            throw getException(Status.BAD_REQUEST, "deleteIpInterface: can't find node " + nodeCriteria);
-        }
-        final OnmsIpInterface intf = node.getIpInterfaceByIpAddress(InetAddressUtils.getInetAddress(ipAddress));
-        if (intf == null) {
-            throw getException(Status.CONFLICT, "deleteIpInterface: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
-        }
-        LogUtils.debugf(this, "deleteIpInterface: deleting interface %s from node %s", ipAddress, nodeCriteria);
-        node.getIpInterfaces().remove(intf);
-        m_nodeDao.save(node);
+        writeLock();
         
-        final EventBuilder bldr = new EventBuilder(EventConstants.INTERFACE_DELETED_EVENT_UEI, getClass().getName());
-
-        bldr.setNodeid(node.getId());
-        bldr.setInterface(addr(ipAddress));
-
         try {
-            m_eventProxy.send(bldr.getEvent());
-        } catch (final EventProxyException ex) {
-            throw getException(Status.BAD_REQUEST, ex.getMessage());
+            final OnmsNode node = m_nodeDao.get(nodeCriteria);
+            if (node == null) {
+                throw getException(Status.BAD_REQUEST, "deleteIpInterface: can't find node " + nodeCriteria);
+            }
+            final OnmsIpInterface intf = node.getIpInterfaceByIpAddress(InetAddressUtils.getInetAddress(ipAddress));
+            if (intf == null) {
+                throw getException(Status.CONFLICT, "deleteIpInterface: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
+            }
+            LogUtils.debugf(this, "deleteIpInterface: deleting interface %s from node %s", ipAddress, nodeCriteria);
+            node.getIpInterfaces().remove(intf);
+            m_nodeDao.save(node);
+            
+            final EventBuilder bldr = new EventBuilder(EventConstants.INTERFACE_DELETED_EVENT_UEI, getClass().getName());
+    
+            bldr.setNodeid(node.getId());
+            bldr.setInterface(addr(ipAddress));
+    
+            try {
+                m_eventProxy.send(bldr.getEvent());
+            } catch (final EventProxyException ex) {
+                throw getException(Status.BAD_REQUEST, ex.getMessage());
+            }
+            return Response.ok().build();
+        } finally {
+            writeUnlock();
         }
-        return Response.ok().build();
     }
 

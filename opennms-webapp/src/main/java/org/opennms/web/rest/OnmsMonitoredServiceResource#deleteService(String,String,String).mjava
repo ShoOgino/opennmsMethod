@@ -9,26 +9,32 @@
     @DELETE
     @Path("{service}")
     public Response deleteService(@PathParam("nodeCriteria") String nodeCriteria, @PathParam("ipAddress") String ipAddress, @PathParam("service") String serviceName) {
-        OnmsNode node = m_nodeDao.get(nodeCriteria);
-        if (node == null) throw getException(Status.BAD_REQUEST, "deleteService: can't find node " + nodeCriteria);
-        OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
-        if (intf == null) throw getException(Status.BAD_REQUEST, "deleteService: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
-        OnmsMonitoredService service = intf.getMonitoredServiceByServiceType(serviceName);
-        if (service == null) throw getException(Status.CONFLICT, "deleteService: service " + serviceName + " not found on interface " + intf);
-        log().debug("deleteService: deleting service " + serviceName + " from node " + nodeCriteria);
-        intf.getMonitoredServices().remove(service);
-        m_ipInterfaceDao.saveOrUpdate(intf);
+        writeLock();
         
-        EventBuilder bldr = new EventBuilder(EventConstants.SERVICE_DELETED_EVENT_UEI, getClass().getName());
-        bldr.setNodeid(node.getId());
-        bldr.setInterface(addr(ipAddress));
-        bldr.setService(serviceName);
-
         try {
-            m_eventProxy.send(bldr.getEvent());
-        } catch (EventProxyException ex) {
-            throw getException(Status.BAD_REQUEST, ex.getMessage());
+            OnmsNode node = m_nodeDao.get(nodeCriteria);
+            if (node == null) throw getException(Status.BAD_REQUEST, "deleteService: can't find node " + nodeCriteria);
+            OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
+            if (intf == null) throw getException(Status.BAD_REQUEST, "deleteService: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
+            OnmsMonitoredService service = intf.getMonitoredServiceByServiceType(serviceName);
+            if (service == null) throw getException(Status.CONFLICT, "deleteService: service " + serviceName + " not found on interface " + intf);
+            log().debug("deleteService: deleting service " + serviceName + " from node " + nodeCriteria);
+            intf.getMonitoredServices().remove(service);
+            m_ipInterfaceDao.saveOrUpdate(intf);
+            
+            EventBuilder bldr = new EventBuilder(EventConstants.SERVICE_DELETED_EVENT_UEI, getClass().getName());
+            bldr.setNodeid(node.getId());
+            bldr.setInterface(addr(ipAddress));
+            bldr.setService(serviceName);
+    
+            try {
+                m_eventProxy.send(bldr.getEvent());
+            } catch (EventProxyException ex) {
+                throw getException(Status.BAD_REQUEST, ex.getMessage());
+            }
+            return Response.ok().build();
+        } finally {
+            writeUnlock();
         }
-        return Response.ok().build();
     }
 
