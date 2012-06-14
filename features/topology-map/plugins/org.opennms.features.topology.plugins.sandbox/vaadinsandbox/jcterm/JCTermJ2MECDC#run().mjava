@@ -1,0 +1,116 @@
+  public void run(){
+    if(jsch==null){ 
+      jsch=new JSch(); 
+      String home=System.getProperty("user.home")+File.separator;
+      home=home+".ssh"+File.separator;
+      try{
+	jsch.setKnownHosts(home+"known_hosts");
+	File file=new java.io.File(home, "id_dsa");
+	if(file.exists())
+	  jsch.addIdentity(file.getPath());
+	file=new java.io.File(home, "id_rsa");
+	if(file.exists())
+	  jsch.addIdentity(file.getPath());
+      }
+      catch(Exception e){
+      }
+    }
+
+    while(thread!=null){
+      try{
+
+	try{
+  	  session=jsch.getSession(user, host, port);
+	  session.setProxy(proxy);
+
+	  ui=new MyUserInfo();
+	  session.setUserInfo(ui);
+
+	  java.util.Properties config=new java.util.Properties();
+	  if(compression==0){
+	    config.put("compression.s2c", "none");
+	    config.put("compression.c2s", "none");
+	  }
+	  else{
+	    config.put("compression.s2c", "zlib,none");
+	    config.put("compression.c2s", "zlib,none");
+	  }
+	  session.setConfig(config);
+
+	  session.connect();
+	}
+	catch(Exception e){
+          //System.out.println(e);
+          break;
+	}
+
+	Channel channel=null;
+
+	if(mode==SHELL){
+          channel=session.openChannel("shell");
+	  if(xforwarding){
+ 	    session.setX11Host(xhost);
+	    session.setX11Port(xport+6000);
+ 	    channel.setXForwarding(true);
+	  }
+
+	  out=channel.getOutputStream();
+	  in=channel.getInputStream();
+
+	  channel.connect();
+	}
+	else if(mode==SFTP){
+
+	  out=new PipedOutputStream();
+	  in=new PipedInputStream();
+	  channel=session.openChannel("sftp");
+	  channel.connect();
+
+	  (new Sftp((ChannelSftp)channel, 
+		    (InputStream)(new PipedInputStream((PipedOutputStream)out)),
+		    new PipedOutputStream((PipedInputStream)in))).kick();
+	}
+	else if(mode==EXEC){
+	  channel=session.openChannel("exec");
+	  ((ChannelExec)channel).setCommand(command);
+	  InputStream in=channel.getInputStream();
+	  OutputStream out=channel.getOutputStream();
+	  channel.connect();
+
+	  byte[] buf=new byte[1024];
+	  StringBuffer sb=new StringBuffer();
+	  while(true){
+	    int i=in.read(buf,0,buf.length);
+	    if(i<=0)break;
+	    sb.append(new String(buf, 0, i));
+	  }
+	  channel.disconnect();
+	  MessageDialog msg=new MessageDialog(command, sb.toString());
+	  break;
+	}
+
+        requestFocus();
+
+	emulator=new EmulatorVT100(this, in);
+	emulator.reset();
+	emulator.start();
+      }
+      catch(Exception e){
+	//e.printStackTrace();
+      }
+      break;
+    }
+
+    thread=null;
+
+    if(session!=null){
+      session.disconnect();
+      session=null;
+    }
+
+    if(splash!=null) splash.draw(img, getTermWidth(), getTermHeight());
+    else clear();
+
+    redraw(0, 0, getTermWidth(), getTermHeight());
+  }
+
