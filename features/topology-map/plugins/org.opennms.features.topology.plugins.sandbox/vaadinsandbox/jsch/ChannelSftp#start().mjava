@@ -1,0 +1,76 @@
+  public void start() throws JSchException{
+    try{
+
+      PipedOutputStream pos=new PipedOutputStream();
+      io.setOutputStream(pos);
+      PipedInputStream pis=new MyPipedInputStream(pos, rmpsize);
+      io.setInputStream(pis);
+
+      io_in=io.in;
+
+      if(io_in==null){
+        throw new JSchException("channel is down");
+      }
+
+      Request request=new RequestSftp();
+      request.request(getSession(), this);
+
+      /*
+      System.err.println("lmpsize: "+lmpsize);
+      System.err.println("lwsize: "+lwsize);
+      System.err.println("rmpsize: "+rmpsize);
+      System.err.println("rwsize: "+rwsize);
+      */
+
+      buf=new Buffer(lmpsize);
+      packet=new Packet(buf);
+
+      obuf=new Buffer(rmpsize);
+      opacket=new Packet(obuf);
+
+      int i=0;
+      int length;
+      int type;
+      byte[] str;
+
+      // send SSH_FXP_INIT
+      sendINIT();
+
+      // receive SSH_FXP_VERSION
+      Header header=new Header();
+      header=header(buf, header);
+      length=header.length;
+      if(length > MAX_MSG_LENGTH){
+        throw new SftpException(SSH_FX_FAILURE, 
+                                "Received message is too long: " + length);
+      }
+      type=header.type;             // 2 -> SSH_FXP_VERSION
+      server_version=header.rid;
+      //System.err.println("SFTP protocol server-version="+server_version);
+      if(length>0){
+        extensions=new java.util.Hashtable();
+        // extension data
+        fill(buf, length);
+        byte[] extension_name=null;
+        byte[] extension_data=null;
+        while(length>0){
+          extension_name=buf.getString();
+          length-=(4+extension_name.length);
+          extension_data=buf.getString();
+          length-=(4+extension_data.length);
+          extensions.put(Util.byte2str(extension_name),
+                         Util.byte2str(extension_data));
+        }
+      }
+
+      lcwd=new File(".").getCanonicalPath();
+    }
+    catch(Exception e){
+      //System.err.println(e);
+      if(e instanceof JSchException) throw (JSchException)e;
+      if(e instanceof Throwable)
+        throw new JSchException(e.toString(), (Throwable)e);
+      throw new JSchException(e.toString());
+    }
+  }
+

@@ -1,0 +1,295 @@
+  public static KeyPair load(JSch jsch, String prvkey, String pubkey) throws JSchException{
+
+    byte[] iv=new byte[8];       // 8
+    boolean encrypted=true;
+    byte[] data=null;
+
+    byte[] publickeyblob=null;
+
+    int type=ERROR;
+    int vendor=VENDOR_OPENSSH;
+    String publicKeyComment = "";
+    Cipher cipher=null;
+
+    try{
+      File file=new File(prvkey);
+      FileInputStream fis=new FileInputStream(prvkey);
+      byte[] buf=new byte[(int)(file.length())];
+      int len=0;
+      while(true){
+        int i=fis.read(buf, len, buf.length-len);
+        if(i<=0)
+          break;
+        len+=i;
+      }
+      fis.close();
+
+      int i=0;
+
+      while(i<len){
+        if(buf[i] == '-' && i+4<len && 
+           buf[i+1] == '-' && buf[i+2] == '-' && 
+           buf[i+3] == '-' && buf[i+4] == '-'){
+          break;
+        }
+        i++;
+      }
+
+      while(i<len){
+        if(buf[i]=='B'&& i+3<len && buf[i+1]=='E'&& buf[i+2]=='G'&& buf[i+3]=='I'){
+          i+=6;	    
+          if(buf[i]=='D'&& buf[i+1]=='S'&& buf[i+2]=='A'){ type=DSA; }
+	  else if(buf[i]=='R'&& buf[i+1]=='S'&& buf[i+2]=='A'){ type=RSA; }
+	  else if(buf[i]=='S'&& buf[i+1]=='S'&& buf[i+2]=='H'){ // FSecure
+	    type=UNKNOWN;
+	    vendor=VENDOR_FSECURE;
+	  }
+	  else{
+	    throw new JSchException("invalid privatekey: "+prvkey);
+	  }
+          i+=3;
+	  continue;
+	}
+        if(buf[i]=='A'&& i+7<len && buf[i+1]=='E'&& buf[i+2]=='S'&& buf[i+3]=='-' && 
+           buf[i+4]=='2'&& buf[i+5]=='5'&& buf[i+6]=='6'&& buf[i+7]=='-'){
+          i+=8;
+          if(Session.checkCipher((String)jsch.getConfig("aes256-cbc"))){
+            Class c=Class.forName((String)jsch.getConfig("aes256-cbc"));
+            cipher=(Cipher)(c.newInstance());
+            // key=new byte[cipher.getBlockSize()];
+            iv=new byte[cipher.getIVSize()];
+          }
+          else{
+            throw new JSchException("privatekey: aes256-cbc is not available "+prvkey);
+          }
+          continue;
+        }
+        if(buf[i]=='A'&& i+7<len && buf[i+1]=='E'&& buf[i+2]=='S'&& buf[i+3]=='-' && 
+           buf[i+4]=='1'&& buf[i+5]=='9'&& buf[i+6]=='2'&& buf[i+7]=='-'){
+          i+=8;
+          if(Session.checkCipher((String)jsch.getConfig("aes192-cbc"))){
+            Class c=Class.forName((String)jsch.getConfig("aes192-cbc"));
+            cipher=(Cipher)(c.newInstance());
+            // key=new byte[cipher.getBlockSize()];
+            iv=new byte[cipher.getIVSize()];
+          }
+          else{
+            throw new JSchException("privatekey: aes192-cbc is not available "+prvkey);
+          }
+          continue;
+        }
+        if(buf[i]=='A'&& i+7<len && buf[i+1]=='E'&& buf[i+2]=='S'&& buf[i+3]=='-' && 
+           buf[i+4]=='1'&& buf[i+5]=='2'&& buf[i+6]=='8'&& buf[i+7]=='-'){
+          i+=8;
+          if(Session.checkCipher((String)jsch.getConfig("aes128-cbc"))){
+            Class c=Class.forName((String)jsch.getConfig("aes128-cbc"));
+            cipher=(Cipher)(c.newInstance());
+            // key=new byte[cipher.getBlockSize()];
+            iv=new byte[cipher.getIVSize()];
+          }
+          else{
+            throw new JSchException("privatekey: aes128-cbc is not available "+prvkey);
+          }
+          continue;
+        }
+        if(buf[i]=='C'&& i+3<len && buf[i+1]=='B'&& buf[i+2]=='C'&& buf[i+3]==','){
+          i+=4;
+	  for(int ii=0; ii<iv.length; ii++){
+            iv[ii]=(byte)(((a2b(buf[i++])<<4)&0xf0)+(a2b(buf[i++])&0xf));
+  	  }
+	  continue;
+	}
+	if(buf[i]==0x0d && i+1<buf.length && buf[i+1]==0x0a){
+	  i++;
+	  continue;
+	}
+	if(buf[i]==0x0a && i+1<buf.length){
+	  if(buf[i+1]==0x0a){ i+=2; break; }
+	  if(buf[i+1]==0x0d &&
+	     i+2<buf.length && buf[i+2]==0x0a){
+	     i+=3; break;
+	  }
+	  boolean inheader=false;
+	  for(int j=i+1; j<buf.length; j++){
+	    if(buf[j]==0x0a) break;
+	    //if(buf[j]==0x0d) break;
+	    if(buf[j]==':'){inheader=true; break;}
+	  }
+	  if(!inheader){
+	    i++; 
+	    encrypted=false;    // no passphrase
+	    break;
+	  }
+	}
+	i++;
+      }
+
+      if(type==ERROR){
+	throw new JSchException("invalid privatekey: "+prvkey);
+      }
+
+      int start=i;
+      while(i<len){
+        if(buf[i]==0x0a){
+	  boolean xd=(buf[i-1]==0x0d);
+          System.arraycopy(buf, i+1, 
+			   buf, 
+			   i-(xd ? 1 : 0), 
+			   len-i-1-(xd ? 1 : 0)
+			   );
+	  if(xd)len--;
+          len--;
+          continue;
+        }
+        if(buf[i]=='-'){  break; }
+        i++;
+      }
+      data=Util.fromBase64(buf, start, i-start);
+
+      if(data.length>4 &&            // FSecure
+	 data[0]==(byte)0x3f &&
+	 data[1]==(byte)0x6f &&
+	 data[2]==(byte)0xf9 &&
+	 data[3]==(byte)0xeb){
+
+	Buffer _buf=new Buffer(data);
+	_buf.getInt();  // 0x3f6ff9be
+	_buf.getInt();
+	byte[]_type=_buf.getString();
+	//System.err.println("type: "+new String(_type)); 
+	String _cipher=Util.byte2str(_buf.getString());
+	//System.err.println("cipher: "+_cipher); 
+	if(_cipher.equals("3des-cbc")){
+  	   _buf.getInt();
+	   byte[] foo=new byte[data.length-_buf.getOffSet()];
+	   _buf.getByte(foo);
+	   data=foo;
+	   encrypted=true;
+	   throw new JSchException("unknown privatekey format: "+prvkey);
+	}
+	else if(_cipher.equals("none")){
+  	   _buf.getInt();
+  	   _buf.getInt();
+
+           encrypted=false;
+
+	   byte[] foo=new byte[data.length-_buf.getOffSet()];
+	   _buf.getByte(foo);
+	   data=foo;
+	}
+      }
+
+      if(pubkey!=null){
+	try{
+	  file=new File(pubkey);
+	  fis=new FileInputStream(pubkey);
+	  buf=new byte[(int)(file.length())];
+          len=0;
+          while(true){
+            i=fis.read(buf, len, buf.length-len);
+            if(i<=0)
+              break;
+            len+=i;
+          }
+	  fis.close();
+
+	  if(buf.length>4 &&             // FSecure's public key
+	     buf[0]=='-' && buf[1]=='-' && buf[2]=='-' && buf[3]=='-'){
+
+	    boolean valid=true;
+	    i=0;
+	    do{i++;}while(buf.length>i && buf[i]!=0x0a);
+	    if(buf.length<=i) {valid=false;}
+
+	    while(valid){
+	      if(buf[i]==0x0a){
+		boolean inheader=false;
+		for(int j=i+1; j<buf.length; j++){
+		  if(buf[j]==0x0a) break;
+		  if(buf[j]==':'){inheader=true; break;}
+		}
+		if(!inheader){
+		  i++; 
+		  break;
+		}
+	      }
+	      i++;
+	    }
+	    if(buf.length<=i){valid=false;}
+
+	    start=i;
+	    while(valid && i<len){
+	      if(buf[i]==0x0a){
+		System.arraycopy(buf, i+1, buf, i, len-i-1);
+		len--;
+		continue;
+	      }
+	      if(buf[i]=='-'){  break; }
+	      i++;
+	    }
+	    if(valid){
+	      publickeyblob=Util.fromBase64(buf, start, i-start);
+	      if(type==UNKNOWN){
+		if(publickeyblob[8]=='d'){ type=DSA; }
+		else if(publickeyblob[8]=='r'){ type=RSA; }
+	      }
+	    }
+	  }
+	  else{
+	    if(buf[0]=='s'&& buf[1]=='s'&& buf[2]=='h' && buf[3]=='-'){
+	      i=0;
+	      while(i<len){ if(buf[i]==' ')break; i++;} i++;
+	      if(i<len){
+		start=i;
+		while(i<len){ if(buf[i]==' ')break; i++;}
+		publickeyblob=Util.fromBase64(buf, start, i-start);
+	      }
+              if(i++<len){
+                int s=i;
+                while(i<len){ if(buf[i]=='\n')break; i++;}
+                if(i<len){
+                  publicKeyComment = new String(buf, s, i-s);
+                }
+              } 
+	    }
+	  }
+	}
+	catch(Exception ee){
+	}
+      }
+    }
+    catch(Exception e){
+      if(e instanceof JSchException) throw (JSchException)e;
+      if(e instanceof Throwable)
+        throw new JSchException(e.toString(), (Throwable)e);
+      throw new JSchException(e.toString());
+    }
+
+    KeyPair kpair=null;
+    if(type==DSA){ kpair=new KeyPairDSA(jsch); }
+    else if(type==RSA){ kpair=new KeyPairRSA(jsch); }
+
+    if(kpair!=null){
+      kpair.encrypted=encrypted;
+      kpair.publickeyblob=publickeyblob;
+      kpair.vendor=vendor;
+      kpair.publicKeyComment=publicKeyComment;
+      kpair.cipher=cipher;
+
+      if(encrypted){
+	kpair.iv=iv;
+	kpair.data=data;
+      }
+      else{
+	if(kpair.parse(data)){
+	  return kpair;
+	}
+	else{
+	  throw new JSchException("invalid privatekey: "+prvkey);
+	}
+      }
+    }
+
+    return kpair;
+  }
+

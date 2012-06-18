@@ -1,0 +1,140 @@
+  private void _get(String src, OutputStream dst,
+                    SftpProgressMonitor monitor, int mode, long skip) throws SftpException{
+    //System.err.println("_get: "+src+", "+dst);
+
+    byte[] srcb=Util.str2byte(src, fEncoding);
+    try{
+      sendOPENR(srcb);
+
+      Header header=new Header();
+      header=header(buf, header);
+      int length=header.length;
+      int type=header.type;
+
+      fill(buf, length);
+
+      if(type!=SSH_FXP_STATUS && type!=SSH_FXP_HANDLE){
+	throw new SftpException(SSH_FX_FAILURE, "");
+      }
+
+      if(type==SSH_FXP_STATUS){
+        int i=buf.getInt();
+        throwStatusError(buf, i);
+      }
+
+      byte[] handle=buf.getString();         // filename
+
+      long offset=0;
+      if(mode==RESUME){
+	offset+=skip;
+      }
+
+      int request_max=1;
+      rq.init();
+      long request_offset=offset;
+
+      int request_len = buf.buffer.length-13;
+      if(server_version==0){ request_len=1024; }
+
+      loop:
+      while(true){
+
+        while(rq.count() < request_max){
+          sendREAD(handle, request_offset, request_len, rq);
+          request_offset += request_len;
+        }
+
+        header=header(buf, header);
+        length=header.length;
+        type=header.type;
+
+        RequestQueue.Request rr = rq.get(header.rid);
+
+        if(type==SSH_FXP_STATUS){
+          fill(buf, length);
+          int i=buf.getInt();    
+          if(i==SSH_FX_EOF){
+            break loop;
+          }
+          throwStatusError(buf, i);
+        }
+
+        if(type!=SSH_FXP_DATA){ 
+	  break loop;
+        }
+
+        buf.rewind();
+        fill(buf.buffer, 0, 4); length-=4;
+        int length_of_data = buf.getInt();   // length of data 
+
+        /**
+         Since sftp protocol version 6, "end-of-file" has been defined,
+
+           byte   SSH_FXP_DATA
+           uint32 request-id
+           string data
+           bool   end-of-file [optional]
+
+         but some sftpd server will send such a field in the sftp protocol 3 ;-(
+         */
+        int optional_data = length - length_of_data;
+
+        int foo = length_of_data;
+        while(foo>0){
+          int bar=foo;
+          if(bar>buf.buffer.length){
+            bar=buf.buffer.length;
+          }
+          int data_len = io_in.read(buf.buffer, 0, bar);
+          if(data_len<0){
+            break loop;
+	  }
+          
+          dst.write(buf.buffer, 0, data_len);
+
+          offset+=data_len;
+          foo-=data_len;
+
+          if(monitor!=null){
+            if(!monitor.count(data_len)){
+              skip(foo); 
+              if(optional_data>0){
+                skip(optional_data);
+              }
+              break loop;
+            }
+          }
+
+        }
+	//System.err.println("length: "+length);  // length should be 0
+
+        if(optional_data>0){
+          skip(optional_data);
+        }
+
+        if(length_of_data<rr.length){  //
+          rq.cancel(header, buf);
+          sendREAD(handle, rr.offset+length_of_data, (int)(rr.length-length_of_data), rq);
+          request_offset=rr.offset+rr.length;
+        }
+
+        if(request_max < rq.size()){
+          request_max++;
+        }
+      }
+      dst.flush();
+
+      if(monitor!=null)monitor.end();
+
+      rq.cancel(header, buf);
+
+      _sendCLOSE(handle, header);
+    }
+    catch(Exception e){
+      if(e instanceof SftpException) throw (SftpException)e;
+      if(e instanceof Throwable)
+        throw new SftpException(SSH_FX_FAILURE, "", (Throwable)e);
+      throw new SftpException(SSH_FX_FAILURE, "");
+    }
+  }
+
