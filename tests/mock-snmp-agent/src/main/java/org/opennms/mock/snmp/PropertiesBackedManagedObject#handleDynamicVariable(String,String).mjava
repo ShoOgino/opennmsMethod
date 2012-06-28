@@ -1,0 +1,47 @@
+    /**
+     * <p>handleDynamicVariable</p>
+     *
+     * @param oidStr a {@link java.lang.String} object.
+     * @param typeStr a {@link java.lang.String} object.
+     * @return a {@link org.snmp4j.smi.Variable} object.
+     */
+	protected Variable handleDynamicVariable(String oidStr, String typeStr) {
+		DynamicVariable responder = m_dynamicVariableCache.get(oidStr);
+		
+		if( responder != null ) {
+			return responder.getVariableForOID(oidStr);
+		} else if( m_dynamicVariableCache.containsKey(oidStr) ) {
+			throw new IllegalArgumentException("Already failed to initialize the dynamic variable "+typeStr);
+		}
+		
+		try{
+			// Create a new instance of the class in typeStr
+			final Class<? extends DynamicVariable> dv = Class.forName(typeStr).asSubclass(DynamicVariable.class);
+			if (!DynamicVariable.class.isAssignableFrom(dv)) {
+				throw new IllegalArgumentException(typeStr+" must implement the DynamicVariable interface");
+			}
+			
+			// Attempt to instantiate the object using the singleton pattern
+			try{
+				Method method = dv.getMethod("getInstance", new Class[0]);
+				responder = (DynamicVariable)method.invoke(dv, new Object[0]);
+			} catch(NoSuchMethodException e) {
+				// Do nothing
+			}
+			
+			// If the singleton initialization failed, then create a new instance
+			if(responder==null) {
+				responder = (DynamicVariable)dv.newInstance();
+			}
+		} catch(IllegalArgumentException e ) {
+			throw e;
+		} catch(Throwable t) {
+			throw new IllegalArgumentException("Failed to marshall "+typeStr);
+		} finally {
+			// Cache the result - good or bad
+			m_dynamicVariableCache.put(oidStr, responder);
+		}
+		
+		return responder.getVariableForOID(oidStr);
+	}
+
