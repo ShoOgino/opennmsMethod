@@ -1,0 +1,89 @@
+  /*public*/ /*synchronized*/ void write(Packet packet, Channel c, int length) throws Exception{
+    long t = getTimeout();
+    while(true){
+      if(in_kex){
+        if(t>0L && (System.currentTimeMillis()-kex_start_time)>t){
+          throw new JSchException("timeout in wating for rekeying process.");
+        }
+        try{Thread.sleep(10);}
+        catch(java.lang.InterruptedException e){};
+        continue;
+      }
+      synchronized(c){
+
+        if(c.rwsize<length){
+          try{ 
+            c.notifyme++;
+            c.wait(100); 
+          }
+          catch(java.lang.InterruptedException e){
+          }
+          finally{
+            c.notifyme--;
+          }
+        }
+
+        if(c.rwsize>=length){
+          c.rwsize-=length;
+          break;
+        }
+
+      }
+      if(c.close || !c.isConnected()){
+	throw new IOException("channel is broken");
+      }
+
+      boolean sendit=false;
+      int s=0;
+      byte command=0;
+      int recipient=-1;
+      synchronized(c){
+	if(c.rwsize>0){
+	  long len=c.rwsize;
+          if(len>length){
+            len=length;
+          }
+          if(len!=length){
+            s=packet.shift((int)len, 
+                           (c2scipher!=null ? c2scipher_size : 8),
+                           (c2smac!=null ? c2smac.getBlockSize() : 0));
+          }
+	  command=packet.buffer.getCommand();
+	  recipient=c.getRecipient();
+	  length-=len;
+	  c.rwsize-=len;
+	  sendit=true;
+	}
+      }
+      if(sendit){
+	_write(packet);
+        if(length==0){
+          return;
+        }
+	packet.unshift(command, recipient, s, length);
+      }
+
+      synchronized(c){
+        if(in_kex){
+          continue;
+        }
+        if(c.rwsize>=length){
+          c.rwsize-=length;
+          break;
+        }
+
+        //try{ 
+        //System.out.println("1wait: "+c.rwsize);
+        //  c.notifyme++;
+        //  c.wait(100); 
+        //}
+        //catch(java.lang.InterruptedException e){
+        //}
+        //finally{
+        //  c.notifyme--;
+        //}
+      }
+    }
+    _write(packet);
+  }
+

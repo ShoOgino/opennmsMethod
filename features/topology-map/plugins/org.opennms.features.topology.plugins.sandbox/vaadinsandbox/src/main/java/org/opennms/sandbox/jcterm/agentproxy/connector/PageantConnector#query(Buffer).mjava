@@ -1,0 +1,61 @@
+  public void query(Buffer buffer) throws AgentProxyException {
+    HANDLE sharedFile = null; 
+    Pointer sharedMemory = null;
+
+    HWND hwnd = libU.FindWindow("Pageant", "Pageant");
+
+    if(hwnd == null){
+      throw new AgentProxyException("Pageant is not runnning.");
+    }
+
+    String mapname = 
+      String.format("PageantRequest%08x", libK.GetCurrentThreadId());
+
+    // TODO
+    SECURITY_ATTRIBUTES psa = null;
+
+    sharedFile = 
+      libK.CreateFileMapping(WinBase.INVALID_HANDLE_VALUE,
+                             psa,
+                             WinNT.PAGE_READWRITE,
+                             0, 
+                             8192,  // AGENT_MAX_MSGLEN
+                             mapname);
+
+    sharedMemory = 
+      Kernel32.INSTANCE.MapViewOfFile(sharedFile, 
+                                      WinNT.SECTION_MAP_WRITE,
+                                      0, 0, 0);
+
+    byte[] data = null;
+    long rcode = 0;
+    try {
+      sharedMemory.write(0, buffer.buffer, 0, buffer.getLength());
+      if(Platform.is64Bit()){
+        COPYDATASTRUCT64 cds64 = new COPYDATASTRUCT64();
+        data = install64(mapname, cds64);
+        rcode = sendMessage(hwnd, data);
+      }
+      else {
+        COPYDATASTRUCT32 cds32 = new COPYDATASTRUCT32();
+        data = install32(mapname, cds32);
+        rcode = sendMessage(hwnd, data);
+      }
+
+      buffer.rewind();
+      if(rcode!=0){
+        sharedMemory.read(0, buffer.buffer, 0, 4); // length
+        int i = buffer.getInt();
+        buffer.rewind();
+        buffer.checkFreeSize(i);
+        sharedMemory.read(4, buffer.buffer, 0, i);
+      }
+    }
+    finally {
+      if(sharedMemory != null) 
+        libK.UnmapViewOfFile(sharedMemory);
+      if(sharedFile != null) 
+        libK.CloseHandle(sharedFile);
+    }
+  }
+
