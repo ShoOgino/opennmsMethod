@@ -1,7 +1,9 @@
 	public void contextInitialized(ServletContextEvent sce) {
 		try {
+			m_servletContext = sce.getServletContext();
+			
 			System.err.println("contextInitialized");
-			String root = new File(sce.getServletContext().getRealPath("/") + "/WEB-INF/karaf").getAbsolutePath();
+			String root = new File(m_servletContext.getRealPath("/") + "/WEB-INF/karaf").getAbsolutePath();
 			System.err.println("Root: " + root);
 			System.setProperty("karaf.home", root);
             System.setProperty("karaf.base", root);
@@ -13,8 +15,30 @@
             System.setProperty("karaf.lock", "false");
 			main = new Main(new String[0]);
             main.launch();
-            final BundleContext context = main.getFramework().getBundleContext();
-            sce.getServletContext().setAttribute(BundleContext.class.getName(), context);
+            
+            // get bundle context for registering service
+            m_framework = main.getFramework().getBundleContext();
+            
+            // add bundle context to servlet context for Proxy Servlet
+            m_servletContext.setAttribute(BundleContext.class.getName(), m_framework);
+
+            
+            // register for ONMS registrations to forward registrations to OSGi service registry
+            m_registry.addRegistrationHook(this, true);
+            
+
+            // register service listener for export osgi services to forward to ONMS registry
+            String exportFilter = "("+REGISTRATION_EXPORT+"=*)";
+			m_framework.addServiceListener(this, exportFilter);
+
+			// forward any existing exported OSGi services with ONMS service registry
+            ServiceReference[] osgiServices = m_framework.getAllServiceReferences(null, exportFilter);
+            for(ServiceReference reference : osgiServices) {
+            	registerWithOnmsRegistry(reference);
+            }
+            
+            
+            
 		} catch (final Exception e) {
 			main = null;
 			e.printStackTrace();
