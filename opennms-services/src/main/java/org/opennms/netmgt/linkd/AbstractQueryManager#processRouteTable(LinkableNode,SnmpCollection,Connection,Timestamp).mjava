@@ -12,29 +12,34 @@
         for (final SnmpStore ent : snmpcoll.getIpRouteTable()) {
             Integer ifindex = ent.getInt32(IpRouteCollectorEntry.IP_ROUTE_IFINDEX);
 
+            Integer ifindexforatinterface = ifindex;
             final InetAddress nexthop = ent.getIPAddress(IpRouteCollectorEntry.IP_ROUTE_NXTHOP);
 
+            boolean store = true;
             if (nexthop == null) {
                 LogUtils.warnf(this, "processRouteTable: next hop not found on node %d. Skipping.", node.getNodeId());
-                continue;
+                store=false;
             }
 
             final InetAddress routedest = ent.getIPAddress(IpRouteCollectorEntry.IP_ROUTE_DEST);
             if (routedest == null) {
                 LogUtils.warnf(this, "processRouteTable: route destination not found on node %d. Skipping.", node.getNodeId());
-                continue;
+                store=false;
             }
 
             final InetAddress routemask = ent.getIPAddress(IpRouteCollectorEntry.IP_ROUTE_MASK);
 
             if (routemask == null) {
                 LogUtils.warnf(this, "processRouteTable: route mask not found on node %d. Skipping.", node.getNodeId());
-                continue;
+                store=false;
+            } else if (routemask.getHostAddress().equals("255.255.255.255")) {
+                LogUtils.warnf(this, "processRouteTable: route mask 255.255.255.255 on node %d. Skipping.", node.getNodeId());
+                store=false;                
             }
 
             if (ifindex == null || ifindex < 0) {
                 LogUtils.warnf(this, "processRouteTable: Invalid ifIndex %d on node %d. Skipping.", ifindex, node.getNodeId());
-                continue;
+                store=false;
             } else if (ifindex == 0) {
                 // According to the RFC, if the ifindex is zero (0) then this indicates that no
                 // particular interface was specified. We need to figure out the ifindex in that case.
@@ -48,10 +53,10 @@
                        scenario where no interface is specified."
                    ::= { inetCidrRouteEntry 7 }
                 */
-                ifindex = getIfIndexFromRouteTableEntries(nexthop, snmpcoll.getIpRouteTable());
-                if (ifindex < 1) {
-                    LogUtils.warnf(this, "processRouteTable: Invalid ifIndex %d on node %d. Skipping.", ifindex, node.getNodeId());
-                    continue;
+                ifindexforatinterface = getIfIndexFromRouteTableEntries(nexthop, snmpcoll.getIpRouteTable());
+                if (ifindexforatinterface < 1) {
+                    LogUtils.warnf(this, "processRouteTable: Not usable ifIndex %d on node %d.", ifindex, node.getNodeId());
+                    ifindexforatinterface = ifindex;
                 }
             }
 
@@ -84,7 +89,7 @@
             } else {
                 int snmpiftype = -2;
 
-                if (ifindex >= 0)
+                if (ifindex > 0)
                     snmpiftype = getSnmpIfType(dbConn, node.getNodeId(), ifindex);
 
                 if (snmpiftype == -1) {
@@ -97,17 +102,16 @@
                     LogUtils.infof(this, "processRouteTable: next hop is a multicast address. Skipping.");
                 } else if (routemetric1 == null || routemetric1 < 0) {
                     LogUtils.infof(this, "processRouteTable: Route metric is invalid. Skipping.");
-                } else {
+                } else if (store){
                     LogUtils.debugf(this, "processRouteTable: Interface has a valid ifType (%d). Adding.", snmpiftype);
 
                     routeIface.setRouteDest(routedest);
                     routeIface.setRoutemask(routemask);
                     routeIface.setSnmpiftype(snmpiftype);
-                    routeIface.setIfindex(ifindex);
+                    routeIface.setIfindex(ifindexforatinterface);
                     routeIface.setMetric(routemetric1);
                     routeIface.setNextHop(nexthop);
                     routeInterfaces.add(routeIface);
-
                 }
             }
 
@@ -120,7 +124,7 @@
 
             // always save info to DB
             if (snmpcoll.getSaveIpRouteTable()) {
-
+                LogUtils.debugf(this, "processRouteTable: persisting routeDest/routeMask/nextHop: %s/%s/%s - ifIndex = %d", str(routedest), str(routemask), str(nexthop), ifindex);
                 final OnmsNode onmsNode = getNode(node.getNodeId());
                 final OnmsIpRouteInterface ipRouteInterface = new OnmsIpRouteInterface();
                 ipRouteInterface.setLastPollTime(scanTime);
