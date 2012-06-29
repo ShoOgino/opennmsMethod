@@ -1,0 +1,45 @@
+    /*
+     *  NETGEAR_SW_108:port8------> port 2/1 (ifindex 9):CISCO_WS_C2948_IP
+     */
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=CISCO_WS_C2948_IP, port=161, resource="classpath:linkd/"+CISCO_WS_C2948_IP+"-walk.txt"),
+            @JUnitSnmpAgent(host=NETGEAR_SW_108_IP, port=161, resource="classpath:linkd/"+NETGEAR_SW_108_IP+"-walk.txt"),
+    })
+    public void testLinkNetgearCiscoWs() throws Exception {
+        m_nodeDao.save(getNetGearSw108());
+        m_nodeDao.save(getCiscoWsC2948());
+        m_nodeDao.flush();
+
+        final OnmsNode ngsw108 = m_nodeDao.findByForeignId("linkd", NETGEAR_SW_108_NAME);
+        final OnmsNode ciscows = m_nodeDao.findByForeignId("linkd", CISCO_WS_C2948_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(ciscows.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(ngsw108.getId()));
+
+        assertTrue(m_linkd.runSingleSnmpCollection(ciscows.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(ngsw108.getId()));        
+        
+        String ciscowspackageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(CISCO_WS_C2948_IP)).getName();
+        String ngsw108packageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(NETGEAR_SW_108_IP)).getName();
+
+        assertEquals(0,m_dataLinkInterfaceDao.countAll());
+        
+        assertEquals("example1", ciscowspackageName);
+        assertEquals("example1", ngsw108packageName);
+        
+        
+        assertTrue(m_linkd.runSingleLinkDiscovery("example1"));
+        
+        final List<DataLinkInterface> links = m_dataLinkInterfaceDao.findAll();
+        assertEquals(1,links.size());
+        
+        final DataLinkInterface ngsw108linktociscows = links.get(0);
+        
+        assertEquals(ngsw108.getId(), ngsw108linktociscows.getNode().getId());
+        assertEquals(8,ngsw108linktociscows.getIfIndex().intValue());
+        assertEquals(ciscows.getId(), ngsw108linktociscows.getNodeParentId());
+        assertEquals(9, ngsw108linktociscows.getParentIfIndex().intValue());
+                
+    }
+
