@@ -1,0 +1,86 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=CISCO_WS_C2948_IP, port=161, resource="classpath:linkd/"+CISCO_WS_C2948_IP+"-walk.txt")
+    })
+    public void testCiscoWsC2948Collection() throws Exception {
+        
+        m_nodeDao.save(getCiscoWsC2948());
+        m_nodeDao.flush();
+        
+        final OnmsNode ciscosw = m_nodeDao.findByForeignId("linkd", CISCO_WS_C2948_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(ciscosw.getId()));
+
+        assertTrue(m_linkd.runSingleSnmpCollection(ciscosw.getId()));
+
+        // linkd has 1 linkable node
+        assertEquals(1, m_linkd.getLinkableNodes().size());
+        LinkableNode linkNode = m_linkd.getLinkableNodes().iterator().next();
+        
+        // linkabble node is not null
+        assertTrue(linkNode != null);
+        
+        // has only one route (next hop must be valid!) 
+        assertEquals(1,linkNode.getRouteInterfaces().size());
+        // has 5 
+        assertEquals(5, linkNode.getVlans().size());
+        
+        String packageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(CISCO_WS_C2948_IP)).getName();
+
+        assertEquals("example1", packageName);
+        
+        assertEquals(58,linkNode.getBridgeIdentifiers().size());
+
+        // has 1 stp node entry check the bridge identifier and protocol
+        assertEquals(CISCO_WS_C2948_BRIDGEID,linkNode.getBridgeIdentifier("1"));
+        
+        // has 50 stp entry che ifIndex must be different then -1
+        // 
+        assertEquals(50, linkNode.getStpInterfaces().get("1").size());
+
+        // no cdp inteface also if the walk return several interfaces
+        assertEquals("No cdp interface because no other node is there",0,linkNode.getCdpInterfaces().size());
+        
+        for (OnmsStpInterface stpiface: linkNode.getStpInterfaces().get("1")) {
+            assertTrue("should have a valid ifindex", stpiface.getIfIndex().intValue() > 0);
+            assertTrue("should have a valid bridgeport", stpiface.getBridgePort().intValue() > 0);
+        }
+
+        // This make shure that the ip/mac association is saved
+        /*
+        * nodelabel:ip:mac:ifindex:ifdescr
+        *      
+        * CISCO_WS_C2948_IP:172.20.1.7:0002baaacffe:3:me1
+        */
+        
+        assertEquals("should have saved 1 ip to mac",1, m_linkd.getAtInterfaces(packageName).size());        
+        AtInterface at = m_linkd.getAtInterfaces(packageName).get("0002baaacffe").get(0);
+        assertEquals(CISCO_WS_C2948_IP,at.getIpAddress().getHostAddress());
+        assertEquals(3, at.getIfIndex().intValue());
+        // Now Let's test the database
+        final OnmsCriteria criteria = new OnmsCriteria(OnmsIpRouteInterface.class);
+        criteria.createAlias("node", "node");
+        criteria.add(Restrictions.eq("node.id", ciscosw.getId()));
+
+        // 2 route entry in database
+        assertEquals(2, m_ipRouteInterfaceDao.findMatching(criteria).size());
+        //0 atinterface in database
+        assertEquals(0, m_atInterfaceDao.findAll().size());
+        
+        // 1 entry in vlan
+        assertEquals(5, m_vlanDao.findAll().size());
+ 
+        // 1 entry in stpnode
+        assertEquals(1, m_stpNodeDao.countAll());
+        
+        OnmsStpNode stpnode = m_stpNodeDao.findByNodeAndVlan(ciscosw.getId(), 1);
+        assertTrue(CISCO_WS_C2948_BRIDGEID.equals(stpnode.getBaseBridgeAddress()));
+        assertEquals(50, stpnode.getBaseNumPorts().intValue());
+
+        assertEquals(CISCO_WS_C2948_STP_TYPE, stpnode.getBaseType().intValue());
+        
+        
+        // 50 entry in stpinterface
+        assertEquals(50, m_stpInterfaceDao.findAll().size());        
+    }
+

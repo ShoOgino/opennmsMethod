@@ -1,0 +1,66 @@
+    /*
+     *
+     * CISCO_C870:  FastEthernet2 3  ------> port  2/44 (ifindex 52):CISCO_WS_C2948_IP
+     * 
+     */
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=CISCO_WS_C2948_IP, port=161, resource="classpath:linkd/"+CISCO_WS_C2948_IP+"-walk.txt"),
+            @JUnitSnmpAgent(host=CISCO_C870_IP, port=161, resource="classpath:linkd/"+CISCO_C870_IP+"-walk.txt")
+    })
+    public void testCiscoRouterCiscoWsUsingCdp() throws Exception {
+        m_nodeDao.save(getCiscoC870());
+        m_nodeDao.save(getCiscoWsC2948());
+        m_nodeDao.flush();
+
+        assertEquals(2, m_nodeDao.countAll());
+        final OnmsNode ciscorouter = m_nodeDao.findByForeignId("linkd", CISCO_C870_NAME);
+        final OnmsNode ciscows = m_nodeDao.findByForeignId("linkd", CISCO_WS_C2948_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(ciscows.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(ciscorouter.getId()));
+
+        assertTrue(m_linkd.runSingleSnmpCollection(ciscows.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(ciscorouter.getId()));
+        
+        final Collection<LinkableNode> linkables = m_linkd.getLinkableNodes();
+        assertEquals(2, linkables.size());
+        
+        for (LinkableNode lnode: linkables) {
+            if (ciscows.getId() == lnode.getNodeId()) {
+                assertEquals(true, lnode.hasCdpInterfaces());
+                assertEquals(1, lnode.getCdpInterfaces().size());
+            } else if (ciscorouter.getId() == lnode.getNodeId()) {
+                assertEquals(true, lnode.hasCdpInterfaces());
+                assertEquals(1, lnode.getCdpInterfaces().size());
+            } else {
+                assertTrue("Found node not added!!!!!",false);
+            }
+        }
+        
+
+        assertEquals(0,m_dataLinkInterfaceDao.countAll());
+                
+        //String ciscowspackageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(CISCO_WS_C2948_IP)).getName();
+        //String ciscorouterpackageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(CISCO_C870_IP)).getName();
+
+        //assertEquals("example1", ciscowspackageName);
+        //assertEquals("example1", ciscorouterpackageName);
+                        
+        assertEquals(2, m_linkd.getLinkableNodesOnPackage("example1").size());
+
+        assertTrue(m_linkd.runSingleLinkDiscovery("example1"));
+
+        
+        final List<DataLinkInterface> links = m_dataLinkInterfaceDao.findAll();
+        assertEquals(1,links.size());
+        
+        final DataLinkInterface ciscorouterlinktociscows = links.get(0);
+        
+        assertEquals(ciscorouter.getId(), ciscorouterlinktociscows.getNode().getId());
+        assertEquals(3, ciscorouterlinktociscows.getIfIndex().intValue());
+        assertEquals(ciscows.getId(), ciscorouterlinktociscows.getNodeParentId());
+        assertEquals(52,ciscorouterlinktociscows.getParentIfIndex().intValue());
+                
+    }
+
