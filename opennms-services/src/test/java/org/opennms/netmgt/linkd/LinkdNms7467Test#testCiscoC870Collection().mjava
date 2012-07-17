@@ -1,0 +1,115 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=CISCO_C870_IP, port=161, resource="classpath:linkd/"+CISCO_C870_IP+"-walk.txt")
+    })
+    public void testCiscoC870Collection() throws Exception {
+        m_nodeDao.save(getCiscoC870());
+        m_nodeDao.flush();
+        
+        final OnmsNode ciscorouter = m_nodeDao.findByForeignId("linkd", CISCO_C870_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(ciscorouter.getId()));
+
+        assertTrue(m_linkd.runSingleSnmpCollection(ciscorouter.getId()));
+
+        // linkd has 1 linkable node
+        assertEquals(1, m_linkd.getLinkableNodes().size());
+        LinkableNode linkNode = m_linkd.getLinkableNodes().iterator().next();
+        
+        // linkabble node is not null
+        assertTrue(linkNode != null);
+        
+        // has 3 route (next hop must be valid!) 
+        assertEquals(3,linkNode.getRouteInterfaces().size());
+        // has 0 vlan 
+        assertEquals(0, linkNode.getVlans().size());
+        
+        String packageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(CISCO_C870_IP)).getName();
+
+        assertEquals("example1", packageName);
+        
+        assertEquals(6,linkNode.getBridgeIdentifiers().size());
+
+        // has 1 stp node entry check the bridge identifier and protocol
+        assertEquals(CISCO_C870_BRIDGEID,linkNode.getBridgeIdentifier("1"));
+        
+        // has 50 stp entry che ifIndex must be different then -1
+        // 
+        assertEquals(1, linkNode.getStpInterfaces().get("1").size());
+
+        // no cdp inteface also if the walk return several interfaces
+        assertEquals("No cdp interface because no other node is there",0,linkNode.getCdpInterfaces().size());
+        
+        for (OnmsStpInterface stpiface: linkNode.getStpInterfaces().get("1")) {
+            assertTrue("should have a valid ifindex", stpiface.getIfIndex().intValue() > 0);
+            assertTrue("should have a valid bridgeport", stpiface.getBridgePort().intValue() > 0);
+        }
+
+        // This make shure that the ip/mac association is saved
+        /*
+        * nodelabel:ip:mac:ifindex:ifdescr
+        *      
+        * CISCO_C870:172.20.1.1:001f6cd034e7:12:Vlan1
+        * CISCO_C870:172.20.2.1:001f6cd034e7:13:Vlan2
+        * CISCO_C870:10.255.255.2:001f6cd034e7:12:Vlan1
+        * CISCO_C870:65.41.39.146:00000c03b09e:14:BVI1
+        */
+        
+        assertEquals("should have saved 2 ip to mac",2, m_linkd.getAtInterfaces(packageName).size());        
+        
+        List<AtInterface> ats = m_linkd.getAtInterfaces(packageName).get("001f6cd034e7");
+        assertEquals(3, ats.size());
+        for (AtInterface at :ats) {
+            if( at.getIpAddress().getHostAddress().equals("172.20.1.1"))
+                assertEquals(12, at.getIfIndex().intValue());
+            else if( at.getIpAddress().getHostAddress().equals("172.20.2.1"))
+                assertEquals(13, at.getIfIndex().intValue());
+            else if( at.getIpAddress().getHostAddress().equals("10.255.255.2"))
+                assertEquals(12, at.getIfIndex().intValue());
+            else 
+                assertTrue("ip: "+ at.getIpAddress().getHostAddress() + "does not match any known ip address", false);
+        }
+
+        ats = m_linkd.getAtInterfaces(packageName).get("00000c03b09e");
+        assertEquals(1, ats.size());
+        for (AtInterface at : ats) {
+            if( at.getIpAddress().getHostAddress().equals("65.41.39.146"))
+                assertEquals(14, at.getIfIndex().intValue());
+            else 
+                assertTrue("ip: "+ at.getIpAddress().getHostAddress() + "does not match any known ip address", false);
+        }
+
+        
+        // Now Let's test the database
+        //0 atinterface in database
+        assertEquals(4, m_atInterfaceDao.findAll().size());
+
+        final OnmsCriteria criteria = new OnmsCriteria(OnmsIpRouteInterface.class);
+        criteria.createAlias("node", "node");
+        criteria.add(Restrictions.eq("node.id", ciscorouter.getId()));
+        final List<OnmsIpRouteInterface> iproutes = m_ipRouteInterfaceDao.findMatching(criteria);
+        // 7 route entry in database
+        for (OnmsIpRouteInterface iproute: iproutes) {
+            System.out.println(iproute.getRouteDest()+"/"+iproute.getRouteMask()+"/"+iproute.getRouteNextHop()+"/"+iproute.getRouteIfIndex());
+        }
+        assertEquals(7, iproutes.size());
+        
+        // 0 entry in vlan
+        assertEquals(0, m_vlanDao.findAll().size());
+ 
+        // 1 entry in stpnode
+        assertEquals(1, m_stpNodeDao.countAll());
+        
+        OnmsStpNode stpnode = m_stpNodeDao.findByNodeAndVlan(ciscorouter.getId(), 1);
+        assertTrue(CISCO_C870_BRIDGEID.equals(stpnode.getBaseBridgeAddress()));
+        assertEquals(1, stpnode.getBaseNumPorts().intValue());
+
+        assertEquals(CISCO_C870_STP_TYPE, stpnode.getBaseType().intValue());
+        
+        
+        // 1 entry in stpinterface
+        assertEquals(1, m_stpInterfaceDao.findAll().size());        
+
+        
+    }
+

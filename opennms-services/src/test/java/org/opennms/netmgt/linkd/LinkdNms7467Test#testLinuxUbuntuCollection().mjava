@@ -1,0 +1,81 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=LINUX_UBUNTU_IP, port=161, resource="classpath:linkd/"+LINUX_UBUNTU_IP+"-walk.txt")
+    })
+    public void testLinuxUbuntuCollection() throws Exception {
+        m_nodeDao.save(getLinuxUbuntu());
+        m_nodeDao.flush();
+        
+        final OnmsNode linux = m_nodeDao.findByForeignId("linkd", LINUX_UBUNTU_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(linux.getId()));
+
+        assertTrue(m_linkd.runSingleSnmpCollection(linux.getId()));
+
+        // linkd has 1 linkable node
+        assertEquals(1, m_linkd.getLinkableNodes().size());
+        LinkableNode linkNode = m_linkd.getLinkableNodes().iterator().next();
+        
+        // linkabble node is not null
+        assertTrue(linkNode != null);
+        
+        // has 0 route (next hop must be valid!) no ip route table
+        assertEquals(0,linkNode.getRouteInterfaces().size());
+        // has 0 vlan 
+        assertEquals(0, linkNode.getVlans().size());
+        
+        String packageName = m_linkdConfig.getFirstPackageMatch(InetAddress.getByName(LINUX_UBUNTU_IP)).getName();
+
+        assertEquals("example1", packageName);
+              
+        assertEquals(false, linkNode.isBridgeNode());
+        
+        assertEquals(0,linkNode.getBridgeIdentifiers().size());
+
+        // no cdp inteface also if the walk return several interfaces
+        assertEquals("cdp not supported",0,linkNode.getCdpInterfaces().size());
+        
+        // This make shure that the ip/mac association is saved
+        /*
+        * nodelabel:ip:mac:ifindex:ifdescr
+        * LINUX_UBUNTU:172.20.1.14:406186e28b53:4:br0
+        * 
+        */
+        
+        assertEquals("should have saved 1 ip to mac",1, m_linkd.getAtInterfaces(packageName).size());        
+        
+        List<AtInterface> ats = m_linkd.getAtInterfaces(packageName).get("406186e28b53");
+        assertEquals(1, ats.size());
+        for (AtInterface at : ats) {
+            if( at.getIpAddress().getHostAddress().equals("172.20.1.14"))
+                assertTrue(at.getIfIndex().intValue() == 4);
+            else 
+                assertTrue("ip: "+ at.getIpAddress().getHostAddress() + "does not match any known ip address", false);
+        }
+
+        
+        // Now Let's test the database
+        //0 atinterface in database
+        assertEquals(0, m_atInterfaceDao.findAll().size());
+
+        final OnmsCriteria criteria = new OnmsCriteria(OnmsIpRouteInterface.class);
+        criteria.createAlias("node", "node");
+        criteria.add(Restrictions.eq("node.id", linux.getId()));
+        final List<OnmsIpRouteInterface> iproutes = m_ipRouteInterfaceDao.findMatching(criteria);
+        // 4 route entry in database
+        for (OnmsIpRouteInterface iproute: iproutes) {
+            System.out.println(iproute.getRouteDest()+"/"+iproute.getRouteMask()+"/"+iproute.getRouteNextHop()+"/"+iproute.getRouteIfIndex());
+        }
+        assertEquals(4, iproutes.size());
+        
+        // 0 entry in vlan
+        assertEquals(0, m_vlanDao.findAll().size());
+ 
+        // 0 entry in stpnode
+        assertEquals(0, m_stpNodeDao.countAll());        
+        
+        // 0 entry in stpinterface
+        assertEquals(0, m_stpInterfaceDao.findAll().size());        
+
+    }
+

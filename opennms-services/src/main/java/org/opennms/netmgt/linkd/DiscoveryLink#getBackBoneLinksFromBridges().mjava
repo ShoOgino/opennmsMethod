@@ -1,0 +1,226 @@
+    private void getBackBoneLinksFromBridges() {
+        if (m_bridgeNodes.size() > 0) {
+            LogUtils.infof(this,
+                           "run: trying to find backbone ethernet links among bridge nodes using Spanning Tree Protocol");
+        }
+
+        for (final LinkableNode curNode : m_bridgeNodes.values()) {
+            final int curNodeId = curNode.getNodeId();
+            final InetAddress cupIpAddr = curNode.getSnmpPrimaryIpAddr();
+
+            LogUtils.infof(this,
+                           "run: parsing bridge nodeid %d IP address %s with %d VLANs",
+                           curNodeId, str(cupIpAddr),
+                           curNode.getStpInterfaces().size());
+
+            for (final Map.Entry<String, List<OnmsStpInterface>> me : curNode.getStpInterfaces().entrySet()) {
+                final String vlan = me.getKey();
+                final String curBaseBridgeAddress = curNode.getBridgeIdentifier(vlan);
+
+                LogUtils.debugf(this, "run: found bridge identifier %s",
+                                curBaseBridgeAddress);
+
+                String designatedRoot = null;
+
+                if (curNode.hasStpRoot(vlan)) {
+                    designatedRoot = curNode.getStpRoot(vlan);
+                } else {
+                    LogUtils.debugf(this,
+                                    "run: designated root bridge identifier not found. Skipping %s",
+                                    curBaseBridgeAddress);
+                    continue;
+                }
+
+                if (designatedRoot == null
+                        || designatedRoot.equals("0000000000000000")) {
+                    LogUtils.warnf(this,
+                                   "run: designated root is invalid, skipping: %s",
+                                   designatedRoot);
+                    continue;
+                }
+                // check if designated
+                // bridge is itself
+                // if bridge is STP root bridge itself exiting
+                // searching on linkablesnmpnodes
+
+                if (curNode.isBridgeIdentifier(designatedRoot.substring(4))) {
+                    LogUtils.debugf(this,
+                                    "run: STP designated root is the bridge itself. Skipping.");
+                    continue;
+                }
+
+                // Now parse STP bridge port info to get designated bridge
+                LogUtils.debugf(this,
+                                "run: STP designated root is another bridge. %s Parsing STP Interface",
+                                designatedRoot);
+
+                for (final OnmsStpInterface stpIface : me.getValue()) {
+                    // the bridge port number
+                    final int stpbridgeport = stpIface.getBridgePort();
+                    // if port is a backbone port continue
+                    if (curNode.isBackBoneBridgePort(stpbridgeport)) {
+                        LogUtils.debugf(this,
+                                        "run: bridge port %d already found. Skipping.",
+                                        stpbridgeport);
+                        continue;
+                    }
+
+                    final String stpPortDesignatedPort = stpIface.getStpPortDesignatedPort();
+                    final String stpPortDesignatedBridge = stpIface.getStpPortDesignatedBridge();
+
+                    LogUtils.debugf(this,
+                                    "run: parsing bridge port %d with STP designated bridge %s and STP designated port %s",
+                                    stpbridgeport, stpPortDesignatedBridge,
+                                    stpPortDesignatedPort);
+
+                    if (stpPortDesignatedBridge == null
+                            || stpPortDesignatedBridge.equals("0000000000000000")
+                            || stpPortDesignatedBridge.equals("")) {
+                        LogUtils.warnf(this,
+                                       "run: designated bridge is invalid, skipping: %s",
+                                       stpPortDesignatedBridge);
+                        continue;
+                    }
+
+                    if (curNode.isBridgeIdentifier(stpPortDesignatedBridge.substring(4))) {
+                        LogUtils.debugf(this,
+                                        "run: designated bridge for port %d is bridge itself",
+                                        stpbridgeport);
+                        continue;
+                    }
+
+                    if (stpPortDesignatedPort == null
+                            || stpPortDesignatedPort.equals("0000")) {
+                        LogUtils.warnf(this,
+                                       "run: designated port is invalid: %s",
+                                       stpPortDesignatedPort);
+                        continue;
+                    }
+
+                    // A Port Identifier shall be encoded as two octets,
+                    // taken to represent an unsigned binary number. If
+                    // two Port Identifiers are numerically compared, the
+                    // lesser number denotes the Port of better priority.
+                    // The more significant octet of a Port Identifier is
+                    // a settable priority component that permits the
+                    // relative priority of Ports on the same Bridge to be
+                    // managed (17.13.7 and Clause 14). The less
+                    // significant twelve bits is the Port Number
+                    // expressed as an unsigned binary number. The value 0
+                    // is not used as a Port Number. NOTE -- The number of
+                    // bits that are considered to be part of the Port
+                    // Number (12 bits) differs from the 1998 and prior
+                    // versions of this standard (formerly, the priority
+                    // component was 8 bits and the Port Number component
+                    // also 8 bits). This change acknowledged that modern
+                    // switched LAN infrastructures call for increasingly
+                    // large numbers of Ports to be supported in a single
+                    // Bridge. To maintain management compatibility with
+                    // older implementations, the priority component is
+                    // still considered, for management purposes, to be an
+                    // 8-bit value, but the values that it can be set to
+                    // are restricted to those where the least significant
+                    // 4 bits are zero (i.e., only the most significant 4
+                    // bits are settable).
+                    int designatedbridgeport = Integer.parseInt(stpPortDesignatedPort.substring(1),
+                                                                16);
+
+                    // try to see if designated bridge is linkable SNMP node
+
+                    final LinkableNode designatedNode = getNodeFromMacIdentifierOfBridgeNode(stpPortDesignatedBridge.substring(4));
+
+                    if (designatedNode == null) {
+                        LogUtils.debugf(this,
+                                        "run: no nodeid found for STP bridge address %s. Nothing to save.",
+                                        stpPortDesignatedBridge);
+                        continue; // no saving info if no nodeid
+                    }
+
+                    final int designatednodeid = designatedNode.getNodeId();
+
+                    LogUtils.debugf(this, "run: found designated nodeid %d",
+                                    designatednodeid);
+
+                    // test if there are other bridges between this link
+                    // USING MAC ADDRESS FORWARDING TABLE
+
+                    if (!isNearestBridgeLink(curNode, stpbridgeport,
+                                             designatedNode,
+                                             designatedbridgeport)) {
+                        LogUtils.debugf(this,
+                                        "run: other bridge found between nodes. No links to save!");
+                        continue; // no saving info if no nodeid
+                    }
+
+                    // this is a backbone port so try adding to Bridge class
+                    // get the ifindex on node
+
+                    final int curIfIndex = curNode.getIfindex(stpbridgeport);
+
+                    if (curIfIndex == -1) {
+                        LogUtils.warnf(this,
+                                       "run: got invalid ifindex on node: %s",
+                                       curNode.toString());
+                        continue;
+                    }
+
+                    final int designatedifindex = designatedNode.getIfindex(designatedbridgeport);
+
+                    if (designatedifindex == -1) {
+                        LogUtils.warnf(this,
+                                       "run: got invalid ifindex on designated node: %s",
+                                       designatedNode.toString());
+                        continue;
+                    }
+
+                    LogUtils.debugf(this,
+                                    "run: backbone port found for node %d. Adding to bridge %d.",
+                                    curNodeId, stpbridgeport);
+
+                    curNode.addBackBoneBridgePorts(stpbridgeport);
+                    m_bridgeNodes.put(new Integer(curNodeId), curNode);
+
+                    LogUtils.debugf(this,
+                                    "run: backbone port found for node %d. Adding to helper class BB port bridge port %d.",
+                                    designatednodeid, designatedbridgeport);
+
+                    designatedNode.addBackBoneBridgePorts(designatedbridgeport);
+                    m_bridgeNodes.put(new Integer(designatednodeid),
+                                      designatedNode);
+
+                    LogUtils.debugf(this,
+                                    "run: adding links on BB bridge port %d",
+                                    designatedbridgeport);
+
+                    addLinks(getMacsOnBridgeLink(curNode, stpbridgeport,
+                                                 designatedNode,
+                                                 designatedbridgeport),
+                             curNodeId, curIfIndex);
+
+                    // writing to db using class
+                    // DbDAtaLinkInterfaceEntry
+                    final NodeToNodeLink lk = new NodeToNodeLink(curNodeId,
+                                                                 curIfIndex);
+                    lk.setNodeparentid(designatednodeid);
+                    lk.setParentifindex(designatedifindex);
+                    LogUtils.infof(this,
+                                   "run: saving STP bridge link: "
+                                           + lk.toString());
+                    addNodetoNodeLink(lk);
+
+                }
+            }
+            LogUtils.infof(this,
+                           "run: done parsing bridge nodeid %d IP address %s with %d VLANs",
+                           curNodeId, str(cupIpAddr),
+                           curNode.getStpInterfaces().size());
+        }
+
+        if (m_bridgeNodes.size() > 0) {
+            LogUtils.infof(this,
+                           "run: done finding backbone ethernet links among bridge nodes using Spanning Tree Protocol");
+        }
+
+
+    }
+
