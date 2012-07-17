@@ -1,5 +1,61 @@
+    /**
+     * This test is a bit fragile because it relies on the fact that the main changelog.xml will
+     * be located in the classpath before the schema.a and schema.b test migrations.
+     */
     @Test
+    @JUnitTemporaryDatabase(createSchema=false)
     public void testUpdate() throws Exception {
+        // Make sure there is no databasechangelog table
+        Connection connection = m_dataSource.getConnection();
+        try {
+            PreparedStatement statement = connection.prepareStatement("SELECT id FROM databasechangelog");
+            statement.execute();
+            Assert.fail("databasechangelog exists");
+        } catch (SQLException e) {
+        } finally {
+            connection.close();
+        }
+
+        for (final Resource resource : m_context.getResources("classpath*:/changelog.xml")) {
+            LogUtils.infof(this, "=== found resource: " + resource + " ===");
+        }
+
+        // Make sure that none of the tables that are added during the migration are present
+        Connection conn = null;
+        try {
+            conn = m_dataSource.getConnection();
+
+            Set<String> tables = new HashSet<String>();
+            boolean first = true;
+            StringBuffer tableNames = new StringBuffer();
+            ResultSet rs = conn.getMetaData().getTables(null, null, "%", null);
+            while (rs.next()) {
+                String tableName = rs.getString("TABLE_NAME").toLowerCase();
+                tables.add(tableName);
+                if (!first) { 
+                    tableNames.append(",\n ");
+                }
+                tableNames.append(tableName);
+                first = false;
+            }
+            LogUtils.infof(this, "Tables in database before migration:\n %s\n", tableNames);
+            assertFalse("must not contain table 'alarms'", tables.contains("alarms"));
+
+            Set<String> procs = new HashSet<String>();
+            rs = conn.getMetaData().getProcedures(null, null, "%");
+            while (rs.next()) {
+                procs.add(rs.getString("PROCEDURE_NAME").toLowerCase());
+            }
+            LogUtils.infof(this, "procs = %s", procs);
+            assertFalse("must not have stored procedure 'setSnmpInterfaceKeysOnUpdate'", procs.contains("setsnmpinterfacekeysonupdate"));
+        } finally {
+            if (conn != null) {
+                conn.close();
+            }
+        }
+
+        LogUtils.infof(this, "Running migration on database: %s", m_migration.toString());
+
         Migrator m = new Migrator();
         m.setDataSource(m_dataSource);
         m.setAdminDataSource(m_dataSource);
@@ -10,15 +66,24 @@
         m.prepareDatabase(m_migration);
         m.migrate(m_migration);
 
-        Connection conn = null;
+        // Make sure that the tables were created by the migration properly
         try {
             conn = m_dataSource.getConnection();
 
             Set<String> tables = new HashSet<String>();
+            boolean first = true;
+            StringBuffer tableNames = new StringBuffer();
             ResultSet rs = conn.getMetaData().getTables(null, null, "%", null);
             while (rs.next()) {
-                tables.add(rs.getString("TABLE_NAME").toLowerCase());
+                String tableName = rs.getString("TABLE_NAME").toLowerCase();
+                tables.add(tableName);
+                if (!first) { 
+                    tableNames.append(",\n ");
+                }
+                tableNames.append(tableName);
+                first = false;
             }
+            LogUtils.infof(this, "Tables in database after migration:\n %s\n", tableNames);
             assertTrue("must contain table 'alarms'", tables.contains("alarms"));
 
             Set<String> procs = new HashSet<String>();
@@ -26,7 +91,7 @@
             while (rs.next()) {
                 procs.add(rs.getString("PROCEDURE_NAME").toLowerCase());
             }
-            System.err.println("procs = " + procs);
+            LogUtils.infof(this, "procs = %s ", procs);
             assertTrue("must have stored procedure 'setSnmpInterfaceKeysOnUpdate'", procs.contains("setsnmpinterfacekeysonupdate"));
         } finally {
             if (conn != null) {
