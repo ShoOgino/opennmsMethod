@@ -1,0 +1,151 @@
+    private void getLinksFromRouteTable() {
+        if (m_routerNodes.size() > 0) {
+            LogUtils.infof(this,
+                           "run: finding non-ethernet links on Router nodes");
+        }
+
+        for (final LinkableNode curNode : m_routerNodes) {
+            final int curNodeId = curNode.getNodeId();
+            InetAddress curIpAddr = curNode.getSnmpPrimaryIpAddr();
+            LogUtils.infof(this,
+                           "run: parsing router node with ID %d IP address %s and %d router interfaces",
+                           curNodeId, str(curIpAddr),
+                           curNode.getRouteInterfaces().size());
+
+            for (final RouterInterface routeIface : curNode.getRouteInterfaces()) {
+                LogUtils.debugf(this, "run: parsing RouterInterface: "
+                        + routeIface.toString());
+
+                if (routeIface.getMetric() == -1) {
+                    LogUtils.warnf(this,
+                                   "run: Router interface has invalid metric %d. Skipping.",
+                                   routeIface.getMetric());
+                    continue;
+                }
+
+                if (forceIpRouteDiscoveryOnEtherNet) {
+                    LogUtils.debugf(this,
+                                    "run: forceIpRouteDiscoveryOnEtherNet is set, skipping validation of the SNMP interface type");
+                } else {
+                    final int snmpiftype = routeIface.getSnmpiftype();
+                    LogUtils.debugf(this,
+                                    "run: force IP route discovery getting SnmpIfType: "
+                                            + snmpiftype);
+
+                    if (snmpiftype == SNMP_IF_TYPE_ETHERNET) {
+                        LogUtils.debugf(this,
+                                        "run: Ethernet interface for nodeid %d. Skipping.",
+                                        curNodeId);
+                        continue;
+                    } else if (snmpiftype == SNMP_IF_TYPE_PROP_VIRTUAL) {
+                        LogUtils.debugf(this,
+                                        "run: PropVirtual interface for nodeid %d. Skipping.",
+                                        curNodeId);
+                        continue;
+                    } else if (snmpiftype == SNMP_IF_TYPE_L2_VLAN) {
+                        LogUtils.debugf(this,
+                                        "run: Layer2 VLAN interface for nodeid %d. Skipping.",
+                                        curNodeId);
+                        continue;
+                    } else if (snmpiftype == SNMP_IF_TYPE_L3_VLAN) {
+                        LogUtils.debugf(this,
+                                        "run: Layer3 VLAN interface for nodeid %d. Skipping.",
+                                        curNodeId);
+                        continue;
+                    } else if (snmpiftype == -1) {
+                        LogUtils.debugf(this,
+                                        "run: interface on node %d has unknown snmpiftype %d. Skipping.",
+                                        curNodeId, snmpiftype);
+                        continue;
+                    }
+                }
+
+                final InetAddress nexthop = routeIface.getNextHop();
+                final String hostAddress = str(nexthop);
+
+                if (hostAddress.equals("0.0.0.0")) {
+                    LogUtils.debugf(this,
+                                    "run: nexthop address is broadcast address %s. Skipping.",
+                                    hostAddress);
+                    // FIXME this should be further analyzed
+                    // working on routeDestNet you can find hosts that
+                    // are directly connected with the destination network
+                    // This happens when static routing is made like this:
+                    // route 10.3.2.0 255.255.255.0 Serial0
+                    // so the router broadcasts on Serial0
+                    continue;
+                }
+
+                if (nexthop.isLoopbackAddress()) {
+                    LogUtils.debugf(this,
+                                    "run: nexthop address is localhost address %s. Skipping.",
+                                    hostAddress);
+                    continue;
+                }
+
+                if (!m_linkd.isInterfaceInPackage(nexthop, getPackageName())) {
+                    LogUtils.debugf(this,
+                                    "run: nexthop address is not in package %s/%s. Skipping.",
+                                    hostAddress, getPackageName());
+                    continue;
+                }
+
+                final int nextHopNodeid = routeIface.getNextHopNodeid();
+
+                if (nextHopNodeid == -1) {
+                    LogUtils.debugf(this,
+                                    "run: no node id found for IP next hop address %s. Skipping.",
+                                    hostAddress);
+                    continue;
+                }
+
+                if (nextHopNodeid == curNodeId) {
+                    LogUtils.debugf(this,
+                                    "run: node id found for IP next hop address %s is itself. Skipping.",
+                                    hostAddress);
+                    continue;
+                }
+
+                int ifindex = routeIface.getIfindex();
+
+                if (ifindex == 0) {
+                    LogUtils.debugf(this,
+                                    "run: route interface has ifindex %d, trying to get ifIndex from nextHopNet: %s",
+                                    ifindex, routeIface.getNextHopNet());
+                    ifindex = getIfIndexFromRouter(curNode,
+                                                   routeIface.getNextHopNet());
+                    if (ifindex == -1) {
+                        LogUtils.debugf(this,
+                                        "run: found not correct ifindex %d. Skipping.",
+                                        ifindex);
+                        continue;
+                    } else {
+                        LogUtils.debugf(this,
+                                        "run: found correct ifindex %d.",
+                                        ifindex);
+                    }
+                }
+
+                // Saving link also when ifindex = -1 (not found)
+                final NodeToNodeLink lk = new NodeToNodeLink(
+                                                             nextHopNodeid,
+                                                             routeIface.getNextHopIfindex());
+                lk.setNodeparentid(curNodeId);
+                lk.setParentifindex(ifindex);
+                LogUtils.infof(this,
+                               "run: saving route link: " + lk.toString());
+                addNodetoNodeLink(lk);
+            }
+            LogUtils.infof(this,
+                           "run: done parsing router node with ID %d IP address %s and %d router interfaces",
+                           curNodeId, str(curIpAddr),
+                           curNode.getRouteInterfaces().size());
+        }
+
+        if (m_routerNodes.size() > 0) {
+            LogUtils.infof(this,
+                           "run: done finding non-ethernet links on Router nodes");
+        }
+
+    }
+
