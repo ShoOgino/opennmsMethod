@@ -1,0 +1,43 @@
+    @Test
+    @JUnitTemporaryDatabase(createSchema=false)
+    public void testMultipleChangelogs() throws Exception {
+        // Make sure there is no databasechangelog table
+        Connection connection = m_dataSource.getConnection();
+        try {
+            PreparedStatement statement = connection.prepareStatement("SELECT id FROM databasechangelog");
+            statement.execute();
+            Assert.fail("databasechangelog exists");
+        } catch (SQLException e) {
+        } finally {
+            connection.close();
+        }
+
+        final Migrator m = new Migrator();
+        m.setDataSource(m_dataSource);
+        m.setAdminDataSource(m_dataSource);
+        m.setValidateDatabaseVersion(false);
+        m.setCreateUser(false);
+        m.setCreateDatabase(false);
+
+        // Add a resource accessor to the migration so that it will load multiple changelog.xml files
+        // from the classpath
+        for (final Resource resource : m_context.getResources("classpath*:/changelog.xml")) {
+            LogUtils.infof(this, "=== found resource: " + resource + " ===");
+            m_migration.setAccessor(new ExistingResourceAccessor(resource));
+            m.migrate(m_migration);
+        }
+
+        connection = m_dataSource.getConnection();
+        PreparedStatement statement = connection.prepareStatement("SELECT id FROM databasechangelog");
+        assertTrue(statement.execute());
+        ResultSet rs = statement.getResultSet();
+        List<String> ids = new ArrayList<String>();
+        while (rs.next()) {
+            ids.add(rs.getString(1));
+        }
+        
+        assertTrue(ids.size() > 0);
+        assertTrue(ids.contains("test-api.schema.a"));
+        assertTrue(ids.contains("test-api.schema.b"));
+    }
+
