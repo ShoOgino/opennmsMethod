@@ -13,7 +13,7 @@
      * 		ConnectFuture from a Mina connect call
      */
     @Override
-    public ConnectFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, IoSessionInitializer<? extends ConnectFuture> init, IoHandler handler) {
+    public ConnectFuture connect(SocketAddress remoteAddress, IoSessionInitializer<? extends ConnectFuture> init, IoHandler handler) {
         for (int retries = 0; retries < 3; retries++) { 
             synchronized (m_connectorMutex) {
                 if (m_connector == null) {
@@ -28,6 +28,18 @@
                      * connect() call.
                      */
                     m_connector.setHandler(handler);
+
+                    InetSocketAddress localAddress = null;
+                    synchronized (m_portMutex) {
+                        if (m_port == null) {
+                            // Fetch a new ephemeral port
+                            localAddress = new InetSocketAddress(InetAddressUtils.getLocalHostAddress(), 0);
+                            m_port = localAddress.getPort();
+                        } else {
+                            localAddress = new InetSocketAddress(InetAddressUtils.getLocalHostAddress(), m_port);
+                        }
+                    }
+
                     /*
                      * Use the 3-argument call to connect(). If you use the 2-argument version without
                      * the localhost port, the call will end up doing a name lookup which seems to fail
@@ -35,7 +47,9 @@
                      *
                      * @see http://issues.opennms.org/browse/NMS-5309
                      */
-                    return m_connector.connect(remoteAddress, localAddress, init);
+                    ConnectFuture cf = m_connector.connect(remoteAddress, localAddress, init);
+                    cf.addListener(portSwitcher(m_connector, remoteAddress, init, handler));
+                    return cf;
                 } catch (Throwable e) {
                     LogUtils.debugf(this, e, "Caught exception on factory %s, retrying: %s", this, e);
                     m_connector.dispose();
