@@ -1,27 +1,28 @@
-	/**
-	 * <p>
-	 * Performs link discovery for the Nodes and save info in
-	 * DatalinkInterface table on DataBase
-	 * <p>
-	 * No synchronization is performed, so if this is used in a separate thread
-	 * context synchronization must be added.
-	 * </p>
-	 */
+    /**
+     * <p>
+     * Performs link discovery for the Nodes and save info in
+     * DatalinkInterface table on DataBase
+     * <p>
+     * No synchronization is performed, so if this is used in a separate
+     * thread context synchronization must be added.
+     * </p>
+     */
     public void run() {
 
         if (suspendCollection) {
             LogUtils.warnf(this, "run: linkd collections are suspended!");
             return;
         }
-		    
+
         Collection<LinkableNode> linkableNodes = m_linkd.getLinkableNodesOnPackage(getPackageName());
 
         LogUtils.debugf(this, "run: LinkableNodes/package found: %d/%s",
                         linkableNodes.size(), getPackageName());
         LogUtils.debugf(this,
-                        "run: discoveryUsingBridge/discoveryUsingCdp/discoveryUsingRoutes/discoveryUsingLldp: %b/%b/%b/%b",
+                        "run: discoveryUsingBridge/discoveryUsingCdp/discoveryUsingRoutes/discoveryUsingLldp/discoveryUsingOspf: %b/%b/%b/%b/%b",
                         discoveryUsingBridge, discoveryUsingCdp,
-                        discoveryUsingRoutes,discoveryUsingLldp);
+                        discoveryUsingRoutes, discoveryUsingLldp,
+                        discoveryUsingOspf);
         LogUtils.debugf(this, "run: enableDownloadDiscovery: %b",
                         enableDownloadDiscovery);
 
@@ -29,7 +30,17 @@
             LogUtils.debugf(this,
                             "run: Iterating on LinkableNode's found node with ID %d",
                             linkableNode.getNodeId());
-            if (discoveryUsingLldp && linkableNode.getLldpChassisId() != null && linkableNode.getLldpChassisIdSubtype() != null && linkableNode.getLldpRemInterfaces() != null ) {
+            if (discoveryUsingOspf && linkableNode.getOspfRouterId() != null
+                    && linkableNode.getOspfinterfaces() != null
+                    && linkableNode.getOspfipaddresstoifindex() != null) {
+                LogUtils.debugf(this,
+                                "run: adding to ospf node list: node with ID %d",
+                                linkableNode.getNodeId());
+                m_ospfNodes.add(linkableNode);
+            }   
+            if (discoveryUsingLldp && linkableNode.getLldpChassisId() != null
+                    && linkableNode.getLldpChassisIdSubtype() != null
+                    && linkableNode.getLldpRemInterfaces() != null) {
                 LogUtils.debugf(this,
                                 "run: adding to lldp node list: node with ID %d",
                                 linkableNode.getNodeId());
@@ -68,7 +79,7 @@
             LogUtils.infof(this,
                            "run: fetching further unknown MAC address SNMP bridge table info");
             parseBridgeNodes();
-        } 
+        }
 
         // Try Link Layer Discovery Protocol to found link among all nodes
         getLinkdFromLldp();
@@ -76,25 +87,27 @@
         // and store information in Bridge class
         // finding links using MAC address on ports
         getBackBoneLinksFromBridges();
-        
+
         // getting links on remaining bridge ports
         getLinksFromBridges();
 
         // Try Cisco Discovery Protocol to found link among all nodes
         getLinksFromCdp();
 
-        // fourth find inter-router links,
         // this part could have several special function to get inter-router
         // links, but at the moment we worked much on switches.
         // In future we can try to extend this part.
         getLinksFromRouteTable();
 
+        getLinksFromOspf();
+        
         m_bridgeNodes.clear();
         m_routerNodes.clear();
         m_cdpLinks.clear();
         m_macsParsed.clear();
         macsExcluded.clear();
         m_lldpNodes.clear();
+        m_ospfNodes.clear();
         
         getLinkd().getAtInterfaces(getPackageName()).clear();
 
