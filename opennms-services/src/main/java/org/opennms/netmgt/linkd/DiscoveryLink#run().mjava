@@ -28,42 +28,40 @@
 
         for (final LinkableNode linkableNode : linkableNodes) {
             LogUtils.debugf(this,
-                            "run: Iterating on LinkableNode's found node with ID %d",
-                            linkableNode.getNodeId());
+                            "run: Iterating on LinkableNode's found node with nodeid/sysoid/ipaddress %d/%s/%s",
+                            linkableNode.getNodeId(),linkableNode.getSysoid(),str(linkableNode.getSnmpPrimaryIpAddr()));
             if (discoveryUsingOspf && linkableNode.getOspfRouterId() != null
                     && linkableNode.getOspfinterfaces() != null
                     && linkableNode.getOspfipaddresstoifindex() != null) {
                 LogUtils.debugf(this,
-                                "run: adding to ospf node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to ospf node list: node with nodeid/ospfrouterid %d/%s",
+                                linkableNode.getNodeId(),str(linkableNode.getOspfRouterId()));
                 m_ospfNodes.add(linkableNode);
             }   
             if (discoveryUsingLldp && linkableNode.getLldpChassisId() != null
-                    && linkableNode.getLldpChassisIdSubtype() != null
-                    && linkableNode.getLldpRemInterfaces() != null) {
+                    && linkableNode.getLldpChassisIdSubtype() != null) {
                 LogUtils.debugf(this,
-                                "run: adding to lldp node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to lldp node list: node with nodeid/sysname/chassisid %d/%s/%s",
+                                linkableNode.getNodeId(),linkableNode.getLldpSysname(),linkableNode.getLldpChassisId());
                 m_lldpNodes.add(linkableNode);
             }
             if (discoveryUsingBridge && linkableNode.isBridgeNode()) {
                 LogUtils.debugf(this,
-                                "run: adding to bridge node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to bridge node list: node with nodeid/bridgeidentifier %d/%s",
+                                linkableNode.getNodeId(),linkableNode.getBridgeIdentifiers().get(0));
                 m_bridgeNodes.put(new Integer(linkableNode.getNodeId()),
                                   linkableNode);
             }
             if (discoveryUsingCdp && linkableNode.hasCdpInterfaces()) {
-                addCdpLinks(linkableNode);
                 LogUtils.debugf(this,
-                                "run: adding to CDP node list: node with ID %d",
-                                linkableNode.getNodeId());
-
+                                "run: adding to CDP node list: node with nodeid/#cdpinterfaces %d/#%d",
+                                linkableNode.getNodeId(),linkableNode.getCdpInterfaces().size());
+                addCdpLinks(linkableNode);
             }
             if (discoveryUsingRoutes && linkableNode.hasRouteInterfaces()) {
                 LogUtils.debugf(this,
-                                "run: adding to router node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to router node list: node with nodeid/#iprouteinterface %d/#%d",
+                                linkableNode.getNodeId(),linkableNode.getRouteInterfaces().size());
                 m_routerNodes.add(linkableNode);
             }
 
@@ -72,7 +70,8 @@
         // This will found all mac address on
         // current package and their association
         // with ip addresses.
-        populateMacToAtInterface();
+        if (discoveryUsingBridge)
+            populateMacToAtInterface();
 
         // now perform operation to complete
         if (enableDownloadDiscovery) {
@@ -80,6 +79,13 @@
                            "run: fetching further unknown MAC address SNMP bridge table info");
             parseBridgeNodes();
         }
+
+        // this part could have several special function to get inter-router
+        // links, but at the moment we worked much on switches.
+        // In future we can try to extend this part.
+        getLinksFromRouteTable();
+
+        getLinksFromOspf();
 
         // Try Link Layer Discovery Protocol to found link among all nodes
         getLinkdFromLldp();
@@ -94,13 +100,6 @@
         // Try Cisco Discovery Protocol to found link among all nodes
         getLinksFromCdp();
 
-        // this part could have several special function to get inter-router
-        // links, but at the moment we worked much on switches.
-        // In future we can try to extend this part.
-        getLinksFromRouteTable();
-
-        getLinksFromOspf();
-        
         m_bridgeNodes.clear();
         m_routerNodes.clear();
         m_cdpLinks.clear();
@@ -109,7 +108,8 @@
         m_lldpNodes.clear();
         m_ospfNodes.clear();
         
-        getLinkd().getAtInterfaces(getPackageName()).clear();
+        if (getLinkd().getAtInterfaces(getPackageName()) != null)
+            getLinkd().getAtInterfaces(getPackageName()).clear();
 
         m_linkd.updateDiscoveryLinkCollection(this);
 
