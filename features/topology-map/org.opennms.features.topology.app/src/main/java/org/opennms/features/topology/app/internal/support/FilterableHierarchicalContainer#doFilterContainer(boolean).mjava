@@ -1,0 +1,63 @@
+    @Override
+    protected boolean doFilterContainer(boolean hasFilters) {
+        if (!hasFilters) {
+            // All filters removed
+            m_filteredRoots = null;
+            m_filteredChildren = null;
+            m_filteredParent = null;
+            
+            boolean changed = m_container.getItemIds().size() != getFilteredItemIds().size();
+            setFilteredItemIds(null);
+            return changed;
+            
+        }
+
+        // Reset data structures
+        m_filteredRoots = new LinkedList<Object>();
+        m_filteredChildren = new HashMap<Object, LinkedList<Object>>();
+        m_filteredParent = new HashMap<Object, Object>();
+
+        if (m_includeParentsWhenFiltering) {
+            // Filter so that parents for items that match the filter are also
+            // included
+            HashSet<Object> includedItems = new HashSet<Object>();
+            for (Object rootId : m_container.rootItemIds()) {
+                if (filterIncludingParents(rootId, includedItems)) {
+                    m_filteredRoots.add(rootId);
+                    addFilteredChildrenRecursively(rootId, includedItems);
+                }
+            }
+            // includedItemIds now contains all the item ids that should be
+            // included. Filter IndexedContainer based on this
+            m_filterOverride = includedItems;
+            super.doFilterContainer(hasFilters);
+            m_filterOverride = null;
+
+            return true;
+        } else {
+            // Filter by including all items that pass the filter and make items
+            // with no parent new root items
+
+            // Filter IndexedContainer first so getItemIds return the items that
+            // match
+            super.doFilterContainer(hasFilters);
+
+            LinkedHashSet<Object> filteredItemIds = new LinkedHashSet<Object>(getItemIds());
+
+            for (Object itemId : filteredItemIds) {
+                Object itemParent = m_parent.get(itemId);
+                if (itemParent == null || !filteredItemIds.contains(itemParent)) {
+                    // Parent is not included or this was a root, in both cases
+                    // this should be a filtered root
+                    m_filteredRoots.add(itemId);
+                } else {
+                    // Parent is included. Add this to the children list (create
+                    // it first if necessary)
+                    addFilteredChild(itemParent, itemId);
+                }
+            }
+
+            return true;
+        }
+    }
+
