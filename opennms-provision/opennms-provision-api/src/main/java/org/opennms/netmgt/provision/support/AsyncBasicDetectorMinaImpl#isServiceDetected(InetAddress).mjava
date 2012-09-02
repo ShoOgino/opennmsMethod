@@ -23,17 +23,22 @@
                         filter.setUseClientMode(true);
                         session.getFilterChain().addFirst("SSL", filter);
                     }
-                    session.getFilterChain().addLast( "logger", getLoggingFilter() != null ? getLoggingFilter() : new LoggingFilter() );
+                    session.getFilterChain().addLast( "logger", getLoggingFilter() != null ? getLoggingFilter() : new SlightlyMoreVerboseLoggingFilter() );
                     session.getFilterChain().addLast( "codec", getProtocolCodecFilter());
-                    session.getConfig().setIdleTime(IdleStatus.READER_IDLE, getIdleTime());
+
+                    // Make the minimum idle timeout 1 second
+                    int idleTimeInSeconds = Math.max(1, Math.round(getIdleTime() / 1000.0f));
+                    // Set all of the idle time limits. Make sure to specify values in
+                    // seconds!!!
+                    session.getConfig().setReaderIdleTime(idleTimeInSeconds);
+                    session.getConfig().setWriterIdleTime(idleTimeInSeconds);
+                    session.getConfig().setBothIdleTime(idleTimeInSeconds);
                 }
             };
 
             // Start communication
             final InetSocketAddress socketAddress = new InetSocketAddress(address, getPort());
-            // Get an ephemeral port on the localhost interface
-            final InetSocketAddress localAddress = new InetSocketAddress(InetAddressUtils.getLocalHostAddress(), 0);
-            final ConnectFuture cf = m_connectionFactory.connect(socketAddress, localAddress, init, createDetectorHandler(detectFuture));
+            final ConnectFuture cf = m_connectionFactory.connect(socketAddress, init, createDetectorHandler(detectFuture));
             cf.addListener(retryAttemptListener(detectFuture, socketAddress, init, getRetries()));
         } catch (KeyManagementException e) {
             detectFuture.setException(e);

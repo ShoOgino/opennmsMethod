@@ -1,53 +1,66 @@
-	/**
-	 * <p>
-	 * Performs link discovery for the Nodes and save info in
-	 * DatalinkInterface table on DataBase
-	 * <p>
-	 * No synchronization is performed, so if this is used in a separate thread
-	 * context synchronization must be added.
-	 * </p>
-	 */
+    /**
+     * <p>
+     * Performs link discovery for the Nodes and save info in
+     * DatalinkInterface table on DataBase
+     * <p>
+     * No synchronization is performed, so if this is used in a separate
+     * thread context synchronization must be added.
+     * </p>
+     */
     public void run() {
 
         if (suspendCollection) {
             LogUtils.warnf(this, "run: linkd collections are suspended!");
             return;
         }
-		    
+
         Collection<LinkableNode> linkableNodes = m_linkd.getLinkableNodesOnPackage(getPackageName());
 
         LogUtils.debugf(this, "run: LinkableNodes/package found: %d/%s",
                         linkableNodes.size(), getPackageName());
         LogUtils.debugf(this,
-                        "run: discoveryUsingBridge/discoveryUsingCdp/discoveryUsingRoutes: %b/%b/%b",
+                        "run: discoveryUsingBridge/discoveryUsingCdp/discoveryUsingRoutes/discoveryUsingLldp/discoveryUsingOspf: %b/%b/%b/%b/%b",
                         discoveryUsingBridge, discoveryUsingCdp,
-                        discoveryUsingRoutes);
+                        discoveryUsingRoutes, discoveryUsingLldp,
+                        discoveryUsingOspf);
         LogUtils.debugf(this, "run: enableDownloadDiscovery: %b",
                         enableDownloadDiscovery);
 
         for (final LinkableNode linkableNode : linkableNodes) {
             LogUtils.debugf(this,
-                            "run: Iterating on LinkableNode's found node with ID %d",
-                            linkableNode.getNodeId());
-
-            if (linkableNode.isBridgeNode() && discoveryUsingBridge) {
+                            "run: Iterating on LinkableNode's found node with nodeid/sysoid/ipaddress %d/%s/%s",
+                            linkableNode.getNodeId(),linkableNode.getSysoid(),str(linkableNode.getSnmpPrimaryIpAddr()));
+            if (discoveryUsingOspf && linkableNode.getOspfRouterId() != null
+                    && linkableNode.getOspfinterfaces() != null ) {
                 LogUtils.debugf(this,
-                                "run: adding to bridge node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to ospf node list: node with nodeid/ospfrouterid/#ospfinterface %d/%s/#%d",
+                                linkableNode.getNodeId(),str(linkableNode.getOspfRouterId()),linkableNode.getOspfinterfaces().size());
+                m_ospfNodes.add(linkableNode);
+            }   
+            if (discoveryUsingLldp && linkableNode.getLldpChassisId() != null
+                    && linkableNode.getLldpChassisIdSubtype() != null) {
+                LogUtils.debugf(this,
+                                "run: adding to lldp node list: node with nodeid/sysname/chassisid %d/%s/%s",
+                                linkableNode.getNodeId(),linkableNode.getLldpSysname(),linkableNode.getLldpChassisId());
+                m_lldpNodes.add(linkableNode);
+            }
+            if (discoveryUsingBridge && linkableNode.isBridgeNode()) {
+                LogUtils.debugf(this,
+                                "run: adding to bridge node list: node with nodeid/bridgeidentifier %d/%s",
+                                linkableNode.getNodeId(),linkableNode.getBridgeIdentifiers().get(0));
                 m_bridgeNodes.put(new Integer(linkableNode.getNodeId()),
                                   linkableNode);
             }
-            if (linkableNode.hasCdpInterfaces() && discoveryUsingCdp) {
+            if (discoveryUsingCdp && linkableNode.hasCdpInterfaces()) {
+                LogUtils.debugf(this,
+                                "run: adding to CDP node list: node with nodeid/#cdpinterfaces %d/#%d",
+                                linkableNode.getNodeId(),linkableNode.getCdpInterfaces().size());
                 addCdpLinks(linkableNode);
-                LogUtils.debugf(this,
-                                "run: adding to CDP node list: node with ID %d",
-                                linkableNode.getNodeId());
-
             }
-            if (linkableNode.hasRouteInterfaces() && discoveryUsingRoutes) {
+            if (discoveryUsingRoutes && linkableNode.hasRouteInterfaces()) {
                 LogUtils.debugf(this,
-                                "run: adding to router node list: node with ID %d",
-                                linkableNode.getNodeId());
+                                "run: adding to router node list: node with nodeid/#iprouteinterface %d/#%d",
+                                linkableNode.getNodeId(),linkableNode.getRouteInterfaces().size());
                 m_routerNodes.add(linkableNode);
             }
 
@@ -56,38 +69,46 @@
         // This will found all mac address on
         // current package and their association
         // with ip addresses.
-        populateMacToAtInterface();
+        if (discoveryUsingBridge)
+            populateMacToAtInterface();
 
         // now perform operation to complete
         if (enableDownloadDiscovery) {
             LogUtils.infof(this,
                            "run: fetching further unknown MAC address SNMP bridge table info");
             parseBridgeNodes();
-        } 
+        }
 
-        // try get backbone links between switches using STP info
-        // and store information in Bridge class
-        // finding links using MAC address on ports
-        getBackBoneLinksFromBridges();
-        
-        // getting links on remaining bridge ports
-        getLinksFromBridges();
-
-        // Try Cisco Discovery Protocol to found link among all nodes
-        // Add CDP info for backbones ports
-        getLinksFromCdp();
-        // fourth find inter-router links,
         // this part could have several special function to get inter-router
         // links, but at the moment we worked much on switches.
         // In future we can try to extend this part.
         getLinksFromRouteTable();
+
+        getLinksFromOspf();
+
+        // Try Link Layer Discovery Protocol to found link among all nodes
+        getLinkdFromLldp();
+        // try get backbone links between switches using STP info
+        // and store information in Bridge class
+        // finding links using MAC address on ports
+        getBackBoneLinksFromBridges();
+
+        // getting links on remaining bridge ports
+        getLinksFromBridges();
+
+        // Try Cisco Discovery Protocol to found link among all nodes
+        getLinksFromCdp();
 
         m_bridgeNodes.clear();
         m_routerNodes.clear();
         m_cdpLinks.clear();
         m_macsParsed.clear();
         macsExcluded.clear();
-        getLinkd().getAtInterfaces(getPackageName()).clear();
+        m_lldpNodes.clear();
+        m_ospfNodes.clear();
+        
+        if (getLinkd().getAtInterfaces(getPackageName()) != null)
+            getLinkd().getAtInterfaces(getPackageName()).clear();
 
         m_linkd.updateDiscoveryLinkCollection(this);
 
