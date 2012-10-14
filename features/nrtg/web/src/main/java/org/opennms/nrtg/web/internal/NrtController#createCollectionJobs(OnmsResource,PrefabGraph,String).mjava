@@ -1,0 +1,41 @@
+    private List<CollectionJob> createCollectionJobs(OnmsResource reportResource, PrefabGraph prefabGraph, String nrtCollectionTaskId) {
+        List<CollectionJob> collectionJobs = new ArrayList<CollectionJob>();
+
+        OnmsResource nodeResource = reportResource.getParent();
+        OnmsNode node = (OnmsNode) nodeResource.getEntity();
+        Integer nodeId = node.getId();
+        Date createTimestamp = new Date();
+
+        //What protocols are involved?
+        //For each protocol build a new CollectionJob
+        Map<String, List<MetricTuple>> metricsByProtocol = getMetricIdsByProtocol(reportResource, prefabGraph);
+
+        //Destinations for MeasurementSets
+        Set<String> resultDestinations = new HashSet<String>();
+        resultDestinations.add(nrtCollectionTaskId);
+        //resultDestinations.add("NrtPersistMe");
+
+        for (String protocol : metricsByProtocol.keySet()) {
+            CollectionJob collectionJob = new DefaultCollectionJob();
+            collectionJob.setService(protocol);
+            collectionJob.setNodeId(nodeId);
+            collectionJob.setCreationTimestamp(createTimestamp);
+
+            for (MetricTuple metricTuple : metricsByProtocol.get(protocol)) {
+                collectionJob.addMetric(metricTuple.getMetricId(), resultDestinations, metricTuple.getOnmsLogicMetricId());
+            }
+
+            if (protocol.equals("SNMP")) {
+                collectionJob.setNetInterface(protocol);
+                SnmpAgentConfig snmpAgentConfig = m_snmpAgentConfigFactory.getAgentConfig(node.getPrimaryInterface().getIpAddress());
+                collectionJob.setProtocolConfiguration(snmpAgentConfig.toProtocolConfigString());
+                collectionJob.setNetInterface(node.getPrimaryInterface().getIpAddress().getHostAddress());
+                collectionJobs.add(collectionJob);
+            } else {
+                logger.error("Protocol '{}' is not supported yet. CollectionJob will be ignorred.", protocol);
+            }
+        }
+
+        return collectionJobs;
+    }
+

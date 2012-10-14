@@ -6,43 +6,19 @@
         assert (report != null);
         logger.debug("report: '{}'", report);
 
-        //Todo Tak there is you session to manage the CollectionSessions
-        logger.debug(httpSession.toString());
-
         OnmsResource reportResource = m_resourceDao.getResourceById(resourceId);
-        OnmsResource topResource = reportResource.getParent();
-        OnmsNode node = (OnmsNode) topResource.getEntity();
-
-        SnmpAgentConfig snmpAgentConfig = m_snmpAgentConfigFactory.getAgentConfig(node.getPrimaryInterface().getIpAddress());
-        logger.debug("SnmpAgentConfig '{}' communityString '{}'", snmpAgentConfig, snmpAgentConfig.getReadCommunity());
 
         PrefabGraph prefabGraph = m_graphDao.getPrefabGraph(report);
-        //TODO Tak graph service is able to check is a graph is propper for a given resource, check that later.
-        lookUpMetricsForColumnsOfPrefabGraphs(prefabGraph, reportResource);
+        //TODO Tak graph service is able to check if a graph is proper for a given resource, check that later.
+        prefabGraph = lookUpMetricsForColumnsOfPrefabGraphs(prefabGraph, reportResource);
 
         String nrtCollectionTaskId = "NrtCollectionTaskId_" + System.currentTimeMillis();
 
-        CollectionJob collectionJob = new DefaultCollectionJob();
-        collectionJob.setService("SNMP");
-        collectionJob.setProtocolConfiguration(snmpAgentConfig.toProtocolConfigString());
-
-        collectionJob.setNodeId(node.getId());
-        String netInterface = node.getPrimaryInterface().getIpAddress().getHostAddress();
-        logger.debug("netInterface '{}'", netInterface);
-        collectionJob.setNetInterface(netInterface);
-
-        Set<String> resultDestinations = new HashSet<String>();
-        resultDestinations.add(nrtCollectionTaskId);
-
-        for (int i = 0; i < prefabGraph.getColumns().length; i++) {
-            logger.debug("Adding Metric '{}' with MetricId '{}' to collectionJob", prefabGraph.getColumns()[i], prefabGraph.getMetricIds()[i]);
-            collectionJob.addMetric(prefabGraph.getMetricIds()[i], resultDestinations);
+        List<CollectionJob> collectionJobs = createCollectionJobs(reportResource, prefabGraph, nrtCollectionTaskId);
+        for (CollectionJob collectionJob : collectionJobs) {
+            m_nrtBroker.publishCollectionJob(collectionJob);
+            getCollectionJobMap(httpSession, true).put(nrtCollectionTaskId, collectionJob);
         }
-        logger.debug("CollectionJob '{}'", collectionJob.toString());
-        m_nrtBroker.publishCollectionJob(collectionJob);
-
-        //Check if there is a NrtCollectionTasks map in the session already 
-        getCollectionJobMap(httpSession, true).put(nrtCollectionTaskId, collectionJob);
 
         ModelAndView modelAndView = new ModelAndView("nrt/realtime");
         modelAndView.addObject("nrtCollectionTaskId", nrtCollectionTaskId);
