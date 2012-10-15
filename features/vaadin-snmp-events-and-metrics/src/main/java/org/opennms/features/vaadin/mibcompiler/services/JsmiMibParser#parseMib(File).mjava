@@ -1,0 +1,67 @@
+    /* (non-Javadoc)
+     * @see org.opennms.features.vaadin.mibcompiler.MibParser#parseMib(java.io.File)
+     */
+    public boolean parseMib(File mibFile) {
+        // Validate MIB Directory
+        if (mibDirectory == null) {
+            errors = "MIB directory has not been set.";
+            return false;
+        }
+
+        // Reset error handler
+        errorHandler.reset();
+        errors = null;
+
+        // Add MIB to be parsed
+        List<URL> inputUrls = new ArrayList<URL>();
+        try {
+            inputUrls.add(mibFile.toURI().toURL());
+        } catch (Exception e) {
+            errors = e.getMessage();
+            return false;
+        }
+        parser.getFileParserPhase().setInputUrls(inputUrls);
+
+        // Parse MIB
+        LogUtils.debugf(this, "Parsing %s", mibFile.getAbsolutePath());
+        SmiMib mib = parser.parse();
+        if (parser.getProblemEventHandler().isNotOk()) {
+            LogUtils.infof(this, "Some errors has been found when processing %s", mibFile.getAbsolutePath());
+            // Check for dependencies and update URLs if the MIBs exists on the MIB directory
+            missingDependencies = errorHandler.getDependencies();
+            for (Iterator<String> it = missingDependencies.iterator(); it.hasNext();) {
+                String dependency = it.next();
+                for (String suffix : MIB_SUFFIXES) {
+                    File f = new File(mibDirectory, dependency + suffix);
+                    if (f.exists()) {
+                        LogUtils.infof(this, "Adding dependency file %s", f.getAbsolutePath());
+                        try {
+                            inputUrls.add(f.toURI().toURL());
+                        } catch (Exception e) {
+                            errors = e.getMessage();
+                            return false;
+                        }
+                        it.remove();
+                    }
+                }
+            }
+            if (missingDependencies.isEmpty()) {
+                LogUtils.infof(this, "Reparsing all files %s", inputUrls);
+                // All dependencies found, trying again.
+                errorHandler.reset();
+                mib = parser.parse();
+                if (parser.getProblemEventHandler().isNotOk()) {
+                    LogUtils.errorf(this, "Found errors when processing %s: %s", mibFile, errorHandler.getMessages());
+                    return false;
+                }
+            } else {
+                // There are still unsatisfied dependencies.
+                LogUtils.warnf(this, "There are unsatisfied dependencies remaining: " + missingDependencies);
+                return false;
+            }
+        }
+
+        module = getModule(mib, mibFile);
+        return module != null;
+    }
+
