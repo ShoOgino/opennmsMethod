@@ -1,0 +1,72 @@
+    /**
+     * Initialize the MIB tree.
+     *
+     * @param logger the logger
+     */
+    private void initMibTree(final Logger logger) {
+        File[] folders = new File[] { MIBS_COMPILED_DIR, MIBS_PENDING_DIR };
+        for (File folder : folders) {
+            addTreeItem(folder.getName(), null);
+        }
+        for (File folder : folders) {
+            String[] files = folder.list();
+            if (files == null) continue;
+            for (String file : files) {
+                addTreeItem(file, folder.getName());
+            }
+        }
+
+        mibsTree.setContainerDataSource(mibsContainer);
+        mibsTree.expandItemsRecursively(COMPILED);
+        mibsTree.expandItemsRecursively(PENDING);
+
+        mibsTree.addActionHandler(new Action.Handler() {
+
+            public Action[] getActions(Object target, Object sender) {
+                if (target == null) {
+                    return new Action[] {};
+                }
+                Object parent = mibsContainer.getParent(target);
+                if (parent == null) {
+                    return new Action[] {};
+                }
+                if (parent.equals(COMPILED)) {
+                    return new Action[] { ACTION_EVENTS, ACTION_COLLECT };
+                } else {
+                    return new Action[] { ACTION_EDIT, ACTION_DELETE, ACTION_COMPILE };
+                }
+            }
+
+            public void handleAction(Action action, Object sender, Object target) {
+                String fileName = (String) target;
+                if (action == ACTION_DELETE) {
+                    File file = new File(MIBS_PENDING_DIR, fileName);
+                    if (file.delete()) {
+                        mibsContainer.removeItem(target);
+                        logger.info("MIB " + file + " has been successfully removed.");
+                    } else {
+                        getApplication().getMainWindow().showNotification("Can't delete " + file);
+                    }
+                }
+                if (action == ACTION_EDIT) {
+                    Window w = new FileEditorWindow(new File(MIBS_PENDING_DIR, fileName), logger);
+                    getApplication().getMainWindow().addWindow(w);
+                }
+                if (action == ACTION_COMPILE) {
+                    if (parseMib(logger, new File(MIBS_PENDING_DIR, fileName))) {
+                        mibsTree.removeItem(target);
+                        addTreeItem(fileName, COMPILED);
+                        File file = new File(MIBS_PENDING_DIR, fileName);
+                        file.renameTo(new File(MIBS_COMPILED_DIR, file.getName()));
+                    }
+                }
+                if (action == ACTION_EVENTS) {
+                    generateEvents(logger, fileName);
+                }
+                if (action == ACTION_COLLECT) {
+                    generateDataCollection(logger, fileName);
+                }
+            }
+        });
+    }
+
