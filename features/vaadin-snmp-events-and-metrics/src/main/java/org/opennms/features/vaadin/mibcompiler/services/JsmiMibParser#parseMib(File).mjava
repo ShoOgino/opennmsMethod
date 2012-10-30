@@ -8,59 +8,36 @@
             return false;
         }
 
-        // Reset error handler
-        errorHandler.reset();
+        // Reset error handler and dependencies tracker
+        missingDependencies.clear();
         errors = null;
 
-        // Add MIB to be parsed
-        List<URL> inputUrls = new ArrayList<URL>();
-        try {
-            inputUrls.add(mibFile.toURI().toURL());
-        } catch (Exception e) {
-            errors = e.getMessage();
-            return false;
-        }
-        parser.getFileParserPhase().setInputUrls(inputUrls);
+        // Set UP the MIB Queue MIB to be parsed
+        List<URL> queue = new ArrayList<URL>();
+        parser.getFileParserPhase().setInputUrls(queue);
 
         // Parse MIB
         LogUtils.debugf(this, "Parsing %s", mibFile.getAbsolutePath());
-        SmiMib mib = parser.parse();
-        if (errorHandler.isNotOk()) {
-            LogUtils.infof(this, "Found errors when processing %s", mibFile.getAbsolutePath());
-            // Check for dependencies and update URLs if the MIBs exists on the MIB directory
-            missingDependencies = errorHandler.getDependencies();
-            for (Iterator<String> it = missingDependencies.iterator(); it.hasNext();) {
-                String dependency = it.next();
-                for (String suffix : MIB_SUFFIXES) {
-                    File f = new File(mibDirectory, dependency + suffix);
-                    if (f.exists()) {
-                        LogUtils.infof(this, "Adding dependency file %s", f.getAbsolutePath());
-                        try {
-                            inputUrls.add(0, f.toURI().toURL());
-                        } catch (Exception e) {
-                            errors = e.getMessage();
-                            return false;
-                        }
-                        it.remove();
-                    }
-                }
-            }
-            if (missingDependencies.isEmpty()) {
-                LogUtils.infof(this, "Re-parsing the following files %s", inputUrls);
-                // All dependencies found, trying again.
-                errorHandler.reset();
-                mib = parser.parse();
-                if (errorHandler.isNotOk()) {
-                    LogUtils.errorf(this, "Found errors when re-processing %s: %s", mibFile, errorHandler.getMessages());
-                    return false;
-                }
+        SmiMib mib = null;
+        addFileToQueue(queue, mibFile);
+        while (true) {
+            errorHandler.reset();
+            mib = parser.parse();
+            if (errorHandler.isOk()) {
+                break;
             } else {
-                // There are still unsatisfied dependencies.
-                LogUtils.warnf(this, "There are unsatisfied dependencies remaining: " + missingDependencies);
-                return false;
+                List<String> dependencies = errorHandler.getDependencies();
+                if (dependencies.isEmpty()) // No dependencies, everything is fine.
+                    break;
+                missingDependencies.addAll(dependencies);
+                if (!addDependencyToQueue(queue))
+                    break;
             }
         }
+        if (errorHandler.isNotOk()) // There are still non-dependency related problems.
+            return false;
 
+        // Extracting the module from compiled MIB.
         LogUtils.infof(this, "The MIB %s has been parsed successfully.", mibFile.getAbsolutePath());
         module = getModule(mib, mibFile);
         return module != null;
