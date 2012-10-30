@@ -1,0 +1,58 @@
+    /**
+     * <p>scheduleDynamicPackages</p>
+     * 
+     * Schedules packages that have a wild-card in their name.
+     * Remove scheduled packages that are no longer present in the database.
+     * 
+     */
+    private void scheduleDynamicPackages() {
+    	log().debug("scheduleDynamicPackages() was triggered");
+    	
+    	// Build the current list of dynamic packages
+    	Map<String,Package> dynamicPackages = new HashMap<String,Package>();
+    	
+        for(Package pkg : m_pollerConfig.getPackages()) {
+        	if( !pkg.nameHasWildcard() ) {
+        		continue;
+        	}
+        	
+        	for( String pkgName : m_accessPointDao.findDistinctPackagesLike(pkg.getName()) ) {
+        		Package newPkg = new Package(pkg);
+        		newPkg.setName(pkgName);
+        		newPkg.setIsDynamic(true);
+        		dynamicPackages.put(pkgName, newPkg);
+        	}
+        }
+        
+        for( Package pkg : dynamicPackages.values() ) {
+        	synchronized(m_activePollers) {
+	        	PollingContext p = m_activePollers.get(pkg.getName());
+	        	if( p != null ) {
+	        		if( p.getPackage().getIsDynamic() ) {
+	        			log().debug("Package '" + pkg.getName() + "' is already active.");
+	        		} else {
+	        			log().error("Package '" + pkg.getName() + "' is statically defined and matches a dynamic definitions.");
+	        		}
+	        	} else {
+	        		schedulePackage(pkg);
+	        	}
+        	}
+        }
+        
+        // Iterate over all of the active pollers
+        synchronized(m_activePollers) {
+	        Iterator<Map.Entry<String, PollingContext>> entries = m_activePollers.entrySet().iterator();
+	        while (entries.hasNext()) {
+	            Map.Entry<String, PollingContext> entry = entries.next();
+	            PollingContext p = entry.getValue();
+	            Package pkg = p.getPackage();
+	            // Un-schedule the package if its dynamic and not in the list of packages we just discovered
+	        	if( pkg.getIsDynamic() && !dynamicPackages.containsKey(entry.getKey()) ) {
+	        		log().debug("unscheduling " +  pkg.getName());
+	    			p.release();
+	    			entries.remove();
+	        	}
+	        }
+        }
+    }
+
