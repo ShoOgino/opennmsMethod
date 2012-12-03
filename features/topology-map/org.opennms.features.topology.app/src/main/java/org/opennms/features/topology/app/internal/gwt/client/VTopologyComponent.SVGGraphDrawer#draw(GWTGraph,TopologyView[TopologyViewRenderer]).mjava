@@ -12,13 +12,14 @@
 
 			}).attr("opacity", 1);
 
+			
 			//Exits
-			edgeSelection.exit().with(exitTransition()).remove();
+			edgeSelection.exit().remove();
 			vertexSelection.exit().with(new D3Behavior() {
 
 				@Override
 				public D3 run(D3 selection) {
-					return selection.transition().delay(0).duration(500);
+					return selection.transition().delay(0).duration(0);
 				}
 			}).attr("transform", new Func<String, GWTVertex>(){
 
@@ -30,23 +31,57 @@
 
 
 			//Updates
-			edgeSelection.with(updateTransition()).call(GWTEdge.draw()).attr("opacity", 1)
-			    //.transition().styleTween("stroke-width", edgeStrokeWidthTween(topologyView))
-			    ;
-
+			edgeSelection.call(GWTEdge.draw()).attr("opacity", 1);
+			
 			vertexSelection.with(updateTransition()).call(GWTVertex.draw()).attr("opacity", 1);
 
 
 			//Enters
-			edgeSelection.enter().create(GWTEdge.create()).call(setupEdgeEventHandlers()).with(enterTransition())
-			    //.transition().styleTween("stroke-width", edgeStrokeWidthTween(topologyView));
-			    .transition().style("stroke-width", "7px");
+			edgeSelection.enter().create(GWTEdge.create()).call(setupEdgeEventHandlers());
 			
-			
-			D3.d3().select(topologyView.getSVGViewPort())
-			    .transition().duration(30000)
-			    .attr("transform", topologyView.getViewportTransform() );
-			//vertexSelection.enter().create(GWTVertex.create()).call(setupEventHandlers()).with(enterTransition());
-			
+			consoleLog("isFitToView(): " + graph.isFitToView() + " isPanToSelection(): " + graph.isPanToSelection());
+            //Scaling and Fit to Zoom transitions
+            if(!graph.isFitToView() && !graph.isPanToSelection()) {
+                
+                SVGMatrix transform = topologyView.calculateNewTransform(graph.getOldScale(), graph.getScale(), graph.getClientX(), graph.getClientY());
+                
+                D3.d3().select(topologyView.getSVGViewPort())
+                .transition().duration(1000)
+                .attr("transform", matrixTransform(transform) )
+                .selectAll(GWTEdge.SVG_EDGE_ELEMENT).attr("opacity", "1").transition().style("stroke-width", 5/transform.getA() + "px");
+            
+            } else if(graph.isPanToSelection()) {
+                
+                final BoundingRect rect = createBoundingRect(graph.getVertices(), false);
+                SVGMatrix transform = topologyView.calculateZoomToFit(rect);
+                final double scale = transform.getA();
+                graph.setScale(scale);
+                
+                D3.d3().select(topologyView.getSVGViewPort()).transition().duration(2000).attr("transform", matrixTransform(transform)).each("end", new AnonymousFunc() {
+                    
+                    @Override
+                    public void call() {
+                        onScaleUpdate(scale);
+                    }
+                });
+                
+                D3.d3().selectAll(GWTEdge.SVG_EDGE_ELEMENT).transition().delay(500).duration(1500).attr("opacity", "1").style("stroke-width", 5 / scale + "px");
+            }else if(graph.isFitToView()) {
+                
+                final BoundingRect rect = createBoundingRect(graph.getVertices(), true);
+                SVGMatrix transform = topologyView.calculateZoomToFit(rect);
+                final double scale = transform.getA();
+                graph.setScale(scale);
+                
+                D3.d3().select(topologyView.getSVGViewPort()).transition().delay(500).duration(2000).attr("transform", matrixTransform(transform)).each("end", new AnonymousFunc() {
+                    
+                    @Override
+                    public void call() {
+                        onScaleUpdate(scale);
+                    }
+                });
+                
+                D3.d3().selectAll(GWTEdge.SVG_EDGE_ELEMENT).transition().duration(2000).attr("opacity", "1").style("stroke-width", 5 / scale + "px");
+            }
 		}
 
