@@ -1,6 +1,10 @@
-    public JmxDatacollectionConfig generateJmxConfigModel(MBeanServerConnection mBeanServerConnection, String serviceName, Boolean runStandardVmBeans, Boolean runWritableMBeans) {
+    public JmxDatacollectionConfig generateJmxConfigModel(
+            MBeanServerConnection mBeanServerConnection, String serviceName,
+            Boolean runStandardVmBeans, Boolean runWritableMBeans) {
 
-        logger.debug("Startup values: \n serviceName: " + serviceName + "\n runStandardVmBeans: " + runStandardVmBeans + "\n runWritableMBeans: " + runWritableMBeans);
+        logger.debug("Startup values: \n serviceName: " + serviceName
+                + "\n runStandardVmBeans: " + runStandardVmBeans
+                + "\n runWritableMBeans: " + runWritableMBeans);
         JmxDatacollectionConfig xmlJmxDatacollectionConfig = xmlObjectFactory.createJmxDatacollectionConfig();
         JmxCollection xmlJmxCollection = xmlObjectFactory.createJmxCollection();
 
@@ -16,17 +20,24 @@
         }
 
         try {
-            for (String domainName : mBeanServerConnection.getDomains()) {
+            String[] domains = mBeanServerConnection.getDomains();
+            logger.info("Found " + domains.length + " domains");
+            logger.info("domains: " + Arrays.toString(domains));
+            for (String domainName : domains) {
 
                 // just domains that are relevant for the service
                 if (!ignores.contains(domainName)) {
-                    logger.debug("domain: " + domainName);
+                    logger.info("domain: " + domainName);
 
                     // for all mBeans of the actual domain
-                    for (ObjectInstance jmxObjectInstance : mBeanServerConnection.queryMBeans(new ObjectName(domainName + ":*"), null)) {
+                    for (ObjectInstance jmxObjectInstance : mBeanServerConnection.queryMBeans(new ObjectName(
+                                                                                                             domainName
+                                                                                                                     + ":*"),
+                                                                                              null)) {
                         Mbean xmlMbean = xmlObjectFactory.createMbean();
                         xmlMbean.setObjectname(jmxObjectInstance.getObjectName().toString());
-                        String typeAndOthers = StringUtils.substringAfterLast(jmxObjectInstance.getObjectName().getCanonicalName(), "=");
+                        String typeAndOthers = StringUtils.substringAfterLast(jmxObjectInstance.getObjectName().getCanonicalName(),
+                                                                              "=");
                         xmlMbean.setName(domainName + "." + typeAndOthers);
 
                         logger.debug("\t" + jmxObjectInstance.getObjectName());
@@ -35,35 +46,53 @@
                         try {
                             jmxMbeanInfo = mBeanServerConnection.getMBeanInfo(jmxObjectInstance.getObjectName());
                         } catch (InstanceNotFoundException e) {
-                            logger.error("InstanceNotFoundException skipping MBean '{}' message: '{}'", jmxObjectInstance.getObjectName(), e.getMessage());
+                            logger.error("InstanceNotFoundException skipping MBean '{}' message: '{}'",
+                                         jmxObjectInstance.getObjectName(),
+                                         e.getMessage());
                             continue;
                         } catch (IntrospectionException e) {
-                            logger.error("IntrospectionException skipping MBean '{}' message: '{}'", jmxObjectInstance.getObjectName(), e.getMessage());
+                            logger.error("IntrospectionException skipping MBean '{}' message: '{}'",
+                                         jmxObjectInstance.getObjectName(),
+                                         e.getMessage());
                             continue;
                         } catch (ReflectionException e) {
-                            logger.error("ReflectionException skipping MBean '{}' message: '{}'", jmxObjectInstance.getObjectName(), e.getMessage());
+                            logger.error("ReflectionException skipping MBean '{}' message: '{}'",
+                                         jmxObjectInstance.getObjectName(),
+                                         e.getMessage());
                             continue;
                         } catch (Throwable e) {
-                            logger.error("problem during remote call to get MBeanInfo for '{}' skipping this MBean. Message '{}'", jmxObjectInstance.getObjectName(), e.getMessage());
+                            logger.error("problem during remote call to get MBeanInfo for '{}' skipping this MBean. Message '{}'",
+                                         jmxObjectInstance.getObjectName(),
+                                         e.getMessage());
                             continue;
                         }
 
-                        logger.debug("--- Attributes for " + jmxObjectInstance.getObjectName());
+                        logger.debug("--- Attributes for "
+                                + jmxObjectInstance.getObjectName());
 
                         for (MBeanAttributeInfo jmxBeanAttributeInfo : jmxMbeanInfo.getAttributes()) {
 
                             // process just readable mbeans
                             if (jmxBeanAttributeInfo.isReadable()) {
-                                // precess writable mbeans if run writable mbeans is set
-                                if (!jmxBeanAttributeInfo.isWritable() || runWritableMBeans) {
+                                // precess writable mbeans if run writable
+                                // mbeans is set
+                                if (!jmxBeanAttributeInfo.isWritable()
+                                        || runWritableMBeans) {
 
-                                    logger.debug("Check mBean: '{}', attribute: '{}'", jmxObjectInstance.getObjectName().toString(), jmxBeanAttributeInfo.getName());
-                                    logger.debug("isWritable: '{}', type: '{}'", jmxBeanAttributeInfo.isWritable(), jmxBeanAttributeInfo.getType());
+                                    logger.debug("Check mBean: '{}', attribute: '{}'",
+                                                 jmxObjectInstance.getObjectName().toString(),
+                                                 jmxBeanAttributeInfo.getName());
+                                    logger.debug("isWritable: '{}', type: '{}'",
+                                                 jmxBeanAttributeInfo.isWritable(),
+                                                 jmxBeanAttributeInfo.getType());
 
                                     // check for CompositeData
                                     if ("javax.management.openmbean.CompositeData".equals(jmxBeanAttributeInfo.getType())) {
-                                        logger.error("actual mBean: '{}'", jmxObjectInstance.getObjectName());
-                                        CompAttrib compAttrib = createCompAttrib(mBeanServerConnection, jmxObjectInstance, jmxBeanAttributeInfo);
+                                        logger.error("actual mBean: '{}'",
+                                                     jmxObjectInstance.getObjectName());
+                                        CompAttrib compAttrib = createCompAttrib(mBeanServerConnection,
+                                                                                 jmxObjectInstance,
+                                                                                 jmxBeanAttributeInfo);
                                         if (compAttrib != null) {
                                             logger.debug("xmlMbean got CompAttrib");
                                             xmlMbean.getCompAttrib().add(compAttrib);
@@ -72,17 +101,23 @@
 
                                     if (numbers.contains(jmxBeanAttributeInfo.getType())) {
                                         Attrib xmlJmxAttribute = createAttr(jmxBeanAttributeInfo);
-                                        logger.debug("Added MBean: '{}' Added attribute: '{}'", xmlMbean.getObjectname(), xmlJmxAttribute.getName() + " as " + xmlJmxAttribute.getAlias());
+                                        logger.debug("Added MBean: '{}' Added attribute: '{}'",
+                                                     xmlMbean.getObjectname(),
+                                                     xmlJmxAttribute.getName()
+                                                             + " as "
+                                                             + xmlJmxAttribute.getAlias());
                                         xmlMbean.getAttrib().add(xmlJmxAttribute);
                                     }
                                 }
                             }
                         }
 
-                        if (xmlMbean.getAttrib().size() > 0 || xmlMbean.getCompAttrib().size() > 0) {
+                        if (xmlMbean.getAttrib().size() > 0
+                                || xmlMbean.getCompAttrib().size() > 0) {
                             xmlJmxCollection.getMbeans().getMbean().add(xmlMbean);
                         } else {
-                            logger.debug("mbean: " + xmlMbean.getName() + " has no relavant attributes.");
+                            logger.debug("mbean: " + xmlMbean.getName()
+                                    + " has no relavant attributes.");
                         }
                     }
                 } else {
@@ -95,7 +130,7 @@
         } catch (IOException e) {
             logger.error("IOException '{}'", e.getMessage());
         }
-
+        logger.debug("finish collection!");
         return xmlJmxDatacollectionConfig;
     }
 
