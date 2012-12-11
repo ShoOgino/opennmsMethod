@@ -1,73 +1,72 @@
-	public void run() {
-		// Determine the list of interfaces to poll at runtime
-		OnmsIpInterfaceList ifaces = getInterfaceList();
-		
+    public void run() {
+        // Determine the list of interfaces to poll at runtime
+        OnmsIpInterfaceList ifaces = getInterfaceList();
+
         // If the list of interfaces is empty, print a warning message
-        if( ifaces.isEmpty() ) {
-        	log().warn("Package '" + getPackage().getName() + "' was scheduled, but no interfaces were matched.");
+        if (ifaces.isEmpty()) {
+            log().warn("Package '" + getPackage().getName() + "' was scheduled, but no interfaces were matched.");
         }
-        
-		// Get the complete list of APs that we are responsible for polling
-		OnmsAccessPointCollection apsDown = m_accessPointDao.findByPackage(getPackage().getName());
-		if( log().isDebugEnabled() ) {
-			log().debug("Found " + apsDown.size() + " APs in package '" + getPackage().getName() + "'");
-		}
-		
-		// Keep track of all APs that we've confirmed to be ONLINE
-		OnmsAccessPointCollection apsUp = new OnmsAccessPointCollection();
-		
-		Set<Callable<OnmsAccessPointCollection>> callables = new HashSet<Callable<OnmsAccessPointCollection>>();
 
-		// Iterate over all of the matched interfaces
-		for(Iterator<OnmsIpInterface> it = ifaces.iterator(); it.hasNext();) {
-			OnmsIpInterface iface = it.next();
-			
-			// Create a new instance of the poller
-			AccessPointPoller p = m_package.getPoller(m_pollerConfig.getMonitors());
-			p.setInterfaceToPoll(iface);
-			p.setAccessPointDao(m_accessPointDao);
-			p.setPackage(m_package);
-			p.setPropertyMap(m_parameters);
-			
-			// Schedule the poller for execution
-			callables.add(p);
-		}
-		
-		boolean succesfullyPolledAController = false;
-		
-		try {
-			// Invoke all of the pollers using the thread pool
-			List<Future<OnmsAccessPointCollection>> futures = m_pool.invokeAll(callables);
+        // Get the complete list of APs that we are responsible for polling
+        OnmsAccessPointCollection apsDown = m_accessPointDao.findByPackage(getPackage().getName());
+        if (log().isDebugEnabled()) {
+            log().debug("Found " + apsDown.size() + " APs in package '" + getPackage().getName() + "'");
+        }
 
-			// Gather the list of APs that are ONLINE
-			for(Future<OnmsAccessPointCollection> future : futures) {
-				try {
-					apsUp.addAll(future.get());
-					succesfullyPolledAController = true;
-				} catch (ExecutionException e) {
-					log().error("An error occurred while polling :" + e);
-				}			
-			}
-		} catch (InterruptedException e) {
-			log().error("I was interrupted :" + e);
-		}
+        // Keep track of all APs that we've confirmed to be ONLINE
+        OnmsAccessPointCollection apsUp = new OnmsAccessPointCollection();
 
-		// Remove the APs from the list that are ONLINE
-		apsDown.removeAll(apsUp);
-		
-		if(log().isDebugEnabled()) {
-			log().debug("(" + apsUp.size() + ") APs Online, (" + apsDown.size() 
-					+ ") APs offline in package '" + getPackage().getName() + "'");
-		}
-	
-		if( !succesfullyPolledAController ) {
-			log().warn("Failed to poll at least one controller in the package '" + getPackage().getName() + "'");
-		}
-		
-		updateApStatus(apsUp, apsDown);
-		
+        Set<Callable<OnmsAccessPointCollection>> callables = new HashSet<Callable<OnmsAccessPointCollection>>();
+
+        // Iterate over all of the matched interfaces
+        for (Iterator<OnmsIpInterface> it = ifaces.iterator(); it.hasNext();) {
+            OnmsIpInterface iface = it.next();
+
+            // Create a new instance of the poller
+            AccessPointPoller p = m_package.getPoller(m_pollerConfig.getMonitors());
+            p.setInterfaceToPoll(iface);
+            p.setAccessPointDao(m_accessPointDao);
+            p.setPackage(m_package);
+            p.setPropertyMap(m_parameters);
+
+            // Schedule the poller for execution
+            callables.add(p);
+        }
+
+        boolean succesfullyPolledAController = false;
+
+        try {
+            // Invoke all of the pollers using the thread pool
+            List<Future<OnmsAccessPointCollection>> futures = m_pool.invokeAll(callables);
+
+            // Gather the list of APs that are ONLINE
+            for (Future<OnmsAccessPointCollection> future : futures) {
+                try {
+                    apsUp.addAll(future.get());
+                    succesfullyPolledAController = true;
+                } catch (ExecutionException e) {
+                    log().error("An error occurred while polling :" + e);
+                }
+            }
+        } catch (InterruptedException e) {
+            log().error("I was interrupted :" + e);
+        }
+
+        // Remove the APs from the list that are ONLINE
+        apsDown.removeAll(apsUp);
+
+        if (log().isDebugEnabled()) {
+            log().debug("(" + apsUp.size() + ") APs Online, (" + apsDown.size() + ") APs offline in package '" + getPackage().getName() + "'");
+        }
+
+        if (!succesfullyPolledAController) {
+            log().warn("Failed to poll at least one controller in the package '" + getPackage().getName() + "'");
+        }
+
+        updateApStatus(apsUp, apsDown);
+
         // Reschedule the service
         log().debug("Re-scheduling the package '" + getPackage().getName() + "' in " + m_interval);
         m_scheduler.schedule(m_interval, getReadyRunnable());
-	}
+    }
 
