@@ -1,75 +1,76 @@
-	public OnmsAccessPointCollection call() throws IOException {
-		OnmsAccessPointCollection apsUp = new OnmsAccessPointCollection();
+    public OnmsAccessPointCollection call() throws IOException {
+        OnmsAccessPointCollection apsUp = new OnmsAccessPointCollection();
         InetAddress ipaddr = m_iface.getIpAddress();
 
         // Retrieve this interface's SNMP peer object
         SnmpAgentConfig agentConfig = getAgentConfig(ipaddr);
         final String hostAddress = InetAddressUtils.str(ipaddr);
-		log().debug("poll: setting SNMP peer attribute for interface " + hostAddress);
+        log().debug("poll: setting SNMP peer attribute for interface " + hostAddress);
 
         // Get configuration parameters
         String oid = ParameterMap.getKeyedString(m_parameters, "oid", null);
         if (oid == null) {
-        	throw new IllegalStateException("oid parameter is not set.");
+            throw new IllegalStateException("oid parameter is not set.");
         }
         String operator = ParameterMap.getKeyedString(m_parameters, "operator", null);
         String operand = ParameterMap.getKeyedString(m_parameters, "operand", null);
         String matchstr = ParameterMap.getKeyedString(m_parameters, "match", "true");
 
         if (log().isDebugEnabled()) {
-        	log().debug("InstanceStrategy.poll: SnmpAgentConfig address= " + agentConfig);
+            log().debug("InstanceStrategy.poll: SnmpAgentConfig address= " + agentConfig);
         }
 
         // Establish SNMP session with interface
-    	try {
+        try {
             SnmpObjId snmpObjectId = SnmpObjId.get(oid);
-            
+
             Map<SnmpInstId, SnmpValue> map = SnmpUtils.getOidValues(agentConfig, "AccessPointMonitor::InstanceStrategy", snmpObjectId);
-            
-            if( map.size() <= 0 ) {
-            	throw new IOException("No entries found in table (possible timeout).");
+
+            if (map.size() <= 0) {
+                throw new IOException("No entries found in table (possible timeout).");
             }
-            
+
             for (Map.Entry<SnmpInstId, SnmpValue> entry : map.entrySet()) {
-            	boolean isUp = false;
-            	SnmpInstId instance = entry.getKey();
-            	SnmpValue value = entry.getValue();
-            	
-            	// Check the value against the configured criteria
+                boolean isUp = false;
+                SnmpInstId instance = entry.getKey();
+                SnmpValue value = entry.getValue();
+
+                // Check the value against the configured criteria
                 if (meetsCriteria(value, operator, operand)) {
-                	if ("true".equals(matchstr)) {
-                		isUp = true;
-                	}
+                    if ("true".equals(matchstr)) {
+                        isUp = true;
+                    }
                 } else if ("false".equals(matchstr)) {
-            		isUp = true;
+                    isUp = true;
                 }
-                
-                // If the criteria is met, find the AP and add it to the list of online APs
-                if(isUp) {
-                	String physAddr = getPhysAddrFromInstance(instance);
-                	log().debug("AP at instance '" + instance + "' with MAC '" + physAddr + "' is considered to be ONLINE on controller '" + m_iface.getIpAddress() + "'");
-                	OnmsAccessPoint ap = m_accessPointDao.findByPhysAddr(physAddr);
-                	if( ap != null ) {
-                		if( ap.getPollingPackage().compareToIgnoreCase(getPackage().getName()) == 0 ) {
-                    		// Save the controller's IP address
-                    		ap.setControllerIpAddress(ipaddr);
-                    		apsUp.add(ap);
-                		} else {
-                			log().info("AP with MAC '" + physAddr + "' is in a different package.");
-                		}
-                	} else {
-                		log().info("No matching AP in database for instance '" + instance + "'.");
-                	}
+
+                // If the criteria is met, find the AP and add it to the list
+                // of online APs
+                if (isUp) {
+                    String physAddr = getPhysAddrFromInstance(instance);
+                    log().debug("AP at instance '" + instance + "' with MAC '" + physAddr + "' is considered to be ONLINE on controller '" + m_iface.getIpAddress() + "'");
+                    OnmsAccessPoint ap = m_accessPointDao.findByPhysAddr(physAddr);
+                    if (ap != null) {
+                        if (ap.getPollingPackage().compareToIgnoreCase(getPackage().getName()) == 0) {
+                            // Save the controller's IP address
+                            ap.setControllerIpAddress(ipaddr);
+                            apsUp.add(ap);
+                        } else {
+                            log().info("AP with MAC '" + physAddr + "' is in a different package.");
+                        }
+                    } else {
+                        log().info("No matching AP in database for instance '" + instance + "'.");
+                    }
                 }
             }
-    	} catch (NumberFormatException e) {
-        	log().error("Number operator used on a non-number ", e);
+        } catch (NumberFormatException e) {
+            log().error("Number operator used on a non-number ", e);
         } catch (IllegalArgumentException e) {
-        	log().error("Invalid SNMP Criteria ", e);
+            log().error("Invalid SNMP Criteria ", e);
         } catch (InterruptedException e) {
-        	log().error("Interrupted while polling " + hostAddress, e);
-		}
-        
+            log().error("Interrupted while polling " + hostAddress, e);
+        }
+
         return apsUp;
-	}
+    }
 
