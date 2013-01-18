@@ -1,7 +1,5 @@
     //@Transactional
-    private void loadtopology() {
-        log("loadtopology: loading topology: configFile:" + m_configurationFile);
-        
+    private void loadtopology() throws MalformedURLException, JAXBException {
         log("loadtopology: Clear " + VertexProvider.class.getSimpleName());
         clearVertices();
         log("loadtopology: Clear " + EdgeProvider.class.getSimpleName());
@@ -56,18 +54,29 @@
         log("Found " + vertexes.size() + " vertices");
         log("Found " + edges.size() + " edges");
 
-                
-        addVertices(vertexes.values().toArray(new Vertex[] {}));
-        addEdges(edges.toArray(new Edge[] {}));
+        addVertices(vertexes.values().toArray(new Vertex[0]));
+        addEdges(edges.toArray(new Edge[0]));
  
+        log("loadtopology: loading topology: configFile:" + m_configurationFile);
         File configFile = new File(m_configurationFile);
 
-        int numberOfGroups = 0;
         if (configFile.exists() && configFile.canRead()) {
             log("loadtopology: loading topology from configuration file: " + m_configurationFile);
             m_groupCounter = 0;
             WrappedGraph graph = getGraphFromFile(configFile);
+
+            String namespace = graph.m_namespace == null ? TOPOLOGY_NAMESPACE_LINKD : graph.m_namespace;
+            if (getVertexNamespace() != namespace) { 
+                LoggerFactory.getLogger(this.getClass()).info("Creating new vertex provider with namespace {}", namespace);
+                m_vertexProvider = new SimpleVertexProvider(namespace);
+            }
+            if (getEdgeNamespace() != namespace) { 
+                LoggerFactory.getLogger(this.getClass()).info("Creating new edge provider with namespace {}", namespace);
+                m_edgeProvider = new SimpleEdgeProvider(namespace);
+            }
+
             // Add all groups to the topology
+            int numberOfGroups = 0;
             for (WrappedVertex vertex: graph.m_vertices) {
                 if (!vertex.leaf) {
                     log("loadtopology: adding group to topology: " + vertex.id);
@@ -80,17 +89,27 @@
                     } catch (NumberFormatException e) {
                         // Ignore this group ID since it doesn't conform to our pattern for auto-generated IDs
                     }
-                    addGroup(vertex.id, vertex.iconKey, vertex.label);
+                    AbstractVertex newVertex = addGroup(vertex.id, vertex.iconKey, vertex.label);
+                    newVertex.setIpAddress(vertex.ipAddr);
+                    newVertex.setLocked(vertex.locked);
+                    if (vertex.nodeID != null) newVertex.setNodeID(vertex.nodeID);
+                    newVertex.setParent(vertex.parent);
+                    newVertex.setSelected(vertex.selected);
+                    newVertex.setStyleName(vertex.styleName);
+                    newVertex.setTooltipText(vertex.tooltipText);
+                    if (vertex.x != null) newVertex.setX(vertex.x);
+                    if (vertex.y != null) newVertex.setY(vertex.y);
                     numberOfGroups++;
                 }
             }
             
-            for (WrappedVertex vertex: graph.m_vertices) {
-                log("loadtopology: setting parent of " + vertex + " to " + vertex.parent);
-                setParent(vertex, vertex.parent);
+            for (Vertex vertex: getVertices()) {
+                if (vertex.getParent() != null) {
+                    log("loadtopology: setting parent of " + vertex + " to " + vertex.getParent());
+                    setParent(vertex, vertex.getParent());
+                }
             }
-
+            log("Found " + numberOfGroups + " groups");
         }
-        log("Found " + numberOfGroups + " groups");
     }
 
