@@ -29,28 +29,27 @@
 				super.commit();
 				String groupLabel = (String)getField("Group Label").getValue();
 
+				TopologyProvider topologyProvider = graphContainer.getDataSource();
 				// Add the new group
-				VertexRef groupId = operationContext.getGraphContainer().getBaseTopology().addGroup(groupLabel, GROUP_ICON_KEY);
+				Object groupId = topologyProvider.addGroup(groupLabel, GROUP_ICON_KEY);
 
-				Vertex parentGroup = null;
+				Object parentGroup = null;
 				for(VertexRef vertexRef : targets) {
-					Vertex parent = operationContext.getGraphContainer().getBaseTopology().getParent(vertexRef);
+					Object vertexId = getTopoItemId(graphContainer, vertexRef);
+					Object parent = topologyProvider.getVertexContainer().getParent(vertexId);
 					if (parentGroup == null) {
 						parentGroup = parent;
 					} else if (!parentGroup.equals(parent)) {
-						// If there are multiple parents present then attach the new group 
-						// to the top level of the hierarchy
-						parentGroup = null;
-						break;
+						parentGroup = ROOT_GROUP_ID;
 					}
-					operationContext.getGraphContainer().getBaseTopology().setParent(vertexRef, groupId);
+					topologyProvider.setParent(vertexId, groupId);
 				}
 
 				// Set the parent of the new group to the selected top-level parent
-				operationContext.getGraphContainer().getBaseTopology().setParent(groupId, parentGroup);
+				topologyProvider.setParent(groupId, parentGroup == null ? ROOT_GROUP_ID : parentGroup);
 
 				// Save the topology
-				operationContext.getGraphContainer().getBaseTopology().save(null);
+				topologyProvider.save(null);
 
 				graphContainer.redoLayout();
 			}
@@ -70,11 +69,12 @@
 			@Override
 			public boolean isValid(Object value) {
 				try {
-					final Collection<? extends Vertex> vertexIds = graphContainer.getBaseTopology().getVertices();
+					final Collection<String> vertexIds = (Collection<String>)graphContainer.getDataSource().getVertexContainer().getItemIds();
 					final Collection<String> groupLabels = new ArrayList<String>();
-					for (Vertex vertexId : vertexIds) {
-						if (!vertexId.isLeaf()) {
-							groupLabels.add(vertexId.getLabel());
+					for (String vertexId : vertexIds) {
+						BeanItem<?> vertex = graphContainer.getDataSource().getVertexContainer().getItem(vertexId);
+						if (!(Boolean)vertex.getItemProperty("leaf").getValue()) {
+							groupLabels.add((String)vertex.getItemProperty("label").getValue());
 						}
 					}
 

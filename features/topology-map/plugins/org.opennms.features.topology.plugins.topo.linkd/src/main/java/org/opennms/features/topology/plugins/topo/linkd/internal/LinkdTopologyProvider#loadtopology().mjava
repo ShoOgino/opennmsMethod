@@ -1,0 +1,96 @@
+    //@Transactional
+    private void loadtopology() {
+        log("loadtopology: loading topology: configFile:" + m_configurationFile);
+        
+        log("loadtopology: Clean Vertexcontainer");
+        getVertexContainer().removeAllItems();
+        log("loadtopology: Clean EdgeContainer");
+        getEdgeContainer().removeAllItems();
+
+        Map<String, LinkdVertex> vertexes = new HashMap<String, LinkdVertex>();
+        Collection<LinkdEdge> edges = new ArrayList<LinkdEdge>();
+        for (DataLinkInterface link: m_dataLinkInterfaceDao.findAll()) {
+            log("loadtopology: parsing link: " + link.getDataLinkInterfaceId());
+
+            OnmsNode node = m_nodeDao.get(link.getNode().getId());
+            //OnmsNode node = link.getNode();
+            log("loadtopology: found node: " + node.getLabel());
+            String sourceId = node.getNodeId();
+            LinkdVertex source;
+            if ( vertexes.containsKey(sourceId)) {
+                source = vertexes.get(sourceId);
+            } else {
+                log("loadtopology: adding source as vertex: " + node.getLabel());
+                source = getVertex(node);
+                vertexes.put(sourceId, source);
+            }
+
+            OnmsNode parentNode = m_nodeDao.get(link.getNodeParentId());
+            log("loadtopology: found parentnode: " + parentNode.getLabel());
+                       String targetId = parentNode.getNodeId();
+            LinkdVertex target;
+            if (vertexes.containsKey(targetId)) {
+                target = vertexes.get(targetId);
+            } else {
+                log("loadtopology: adding target as vertex: " + parentNode.getLabel());
+                target = getVertex(parentNode);
+                vertexes.put(targetId, target);
+            }
+            LinkdEdge edge = new LinkdEdge(link.getDataLinkInterfaceId(),source,target); 
+            edge.setTooltipText(getEdgeTooltipText(link,source,target));
+            edges.add(edge);
+        }
+        
+        log("loadtopology: isAddNodeWithoutLink: " + isAddNodeWithoutLink());
+        if (isAddNodeWithoutLink()) {
+            for (OnmsNode onmsnode: m_nodeDao.findAll()) {
+                log("loadtopology: parsing link less node: " + onmsnode.getLabel());
+                String nodeId = onmsnode.getNodeId();
+                if (!vertexes.containsKey(nodeId)) {
+                    log("loadtopology: adding link less node: " + onmsnode.getLabel());
+                    vertexes.put(nodeId,getVertex(onmsnode));
+                }                
+            }
+        }
+        
+        log("Found Vertexes: #" + vertexes.size());        
+        log("Found Edges: #" + edges.size());
+
+                
+        m_vertexContainer.addAll(vertexes.values());
+        m_edgeContainer.addAll(edges);        
+ 
+        File configFile = new File(m_configurationFile);
+
+        if (configFile.exists() && configFile.canRead()) {
+            log("loadtopology: loading topology from configuration file: " + m_configurationFile);
+            m_groupCounter = 0;
+            SimpleGraph graph = getGraphFromFile(configFile);
+            for (LinkdVertex vertex: graph.m_vertices) {
+                if (!vertex.isLeaf()) {
+                    log("loadtopology: adding group to topology: " + vertex.getId());
+                    // Find the highest index group number and start the index for new groups above it
+                    int groupNumber = Integer.parseInt(vertex.getId().substring(LINKD_GROUP_ID_PREFIX.length()));
+                    if (m_groupCounter <= groupNumber) {
+                        m_groupCounter = groupNumber + 1;
+                    }
+                    addGroup(vertex.getId(), vertex.getIconKey(), vertex.getLabel());
+                }
+            }
+            
+            for (LinkdVertex vertex: graph.m_vertices) {
+                log("loadtopology: found vertex: " + vertex.getId());
+                if (vertex.isRoot()) {
+                    if (!vertex.isLeaf())
+                        setParent(vertex.getId(), Constants.ROOT_GROUP_ID);
+                } else {
+                    setParent(vertex.getId(), vertex.getParent().getId());
+                }
+            }
+
+        }
+        log("Found Groups: #" + m_groupCounter);
+
+
+    }
+
