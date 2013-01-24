@@ -1,0 +1,33 @@
+    @Override
+    public Coordinates getCoordinates(final String address) throws GeocoderException {
+        final HttpUriRequest method = new HttpGet(getUrl(address));
+        method.addHeader("User-Agent", "OpenNMS-NominatimGeocoderService/1.0");
+        if (m_referer != null && !"".equals(m_referer)) {
+                method.addHeader("Referer", m_referer);
+        }
+
+        try {
+            InputStream responseStream = m_httpClient.execute(method).getEntity().getContent();
+            final ElementTree tree = ElementTree.fromStream(responseStream);
+            if (tree == null) {
+                throw new GeocoderException("an error occurred connecting to the Nominatim geocoding service (no XML tree was found)");
+            }
+
+            final List<ElementTree> places = tree.findAll("//place");
+            if (places.size() > 1) {
+                m_log.warn("More than one location returned for query: {}", address);
+            } else if (places.size() == 0) {
+                throw new GeocoderException("Nominatim returned an OK status code, but no places");
+            }
+            final ElementTree place = places.get(0);
+
+            Float latitude = Float.valueOf(place.getAttribute("lat"));
+            Float longitude = Float.valueOf(place.getAttribute("lon"));
+            return new Coordinates(latitude, longitude);
+        } catch (GeocoderException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new GeocoderException("unable to get lat/lng from Nominatim", e);
+        }
+    }
+
