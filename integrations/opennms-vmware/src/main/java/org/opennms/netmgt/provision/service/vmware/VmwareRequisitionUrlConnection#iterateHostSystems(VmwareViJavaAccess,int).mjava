@@ -1,0 +1,60 @@
+    /**
+     * Iterates through the host systems and adds them to the requisition object.
+     *
+     * @param vmwareViJavaAccess the access/connection to use
+     * @throws RemoteException
+     */
+    private void iterateHostSystems(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) throws RemoteException {
+        ManagedEntity[] hostSystems;
+
+        // search for host systems (esx hosts)
+        hostSystems = vmwareViJavaAccess.searchManagedEntities("HostSystem");
+
+        if (hostSystems != null) {
+
+            for (ManagedEntity managedEntity : hostSystems) {
+                HostSystem hostSystem = (HostSystem) managedEntity;
+
+                m_hostSystemMap.put(hostSystem.getMOR().getVal(), hostSystem.getName());
+
+                // check for correct key/value-pair
+                if (checkHostPowerState(hostSystem) && checkForAttribute(hostSystem)) {
+                    logger.debug("Adding Host System '{}'", hostSystem.getName());
+
+                    // iterate over all service console networks and add interface Ip addresses
+                    LinkedHashSet<String> ipAddresses = new LinkedHashSet<String>();
+
+                    HostNetworkSystem hostNetworkSystem = hostSystem.getHostNetworkSystem();
+
+                    if (hostNetworkSystem != null) {
+                        HostNetworkInfo hostNetworkInfo = hostNetworkSystem.getNetworkInfo();
+                        if (hostNetworkInfo != null) {
+
+                            HostVirtualNic[] hostVirtualNics = hostNetworkInfo.getConsoleVnic();
+                            if (hostVirtualNics != null) {
+                                for (HostVirtualNic hostVirtualNic : hostVirtualNics) {
+                                    ipAddresses.add(hostVirtualNic.getSpec().getIp().getIpAddress());
+                                }
+                            }
+
+                            hostVirtualNics = hostNetworkInfo.getVnic();
+                            if (hostVirtualNics != null) {
+                                for (HostVirtualNic hostVirtualNic : hostVirtualNics) {
+                                    ipAddresses.add(hostVirtualNic.getSpec().getIp().getIpAddress());
+                                }
+                            }
+                        }
+                    }
+
+                    // create the new node...
+                    RequisitionNode node = createRequisitionNode(ipAddresses, hostSystem, apiVersion);
+
+                    // ...and add it to the requisition
+                    if (node != null) {
+                        m_requisition.insertNode(node);
+                    }
+                }
+            }
+        }
+    }
+

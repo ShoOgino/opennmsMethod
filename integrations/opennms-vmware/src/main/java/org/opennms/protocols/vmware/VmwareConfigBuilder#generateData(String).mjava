@@ -1,0 +1,70 @@
+    private void generateData(String rrdRepository) throws Exception {
+        serviceInstance = new ServiceInstance(new URL("https://" + hostname + "/sdk"), username, password);
+
+        performanceManager = serviceInstance.getPerformanceManager();
+
+        PerfCounterInfo[] perfCounterInfos = performanceManager.getPerfCounter();
+
+        for (PerfCounterInfo perfCounterInfo : perfCounterInfos) {
+            perfCounterInfoMap.put(perfCounterInfo.getKey(), perfCounterInfo);
+        }
+
+        System.out.println("Generating configuration files for '" + serviceInstance.getAboutInfo().getFullName() + "' using rrdRepository '" + rrdRepository + "'...");
+
+        StringBuffer buffer = new StringBuffer();
+        buffer.append("Configuration file generated for:\n\n");
+        buffer.append("Full name.......: " + serviceInstance.getAboutInfo().getFullName() + "\n");
+        buffer.append("API type........: " + serviceInstance.getAboutInfo().getApiType() + "\n");
+        buffer.append("API version.....: " + serviceInstance.getAboutInfo().getApiVersion() + "\n");
+        buffer.append("Product name....: " + serviceInstance.getAboutInfo().getLicenseProductName() + "\n");
+        buffer.append("Product version.: " + serviceInstance.getAboutInfo().getLicenseProductVersion() + "\n");
+        buffer.append("OS type.........: " + serviceInstance.getAboutInfo().getOsType() + "\n");
+
+        versionInformation = buffer.toString();
+
+        String arr[] = serviceInstance.getAboutInfo().getApiVersion().split("\\.");
+
+        if (arr.length > 1) {
+            apiVersion = arr[0];
+            if (Integer.valueOf(apiVersion) < 4) {
+                apiVersion = "3";
+            }
+        }
+
+        ManagedEntity[] hostSystems, virtualMachines;
+
+        virtualMachines = new InventoryNavigator(serviceInstance.getRootFolder()).searchManagedEntities("VirtualMachine");
+
+        if (virtualMachines != null) {
+            if (virtualMachines.length > 0) {
+                for (ManagedEntity managedEntity : virtualMachines) {
+                    if ("poweredOn".equals(((VirtualMachine) managedEntity).getRuntime().getPowerState().toString())) {
+                        lookupMetrics("default-VirtualMachine" + apiVersion, managedEntity.getMOR().getVal());
+                        break;
+                    }
+                }
+            } else {
+                System.err.println("No virtual machines found");
+            }
+        }
+
+        hostSystems = new InventoryNavigator(serviceInstance.getRootFolder()).searchManagedEntities("HostSystem");
+
+        if (hostSystems != null) {
+            if (hostSystems.length > 0) {
+                for (ManagedEntity managedEntity : hostSystems) {
+                    if ("poweredOn".equals(((HostSystem) managedEntity).getRuntime().getPowerState().toString())) {
+                        lookupMetrics("default-HostSystem" + apiVersion, managedEntity.getMOR().getVal());
+                        break;
+                    }
+                }
+            } else {
+                System.err.println("No host systems found!");
+            }
+        }
+
+        saveVMwareDatacollectionConfig(rrdRepository);
+        saveVMwareDatacollectionInclude();
+        saveVMwareGraphProperties();
+    }
+

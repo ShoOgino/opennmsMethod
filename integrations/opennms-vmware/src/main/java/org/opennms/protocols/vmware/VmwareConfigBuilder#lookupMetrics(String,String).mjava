@@ -1,0 +1,72 @@
+    private void lookupMetrics(String collectionName, String managedObjectId) throws Exception {
+        ManagedObjectReference managedObjectReference = new ManagedObjectReference();
+
+        managedObjectReference.setType("ManagedEntity");
+        managedObjectReference.setVal(managedObjectId);
+
+        ManagedEntity managedEntity = MorUtil.createExactManagedEntity(serviceInstance.getServerConnection(), managedObjectReference);
+
+        int refreshRate = performanceManager.queryPerfProviderSummary(managedEntity).getRefreshRate();
+
+        PerfQuerySpec perfQuerySpec = new PerfQuerySpec();
+        perfQuerySpec.setEntity(managedEntity.getMOR());
+        perfQuerySpec.setMaxSample(Integer.valueOf(1));
+        perfQuerySpec.setIntervalId(refreshRate);
+
+        PerfEntityMetricBase[] perfEntityMetricBases = performanceManager.queryPerf(new PerfQuerySpec[]{perfQuerySpec});
+
+        HashMap<String, TreeSet<VMwareConfigMetric>> groupMap = new HashMap<String, TreeSet<VMwareConfigMetric>>();
+
+        HashMap<String, Boolean> multiInstance = new HashMap<String, Boolean>();
+
+        if (perfEntityMetricBases != null) {
+            for (int i = 0; i < perfEntityMetricBases.length; i++) {
+                PerfMetricSeries[] perfMetricSeries = ((PerfEntityMetric) perfEntityMetricBases[i]).getValue();
+
+                for (int j = 0; perfMetricSeries != null && j < perfMetricSeries.length; j++) {
+
+                    if (perfMetricSeries[j] instanceof PerfMetricIntSeries) {
+
+                        long[] longs = ((PerfMetricIntSeries) perfMetricSeries[j]).getValue();
+
+                        if (longs.length == 1) {
+
+                            PerfCounterInfo perfCounterInfo = perfCounterInfoMap.get(perfMetricSeries[j].getId().getCounterId());
+
+                            String instanceName = perfMetricSeries[j].getId().getInstance();
+
+                            String humanReadableName = getHumanReadableName(perfCounterInfo);
+                            String aliasName = getAliasName(perfCounterInfo);
+                            String groupName = perfCounterInfo.getGroupInfo().getKey();
+                            String normalizedGroupName = normalizeGroupName(groupName);
+
+                            Boolean b = multiInstance.get(getHumanReadableName(perfCounterInfo));
+
+                            if (b == null) {
+                                b = Boolean.valueOf(instanceName != null && !"".equals(instanceName));
+                            } else {
+                                b = Boolean.valueOf(b.booleanValue() || (instanceName != null && !"".equals(instanceName)));
+                            }
+
+                            if (!b) {
+                                groupName = "Node";
+                                normalizedGroupName = "Node";
+                            }
+
+                            if (!groupMap.containsKey(normalizedGroupName)) {
+                                groupMap.put(normalizedGroupName, new TreeSet<VMwareConfigMetric>());
+                            }
+
+                            TreeSet<VMwareConfigMetric> counterSet = groupMap.get(normalizedGroupName);
+
+                            multiInstance.put(getHumanReadableName(perfCounterInfo), b);
+
+                            counterSet.add(new VMwareConfigMetric(perfCounterInfo, humanReadableName, aliasName, b, normalizedGroupName));
+                        }
+                    }
+                }
+            }
+        }
+        collections.put(collectionName, groupMap);
+    }
+

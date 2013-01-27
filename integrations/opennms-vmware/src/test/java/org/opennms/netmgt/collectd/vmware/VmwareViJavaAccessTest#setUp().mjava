@@ -1,0 +1,189 @@
+    @Before
+    public void setUp() throws Exception {
+        // setup required objects
+
+        managedObjectReferenceManagedEntity = new ManagedObjectReference();
+        managedObjectReferenceManagedEntity.setType("ManagedEntity");
+        managedObjectReferenceManagedEntity.setVal("moIdMe");
+
+        managedObjectReferenceVirtualMachine = new ManagedObjectReference();
+        managedObjectReferenceVirtualMachine.setType("VirtualMachine");
+        managedObjectReferenceVirtualMachine.setVal("moIdVm");
+
+        managedObjectReferenceHostSystem = new ManagedObjectReference();
+        managedObjectReferenceHostSystem.setType("HostSystem");
+        managedObjectReferenceHostSystem.setVal("moIdHs");
+
+        // setup VmwareViJavaAccess
+        vmwareViJavaAccess = new VmwareViJavaAccess("hostname", "username", "password") {
+            @Override
+            protected void relax() {
+            }
+        };
+
+        // setup PerformanceManager
+        mockPerformanceManager = createMock(PerformanceManager.class);
+
+        // setup ServiceInstance mock
+        mockServiceInstance = createMock(ServiceInstance.class);
+
+        // setup ServerConnection
+        mockServerConnection = new ServerConnection(new URL("https://hostname/sdk"), new VimPortType(new WSClient("https://hostname/sdk")), mockServiceInstance);
+
+        // setup AboutInfo
+        mockAboutInfo = createMock(AboutInfo.class);
+
+        expectNew(ServiceInstance.class, new Class<?>[]{URL.class, String.class, String.class}, new URL("https://hostname/sdk"), "username", "password").andReturn(mockServiceInstance).anyTimes();
+        expect(mockServiceInstance.getServerConnection()).andReturn(mockServerConnection).anyTimes();
+        expect(mockServiceInstance.getPerformanceManager()).andReturn(mockPerformanceManager).anyTimes();
+        expect(mockServiceInstance.getAboutInfo()).andReturn(mockAboutInfo).anyTimes();
+
+        managedEntity = new ManagedEntity(null, managedObjectReferenceManagedEntity);
+        virtualMachine = new VirtualMachine(null, managedObjectReferenceVirtualMachine);
+        hostSystem = new HostSystem(null, managedObjectReferenceHostSystem);
+
+        // setup MorUtil
+
+        mockStatic(MorUtil.class);
+        expect(MorUtil.createExactManagedEntity(mockServerConnection, managedObjectReferenceManagedEntity)).andReturn(managedEntity).anyTimes();
+        expect(MorUtil.createExactManagedEntity(mockServerConnection, managedObjectReferenceVirtualMachine)).andReturn(virtualMachine).anyTimes();
+        expect(MorUtil.createExactManagedEntity(mockServerConnection, managedObjectReferenceHostSystem)).andReturn(hostSystem).anyTimes();
+
+        // setup about info
+
+        expect(mockAboutInfo.getApiVersion()).andReturn("2.x");
+        expect(mockAboutInfo.getApiVersion()).andReturn("3.x");
+        expect(mockAboutInfo.getApiVersion()).andReturn("4.x");
+        expect(mockAboutInfo.getApiVersion()).andReturn("5.x");
+        expect(mockAboutInfo.getApiVersion()).andReturn("6.x");
+        expect(mockAboutInfo.getApiVersion()).andReturn("x");
+
+        // setup performance data
+
+        int refreshRate = 100;
+        int metricCount = 15;
+        int instanceModifier = 5;
+
+        perfQuerySpec = new PerfQuerySpec();
+        perfQuerySpec.setEntity(managedEntity.getMOR());
+        perfQuerySpec.setMaxSample(new
+                Integer(1)
+        );
+        perfQuerySpec.setIntervalId(refreshRate);
+
+        perfEntityMetricBases = new PerfEntityMetricBase[metricCount];
+        perfCounterInfos = new PerfCounterInfo[metricCount];
+
+        for (int i = 0; i < metricCount; i++) {
+            ElementDescription groupInfo = new ElementDescription();
+            groupInfo.setKey("key" + i);
+
+            ElementDescription nameInfo = new ElementDescription();
+            nameInfo.setKey("name" + i);
+
+            perfCounterInfos[i] = new PerfCounterInfo();
+            perfCounterInfos[i].setKey(i);
+            perfCounterInfos[i].setGroupInfo(groupInfo);
+            perfCounterInfos[i].setNameInfo(nameInfo);
+            perfCounterInfos[i].setRollupType(PerfSummaryType.average);
+
+            perfEntityMetricBases[i] = new PerfEntityMetric();
+
+            PerfMetricIntSeries[] perfMetricIntSeries;
+
+            int instanceCount = (i % instanceModifier) + 1;
+
+            perfMetricIntSeries = new PerfMetricIntSeries[instanceCount];
+
+            for (int b = 0; b < instanceCount; b++) {
+                PerfMetricId perfMetricId = new PerfMetricId();
+                perfMetricId.setCounterId(i);
+
+                if (instanceCount == 1) {
+                    perfMetricId.setInstance(null);
+                } else {
+                    perfMetricId.setInstance("instance" + b);
+                }
+
+                perfMetricIntSeries[b] = new PerfMetricIntSeries();
+                perfMetricIntSeries[b].setValue(new long[]{(long) 42});
+                perfMetricIntSeries[b].setId(perfMetricId);
+            }
+
+            ((PerfEntityMetric) perfEntityMetricBases[i]).setValue(perfMetricIntSeries);
+        }
+
+        // setup PerfProviderSummary
+        mockPerfProviderSummary = createMock(PerfProviderSummary.class);
+
+        expect(mockPerformanceManager.queryPerfProviderSummary(managedEntity)).andReturn(mockPerfProviderSummary).anyTimes();
+        expect(mockPerfProviderSummary.getRefreshRate()).andReturn(refreshRate).anyTimes();
+        expect(mockPerformanceManager.getPerfCounter()).andReturn(perfCounterInfos).anyTimes();
+        expect(mockPerformanceManager.queryPerf(anyObject(PerfQuerySpec[].class))).andReturn(perfEntityMetricBases).anyTimes();
+
+        // setup network info
+
+        HostNetworkInfo hostNetworkInfo = new HostNetworkInfo();
+
+        int numberOfVnics = 3;
+
+        HostVirtualNic[] hostVirtualNics = new HostVirtualNic[numberOfVnics];
+
+        for (int i = 0; i < numberOfVnics; i++) {
+            HostVirtualNicSpec hostVirtualNicSpec = new HostVirtualNicSpec();
+            HostIpConfig hostIpConfig = new HostIpConfig();
+            hostIpConfig.setIpAddress("192.168.1." + (i + 1));
+            hostVirtualNicSpec.setIp(hostIpConfig);
+            hostVirtualNics[i] = new HostVirtualNic();
+            hostVirtualNics[i].setSpec(hostVirtualNicSpec);
+        }
+
+        hostNetworkInfo.setVnic(hostVirtualNics);
+
+        HostVirtualNic[] hostVirtualConsoleNics = new HostVirtualNic[numberOfVnics];
+
+        for (int i = 0; i < numberOfVnics; i++) {
+            HostVirtualNicSpec hostVirtualNicSpec = new HostVirtualNicSpec();
+            HostIpConfig hostIpConfig = new HostIpConfig();
+            hostIpConfig.setIpAddress("192.168.2." + (i + 1));
+            hostVirtualNicSpec.setIp(hostIpConfig);
+            hostVirtualConsoleNics[i] = new HostVirtualNic();
+            hostVirtualConsoleNics[i].setSpec(hostVirtualNicSpec);
+        }
+
+        hostNetworkInfo.setConsoleVnic(hostVirtualConsoleNics);
+
+        HostServiceTicket hostServiceTicket = new HostServiceTicket();
+        hostServiceTicket.setSessionId("sessionId");
+
+        // setup HostSystem
+        mockHostSystem = createMock(HostSystem.class);
+
+        // setup HostNetworkSystem
+        mockHostNetworkSystem = createMock(HostNetworkSystem.class);
+
+        // setup CIMClient
+        mockCIMClient = createPartialMock(CIMClient.class, "enumerateInstances");
+
+        // setup the cim objects
+
+        cimObjects = new ArrayList<CIMObject>();
+
+        int cimObjectCount = 5;
+
+        for (int i = 0; i < cimObjectCount; i++) {
+            CIMInstance cimInstance = new CIMInstance();
+            cimInstance.setName("cimInstance" + i);
+            cimObjects.add(cimInstance);
+        }
+
+        expect(mockHostSystem.getHostNetworkSystem()).andReturn(mockHostNetworkSystem).anyTimes();
+        expect(mockHostSystem.acquireCimServicesTicket()).andReturn(hostServiceTicket).anyTimes();
+        expect(mockHostNetworkSystem.getNetworkInfo()).andReturn(hostNetworkInfo).anyTimes();
+        expectNew(CIMClient.class, new Class<?>[]{CIMNameSpace.class, Principal.class, Object.class}, anyObject(), anyObject(), anyObject()).andReturn(mockCIMClient).anyTimes();
+
+        suppress(method(CIMClient.class, "useMPost"));
+
+        expect(mockCIMClient.enumerateInstances(new CIMObjectPath("cimClass"))).andReturn(Collections.enumeration(cimObjects)).anyTimes();
+    }
+
