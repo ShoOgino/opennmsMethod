@@ -1,0 +1,81 @@
+    private void addHostSystem(OnmsNode hostSystem) {
+        // getting data for nodes
+
+        String vmwareManagementServer = hostSystem.getAssetRecord().getVmwareManagementServer().trim();
+        String vmwareManagedObjectId = hostSystem.getAssetRecord().getVmwareManagedObjectId().trim();
+        String vmwareTopologyInfo = hostSystem.getAssetRecord().getVmwareTopologyInfo().trim();
+        String vmwareState = hostSystem.getAssetRecord().getVmwareState().trim();
+
+        String datacenterMoId = null;
+        String datacenterName = "Datacenter (" + vmwareManagementServer + ")";
+
+        ArrayList<String> networks = new ArrayList<String>();
+        ArrayList<String> datastores = new ArrayList<String>();
+
+        HashMap<String, String> moIdToName = new HashMap<String, String>();
+
+        String entities[] = vmwareTopologyInfo.split(SPLIT_REGEXP);
+
+        for (String entityAndName : entities) {
+            String splitBySlash[] = entityAndName.split("/");
+            String entityId = splitBySlash[0];
+
+            String entityName = "unknown";
+
+            if (splitBySlash.length > 1) {
+                try {
+                    entityName = new String(URLDecoder.decode(splitBySlash[1], "UTF-8"));
+                } catch (UnsupportedEncodingException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            String entityType = entityId.split("-")[0];
+
+            if ("network".equals(entityType)) {
+                networks.add(entityId);
+            }
+
+            if ("datastore".equals(entityType)) {
+                datastores.add(entityId);
+            }
+
+            if ("datacenter".equals(entityType)) {
+                datacenterMoId = entityId;
+            }
+
+            moIdToName.put(entityId, entityName);
+        }
+
+        if (datacenterMoId != null) {
+            datacenterName = moIdToName.get(datacenterMoId) + " (" + vmwareManagementServer + ")";
+        }
+
+        AbstractVertex datacenterVertex = addDatacenterGroup(vmwareManagementServer, datacenterName);
+
+        String primaryInterface = "unknown";
+
+        // get the primary interface ip address
+        OnmsIpInterface ipInterface = m_ipInterfaceDao.findPrimaryInterfaceByNodeId(hostSystem.getId());
+
+        if (ipInterface != null) {
+            primaryInterface = ipInterface.getIpHostName();
+        }
+
+        AbstractVertex hostSystemVertex = addHostSystemVertex(vmwareManagementServer + "/" + vmwareManagedObjectId, hostSystem.getLabel(), primaryInterface, hostSystem.getId(), vmwareState);
+
+        // set the parent vertex
+        hostSystemVertex.setParent(datacenterVertex);
+
+        for (String network : networks) {
+            AbstractVertex networkVertex = addNetworkVertex(vmwareManagementServer + "/" + network, moIdToName.get(network));
+            networkVertex.setParent(datacenterVertex);
+            connectVertices(vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + network, hostSystemVertex, networkVertex);
+        }
+        for (String datastore : datastores) {
+            AbstractVertex datastoreVertex = addDatastoreVertex(vmwareManagementServer + "/" + datastore, moIdToName.get(datastore));
+            datastoreVertex.setParent(datacenterVertex);
+            connectVertices(vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + datastore, hostSystemVertex, datastoreVertex);
+        }
+    }
+
