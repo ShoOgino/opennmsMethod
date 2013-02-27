@@ -1,0 +1,38 @@
+    // SELECT node.nodeid,ipinterface.ifindex FROM node LEFT JOIN ipinterface ON node.nodeid = ipinterface.nodeid WHERE nodetype = 'A' AND ipaddr = ?
+    @Override
+    public OnmsAtInterface getAtInterfaceForAddress(final InetAddress address) {
+        final String addressString = str(address);
+
+        if (address.isLoopbackAddress() || addressString.equals("0.0.0.0")) return null;
+
+        // See if we have an existing version of this OnmsAtInterface first
+        final OnmsCriteria criteria = new OnmsCriteria(OnmsAtInterface.class);
+        criteria.createAlias("node", "node", OnmsCriteria.LEFT_JOIN);
+        criteria.add(Restrictions.eq("node.type", "A"));
+        criteria.add(Restrictions.eq("ipAddress", addressString));
+        List<OnmsAtInterface> interfaces = findMatching(criteria);
+
+        if (interfaces.isEmpty()) {
+                    final List<OnmsIpInterface> ifaces = m_ipInterfaceDao.findByIpAddress(addressString);
+                    if (ifaces.isEmpty()) {
+                        return null;
+                    } else {
+                        if (ifaces.size() > 1) {
+                            LogUtils.debugf(this, "getAtInterfaceForAddress: More than one AtInterface matched address %s!", addressString);
+                        }
+                        OnmsIpInterface iface = ifaces.get(0);
+                        OnmsAtInterface retval = new OnmsAtInterface(iface.getNode(), iface.getIpAddress());
+                        retval.setLastPollTime(new Date());
+                        retval.setSourceNodeId(iface.getNode().getId());
+                        retval.setStatus(StatusType.INACTIVE);
+                        save(retval);
+                        return retval;
+                    }
+        } else {
+            if (interfaces.size() > 1) {
+                LogUtils.debugf(this, "getAtInterfaceForAddress: More than one AtInterface matched address %s!", addressString);
+            }
+            return interfaces.get(0);
+        }
+    }
+
