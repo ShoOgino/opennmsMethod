@@ -1,0 +1,69 @@
+	@Test
+	public void testAddVertexToGroupOperation() {
+
+		m_topologyProvider.resetContainer();
+
+		Vertex vertex1 = m_topologyProvider.addVertex(0, 0);
+		Vertex groupId = m_topologyProvider.addGroup("NEW GROUP", null);
+
+		GraphContainer graphContainer = EasyMock.createMock(GraphContainer.class);
+
+		EasyMock.expect(graphContainer.getBaseTopology()).andReturn(m_topologyProvider).anyTimes();
+		graphContainer.redoLayout();
+
+		EasyMock.replay(graphContainer);
+
+		List<VertexRef> targets = new ArrayList<VertexRef>();
+		targets.add(vertex1);
+
+		Collection<Vertex> vertices = m_topologyProvider.getVertices();
+		assertEquals(2, vertices.size());
+		assertEquals(0, m_topologyProvider.getChildren(groupId).size());
+
+		AddVertexToGroupOperation operation = new AddVertexToGroupOperation();
+		OperationContext context = getOperationContext(graphContainer);
+		// Execute the operation on the single vertex
+		operation.execute(Collections.singletonList((VertexRef)vertex1), context);
+
+		// Even though we have executed the operation, it is waiting on a Window
+		// operation to commit the change so make sure the vertex hasn't been
+		// added yet.
+		vertices = m_topologyProvider.getVertices();
+		assertEquals(2, vertices.size());
+		assertEquals(0, m_topologyProvider.getChildren(groupId).size());
+
+		assertEquals(0, m_topologyProvider.getSemanticZoomLevel(groupId));
+		assertEquals(0, m_topologyProvider.getSemanticZoomLevel(vertex1));
+
+		// Grab the window, put a value into the form field, and commit the form to complete
+		// the operation.
+		Window window = context.getMainWindow();
+		assertEquals(1, window.getChildWindows().size());
+		Window prompt = window.getChildWindows().iterator().next();
+
+		for (Iterator<Component> itr = prompt.getComponentIterator(); itr.hasNext();) {
+			Component component = itr.next();
+			try {
+				Form form = (Form)component;
+				Field group = form.getField("Group");
+				group.setValue(groupId.getId());
+				// Make sure that the value was set, Vaadin will ignore the value
+				// if, for instance, the specified value is not in the Select list
+				assertEquals(groupId.getId(), group.getValue());
+				form.commit();
+			} catch (ClassCastException e) {
+				LoggerFactory.getLogger(this.getClass()).info("Not a Form: " + component.getClass());
+			}
+		}
+
+		vertices = m_topologyProvider.getVertices();
+		assertEquals(2, vertices.size());
+
+		// Verify that the semantic zoom level of the vertices is correct
+		assertEquals(1, m_topologyProvider.getChildren(groupId).size());
+		assertEquals(0, m_topologyProvider.getSemanticZoomLevel(groupId));
+		assertEquals(1, m_topologyProvider.getSemanticZoomLevel(vertex1));
+
+		EasyMock.verify(graphContainer);
+	}
+
