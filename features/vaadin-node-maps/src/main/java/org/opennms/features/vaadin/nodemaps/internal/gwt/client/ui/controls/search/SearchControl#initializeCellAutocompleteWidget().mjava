@@ -1,0 +1,89 @@
+    private void initializeCellAutocompleteWidget() {
+        final AbstractSafeHtmlRenderer<NodeMarker> renderer = new AbstractSafeHtmlRenderer<NodeMarker>() {
+            @Override
+            public SafeHtml render(final NodeMarker marker) {
+                final SafeHtmlBuilder builder = new SafeHtmlBuilder();
+                final String searchString = m_searchConsumer.getSearchString().toLowerCase();
+
+                builder.appendHtmlConstant("<div class=\"autocomplete-label\">");
+                builder.appendHtmlConstant(marker.getNodeLabel());
+                builder.appendHtmlConstant("</div>");
+                String additionalSearchInfo = null;
+                if (searchString.startsWith("category:")) {
+                    final String categoryString = marker.getCategoriesAsString();
+                    if (categoryString.length() > 0) {
+                        additionalSearchInfo = categoryString;
+                    }
+                } else if (searchString.startsWith("nodelabel:")) {
+                    // do nothing, we already show this
+                } else if (searchString.startsWith("description")) {
+                    additionalSearchInfo = "Description: " + marker.getDescription();
+                } else if (searchString.startsWith("ipaddress")) {
+                    additionalSearchInfo = "IP Address: " + marker.getIpAddress();
+                } else if (searchString.startsWith("maintcontract")) {
+                    additionalSearchInfo = "Maint.&nbsp;Contract: " + marker.getMaintContract();
+                }
+                if (additionalSearchInfo != null) {
+                    builder.appendHtmlConstant("<div class=\"autocomplete-additional-info\">")
+                        .appendHtmlConstant(additionalSearchInfo)
+                        .appendHtmlConstant("</div>");
+                }
+
+                return builder.toSafeHtml();
+            }
+        };
+
+        final AbstractSafeHtmlCell<NodeMarker> cell = new AbstractSafeHtmlCell<NodeMarker>(renderer, "keydown", "click", "dblclick", "touchstart") {
+
+            @Override
+            public void onBrowserEvent(final Context context, final com.google.gwt.dom.client.Element parent, final NodeMarker value, final NativeEvent event, final ValueUpdater<NodeMarker> valueUpdater) {
+                boolean setSearchString = false;
+                final String eventType = event.getType();
+                if ("click".equals(eventType) || "touchstart".equals(eventType)) {
+                    if (m_autoComplete.getSelectionModel().isSelected(value)) {
+                        setSearchString = true;
+                    }
+                } else if ("dblclick".equals(eventType)) {
+                    setSearchString = true;
+                } else if ("keydown".equals(eventType)) {
+                    if (event.getKeyCode() == KeyCodes.KEY_ENTER) {
+                        setSearchString = true;
+                    } else if (event.getKeyCode() == KeyCodes.KEY_ESCAPE) {
+                        m_inputBox.setText("");
+                        setSearchString = false;
+                        hideAutocomplete();
+                    }
+                }
+
+                if (setSearchString) {
+                    Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+                        @Override public void execute() {
+                            m_autoComplete.getSelectionModel().setSelected(value, false);
+                            hideAutocomplete();
+                            m_inputBox.setFocus(true);
+                            m_inputBox.setValue(value.getNodeLabel(), true);
+                            m_searchConsumer.setSearchString(value.getNodeLabel());
+                            m_searchConsumer.refresh();
+                        }
+                    });
+                } else {
+                    super.onBrowserEvent(context, parent, value, event, valueUpdater);
+                }
+            }
+
+            @Override protected void render(final Context context, final SafeHtml data, final SafeHtmlBuilder builder) {
+                builder.appendHtmlConstant("<div class=\"autocomplete-entry\">");
+                if (data != null) {
+                    builder.append(data);
+                }
+                builder.appendHtmlConstant("</div>");
+            }
+        };
+
+        m_autoComplete = new CellList<NodeMarker>(cell);
+        m_autoComplete.setSelectionModel(new SingleSelectionModel<NodeMarker>());
+        m_autoComplete.setKeyboardSelectionPolicy(KeyboardSelectionPolicy.BOUND_TO_SELECTION);
+        m_autoComplete.setVisible(false);
+        m_autoComplete.addStyleName("search-autocomplete");
+    }
+
