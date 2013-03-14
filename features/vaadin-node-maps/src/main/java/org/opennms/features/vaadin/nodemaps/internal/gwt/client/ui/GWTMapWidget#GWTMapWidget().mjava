@@ -5,66 +5,79 @@
         m_div.getStyle().setWidth(100, Unit.PCT);
         m_div.getStyle().setHeight(100, Unit.PCT);
         setElement(m_div);
-        
+
         m_filter = new MarkerFilter() {
             @Override
             public boolean matches(final NodeMarker marker) {
-                if (marker.getSeverity() < m_minimumSeverity) return false;
-                if (m_searchString == null || "".equals(m_searchString)) return true;
+                if (marker.getSeverity() < m_minimumSeverity)
+                    return false;
+                if (m_searchString == null || "".equals(m_searchString))
+                    return true;
 
                 final String searchString = m_searchString.toLowerCase();
-                //VConsole.log("searching: search string = " + searchString);
+                // VConsole.log("searching: search string = " + searchString);
 
-                ///// handle foo: style search strings for text properties
-                //VConsole.log("checking property:search");
+                // /// handle foo: style search strings for text properties
+                // VConsole.log("checking property:search");
                 for (final String propertyName : marker.getTextPropertyNames()) {
                     final String lowerPropertyName = propertyName.toLowerCase();
                     if (searchString.startsWith(lowerPropertyName + ":")) {
                         final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + ":\\s*", "");
                         final String propertyValue = marker.getProperty(propertyName);
                         if (propertyValue != null && propertyValue.toLowerCase().contains(searchStringWithoutPrefix)) {
-                            //VConsole.log(searchString + " matched: " + propertyValue.toLowerCase());
                             return true;
                         } else {
-                            //VConsole.log(searchString + " did not match: " + propertyValue.toLowerCase());
+                            return false;
+                        }
+                    } else if (searchString.startsWith(lowerPropertyName + "=")) {
+                        final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + "=\\s*", "");
+                        final String propertyValue = marker.getProperty(propertyName);
+                        if (propertyValue != null && propertyValue.toLowerCase().equals(searchStringWithoutPrefix)) {
+                            return true;
+                        } else {
                             return false;
                         }
                     }
                 }
 
-                ///// special case: categories: -> category: search
-                if (searchString.startsWith("category:")) {
-                    final String searchStringWithoutPrefix = searchString.replaceFirst("category:\\s*", "");
-                    return matchCategories(marker, searchStringWithoutPrefix);
+                // /// special case: categories: -> category: search
+                if (searchString.startsWith("category:") || searchString.startsWith("categories:")) {
+                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y):\\s*", "");
+                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
+                    return match != MatchType.NONE;
+                } else if (searchString.startsWith("category=") || searchString.startsWith("categories=")) {
+                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y)=\\s*", "");
+                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
+                    return match == MatchType.EXACT;
                 }
 
-                ///// if no foo: style search strings, first search all text properties for a match
+                // /// if no foo: style search strings, first search all text
+                // properties for a match
                 for (final String propertyName : marker.getTextPropertyNames()) {
                     final String value = marker.getProperty(propertyName);
                     if (value != null) {
                         final String propertyValue = value.toLowerCase();
                         if (propertyValue.contains(searchString)) {
-                            //VConsole.log(searchString + " matched: " + propertyName + "=" + propertyValue);
                             return true;
                         }
                     }
                 }
 
-                ///// otherwise, search categories
-                return matchCategories(marker, searchString);
+                // /// otherwise, search categories
+                return matchCategories(marker, searchString) != MatchType.NONE;
             }
 
-            private boolean matchCategories(final NodeMarker marker, final String searchString) {
+            private MatchType matchCategories(final NodeMarker marker, final String searchString) {
                 final JsArrayString categories = marker.getCategories();
                 for (int i = 0; i < categories.length(); i++) {
                     final String category = categories.get(i).toLowerCase();
-                    if (category.contains(searchString)) {
-                        //VConsole.log(searchString + " matched: " + category);
-                        return true;
+                    if (category.equals(searchString)) {
+                        return MatchType.EXACT;
+                    } else if (category.contains(searchString)) {
+                        return MatchType.SUBSTRING;
                     }
                 }
-                //VConsole.log(searchString + " did not match: " + marker.getCategoriesAsString());
-                return false;
+                return MatchType.NONE;
             }
 
         };
