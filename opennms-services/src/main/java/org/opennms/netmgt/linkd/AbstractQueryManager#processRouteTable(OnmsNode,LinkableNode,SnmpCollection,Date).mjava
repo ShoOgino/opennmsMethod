@@ -16,6 +16,10 @@
         	IpRouteCollectorEntry route = (IpRouteCollectorEntry) ent;
          	
             final InetAddress nexthop = route.getIpRouteNextHop();
+            final InetAddress routedest = route.getIpRouteDest();
+            final InetAddress routemask = route.getIpRouteMask();
+
+            LogUtils.debugf(this, "processRouteTable: processing routedest/routemask/routenexthop %s/%s/%s",str(routedest),str(routemask),str(nexthop));
 
             if (nexthop == null) {
                 LogUtils.warnf(this, "processRouteTable: next hop not found on node %d. Skipping.", node.getNodeId());
@@ -36,13 +40,11 @@
                 continue;
             }
 
-            final InetAddress routedest = route.getIpRouteDest();
             if (routedest == null) {
                 LogUtils.warnf(this, "processRouteTable: route destination not found on node %d. Skipping.", node.getNodeId());
                 continue;
             }
 
-            final InetAddress routemask = route.getIpRouteMask();
 
             if (routemask == null) {
                 LogUtils.warnf(this, "processRouteTable: route mask not found on node %d. Skipping.", node.getNodeId());
@@ -52,7 +54,6 @@
                 continue;
             }
 
-            LogUtils.debugf(this, "processRouteTable: processing routedest/routemask/routenexthop %s/%s/%s",str(routedest),str(routemask),str(nexthop));
 
             Integer ifindex = route.getIpRouteIfIndex();
             
@@ -70,7 +71,18 @@
             LogUtils.debugf(this, "processRouteTable: parsing routeDest/routeMask/nextHop: %s/%s/%s - ifIndex = %d", str(routedest), str(routemask), str(nexthop), ifindex);
 
         	int snmpiftype = -2;
-
+            if (ifindex == 0) {
+    			LogUtils.debugf(this,
+                        "processRouteTable: ifindex is 0. Looking local table to get a valid index.");
+            	for (OnmsIpInterface ip : getIpInterfaceDao().findByNodeId(node.getNodeId())) {
+            		if (Linkd.getNetwork(ip.getIpAddress(), ip.getSnmpInterface().getNetMask()).equals(Linkd.getNetwork(nexthop, ip.getSnmpInterface().getNetMask())))
+                	ifindex = (ip.getIfIndex());
+        			LogUtils.debugf(this,
+                            "processRouteTable: ifindex %d found for local ip %s. ",ifindex, str(ip.getIpAddress()));
+                	break;
+            	}
+            }
+       	
             if (ifindex > 0)
                 snmpiftype = getSnmpIfType(node.getNodeId(), ifindex);
 
@@ -117,7 +129,7 @@
                                     str(nexthop));
                     continue;
                 }
-	            routeInterfaces.add(routeIface);
+ 	            routeInterfaces.add(routeIface);
             }
         }
         node.setRouteInterfaces(routeInterfaces);
