@@ -6,15 +6,6 @@
     @Override
     public void forwardAlarms(List<NorthboundAlarm> alarms) throws NorthbounderException {
         
-        List<SyslogDestination> dests = getDestinations();
-        
-        if (dests == null) {
-        	String errorMsg = "No Syslog destinations are defined.";
-			IllegalStateException e = new IllegalStateException(errorMsg);
-        	LogUtils.errorf(this, e, errorMsg);
-			throw e;
-        }
-        
         if (alarms == null) {
         	String errorMsg = "No alarms in alarms list for syslog forwarding.";
 			IllegalStateException e = new IllegalStateException(errorMsg);
@@ -22,63 +13,56 @@
 			throw e;
         }
         
-        LogUtils.infof(this, "Forwarding %d alarms to %d destinations...", alarms.size(), dests.size());
+        LogUtils.infof(this, "Forwarding %d alarms to destination:"+m_destination.getName(), alarms.size());
 
     	Map<Integer, Map<String, String>> alarmMappings = new HashMap<Integer, Map<String, String>>();    	
         
-        for (SyslogDestination dest : dests) {
-        	
-        	SyslogIF instance;
-			try {
-				instance = Syslog.getInstance(dest.getName());
-			} catch (SyslogRuntimeException e) {
-				LogUtils.errorf(this, e, "Could not find Syslog instance for destination: %s.", dest.getName());
-				continue;
-			}
-        	
-        	LogUtils.debugf(this, "Forwarding alarms to destination %s.", dest.getName());
-        	
-        	/*
-        	 * Iterate over the list of alarms to be forwarded N.
-        	 */
-        	for (NorthboundAlarm alarm : alarms) {
-        		
-        		Integer count = alarm.getCount();
-				if (count > 1 && dest.isFirstOccurrenceOnly()) {
-        			LogUtils.debugf(this, "Destination %s is configured for new alarm instances only.  Alarm has count of %d.", dest.getName(), count);
-        			continue;
-        		}
+    	SyslogIF instance;
+    	try {
+    		instance = Syslog.getInstance(m_destination.getName());
+    	} catch (SyslogRuntimeException e) {
+    		LogUtils.errorf(this, e, "Could not find Syslog instance for destination: %s.", m_destination.getName());
+    		throw e;
+    	}
 
-        		LogUtils.debugf(this, "Creating formatted log message for alarm: %d.", alarm.getId());
-        		
-        		Map<String, String> mapping = null;
-        		
-        		@SuppressWarnings("unchecked")
-				String syslogMessage;
-				int level;
-				try {
-					if (alarmMappings != null) {
-						mapping = alarmMappings.get(alarm.getId());
-					}
-					
-					if (mapping == null) {
-						mapping = createMapping(alarmMappings, alarm);
-					}
-					
-					LogUtils.debugf(this, "Making substitutions for tokens in message format for alarm: %d.", alarm.getId());
-					syslogMessage = PropertiesUtils.substitute(m_config.getMessageFormat(), mapping);
+    	/*
+    	 * Iterate over the list of alarms to be forwarded N.
+    	 */
+    	for (NorthboundAlarm alarm : alarms) {
 
-					LogUtils.debugf(this, "Determining LOG_LEVEL for alarm: %d", alarm.getId());
-					level = determineLogLevel(alarm.getSeverity());
-	        		//Send the Syslog message...
-					LogUtils.debugf(this, "Forwarding alarm: %d via syslog to destination: %s", alarm.getId(), dest.getName());
-					instance.log(level, syslogMessage);
-				} catch (Exception e1) {
-					LogUtils.errorf(this, e1, "Caught exception sending to destination: %s", dest.getName());
-				}
+    		Integer count = alarm.getCount();
+    		if (count > 1 && m_destination.isFirstOccurrenceOnly()) {
+    			LogUtils.debugf(this, "Destination %s is configured for new alarm instances only.  Alarm has count of %d.", m_destination.getName(), count);
+    			continue;
+    		}
 
-        	}
-        }
+    		LogUtils.debugf(this, "Creating formatted log message for alarm: %d.", alarm.getId());
 
+    		Map<String, String> mapping = null;
+
+    		String syslogMessage;
+    		int level;
+    		try {
+    			if (alarmMappings != null) {
+    				mapping = alarmMappings.get(alarm.getId());
+    			}
+
+    			if (mapping == null) {
+    				mapping = createMapping(alarmMappings, alarm);
+    			}
+
+    			LogUtils.debugf(this, "Making substitutions for tokens in message format for alarm: %d.", alarm.getId());
+    			syslogMessage = PropertiesUtils.substitute(m_config.getMessageFormat(), mapping);
+
+    			LogUtils.debugf(this, "Determining LOG_LEVEL for alarm: %d", alarm.getId());
+    			level = determineLogLevel(alarm.getSeverity());
+    			
+    			LogUtils.debugf(this, "Forwarding alarm: %d via syslog to destination: %s", alarm.getId(), m_destination.getName());
+    			instance.log(level, syslogMessage);
+    			
+    		} catch (Exception e1) {
+    			LogUtils.errorf(this, e1, "Caught exception sending to destination: %s", m_destination.getName());
+    		}
+    	}
     }
 
