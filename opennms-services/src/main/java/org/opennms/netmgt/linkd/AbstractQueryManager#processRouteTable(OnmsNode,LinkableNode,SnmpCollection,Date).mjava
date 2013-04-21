@@ -1,0 +1,168 @@
+    protected void processRouteTable(final OnmsNode onmsNode, final LinkableNode node, final SnmpCollection snmpcoll, final Date scanTime) {
+        if (LogUtils.isDebugEnabled(this)) {
+            final int routes = snmpcoll.getIpRouteTable().size();
+            if (routes > 0) {
+                LogUtils.debugf(this, "processRouteTable: Starting route table processing for %d/%s", node.getNodeId(), str(node.getSnmpPrimaryIpAddr()));
+                LogUtils.debugf(this, "processRouteTable: processing # %d routing interfaces", routes);
+            } else {
+                LogUtils.debugf(this, "processRouteTable: Zero route table entries for %d/%s", node.getNodeId(), str(node.getSnmpPrimaryIpAddr()));
+            }
+        }
+
+        List<RouterInterface> routeInterfaces = new ArrayList<RouterInterface>();
+
+        for (final SnmpStore ent : snmpcoll.getIpRouteTable()) {
+
+        	IpRouteCollectorEntry route = (IpRouteCollectorEntry) ent;
+         	
+            final InetAddress nexthop = route.getIpRouteNextHop();
+            final InetAddress routedest = route.getIpRouteDest();
+            final InetAddress routemask = route.getIpRouteMask();
+
+            LogUtils.debugf(this, "processRouteTable: processing routedest/routemask/routenexthop %s/%s/%s",str(routedest),str(routemask),str(nexthop));
+
+            if (nexthop == null) {
+                LogUtils.warnf(this, "processRouteTable: next hop not found on node %d. Skipping.", node.getNodeId());
+                continue;
+            } else if (nexthop.isLoopbackAddress()) {
+                LogUtils.infof(this, "processRouteTable: next hop is a loopback address. Skipping.");
+                continue;
+            } else if (InetAddressUtils.str(nexthop).equals("0.0.0.0")) {
+                LogUtils.infof(this, "processRouteTable: next hop is a broadcast address. Skipping.");
+                continue;
+            } else if (nexthop.isMulticastAddress()) {
+                LogUtils.infof(this, "processRouteTable: next hop is a multicast address. Skipping.");
+                continue;
+            } else if (!getLinkd().isInterfaceInPackage(nexthop, snmpcoll.getPackageName())) {
+                LogUtils.infof(this,
+                                "processRouteTable: nexthop address %s is not in package %s. Skipping.",
+                                str(nexthop), snmpcoll.getPackageName());
+                continue;
+            }
+
+            if (routedest == null) {
+                LogUtils.warnf(this, "processRouteTable: route destination not found on node %d. Skipping.", node.getNodeId());
+                continue;
+            }
+
+
+            if (routemask == null) {
+                LogUtils.warnf(this, "processRouteTable: route mask not found on node %d. Skipping.", node.getNodeId());
+                continue;
+            } else if (routemask.getHostAddress().equals("255.255.255.255")) {
+                LogUtils.warnf(this, "processRouteTable: route mask 255.255.255.255 on node %d. Skipping.", node.getNodeId());
+                continue;
+            }
+
+
+            Integer ifindex = route.getIpRouteIfIndex();
+            
+            if (ifindex == null) {
+                LogUtils.warnf(this, "processRouteTable: Invalid ifIndex %d on node %d. Skipping.", ifindex, node.getNodeId());
+                continue;
+            }
+        	
+            final Integer routemetric1 = route.getIpRouteMetric1();
+        	if (routemetric1 == null || routemetric1 < 0) {
+                LogUtils.infof(this, "processRouteTable: Route metric is invalid. Skipping.");
+                continue;
+            } 
+
+            LogUtils.debugf(this, "processRouteTable: parsing routeDest/routeMask/nextHop: %s/%s/%s - ifIndex = %d", str(routedest), str(routemask), str(nexthop), ifindex);
+
+        	int snmpiftype = -2;
+            if (ifindex == 0) {
+    			LogUtils.debugf(this,
+                        "processRouteTable: ifindex is 0. Looking local table to get a valid index.");
+            	for (OnmsIpInterface ip : getIpInterfaceDao().findByNodeId(node.getNodeId())) {
+            		InetAddress ipaddr = ip.getIpAddress();
+            		InetAddress netmask = ip.getSnmpInterface().getNetMask();
+        			LogUtils.debugf(this,
+                            "processRouteTable: parsing ip %s with netmask %s.", str(ipaddr),str(netmask));
+            		InetAddress net1 = Linkd.getNetwork(ip.getIpAddress(), netmask);
+        			LogUtils.debugf(this,
+                            "processRouteTable: found network %s.", str(net1));
+        			
+        			LogUtils.debugf(this,
+                            "processRouteTable: getting network for nexthop %s with netmask %s.", str(nexthop),str(netmask));
+        			InetAddress net2 = Linkd.getNetwork(nexthop, netmask);
+        			LogUtils.debugf(this,
+                            "processRouteTable: found network %s.", str(net2));
+        			
+            		if (str(net1).equals(str(net2))) {
+            			ifindex = (ip.getIfIndex());
+            			LogUtils.debugf(this,
+                            "processRouteTable: ifindex %d found for local ip %s. ",ifindex, str(ip.getIpAddress()));
+            			break;
+            		}
+            	}
+            }
+       	
+            if (ifindex > 0)
+                snmpiftype = getSnmpIfType(node.getNodeId(), ifindex);
+
+            if (snmpiftype <= 0) {
+                LogUtils.warnf(this, "processRouteTable: interface has an invalid ifType (%d).", snmpiftype);
+            }
+            
+            if (getLinkd().forceIpRoutediscoveryOnEthernet(snmpcoll.getPackageName())) {
+                LogUtils.debugf(this,
+                        "processRouteTable: forceIpRoutediscoveryOnEthernet is true, no validation for SNMP interface type");
+            } else {
+                LogUtils.debugf(this,
+                                "processRouteTable: forceIpRoutediscoveryOnEthernet is false, checking SNMP interface type");
+
+                if (snmpiftype == SNMP_IF_TYPE_ETHERNET) {
+                    LogUtils.debugf(this,
+                                    "run: Ethernet interface for nexthop %s. Skipping.", nexthop);
+                    continue;
+                } else if (snmpiftype == SNMP_IF_TYPE_PROP_VIRTUAL) {
+                    LogUtils.debugf(this,
+                                    "run: PropVirtual interface for nodeid %s. Skipping.",
+                                    nexthop);
+                    continue;
+                } else if (snmpiftype == SNMP_IF_TYPE_L2_VLAN) {
+                    LogUtils.debugf(this,
+                                    "run: Layer2 VLAN interface for nodeid %s. Skipping.",
+                                    nexthop);
+                    continue;
+                } else if (snmpiftype == SNMP_IF_TYPE_L3_VLAN) {
+                    LogUtils.debugf(this,
+                                    "run: Layer3 VLAN interface for nodeid %s. Skipping.",
+                                    nexthop);
+                    continue;
+                }
+            }
+            
+            List<RouterInterface> routeIfaces = getRouteInterface(nexthop,ifindex);
+            if (routeIfaces.isEmpty()) {
+                LogUtils.infof(this, "processRouteTable: No node ID found for next hop IP address %s. Not adding the IP route interface to the linkable SNMP node.", str(nexthop));
+                sendNewSuspectEvent(nexthop, snmpcoll.getTarget(), snmpcoll.getPackageName());
+                continue;
+            }
+            for (RouterInterface routeIface: routeIfaces) {
+                if (node.getNodeId() == routeIface.getNextHopNodeid()) {
+                    LogUtils.debugf(this,
+                                    "processRouteTable: node for IP next hop address %s is itself. Skipping.",
+                                    str(nexthop));
+                    continue;
+                }
+ 	            routeInterfaces.add(routeIface);
+            }
+        }
+        node.setRouteInterfaces(routeInterfaces);
+
+        if (getLinkd().saveRouteTable(snmpcoll.getPackageName())) {
+	        for (final SnmpStore ent : snmpcoll.getIpRouteTable()) {
+	        	IpRouteCollectorEntry route = (IpRouteCollectorEntry) ent;
+	            OnmsIpRouteInterface ipRouteInterface = route.getOnmsIpRouteInterface(new OnmsIpRouteInterface());
+	        	LogUtils.debugf(this, "processRouteTable: persisting %s", ipRouteInterface.toString());
+	            ipRouteInterface.setNode(onmsNode);
+	        	ipRouteInterface.setLastPollTime(scanTime);
+	            ipRouteInterface.setStatus(StatusType.ACTIVE);
+	            
+	            saveIpRouteInterface(ipRouteInterface);
+	        }
+        }
+    }
+

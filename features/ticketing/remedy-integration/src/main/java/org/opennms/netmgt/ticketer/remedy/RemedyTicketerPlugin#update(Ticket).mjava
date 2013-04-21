@@ -1,0 +1,41 @@
+    private void update(Ticket ticket) throws PluginException {
+    	
+    	HPD_IncidentInterface_WSPortTypePortType port = getTicketServicePort(m_portname,m_endpoint);
+    	if (port != null) {
+    		try {
+    			GetOutputMap remedy = port.helpDesk_Query_Service(getRemedyInputMap(ticket.getId()), getRemedyAuthenticationHeader());
+    			if (remedy == null) {
+					log().info("update: Remedy: Cannot find incident with incindent_number: " + ticket.getId());
+					return;
+    			}
+    			if (remedy.getStatus().getValue().equals(StatusType._value7)) {
+					log().info("update: Remedy: Ticket Cancelled. Not updating ticket with incindent_number: " + ticket.getId());
+    				return;
+    			}
+    			if (remedy.getStatus().getValue().equals(StatusType._value6)) {
+					log().info("update: Remedy: Ticket Closed. Not updating ticket with incindent_number: " + ticket.getId());
+    				return;
+    			}
+				SetInputMap output = getRemedySetInputMap(ticket,remedy); 
+				
+				// The only things to update are urgency and state
+				log().debug("update: Remedy: found urgency: "+output.getUrgency().getValue() +" - for ticket with incindent_number: " + ticket.getId());
+				output.setUrgency(getUrgency(ticket));
+				
+				log().debug("update: opennms status: "+ticket.getState().toString() +" - for ticket with incindent_number: " + ticket.getId());
+				
+				log().debug("update: Remedy: found status: "+output.getStatus().getValue() +" - for ticket with incindent_number: " + ticket.getId());
+				State outputState = remedyToOpenNMSState(output.getStatus());
+				log().debug("update: Remedy: found opennms status: "+outputState.toString() +" - for ticket with incindent_number: " + ticket.getId());
+				if (! (ticket.getState() == outputState))
+					output = opennmsToRemedyState(output,ticket.getState());
+
+				port.helpDesk_Modify_Service(output , getRemedyAuthenticationHeader());
+			} catch (RemoteException e) {
+				e.printStackTrace();
+				throw new PluginException("Problem creating ticket", e);
+			}
+    	}
+		
+	}
+

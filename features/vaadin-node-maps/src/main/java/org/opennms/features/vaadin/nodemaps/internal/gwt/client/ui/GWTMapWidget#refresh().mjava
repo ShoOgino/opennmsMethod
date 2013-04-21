@@ -1,0 +1,82 @@
+    public void refresh() {
+        if (m_markers == null) {
+            VConsole.log("markers not initialized yet, skipping update");
+            return;
+        }
+        if (m_markerClusterGroup == null) {
+            VConsole.log("marker cluster not initialized yet, skipping update");
+            return;
+        }
+
+        m_markers.refresh();
+
+        VConsole.log("processing " + m_markers.size() + " markers for the node layer");
+        // make the search control refresh with the new markers
+        Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+            @Override public void execute() {
+                m_searchControl.refresh();
+            }
+        });
+
+        // add new markers
+        Scheduler.get().scheduleIncremental(new RepeatingCommand() {
+            final ListIterator<NodeMarker> m_markerIterator = m_markers.listIterator();
+
+            @Override
+            public boolean execute() {
+                if (m_markerIterator.hasNext()) {
+                    final NodeMarker marker = m_markerIterator.next();
+                    if (!m_markerClusterGroup.hasLayer(marker)) {
+                        m_markerClusterGroup.addLayer(marker);
+                    }
+                    return true;
+                }
+
+                VConsole.log("finished adding visible markers");
+
+                return false;
+            }
+
+        });
+
+        // remove disabled markers
+        Scheduler.get().scheduleIncremental(new RepeatingCommand() {
+            final ListIterator<NodeMarker> m_markerIterator = m_markers.getDisabledMarkers().listIterator();
+
+            @Override
+            public boolean execute() {
+                if (m_markerIterator.hasNext()) {
+                    final NodeMarker marker = m_markerIterator.next();
+                    marker.closePopup();
+                    m_markerClusterGroup.removeLayer(marker);
+                    return true;
+                }
+
+                VConsole.log("finished removing filtered markers");
+
+                return false;
+            }
+        });
+
+        // zoom on first run
+        Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+            @Override
+            public void execute() {
+                if (m_firstUpdate) {
+                    final LatLngBounds bounds = new LatLngBounds();
+                    for (final NodeMarker marker : m_markers.getMarkers()) {
+                        bounds.extend(marker.getLatLng());
+                    }
+                    for (final NodeMarker marker : m_markers.getDisabledMarkers()) {
+                        bounds.extend(marker.getLatLng());
+                    }
+                    VConsole.log("first update, zooming to " + bounds.toBBoxString());
+                    m_map.fitBounds(bounds);
+                    m_firstUpdate = false;
+                }
+
+                VConsole.log("finished updating marker cluster layer");
+            }
+        });
+    }
+

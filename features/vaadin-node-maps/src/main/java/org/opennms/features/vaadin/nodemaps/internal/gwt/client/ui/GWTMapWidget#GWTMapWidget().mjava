@@ -1,0 +1,87 @@
+    public GWTMapWidget() {
+        super();
+        m_div = Document.get().createDivElement();
+        m_div.setId("gwt-map");
+        m_div.getStyle().setWidth(100, Unit.PCT);
+        m_div.getStyle().setHeight(100, Unit.PCT);
+        setElement(m_div);
+
+        m_filter = new MarkerFilter() {
+            @Override
+            public boolean matches(final NodeMarker marker) {
+                if (marker.getSeverity() < m_minimumSeverity)
+                    return false;
+                if (m_searchString == null || "".equals(m_searchString))
+                    return true;
+
+                final String searchString = m_searchString.toLowerCase();
+                // VConsole.log("searching: search string = " + searchString);
+
+                // /// handle foo: style search strings for text properties
+                // VConsole.log("checking property:search");
+                for (final String propertyName : marker.getTextPropertyNames()) {
+                    final String lowerPropertyName = propertyName.toLowerCase();
+                    if (searchString.startsWith(lowerPropertyName + ":")) {
+                        final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + ":\\s*", "");
+                        final String propertyValue = marker.getProperty(propertyName);
+                        if (propertyValue != null && propertyValue.toLowerCase().contains(searchStringWithoutPrefix)) {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else if (searchString.startsWith(lowerPropertyName + "=")) {
+                        final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + "=\\s*", "");
+                        final String propertyValue = marker.getProperty(propertyName);
+                        if (propertyValue != null && propertyValue.toLowerCase().equals(searchStringWithoutPrefix)) {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+
+                // /// special case: categories: -> category: search
+                if (searchString.startsWith("category:") || searchString.startsWith("categories:")) {
+                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y):\\s*", "");
+                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
+                    return match != MatchType.NONE;
+                } else if (searchString.startsWith("category=") || searchString.startsWith("categories=")) {
+                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y)=\\s*", "");
+                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
+                    return match == MatchType.EXACT;
+                }
+
+                // /// if no foo: style search strings, first search all text
+                // properties for a match
+                for (final String propertyName : marker.getTextPropertyNames()) {
+                    final String value = marker.getProperty(propertyName);
+                    if (value != null) {
+                        final String propertyValue = value.toLowerCase();
+                        if (propertyValue.contains(searchString)) {
+                            return true;
+                        }
+                    }
+                }
+
+                // /// otherwise, search categories
+                return matchCategories(marker, searchString) != MatchType.NONE;
+            }
+
+            private MatchType matchCategories(final NodeMarker marker, final String searchString) {
+                final JsArrayString categories = marker.getCategories();
+                for (int i = 0; i < categories.length(); i++) {
+                    final String category = categories.get(i).toLowerCase();
+                    if (category.equals(searchString)) {
+                        return MatchType.EXACT;
+                    } else if (category.contains(searchString)) {
+                        return MatchType.SUBSTRING;
+                    }
+                }
+                return MatchType.NONE;
+            }
+
+        };
+        m_markers = new MarkerContainer(m_filter);
+        VConsole.log("GWTMapWidget initialized");
+    }
+

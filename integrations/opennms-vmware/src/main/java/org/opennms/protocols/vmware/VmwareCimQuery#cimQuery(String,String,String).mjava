@@ -1,0 +1,111 @@
+    private static void cimQuery(String hostname, String username, String password) {
+
+        System.out.print("Trying to connect to " + hostname + "... ");
+
+        VmwareViJavaAccess vmwareViJavaAccess = new VmwareViJavaAccess(hostname, username, password);
+
+        try {
+            vmwareViJavaAccess.connect();
+        } catch (MalformedURLException e) {
+            System.out.println("Exception:");
+            e.printStackTrace();
+            return;
+        } catch (RemoteException e) {
+            System.out.println("Exception:");
+            e.printStackTrace();
+            return;
+        }
+
+        System.out.println("Success!");
+
+        ManagedEntity[] hostSystems;
+
+        System.out.print(" Querying " + hostname + " for host systems... ");
+
+        try {
+            hostSystems = vmwareViJavaAccess.searchManagedEntities("HostSystem");
+        } catch (RemoteException remoteException) {
+            remoteException.printStackTrace();
+            vmwareViJavaAccess.disconnect();
+            return;
+        }
+
+        if (hostSystems != null) {
+            System.out.println(hostSystems.length + " host system(s) found!");
+
+            for (ManagedEntity managedEntity : hostSystems) {
+                HostSystem hostSystem = (HostSystem) managedEntity;
+
+                if (hostSystem.getSummary() != null) {
+                    if (hostSystem.getRuntime() != null) {
+                        String powerState = hostSystem.getRuntime().getPowerState().toString();
+
+                        if (!"poweredOn".equals(powerState)) {
+                            System.out.println("  Ignoring host system " + hostSystem.getName() + " (powerState=" + powerState + ")... ");
+                            continue;
+                        } else {
+                            System.out.print("  Determining primary Ip address of host system " + hostSystem.getName() + " (powerState=" + powerState + ")... ");
+                        }
+                    } else {
+                        System.out.println("  Ignoring host system " + hostSystem.getName() + " (powerState=unknown)... ");
+                        continue;
+                    }
+                } else {
+                    System.out.println("  Ignoring host system " + hostSystem.getName() + " (powerState=unknown)... ");
+                    continue;
+                }
+
+                String ipAddress;
+
+                try {
+                    ipAddress = vmwareViJavaAccess.getPrimaryHostSystemIpAddress(hostSystem);
+                } catch (RemoteException remoteException) {
+                    System.out.println("Exception:");
+                    remoteException.printStackTrace();
+                    continue;
+                }
+
+                if (ipAddress != null) {
+                    System.out.print(ipAddress + "\n  Querying host system " + hostSystem.getName() + " for numeric sensors... ");
+
+                    List<CIMObject> cimObjects;
+
+                    try {
+                        cimObjects = vmwareViJavaAccess.queryCimObjects(hostSystem, "CIM_NumericSensor");
+                    } catch (RemoteException remoteException) {
+                        System.out.println("Exception:");
+                        remoteException.printStackTrace();
+                        continue;
+                    }
+
+                    if (cimObjects != null) {
+                        System.out.println(cimObjects.size() + " sensor(s) found!");
+                        for (CIMObject cimObject : cimObjects) {
+                            String healthState = vmwareViJavaAccess.getPropertyOfCimObject(cimObject, "HealthState");
+                            String cimObjectName = vmwareViJavaAccess.getPropertyOfCimObject(cimObject, "Name");
+                            System.out.print("   " + cimObjectName);
+
+                            if (healthState != null) {
+                                System.out.println(" " + m_healthStates.get(Integer.valueOf(healthState)));
+                            } else {
+                                System.out.println();
+                            }
+                        }
+                    } else {
+                        System.out.println("NULL - aborting...");
+                        continue;
+                    }
+                } else {
+                    System.out.println("NULL - aborting...");
+                    continue;
+                }
+            }
+        } else {
+            System.out.println("NULL - aborting...");
+        }
+
+        System.out.println("Cleaning up...");
+
+        vmwareViJavaAccess.disconnect();
+    }
+
