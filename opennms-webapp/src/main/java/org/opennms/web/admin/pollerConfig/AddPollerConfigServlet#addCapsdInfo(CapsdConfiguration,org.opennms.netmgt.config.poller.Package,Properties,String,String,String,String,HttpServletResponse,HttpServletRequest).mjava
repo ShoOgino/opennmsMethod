@@ -10,40 +10,24 @@
      * @throws javax.servlet.ServletException if any.
      * @throws java.io.IOException if any.
      */
-    @SuppressWarnings("null")
-    public void addCapsdInfo(String name, String port, String user, String protocol, HttpServletResponse response, HttpServletRequest request) throws ServletException, IOException {
+    private boolean addCapsdInfo(CapsdConfiguration capsdConfig, org.opennms.netmgt.config.poller.Package pkg, Properties props, String name, String port, String user, String protocol, HttpServletResponse response, HttpServletRequest request) throws ServletException, IOException {
         // Check to see if the name is duplicate of the already specified names
         // first.
-        Collection<ProtocolPlugin> tmpCapsd = getProtocolPlugins();
-        Iterator<ProtocolPlugin> iter = tmpCapsd.iterator();
-        Service pollersvc = null;
-        while (iter.hasNext()) {
-            ProtocolPlugin svc = iter.next();
+        for (ProtocolPlugin svc : capsdConfig.getProtocolPluginCollection()) {
             if (svc.getProtocol().equals(name)) {
                 // delete from the poller configuration.
-                Collection<Service> tmpPollers = getServicesForPackage();
-                Iterator<Service> polleriter = tmpPollers.iterator();
-                boolean removePoller = false;
-                while (polleriter.hasNext()) {
-                    pollersvc = polleriter.next();
+                for (Service pollersvc : pkg.getServiceCollection()) {
                     if (pollersvc.getName().equals(name)) {
-                        removePoller = true;
+                        Collection<Service> tmpPoller = pkg.getServiceCollection();
+                        if (tmpPoller.contains(pollersvc) && pollersvc.getName().equals(name)) {
+                            tmpPoller.remove(pollersvc);
+                            response.sendRedirect(Util.calculateUrlBase(request, "/admin/error.jsp?error=1&name=" + name));
+                            return false;
+                        }
                         break;
                     }
                 }
-                
-                if (removePoller) {
-                    Collection<Service> tmpPoller = getServicesForPackage();
-                    if (tmpPoller.contains(pollersvc) && pollersvc.getName().equals(name)) {
-                        errorflag = true;
-                        tmpPoller.remove(pollersvc);
-                        response.sendRedirect(Util.calculateUrlBase(request, "/admin/error.jsp?error=1&name=" + name));
-                        return;
-                    }
-                }
                 break;
-                // throw new ServletException ("ProtocolPlugin name " + name + "
-                // is already defined.. Try assigning another unique name");
             }
         }
         ProtocolPlugin pluginAdd = new ProtocolPlugin();
@@ -53,6 +37,8 @@
             pluginAdd.setClassName(className);
             pluginAdd.setScan("on");
             pluginAdd.setUserDefined("true");
+
+            // Set banner property
             org.opennms.netmgt.config.capsd.Property newprop = new org.opennms.netmgt.config.capsd.Property();
             String banner = "*";
             if (props.get("banner") != null) {
@@ -62,6 +48,7 @@
             newprop.setKey("banner");
             pluginAdd.addProperty(newprop);
 
+            // Add port(s) property
             newprop = new org.opennms.netmgt.config.capsd.Property();
             if (port != null && !port.equals("")) {
                 newprop.setValue(port);
@@ -73,10 +60,8 @@
                 pluginAdd.addProperty(newprop);
             } else {
                 if (props.get("service." + protocol + ".port") == null || ((String) props.get("service." + protocol + ".port")).equals("")) {
-                    errorflag = true;
                     response.sendRedirect(Util.calculateUrlBase(request, "admin/error.jsp?error=0&name=" + "service." + protocol + ".port"));
-                    pluginAdd = null;
-                    return;
+                    return false;
                 } else {
                     port = (String) props.get("service." + protocol + ".port");
                     newprop.setValue(port);
@@ -88,6 +73,8 @@
                     pluginAdd.addProperty(newprop);
                 }
             }
+
+            // Add timeout property
             newprop = new org.opennms.netmgt.config.capsd.Property();
             String timeout = "3000";
             if (props.get("timeout") != null) {
@@ -95,10 +82,9 @@
             }
             newprop.setValue(timeout);
             newprop.setKey("timeout");
-            if (pluginAdd != null) {
-                pluginAdd.addProperty(newprop);
-            }
+            pluginAdd.addProperty(newprop);
 
+            // Add retry property
             newprop = new org.opennms.netmgt.config.capsd.Property();
             String retry = "3";
             if (props.get("retry") != null) {
@@ -106,17 +92,16 @@
             }
             newprop.setValue(retry);
             newprop.setKey("retry");
-            if (pluginAdd != null) {
-                pluginAdd.addProperty(newprop);
-                capsdProtocols.put(name, pluginAdd);
-                pluginColl = capsdProtocols.values();
-                capsdColl.add(pluginAdd);
-                capsdConfig.addProtocolPlugin(pluginAdd);
-            }
+            pluginAdd.addProperty(newprop);
+
+            // Add the plugin to the capsdConfig
+            capsdConfig.addProtocolPlugin(pluginAdd);
+
+            // Everything worked, return true
+            return true;
         } else {
-            errorflag = true;
             response.sendRedirect(Util.calculateUrlBase(request, "admin/error.jsp?error=0&name=" + "service." + protocol + ".capsd-class"));
-            return;
+            return false;
         }
     }
 
