@@ -1,0 +1,42 @@
+    @Test
+    public void multipleSnapshotTest() throws URISyntaxException, InterruptedException {
+        Requisition pendingReq = createRequisition();
+        m_pending.save(pendingReq);
+        m_pending.flush();
+        final String foreignSource = pendingReq.getForeignSource();
+        pendingReq = m_pending.getRequisition(foreignSource);
+        final File pendingSnapshotA = RequisitionFileUtils.createSnapshot(m_pending, foreignSource, pendingReq.getDate());
+
+        // Now, start a new pending update after the original snapshot is "in progress"
+        pendingReq.updateDateStamp();
+        m_pending.save(pendingReq);
+        m_pending.flush();
+
+        final File pendingSnapshotB = RequisitionFileUtils.createSnapshot(m_pending, foreignSource, pendingReq.getDate());
+
+        // "import" the A snapshot
+        m_repository.importResourceRequisition(new FileSystemResource(pendingSnapshotA));
+
+        assertFalse(pendingSnapshotA.exists());
+        assertTrue(pendingSnapshotB.exists());
+
+        // since there's still a newer snapshot in-progress, the pending test.xml should not have been deleted yet
+        URL pendingUrl = m_pending.getRequisitionURL(foreignSource);
+        assertNotNull(pendingUrl);
+        assertTrue(new File(pendingUrl.toURI()).exists());
+
+        // then, "import" the B snapshot
+        final Requisition bReq = m_repository.importResourceRequisition(new FileSystemResource(pendingSnapshotB));
+        
+        assertFalse(pendingSnapshotA.exists());
+        assertFalse(pendingSnapshotB.exists());
+
+        // now the pending test.xml should be gone
+        pendingUrl = m_pending.getRequisitionURL(foreignSource);
+        assertNull(pendingUrl);
+        
+        // the last (B) pending import should match the deployed
+        final Requisition deployedRequisition = m_active.getRequisition(foreignSource);
+        assertEquals(deployedRequisition.getDate().getTime(), bReq.getDate().getTime());
+    }
+
