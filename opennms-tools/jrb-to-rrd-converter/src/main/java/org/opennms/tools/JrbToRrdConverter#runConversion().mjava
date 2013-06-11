@@ -1,0 +1,76 @@
+    /**
+     * Run the conversion. Initialize a monitoring thread and calculate how many JRobin
+     * files are converted per second.
+     */
+    private void runConversion() {
+        // Check if the rrdtool binary is available
+        if (!(new File(m_rrdTool)).isFile()) {
+            System.err.println("rrdtool '" + m_rrdTool + "' not found!");
+            System.exit(1);
+
+            // rrdtool binary not available, exit with error
+        }
+
+        System.out.println("Using rrdtool '" + m_rrdTool + "'...");
+
+        System.out.print("Setting up " + m_threadCount + " converter thread(s)...");
+
+        // Initialize array with given amount of threads
+        m_threads = new JrbToXml[m_threadCount];
+
+        // Start each thread
+        for (int i = 0; i < m_threadCount; i++) {
+            m_threads[i] = new JrbToXml(this);
+            m_threads[i].start();
+        }
+
+        System.out.print(" done!\nSetting up status thread running every " + m_statusThreadSleep + " ms...");
+
+        // Initialize monitoring thread
+        Thread monitoringThread = new Thread(new Runnable() {
+            public void run() {
+                // Run as long we build the files or we have files to convert
+                while (!m_searchDone || m_fileCount > m_filesConverted) {
+                    try {
+                        Thread.sleep(m_statusThreadSleep);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    // Calculate statistics
+                    int convertedPerSecond = (m_filesConverted - m_oldFilesConverted);
+
+                    // reset for next calculation cycle
+                    m_oldFilesConverted = m_filesConverted;
+
+                    // print statistics
+                    System.out.print("search=" + (m_searchDone ? "finished" : "running") + ", found=" + m_fileCount + ", skipped=" + m_skippedFiles + ", queued=" + (m_fileCount - m_oldFilesConverted) + ", converted=" + m_oldFilesConverted);
+
+                    for (int i = 0; i < m_threadCount; i++) {
+                        System.out.print(", #" + i + "=" + m_threads[i].size());
+                    }
+
+                    System.out.println(", delta=" + convertedPerSecond);
+                }
+
+                // All files converted
+                System.out.println("Finished!\n");
+            }
+        });
+
+        // Start monitoring thread
+        monitoringThread.start();
+
+        System.out.println(" done!\nSearching path is '" + m_path + "'");
+
+        // Search recursive in given path for JRB files to convert.
+        search(m_path);
+
+        m_searchDone = true;
+
+        // Close queue for each thread
+        for (int i = 0; i < m_threadCount; i++) {
+            m_threads[i].close();
+        }
+    }
+
