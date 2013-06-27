@@ -5,7 +5,7 @@
      * @param managedEntity the managed entity
      * @return the generated requisition node
      */
-    private RequisitionNode createRequisitionNode(Set<String> ipAddresses, ManagedEntity managedEntity, int apiVersion) {
+    private RequisitionNode createRequisitionNode(Set<String> ipAddresses, ManagedEntity managedEntity, int apiVersion, VmwareViJavaAccess vmwareViJavaAccess) {
         RequisitionNode requisitionNode = new RequisitionNode();
 
         // Setting the node label
@@ -22,51 +22,104 @@
          * requisitionNode.setForeignId(m_hostname + "/" + managedEntity.getMOR().getVal());
          */
 
-        boolean primary = true;
+        if (managedEntity instanceof VirtualMachine) {
+            boolean firstInterface = true;
 
-        // add all given interfaces
-        for (String ipAddress : ipAddresses) {
+            // add all given interfaces
+            for (String ipAddress : ipAddresses) {
 
-            try {
-                InetAddress inetAddress = InetAddress.getByName(ipAddress);
+                try {
+                    InetAddress inetAddress = InetAddress.getByName(ipAddress);
 
-                if (!inetAddress.isLoopbackAddress()) {
-                    RequisitionInterface requisitionInterface = new RequisitionInterface();
-                    requisitionInterface.setIpAddr(ipAddress);
+                    if (!inetAddress.isLoopbackAddress()) {
+                        RequisitionInterface requisitionInterface = new RequisitionInterface();
+                        requisitionInterface.setIpAddr(ipAddress);
 
-                    //  the first one will be primary
-                    if (primary) {
-                        requisitionInterface.setSnmpPrimary(PrimaryType.PRIMARY);
+                        //  the first one will be primary
+                        if (firstInterface) {
+                            requisitionInterface.setSnmpPrimary(PrimaryType.PRIMARY);
 
-                        if (managedEntity instanceof HostSystem) {
-                            for (String service : m_hostSystemServices) {
+                            for (String service : m_virtualMachineServices) {
                                 requisitionInterface.insertMonitoredService(new RequisitionMonitoredService(service.trim()));
                             }
-                        } else {
-                            if (managedEntity instanceof VirtualMachine) {
-                                for (String service : m_virtualMachineServices) {
-                                    requisitionInterface.insertMonitoredService(new RequisitionMonitoredService(service.trim()));
-                                }
-                            } else {
-                                logger.error("Undefined type of managedEntity '{}'", managedEntity.getMOR().getType());
 
-                                return null;
-                            }
+                            firstInterface = false;
+                        } else {
+                            requisitionInterface.setSnmpPrimary(PrimaryType.SECONDARY);
                         }
 
-                        primary = false;
-                    } else {
-                        requisitionInterface.setSnmpPrimary(PrimaryType.SECONDARY);
+                        requisitionInterface.setManaged(Boolean.TRUE);
+                        requisitionInterface.setStatus(Integer.valueOf(1));
+                        requisitionNode.putInterface(requisitionInterface);
                     }
+                } catch (UnknownHostException unknownHostException) {
+                    logger.warn("Invalid IP address '{}'", unknownHostException.getMessage());
+                }
+            }
+        } else {
+            if (managedEntity instanceof HostSystem) {
+                boolean reachableInterfaceFound = false, firstInterface = true;
+                List<RequisitionInterface> requisitionInterfaceList = new ArrayList<RequisitionInterface>();
+                RequisitionInterface primaryInterfaceCandidate = null;
 
-                    requisitionInterface.setManaged(Boolean.TRUE);
-                    requisitionInterface.setStatus(Integer.valueOf(1));
+                // add all given interfaces
+                for (String ipAddress : ipAddresses) {
+
+                    try {
+                        InetAddress inetAddress = InetAddress.getByName(ipAddress);
+
+                        if (!inetAddress.isLoopbackAddress()) {
+                            RequisitionInterface requisitionInterface = new RequisitionInterface();
+                            requisitionInterface.setIpAddr(ipAddress);
+
+                            if (firstInterface) {
+                                primaryInterfaceCandidate = requisitionInterface;
+                                firstInterface = false;
+                            }
+
+                            if (!reachableInterfaceFound && reachableCimService(vmwareViJavaAccess, (HostSystem) managedEntity, ipAddress)) {
+                                primaryInterfaceCandidate = requisitionInterface;
+                                reachableInterfaceFound = true;
+                            }
+
+                            requisitionInterface.setManaged(Boolean.TRUE);
+                            requisitionInterface.setStatus(Integer.valueOf(1));
+                            requisitionInterface.setSnmpPrimary(PrimaryType.SECONDARY);
+                            requisitionInterfaceList.add(requisitionInterface);
+                        }
+
+                    } catch (UnknownHostException unknownHostException) {
+                        logger.warn("Invalid IP address '{}'", unknownHostException.getMessage());
+                    }
+                }
+
+                if (primaryInterfaceCandidate != null) {
+                    if (reachableInterfaceFound) {
+                        logger.warn("Found reachable primary interface '{}'", primaryInterfaceCandidate.getIpAddr());
+                    } else {
+                        logger.warn("Only non-reachable interfaces found, using first one for primary interface '{}'", primaryInterfaceCandidate.getIpAddr());
+                    }
+                    primaryInterfaceCandidate.setSnmpPrimary(PrimaryType.PRIMARY);
+
+                    for (String service : m_hostSystemServices) {
+                        if (reachableInterfaceFound || !"VMwareCim-HostSystem".equals(service)) {
+                            primaryInterfaceCandidate.insertMonitoredService(new RequisitionMonitoredService(service.trim()));
+                        }
+                    }
+                } else {
+                    logger.warn("No primary interface found");
+                }
+
+                for (RequisitionInterface requisitionInterface : requisitionInterfaceList) {
                     requisitionNode.putInterface(requisitionInterface);
                 }
-            } catch (UnknownHostException unknownHostException) {
-                logger.warn("Invalid IP address '{}'", unknownHostException.getMessage());
+
+            } else {
+                logger.error("Undefined type of managedEntity '{}'", managedEntity.getMOR().getType());
+                return null;
             }
         }
+
         /*
          * For now we use displaycategory, notifycategory and pollercategory for storing
          * the vcenter Ip address, the username and the password
