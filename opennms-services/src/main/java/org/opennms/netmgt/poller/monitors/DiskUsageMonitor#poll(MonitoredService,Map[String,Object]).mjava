@@ -22,7 +22,7 @@
         SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(ipaddr);
         if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
         final String hostAddress = InetAddressUtils.str(ipaddr);
-		log().debug("poll: setting SNMP peer attribute for interface " + hostAddress);
+		LOG.debug("poll: setting SNMP peer attribute for interface {}", hostAddress);
         
         agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout()));
         agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters, "retry", ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries())));
@@ -44,17 +44,15 @@
             throw new RuntimeException("Unknown value '" + matchTypeStr + "' for parameter 'match-type'");
         }
         
-        log().debug("diskName=" + diskName);
-        log().debug("percentfree=" + percentFree);
-        log().debug("matchType=" + matchTypeStr);
+        LOG.debug("diskName=", diskName);
+        LOG.debug("percentfree=", percentFree);
+        LOG.debug("matchType=", matchTypeStr);
         
-        if (log().isDebugEnabled()) log().debug("poll: service= SNMP address= " + agentConfig);
+        LOG.debug("poll: service= SNMP address= {}", agentConfig);
 
         
         try {
-            if (log().isDebugEnabled()) {
-                log().debug("DiskUsageMonitor.poll: SnmpAgentConfig address: " +agentConfig);
-            }
+            LOG.debug("DiskUsageMonitor.poll: SnmpAgentConfig address: {}", agentConfig);
             SnmpObjId hrStorageDescrSnmpObject = SnmpObjId.get(hrStorageDescr);
             
             
@@ -62,15 +60,15 @@
             Map<SnmpInstId, SnmpValue> flagResults = SnmpUtils.getOidValues(agentConfig, "DiskUsagePoller", hrStorageDescrSnmpObject);
             
             if(flagResults.size() == 0) {
-                log().debug("SNMP poll failed: no results, addr=" + hostAddress + " oid=" + hrStorageDescrSnmpObject);
+                LOG.debug("SNMP poll failed: no results, addr=" + hostAddress + " oid=" + hrStorageDescrSnmpObject);
                 return PollStatus.unavailable();
             }
 
             for (Map.Entry<SnmpInstId, SnmpValue> e : flagResults.entrySet()) { 
-                log().debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + hrStorageDescrSnmpObject + " instance=" + e.getKey() + " value=" + e.getValue());
+                LOG.debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + hrStorageDescrSnmpObject + " instance=" + e.getKey() + " value=" + e.getValue());
                 
                 if (isMatch(e.getValue().toString(), diskName, matchType)) {
-                	log().debug("DiskUsageMonitor.poll: found disk=" + diskName);
+			LOG.debug("DiskUsageMonitor.poll: found disk=", diskName);
                 	
                 	SnmpObjId hrStorageSizeSnmpObject = SnmpObjId.get(hrStorageSize + "." + e.getKey().toString());
                 	SnmpObjId hrStorageUsedSnmpObject = SnmpObjId.get(hrStorageUsed + "." + e.getKey().toString());
@@ -80,7 +78,7 @@
                 	SnmpValue snmpUsed = SnmpUtils.get(agentConfig, hrStorageUsedSnmpObject);
                 	float calculatedPercentage = ( (( (float)snmpSize.toLong() - (float)snmpUsed.toLong() ) / (float)snmpSize.toLong() ) ) * 100;
                 
-                	log().debug("DiskUsageMonitor: calculatedPercentage=" + calculatedPercentage + " percentFree="+percentFree);
+                	LOG.debug("DiskUsageMonitor: calculatedPercentage=" + calculatedPercentage + " percentFree="+percentFree);
                 	
                 	if (calculatedPercentage < percentFree) {
                 	
@@ -96,16 +94,22 @@
             }
 
             // if we get here.. it means we did not find the disk...  which means we should not be monitoring it.
-            log().debug("DiskUsageMonitor: no disks found");
+            LOG.debug("DiskUsageMonitor: no disks found");
             return PollStatus.unavailable("could not find " + diskName + "in table");
             
             
         } catch (NumberFormatException e) {
-            status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
+            String reason = "Number operator used on a non-number " + e.getMessage();
+            LOG.debug(reason);
+            status = PollStatus.unavailable(reason);
         } catch (IllegalArgumentException e) {
-            status = logDown(Level.ERROR, "Invalid SNMP Criteria: " + e.getMessage());
+            String reason = "Invalid SNMP Criteria: " + e.getMessage();
+            LOG.debug(reason);
+            status = PollStatus.unavailable(reason);
         } catch (Throwable t) {
-            status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + hostAddress, t);
+            String reason = "Unexpected exception during SNMP poll of interface " + hostAddress;
+            LOG.debug(reason, t);
+            status = PollStatus.unavailable(reason);
         }
 
         return status;

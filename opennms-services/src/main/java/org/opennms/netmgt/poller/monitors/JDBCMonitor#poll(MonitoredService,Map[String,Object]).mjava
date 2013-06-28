@@ -31,7 +31,7 @@
 		ResultSet resultset = null;
 
 		if (iface.getType() != NetworkInterface.TYPE_INET) {
-			log().error("Unsupported interface type, only TYPE_INET currently supported");
+			LOG.error("Unsupported interface type, only TYPE_INET currently supported");
 			throw new NetworkInterfaceNotSupportedException(getClass().getName() + ": Unsupported interface type, only TYPE_INET currently supported");
 		}
 
@@ -41,16 +41,18 @@
 		try {
 			String driverClass = ParameterMap.getKeyedString(parameters, "driver", DBTools.DEFAULT_JDBC_DRIVER);
 			driver = (Driver)Class.forName(driverClass).newInstance();
-			log().debug("Loaded JDBC driver: " + driverClass);
+			LOG.debug("Loaded JDBC driver: {}", driverClass);
 		} catch (Throwable exp) {
 			throw new RuntimeException("Unable to load driver class: "+exp.toString(), exp);
 		}
+
+		LOG.info("Loaded JDBC driver");
 
 		// Get the JDBC url host part
 		InetAddress ipv4Addr = (InetAddress) iface.getAddress();
 		String url = null;
 		url = DBTools.constructUrl(ParameterMap.getKeyedString(parameters, "url", DBTools.DEFAULT_URL), ipv4Addr.getCanonicalHostName());
-		log().debug("JDBC url: " + url);
+		LOG.debug("JDBC url: {}", url);
 		
 		TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
 
@@ -71,7 +73,7 @@
 				status = PollStatus.unresponsive();
 
 				if (con != null) {
-					log().debug("JDBC Connection Established");
+					LOG.debug("JDBC Connection Established");
 
 					tracker.startAttempt();
 
@@ -81,15 +83,17 @@
 						double responseTime = tracker.elapsedTimeInMillis();
 						status = PollStatus.available(responseTime);
 
-						log().debug("JDBC service is AVAILABLE on: " + ipv4Addr.getCanonicalHostName());
-						log().debug("poll: responseTime= " + responseTime + "ms");
+						LOG.debug("JDBC service is AVAILABLE on: {}", ipv4Addr.getCanonicalHostName());
+						LOG.debug("poll: responseTime= " + responseTime + "ms");
 
 						break;
 					}
 				} // end if con
 			} catch (SQLException sqlEx) {
 				
-				status = logDown(Level.INFO, "JDBC service is not responding on: " + ipv4Addr.getCanonicalHostName() + ", " + sqlEx.getSQLState() + ", " + sqlEx.toString(), sqlEx);
+				String reason = "JDBC service is not responding on: " + ipv4Addr.getCanonicalHostName() + ", " + sqlEx.getSQLState() + ", " + sqlEx.toString();
+                LOG.debug(reason, sqlEx);
+                status = PollStatus.unavailable(reason);
 
 			} finally {
 				closeResultSet(resultset);

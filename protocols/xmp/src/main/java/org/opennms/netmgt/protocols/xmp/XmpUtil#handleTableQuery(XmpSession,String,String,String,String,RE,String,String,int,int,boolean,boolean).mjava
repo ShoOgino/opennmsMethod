@@ -1,0 +1,86 @@
+    /**
+     * <p>handleTableQuery</p>
+     *
+     * @param session a {@link org.krupczak.xmp.XmpSession} object.
+     * @param mib a {@link java.lang.String} object.
+     * @param table a {@link java.lang.String} object.
+     * @param object a {@link java.lang.String} object.
+     * @param instance a {@link java.lang.String} object.
+     * @param instanceRegex a {@link org.apache.regexp.RE} object.
+     * @param valueOperator a {@link java.lang.String} object.
+     * @param valueOperand a {@link java.lang.String} object.
+     * @param minMatches a int.
+     * @param maxMatches a int.
+     * @param maxMatchesUnbounded a boolean.
+     * @param caseSensitive a boolean.
+     * @return a boolean.
+     * @throws org.opennms.netmgt.protocols.xmp.XmpUtilException if any.
+     */
+    public static boolean handleTableQuery(XmpSession session, String mib,
+            String table, String object, String instance, RE instanceRegex, 
+            String valueOperator, String valueOperand, int minMatches,
+            int maxMatches, boolean maxMatchesUnbounded,
+            boolean caseSensitive) throws XmpUtilException {
+        XmpMessage reply;
+        String[] tableInfo = new String[3];
+        XmpVar[] queryVars = new XmpVar[1];
+        XmpVar[] replyVars;
+        int numMatches = 0;
+        
+        queryVars[0] = new XmpVar(mib, object, Xmp.SYNTAX_NULLSYNTAX);
+        
+        tableInfo[0] = mib;
+        tableInfo[1] = object;
+        tableInfo[2] = instance;
+        reply = session.queryTableVars(tableInfo, 0, queryVars);
+        
+        if (reply == null) {
+            LOG.warn("handleTableQuery: query for object " + object + " from MIB " + mib + " failed, " + Xmp.errorStatusToString(session.getErrorStatus()));
+            throw new XmpUtilException("XMP query failed (MIB " + mib + ", object " + object + "): " + Xmp.errorStatusToString(session.getErrorStatus()));
+        }
+        
+        replyVars = reply.getMIBVars();
+        LOG.debug("handleTableQuery: Got reply with " + replyVars.length + " variables");
+        
+        
+        /* Since we're constrained to a single object, we know that there's
+         * exactly one column in the result set and so can use a Java 5
+         * for() loop. If there were multiple columns, we'd have to break the
+         * flat array into a two-dimensional matrix using a pair of old-style
+         * for() loops.
+         */
+        for (XmpVar thisVar : replyVars) {
+            String rowInstance = thisVar.getKey();
+            if ((instanceRegex != null) && (!instanceRegex.match(rowInstance))) {
+                
+            	LOG.debug("handleTableQuery: instance {} does not match, skipping this row.", rowInstance);
+                
+                continue;  // to next var
+            } else if (instanceRegex == null) {
+            	LOG.debug("handleTableQuery: instance match not specified, evaluating value of instance {}", rowInstance);
+            } else {
+                    LOG.debug("handleTableQuery: instance {} matches, evaluating value", rowInstance);
+            }
+            if (valueMeetsCriteria(thisVar, valueOperator, valueOperand, caseSensitive)) {
+                numMatches++;
+            }
+        }
+        
+        if (numMatches >= minMatches) {
+                LOG.debug("handleTableQuery: Found {} matches, meets specified minimum of {}", numMatches, minMatches);
+            if (maxMatchesUnbounded) {
+                    LOG.debug("handleTableQuery: Maximum matches unbounded, returning true");
+                return true;
+            } else if (numMatches <= maxMatches) {
+                    LOG.debug("handleTableQuery: Found {} matches, meets specified maximum of {}, returning true", numMatches, maxMatches);
+                return true;
+            } else {
+                    LOG.debug("handleTableQuery: Found {} matches, exceeds specified maximum of {}, returning false", numMatches, maxMatches);
+                throw new XmpUtilException("Found too many value matches (" + numMatches + " > " + maxMatches + ") for condition " + mib + "." + object + " " + valueOperator + " " + valueOperand);
+            }
+        } else {
+                LOG.debug("Found only {} matches, too few to meet specified minimum of {}", numMatches, minMatches);
+            throw new XmpUtilException("Found too few value matches (" + numMatches + " < " + minMatches + ") for condition " + mib + "." + object + " " + valueOperator + " " + valueOperand);
+        }
+    }
+

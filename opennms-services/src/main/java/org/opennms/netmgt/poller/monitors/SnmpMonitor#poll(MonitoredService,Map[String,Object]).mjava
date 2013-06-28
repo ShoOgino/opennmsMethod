@@ -20,7 +20,7 @@
         SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(ipaddr);
         if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
         final String hostAddress = InetAddressUtils.str(ipaddr);
-		log().debug("poll: setting SNMP peer attribute for interface " + hostAddress);
+		LOG.debug("poll: setting SNMP peer attribute for interface {}", hostAddress);
 
         // Get configuration parameters
         //
@@ -57,14 +57,12 @@
         svcParams.setProperty("port", String.valueOf(agentConfig.getPort()));
         svcParams.setProperty("hex", hexstr);
 
-        if (log().isDebugEnabled()) log().debug("poll: service= SNMP address= " + agentConfig);
+        LOG.debug("poll: service= SNMP address= {}", agentConfig);
 
         // Establish SNMP session with interface
         //
         try {
-            if (log().isDebugEnabled()) {
-                log().debug("SnmpMonitor.poll: SnmpAgentConfig address: " +agentConfig);
-            }
+            LOG.debug("SnmpMonitor.poll: SnmpAgentConfig address: {}", agentConfig);
             SnmpObjId snmpObjectId = SnmpObjId.get(oid);
 
             // This if block will count the number of matches within a walk and mark the service
@@ -79,18 +77,20 @@
                 for(SnmpValue result : results) {
 
                     if (result != null) {
-                        log().debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
+                        LOG.debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
                         if (meetsCriteria(result, operator, operand)) {
                             matchCount++;
                         }
                     }
                 }
                 svcParams.setProperty("matchCount", String.valueOf(matchCount));
-                log().debug("poll: SNMPwalk count succeeded, total=" + matchCount + " min=" + countMin + " max=" + countMax);
+                LOG.debug("poll: SNMPwalk count succeeded, total=" + matchCount + " min=" + countMin + " max=" + countMax);
                 if ((countMin <= matchCount) && (matchCount <= countMax)) {
                     status = PollStatus.available();
                 } else {
-                    status = logDown(Level.DEBUG, PropertiesUtils.substitute(reasonTemplate, svcParams));
+                    String reason = PropertiesUtils.substitute(reasonTemplate, svcParams);
+                    LOG.debug(reason);
+                    status = PollStatus.unavailable(reason);
                     return status;
                 }
             } else if ("true".equals(walkstr)) {
@@ -101,14 +101,16 @@
                 for(SnmpValue result : results) {
                     if (result != null) {
                         svcParams.setProperty("observedValue", getStringValue(result));
-                        log().debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
+                        LOG.debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
                         if (meetsCriteria(result, operator, operand)) {
                             status = PollStatus.available();
                             if ("false".equals(matchstr)) {
                                 return status;
                             }
                         } else if ("true".equals(matchstr)) {
-                            status = logDown(Level.DEBUG, PropertiesUtils.substitute(reasonTemplate, svcParams));
+                            String reason = PropertiesUtils.substitute(reasonTemplate, svcParams);
+                            LOG.debug(reason);
+                            status = PollStatus.unavailable(reason);
                             return status;
                         }
                     }
@@ -127,7 +129,7 @@
 
                 if (result != null) {
                     svcParams.setProperty("observedValue", getStringValue(result));
-                    log().debug("poll: SNMP poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
+                    LOG.debug("poll: SNMP poll succeeded, addr=" + hostAddress + " oid=" + oid + " value=" + result);
                     
                     if (meetsCriteria(result, operator, operand)) {
                         status = PollStatus.available();
@@ -135,16 +137,24 @@
                         status = PollStatus.unavailable(PropertiesUtils.substitute(reasonTemplate, svcParams));
                     }
                 } else {
-                    status = logDown(Level.DEBUG, "SNMP poll failed, addr=" + hostAddress + " oid=" + oid);
+                    String reason = "SNMP poll failed, addr=" + hostAddress + " oid=" + oid;
+                    LOG.debug(reason);
+                    status = PollStatus.unavailable(reason);
                 }
             }
 
         } catch (NumberFormatException e) {
-            status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
+            String reason = "Number operator used on a non-number " + e.getMessage();
+            LOG.debug(reason);
+            status = PollStatus.unavailable(reason);
         } catch (IllegalArgumentException e) {
-            status = logDown(Level.ERROR, "Invalid SNMP Criteria: " + e.getMessage());
+            String reason = "Invalid SNMP Criteria: " + e.getMessage();
+            LOG.debug(reason);
+            status = PollStatus.unavailable(reason);
         } catch (Throwable t) {
-            status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + hostAddress, t);
+            String reason = "Unexpected exception during SNMP poll of interface " + hostAddress;
+            LOG.debug(reason, t);
+            status = PollStatus.unavailable(reason);
         }
 
         return status;
