@@ -1,56 +1,70 @@
     /*
      * IMPORTANT:
      *
-     * The sentence <code>snmp.getUSM().addUser(...)</code>, is the only requirement in order to properly process SNMPv3 traps.
-     * This is related with the credentials that should be created for Trapd in order to properly authenticate and/or decode SNMPv3 traps in OpennMS.
-     * This is a user that should be configured (or should be used) by the external  devices to send SNMPv3 Traps to OpenNMS.
+     * The sentence <code>snmp.getUSM().addUser(...)</code>, is the only requirement
+     * in order to properly process SNMPv3 traps.
+     * 
+     * This is related with the credentials that should be created for Trapd in order
+     * to properly authenticate and/or decode SNMPv3 traps in OpenNMS.
+     * 
+     * This is a user that should be configured (or should be used) by the external
+     * devices to send SNMPv3 Traps to OpenNMS.
+     * 
      * The SNMPv3 users should be configured in trapd-configuration.xml
-     *
      */
     @Test
-    public void testTrapReceiverWithoutOpenNMS() {
-        System.out.println("SNMP4J: Register for Traps");
-        trapCount = 0;
+    public void testTrapReceiverWithoutOpenNMS() throws Exception {
+        assertEquals(0, m_trapCount);
+        LOG.debug("SNMP4J: Register for Traps");
         DefaultUdpTransportMapping transportMapping = null;
         Snmp snmp = null;
 
         try {
             transportMapping = new DefaultUdpTransportMapping(new UdpAddress(9162));
             snmp = new Snmp(transportMapping);
-            
+
             snmp.addCommandResponder(this);
             snmp.getUSM().addUser(
+                new OctetString("opennmsUser"),
+                new UsmUser(
                     new OctetString("opennmsUser"),
-                    new UsmUser(new OctetString("opennmsUser"), AuthMD5.ID, new OctetString("0p3nNMSv3"), PrivDES.ID, new OctetString("0p3nNMSv3")));
-            snmp.listen();
+                    AuthMD5.ID,
+                    new OctetString("0p3nNMSv3"),
+                    PrivDES.ID,
+                    new OctetString("0p3nNMSv3")
+                )
+            );
 
+            long start = System.currentTimeMillis();
+            snmp.listen();
             sendTraps();
-        } catch (final IOException e) {
-        	LOG.debug("Failed to grab UDP port.", e);
-        } catch (final InterruptedException e) {
-        	LOG.debug("Interrupted while sending traps.", e);
-        } catch (Exception e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            long waitUntil = System.currentTimeMillis() + 30000L;
+            do {
+                Thread.sleep(200);
+                System.err.print(".");
+                if (m_trapCount == 2) break;
+            } while (System.currentTimeMillis() < waitUntil);
+            System.err.println("");
+            LOG.debug("waited for {} milliseconds", System.currentTimeMillis() - start);
         } finally {
-            System.out.println("SNMP4J: Unregister for Traps");
+            LOG.debug("SNMP4J: Unregister for Traps");
             if (snmp != null) {
                 try {
                     snmp.close();
                 } catch (final IOException e) {
-                	LOG.debug("Failed to close Snmp object: {}", snmp, e);
+                    LOG.debug("Failed to close Snmp object: {}", snmp, e);
                 }
             }
             if (transportMapping != null) {
                 try {
                     transportMapping.close();
                 } catch (final IOException e) {
-                	LOG.debug("Failed to close transport mapping: {}", transportMapping, e);
+                    LOG.debug("Failed to close transport mapping: {}", transportMapping, e);
                 }
             }
         }
 
-        System.out.println("SNMP4J: Checking Trap status");
-        assertEquals(2, trapCount);
+        LOG.debug("SNMP4J: Checking Trap status");
+        assertEquals(2, m_trapCount);
     }
 
