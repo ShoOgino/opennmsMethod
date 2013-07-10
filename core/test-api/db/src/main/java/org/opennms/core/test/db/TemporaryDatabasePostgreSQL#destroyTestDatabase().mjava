@@ -1,0 +1,91 @@
+    private void destroyTestDatabase() throws TemporaryDatabaseException {
+        if (m_useExisting) {
+            return;
+        }
+
+        if (m_destroyed) {
+            System.err.println("Database '" + getTestDatabase() + "' already destroyed");
+            // database already destroyed
+            return;
+        }
+
+        /*
+        * Sleep before destroying the test database because PostgreSQL doesn't
+        * seem to notice immediately clients have disconnected. Yeah, it's a
+        * hack.
+        */
+        try {
+            Thread.sleep(100);
+        } catch (final InterruptedException e) {
+            throw new TemporaryDatabaseException("Interrupted while waiting for database to shut down.", e);
+        }
+
+        Connection adminConnection = null;
+        try {
+            adminConnection = getAdminDataSource().getConnection();
+        } catch (final SQLException e) {
+            throw new TemporaryDatabaseException("Failed to get admin database connection.", e);
+        }
+
+        try {
+            for (int dropAttempt = 0; dropAttempt < MAX_DATABASE_DROP_ATTEMPTS; dropAttempt++) {
+                Statement st = null;
+
+                try {
+                    st = adminConnection.createStatement();
+                    st.execute("DROP DATABASE " + getTestDatabase());
+                    break;
+                } catch (final SQLException e) {
+                    if ((dropAttempt + 1) >= MAX_DATABASE_DROP_ATTEMPTS) {
+                        final String message = "Failed to drop test database on last attempt " + (dropAttempt + 1) + ": " + e;
+                        System.err.println(new Date().toString() + ": " + message);
+                        dumpThreads();
+                        
+                        TemporaryDatabaseException newException = new TemporaryDatabaseException(message);
+                        newException.initCause(e);
+                        throw newException;
+                    } else {
+                        System.err.println(new Date().toString() + ": Failed to drop test database on attempt " + (dropAttempt + 1) + ": " + e);
+                        try {
+                            Thread.sleep(1000);
+                        } catch (final InterruptedException inter) {
+                            throw new TemporaryDatabaseException("Interrupted while waiting for next drop attempt.", inter);
+                        }
+                    }
+                } finally {
+                    if (st != null) {
+                        try {
+                            st.close();
+                        } catch (final SQLException e) {
+                            throw new TemporaryDatabaseException("Error while closing down database statement.", e);
+                        }
+                        st = null;
+                    }
+                }
+            }
+        } finally {
+            /*
+             * Since we are already going to be throwing an exception at this
+             * point, print any further errors to stdout so we don't mask the
+             * first failure.
+             */
+            try {
+                adminConnection.close();
+            } catch (SQLException e) {
+                throw new TemporaryDatabaseException("Error closing administrative database connection after attempting to drop test database", e);
+            }
+
+            /*
+             * Sleep after disconnecting from template1, otherwise creating a
+             * new test database in future tests may fail. Man, I hate this.
+             */
+            try {
+                Thread.sleep(100);
+            } catch (final InterruptedException e) {
+                throw new TemporaryDatabaseException("Interrupted while waiting for disconnection to complete.", e);
+            }
+        }
+
+        m_destroyed = true;
+    }
+

@@ -1,12 +1,15 @@
     @Test(timeout=300000)
-    @JUnitTemporaryDatabase // Relies on records created in @Before so we need a fresh database
-    @Transactional
     public void testSaveCategoriesOnUpdateNodeAttributes() throws Exception {
+        final EventAnticipator eventAnticipator = m_mockEventIpcManager.getEventAnticipator();
+
         final String TEST_CATEGORY = "TEST_CATEGORY";
         final String OLD_LABEL = "apknd";
         final String NEW_LABEL = "apknd-new";
 
         importFromResource("classpath:/tec_dump.xml.smalltest", true);
+        m_scanExecutor.pause();
+
+        m_provisioner.scheduleRescanForExistingNodes();
 
         final Collection<OnmsNode> nodes = m_nodeDao.findByLabel(OLD_LABEL);
         assertNotNull(nodes);
@@ -34,6 +37,14 @@
         nodeCopy = policy.apply(nodeCopy);
         assertTrue(nodeCopy.hasCategory(TEST_CATEGORY));
 
+        final EventBuilder eb = new EventBuilder(EventConstants.NODE_LABEL_CHANGED_EVENT_UEI, "OnmsNode.mergeNodeAttributes");
+        eb.setNodeid(node.getId());
+        eb.addParam("oldNodeLabel", OLD_LABEL);
+        eb.addParam("oldNodeLabelSource", "U");
+        eb.addParam("newNodeLabel", NEW_LABEL);
+        eb.addParam("newNodeLabelSource", "U");
+        eventAnticipator.anticipateEvent(eb.getEvent());
+
         // Change the label of the node so that we can trigger a NODE_LABEL_CHANGED_EVENT_UEI event
         nodeCopy.setLabel(NEW_LABEL);
         // TODO: Replace with constant
@@ -50,16 +61,7 @@
         final OnmsNode node2 = m_nodeDao.findByLabel(NEW_LABEL).iterator().next();
         assertTrue(node2.hasCategory(TEST_CATEGORY));
 
-        // Iterate over the events in the TransactionAwareEventForwarder to make
-        // sure that the NODE_LABEL_CHANGED_EVENT_UEI event was sent
-        boolean foundEvent = false;
-        for (Log eventLog : ((TransactionAwareEventForwarder)m_provisioner.getEventForwarder()).requestPendingEventsList()) {
-            for (Event event : eventLog.getEvents().getEventCollection()) {
-                if (EventConstants.NODE_LABEL_CHANGED_EVENT_UEI.equals(event.getUei())) {
-                    foundEvent = true;
-                }
-            }
-        }
-        assertTrue(String.format("Did not find anticipated %s event", EventConstants.NODE_LABEL_CHANGED_EVENT_UEI), foundEvent);
+        eventAnticipator.resetUnanticipated();
+        eventAnticipator.verifyAnticipated();
     }
 
