@@ -6,8 +6,42 @@
         if (m_client != null) {
             return;
         }
-        m_client = new DefaultHttpClient();
+        final HttpParams httpParams = new BasicHttpParams();
+        if (m_request != null) {
+            int timeout = m_request.getParameterAsInt("timeout");
+            if (timeout > 0) {
+                HttpConnectionParams.setConnectionTimeout(httpParams, timeout);
+                HttpConnectionParams.setSoTimeout(httpParams, timeout);
+            }
+        }
+        m_client = new DefaultHttpClient(httpParams);
         m_client.addRequestInterceptor(new RequestAcceptEncoding());
         m_client.addResponseInterceptor(new ResponseContentEncoding());
+        if (m_request != null) {
+            int retries = m_request.getParameterAsInt("retries");
+            if (retries > 0) {
+                m_client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler() {
+                    @Override
+                    public boolean retryRequest(IOException exception, int executionCount, HttpContext context) {
+                        if (executionCount <= getRetryCount() && (exception instanceof SocketTimeoutException || exception instanceof ConnectTimeoutException)) {
+                            return true;
+                        }
+                        return super.retryRequest(exception, executionCount, context);
+                    }
+                });
+            }
+            String disableSslVerification = m_request.getParameter("disable-ssl-verification");
+            if (Boolean.getBoolean(disableSslVerification)) {
+                final SchemeRegistry registry = m_client.getConnectionManager().getSchemeRegistry();
+                final Scheme https = registry.getScheme("https");
+                try {
+                    SSLSocketFactory factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+                    final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
+                    registry.register(lenient);
+                } catch (NoSuchAlgorithmException e) {
+                    log().warn(e.getMessage());
+                }
+            }
+        }
     }
 
