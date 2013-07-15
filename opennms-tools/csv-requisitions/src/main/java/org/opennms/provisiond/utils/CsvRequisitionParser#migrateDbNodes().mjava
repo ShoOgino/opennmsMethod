@@ -13,6 +13,22 @@
 				"   WHERE iplike(ipaddr, '"+m_iplikeQuery+"')) " +
 				"ORDER BY nodeid";
 		
+		if (m_addOnly) {
+			distinctNodesQueryStr = "  " +
+					"SELECT nodeId AS \"nodeid\"," +
+					"       nodeLabel AS \"nodelabel\"," +
+					"       foreignSource AS \"foreignsource\"," +
+					"       foreignId AS \"foreignid\" " +
+					"  FROM node " +
+					" WHERE nodeid in (" +
+					"  SELECT " +
+					"DISTINCT nodeid " +
+					"    FROM ipinterface " +
+					"   WHERE iplike(ipaddr, '"+m_iplikeQuery+"')) " +
+					"  AND foreignsource is NULL " +
+					"ORDER BY nodeid";
+		}
+		
 		Connection connection = null;
 		Statement distinctNodesStatement = null;
 		PoolingConnection pool = null;
@@ -21,8 +37,6 @@
 		pool = new PoolingConnection(connection);
 		distinctNodesStatement = pool.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE);
 
-
-		System.out.println("Executing query: "+distinctNodesQueryStr);
 		ResultSet distinctNodesResultSet = null;
 		int rowsFound = 0;
 		distinctNodesResultSet = distinctNodesStatement.executeQuery(distinctNodesQueryStr);
@@ -101,9 +115,30 @@
 			distinctNodesResultSet.updateRow();
 			System.out.println("Node updated.");
 
-
 			RequisitionData rd = new RequisitionData(label, primaryIp, m_foreignSource, foreignId);
+			
+			if (m_categoryAddExisting) {
+				String categoriesQueryString = "" +
+						"SELECT c.categoryname as \"categoryname\" " +
+						"  FROM categories c " +
+						"  JOIN category_node cn " +
+						"    ON cn.categoryid = c.categoryid " +
+						"  JOIN node n on n.nodeid = cn.nodeid " +
+						" WHERE n.nodeid = "+nodeId;
+				Statement categoriesStatement = pool.createStatement();
 
+				ResultSet crs = categoriesStatement.executeQuery(categoriesQueryString);
+
+				Set<String> categories = new LinkedHashSet<String>();
+				while(crs.next()) {
+					categories.add(crs.getString("categoryname"));
+				}
+
+				crs.close();
+				categoriesStatement.close();
+				rd.setCategories(categories);
+			}
+			
 			System.out.println("Updating requistion...");
 			createOrUpdateRequistion(rd);
 			System.out.println("Requistion updated!  Next...\n");
