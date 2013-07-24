@@ -1,0 +1,62 @@
+    protected static void parseCsv2(final File csv) throws ClassNotFoundException, SQLException, IOException {
+	
+	String sql = m_dbQuery;
+	
+	Connection con = createConnection(false);
+	PreparedStatement ps = con.prepareStatement(sql, ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE);
+	
+	BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(csv)));
+	CSVReader csvReader = new CSVReader(br);
+		String[] line;
+		int lineCnt = 0;
+		while((line = csvReader.readNext()) != null) {
+			
+			System.out.println("Processing csv line: "+ String.valueOf(++lineCnt));
+	
+			if (line.length != m_fieldMap.size()+1) {
+				continue;
+			}
+	
+			String foreignSource = m_formatter.formatForeignSource(StringUtils.isBlank(line[0]) ? null : line[0]);
+	
+			System.out.println("Running query for foreignSource: "+foreignSource+" ...");
+			ps.setString(1, foreignSource);
+			ResultSet rs = ps.executeQuery();
+			rs.last();
+			int rows = rs.getRow();
+			if (rows < 1) {
+				rs.close();
+				System.out.println("No results found for foreignsource: "+foreignSource+"; continuing to next foreignsource...");
+				continue;
+			}
+			System.out.println("Found "+rows+" rows.");
+	
+			rs.beforeFirst();
+	
+			while (rs.next()) {
+				System.out.println("Updating node: "+rs.getInt("nodeid"));
+	
+				Set<Entry<Integer, String>> entrySet = m_fieldMap.entrySet();
+				for (Entry<Integer, String> entry : entrySet) {
+					int csvField = entry.getKey()-1;
+					String columnName = entry.getValue();
+					System.out.println("\t"+"updating column: "+columnName+" with csv field: "+line[csvField]);
+					rs.updateString(columnName, line[csvField]);
+				}
+				
+				rs.updateRow();
+			}
+			rs.close();
+		}
+	
+		try {
+			con.commit();
+		} catch (SQLException e) {
+			e.printStackTrace();
+			con.rollback();
+		}
+	
+		ps.close();
+		con.close();
+	}
+
