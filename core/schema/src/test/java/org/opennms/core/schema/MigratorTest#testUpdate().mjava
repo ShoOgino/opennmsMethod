@@ -1,42 +1,37 @@
     @Test
-    @JUnitTemporaryDatabase(createSchema=false)
     public void testUpdate() throws Exception {
-        // Make sure there is no databasechangelog table
-        assertFalse(changelogExists());
-
-        Resource aResource = null;
-        for (final Resource resource : m_context.getResources("classpath*:/changelog.xml")) {
-            if (resource.getURI().toString().contains("test-api.schema.a")) {
-                aResource = resource;
-            }
-        }
-
-        Set<String> tables = getTables();
-        assertFalse("must not contain table 'schematest'", tables.contains("schematest"));
-        
-        final Migration migration = new Migration();
-        migration.setAdminUser(System.getProperty(TemporaryDatabase.ADMIN_USER_PROPERTY, TemporaryDatabase.DEFAULT_ADMIN_USER));
-        migration.setAdminPassword(System.getProperty(TemporaryDatabase.ADMIN_PASSWORD_PROPERTY, TemporaryDatabase.DEFAULT_ADMIN_PASSWORD));
-        migration.setDatabaseUser(System.getProperty(TemporaryDatabase.ADMIN_USER_PROPERTY, TemporaryDatabase.DEFAULT_ADMIN_USER));
-        migration.setDatabasePassword(System.getProperty(TemporaryDatabase.ADMIN_PASSWORD_PROPERTY, TemporaryDatabase.DEFAULT_ADMIN_PASSWORD));
-        migration.setChangeLog("changelog.xml");
-        migration.setAccessor(new ExistingResourceAccessor(aResource));
-
-        LogUtils.infof(this, "Running migration on database: %s", migration.toString());
-
-        final Migrator m = new Migrator();
+        Migrator m = new Migrator();
         m.setDataSource(m_dataSource);
         m.setAdminDataSource(m_dataSource);
         m.setValidateDatabaseVersion(false);
         m.setCreateUser(false);
         m.setCreateDatabase(false);
 
-        m.prepareDatabase(migration);
-        m.migrate(migration);
+        m.prepareDatabase(m_migration);
+        m.migrate(m_migration);
 
-        LogUtils.infof(this, "Migration complete: %s", migration.toString());
+        Connection conn = null;
+        try {
+            conn = m_dataSource.getConnection();
 
-        tables = getTables();
-        assertTrue("must contain table 'schematest'", tables.contains("schematest"));
+            Set<String> tables = new HashSet<String>();
+            ResultSet rs = conn.getMetaData().getTables(null, null, "%", null);
+            while (rs.next()) {
+                tables.add(rs.getString("TABLE_NAME").toLowerCase());
+            }
+            assertTrue("must contain table 'alarms'", tables.contains("alarms"));
+
+            Set<String> procs = new HashSet<String>();
+            rs = conn.getMetaData().getProcedures(null, null, "%");
+            while (rs.next()) {
+                procs.add(rs.getString("PROCEDURE_NAME").toLowerCase());
+            }
+            System.err.println("procs = " + procs);
+            assertTrue("must have stored procedure 'setSnmpInterfaceKeysOnUpdate'", procs.contains("setsnmpinterfacekeysonupdate"));
+        } finally {
+            if (conn != null) {
+                conn.close();
+            }
+        }
     }
 
