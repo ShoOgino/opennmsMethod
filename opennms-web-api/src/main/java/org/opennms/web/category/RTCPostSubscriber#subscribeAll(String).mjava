@@ -7,35 +7,43 @@
      * @throws org.exolab.castor.xml.ValidationException if any.
      * @throws org.opennms.netmgt.model.events.EventProxyException if any.
      */
-    public static void subscribeAll(String viewName) throws IOException, MarshalException, ValidationException, EventProxyException {
+    public static void subscribeAll(final String viewName) throws IOException, MarshalException, ValidationException, EventProxyException {
         if (viewName == null) {
             throw new IllegalArgumentException("Cannot take null parameters.");
         }
 
-        // get the list of categories from the viewsdisplay.xml
-        ViewsDisplayFactory.init();
-        ViewsDisplayFactory factory = ViewsDisplayFactory.getInstance();
+        try {
+            Logging.withPrefix(LOGGING_PREFIX, new Callable<Void>() {
+                @Override public Void call() throws Exception {
+                    // get the list of categories from the viewsdisplay.xml
+                    ViewsDisplayFactory.init();
+                    ViewsDisplayFactory factory = ViewsDisplayFactory.getInstance();
 
-        View view = factory.getView(viewName);
+                    final View view = factory.getView(viewName);
 
-        if (view != null) {
-            Section[] sections = view.getSection();
+                    if (view != null) {
+                        // create a JMS connection to subscribe
+                        final RTCPostSubscriber subscriber = new RTCPostSubscriber();
 
-            // create a JMS connection to subscribe
-            RTCPostSubscriber subscriber = new RTCPostSubscriber();
+                        try {
+                            for (final Section section : view.getSectionCollection()) {
+                                for (final String categoryName : section.getCategoryCollection()) {
+                                    subscriber.subscribe(categoryName);
+                                    LOG.info("Sent subscription event to RTC for category: {}",  categoryName);
+                                }
+                            }
+                        } finally {
+                            // Close the subscription JMS connection.
+                            subscriber.close();
+                        }
+                    }
 
-            for (int i = 0; i < sections.length; i++) {
-                Section section = sections[i];
-                String[] categories = section.getCategory();
-
-                for (int j = 0; j < categories.length; j++) {
-                    subscriber.subscribe(categories[j]);
-                    LOG.info("Sent subscription event to RTC for category: {}",  categories[j]);
+                    return null;
                 }
-            }
-
-            // Close the subscription JMS connection.
-            subscriber.close();
+            });
+        } catch (final Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
         }
     }
 

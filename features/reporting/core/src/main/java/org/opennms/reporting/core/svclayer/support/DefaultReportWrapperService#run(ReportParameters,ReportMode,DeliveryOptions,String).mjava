@@ -1,49 +1,41 @@
     /** {@inheritDoc} */
     @Override
-    public void run(ReportParameters parameters,
-            ReportMode mode,
-            DeliveryOptions deliveryOptions,
-            String reportId) {
-        
-        if (!deliveryOptions.getPersist()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            BufferedOutputStream bout = new BufferedOutputStream(out);
-            try {
-                getReportService(reportId).runAndRender(
-                                                        parameters.getReportParms(mode),
-                                                        reportId,
-                                                        deliveryOptions.getFormat(),
-                                                        bout);
-            } catch (ReportException reportException) {
-                LOG.error("failed to run or render report: {}", reportId, reportException);
-            }
-            mailReport(deliveryOptions, out);
-        } else {
-            String outputPath;
-            try {
-                outputPath = getReportService(reportId).run(
-                                                                   parameters.getReportParms(mode),
-                                                                   reportId);
-                ReportCatalogEntry catalogEntry = new ReportCatalogEntry();
-                catalogEntry.setReportId(reportId);
-                catalogEntry.setTitle(deliveryOptions.getInstanceId());
-                catalogEntry.setLocation(outputPath);
-                catalogEntry.setDate(new Date());
-                m_reportStoreService.save(catalogEntry);
-                if (deliveryOptions.getMailTo().length() != 0) {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    BufferedOutputStream bout = new BufferedOutputStream(out);
-                    getReportService(reportId).render(
-                                                      reportId,
-                                                      outputPath,
-                                                      deliveryOptions.getFormat(),
-                                                      bout);
-                    mailReport(deliveryOptions, out);
-                }
-            } catch (ReportException reportException) {
-                LOG.error("failed to run or render report: {}", reportId, reportException);
-            }
-        }
+    public void run(final ReportParameters parameters, final ReportMode mode, final DeliveryOptions deliveryOptions, final String reportId) {
+        Logging.withPrefix(LOG4J_CATEGORY, new Runnable() {
+            @Override public void run() {
+                ByteArrayOutputStream out = null;
+                BufferedOutputStream bout = null;
 
+                try {
+                    out = new ByteArrayOutputStream();
+                    bout = new BufferedOutputStream(out);
+                    if (!deliveryOptions.getPersist()) {
+                        try {
+                            getReportService(reportId).runAndRender(parameters.getReportParms(mode), reportId, deliveryOptions.getFormat(), bout);
+                        } catch (final ReportException reportException) {
+                            LOG.error("failed to run or render report: {}", reportId, reportException);
+                        }
+                        mailReport(deliveryOptions, out);
+                    } else {
+                        final String outputPath = getReportService(reportId).run(parameters.getReportParms(mode), reportId);
+                        final ReportCatalogEntry catalogEntry = new ReportCatalogEntry();
+                        catalogEntry.setReportId(reportId);
+                        catalogEntry.setTitle(deliveryOptions.getInstanceId());
+                        catalogEntry.setLocation(outputPath);
+                        catalogEntry.setDate(new Date());
+                        m_reportStoreService.save(catalogEntry);
+                        if (deliveryOptions.getMailTo().length() != 0) {
+                            getReportService(reportId).render(reportId, outputPath, deliveryOptions.getFormat(), bout);
+                            mailReport(deliveryOptions, out);
+                        }
+                    }
+                } catch (final Exception e) {
+                    LOG.error("failed to run or render report: {}", reportId, e);
+                } finally {
+                    IOUtils.closeQuietly(bout);
+                    IOUtils.closeQuietly(out);
+                }
+            }
+        });
     }
 
