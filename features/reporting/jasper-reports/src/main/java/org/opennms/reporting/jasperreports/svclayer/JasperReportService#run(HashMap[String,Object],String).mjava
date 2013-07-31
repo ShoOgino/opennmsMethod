@@ -2,74 +2,56 @@
      * {@inheritDoc}
      */
     @Override
-    public String run(HashMap<String, Object> reportParms, String reportId)
-            throws ReportException {
-        String baseDir = System.getProperty("opennms.report.dir");
-        JasperReport jasperReport = null;
-        String outputFileName = null;
-
-        // TODO TAK: What is about jrReportParms?
-        HashMap<String, Object> jrReportParms;
-
+    public String run(final HashMap<String, Object> reportParms, final String reportId) throws ReportException {
         try {
-            jasperReport = JasperCompileManager.compileReport(m_globalReportRepository.getTemplateStream(reportId));
-        } catch (JRException e) {
-            LOG.error("unable to compile jasper report", e);
-            throw new ReportException("unable to compile jasperReport", e);
+            return Logging.withPrefix(LOG4J_CATEGORY, new Callable<String>() {
+                @Override public String call() throws Exception {
+                    final String baseDir = System.getProperty("opennms.report.dir");
+                    JasperReport jasperReport = null;
+
+                    final DBUtils db = new DBUtils();
+
+                    try {
+                        jasperReport = JasperCompileManager.compileReport(m_globalReportRepository.getTemplateStream(reportId));
+                    } catch (JRException e) {
+                        LOG.error("Unable to compile jasper report {}", reportId, e);
+                        throw new ReportException("Unable to compile jasperReport " + reportId, e);
+                    }
+
+                    final HashMap<String, Object> jrReportParms = buildJRparameters(reportParms, jasperReport.getParameters());
+
+                    // Find sub reports and provide sub reports as parameter
+                    jrReportParms.putAll(buildSubreport(reportId, jasperReport));
+
+                    final String outputFileName = new String(baseDir + "/" + jasperReport.getName() + new SimpleDateFormat("-MMddyyyy-HHmm").format(new Date()) + ".jrprint");
+                    LOG.debug("jrprint output file: {}", outputFileName);
+
+                    try {
+                        if ("jdbc".equalsIgnoreCase(m_globalReportRepository.getEngine(reportId))) {
+                            try {
+                                final Connection connection = DataSourceFactory.getDataSource().getConnection();
+                                db.watch(connection);
+                                JasperFillManager.fillReportToFile(jasperReport, outputFileName, reportParms, connection);
+                            } finally {
+                                db.cleanUp();
+                            }
+                        } else if (m_globalReportRepository.getEngine(reportId).equals("null")) {
+                            JasperFillManager.fillReportToFile(jasperReport, outputFileName, reportParms, new JREmptyDataSource());
+                        } else {
+                            throw new ReportException("No suitable datasource configured for report " + reportId);
+                        }
+                    } catch (final Exception e) {
+                        LOG.warn("Failed to run report " + reportId, e);
+                        if (e instanceof ReportException) throw (ReportException)e;
+                        throw new ReportException(e);
+                    }
+                    return outputFileName;
+                }
+            });
+        } catch (final Exception e) {
+            if (e instanceof ReportException) throw (ReportException)e;
+            throw new ReportException("Failed to run Jasper report " + reportId, e);
         }
 
-        jrReportParms = buildJRparameters(reportParms,
-                jasperReport.getParameters());
-
-        // Find sub reports and provide sub reports as parameter
-        jrReportParms.putAll(buildSubreport(reportId, jasperReport));
-
-        outputFileName = new String(baseDir + "/" + jasperReport.getName()
-                + new SimpleDateFormat("-MMddyyyy-HHmm").format(new Date())
-                + ".jrprint");
-        LOG.debug("jrprint output file: {}", outputFileName);
-
-        if ("jdbc".equalsIgnoreCase(m_globalReportRepository.getEngine(reportId))) {
-            Connection connection;
-            try {
-                connection = DataSourceFactory.getDataSource().getConnection();
-                JasperFillManager.fillReportToFile(jasperReport,
-                        outputFileName,
-                        reportParms, connection);
-
-                connection.close();
-            } catch (SQLException e) {
-                LOG.error("sql exception getting or closing datasource ", e);
-                throw new ReportException(
-                        "sql exception getting or closing datasource",
-                        e);
-            } catch (JRException e) {
-                LOG.error("jasper report exception ", e);
-                throw new ReportException(
-                        "unable to run emptyDataSource jasperReport",
-                        e);
-            }
-        } else if (m_globalReportRepository.getEngine(reportId).equals("null")) {
-
-            try {
-
-                JasperFillManager.fillReportToFile(jasperReport,
-                        outputFileName,
-                        reportParms,
-                        new JREmptyDataSource());
-            } catch (JRException e) {
-                LOG.error("jasper report exception ", e);
-                throw new ReportException(
-                        "unable to run emptyDataSource jasperReport",
-                        e);
-            }
-
-        } else {
-            throw new ReportException(
-                    "no suitable datasource configured for reportId: "
-                            + reportId);
-        }
-
-        return outputFileName;
     }
 
