@@ -1,0 +1,73 @@
+    @Test
+    public void testSpc674RaceCondition() throws Exception {
+        final String foreignSource = "spc674";
+
+        System.err.println("=== create a requisition like the ReST service does, import it immediately ===");
+        final Requisition initial = new Requisition(foreignSource);
+        initial.putNode(createNode("1"));
+        initial.updateDateStamp();
+        m_pending.save(initial);
+        
+        final URL node1Snapshot = createSnapshot(foreignSource);
+        Resource resource = new UrlResource(node1Snapshot);
+        doImport(resource);
+
+        Thread.sleep(5);
+        List<String> files = getImports(foreignSource);
+        assertEquals(1, files.size());
+
+        System.err.println("=== create another snapshot, but don't import it yet ===");
+        initial.putNode(createNode("2"));
+        initial.updateDateStamp();
+        m_pending.save(initial);
+        final URL node2Snapshot = createSnapshot(foreignSource);
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(3, files.size());
+
+        System.err.println("=== create yet another snapshot, and don't import it yet ===");
+        initial.putNode(createNode("3"));
+        initial.updateDateStamp();
+        m_pending.save(initial);
+        final URL node3Snapshot = createSnapshot(foreignSource);
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(4, files.size());
+        
+        System.err.println("=== import of the second file finishes ===");
+        doImport(new UrlResource(node2Snapshot));
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(2, files.size());
+
+        System.err.println("=== fourth node is sent to the ReST interface ===");
+        final Requisition currentPending = RequisitionFileUtils.getLatestPendingOrSnapshotRequisition(m_pending, foreignSource);
+        assertNotNull(currentPending);
+        assertEquals(initial.getDate(), currentPending.getDate());
+        currentPending.putNode(createNode("4"));
+        currentPending.updateDateStamp();
+        m_pending.save(currentPending);
+        final URL node4Snapshot = createSnapshot(foreignSource);
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(4, files.size());
+
+        System.err.println("=== import of the third file finishes ===");
+        doImport(new UrlResource(node3Snapshot));
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(2, files.size());
+
+        System.err.println("=== import of the fourth file finishes ===");
+        doImport(new UrlResource(node4Snapshot));
+
+        Thread.sleep(5);
+        files = getImports(foreignSource);
+        assertEquals(1, files.size());
+    }
+

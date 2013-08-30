@@ -11,8 +11,48 @@
         InputStream stream = null;
 
         try {
-            Requisition r = buildVMwareRequisition();
-            stream = new ByteArrayInputStream(jaxBMarshal(r).getBytes());
+            Requisition curReq = null;
+            try {
+                ForeignSourceRepository repository = BeanUtils.getBean("daoContext", "deployedForeignSourceRepository", ForeignSourceRepository.class);
+                if (repository != null) {
+                    curReq = repository.getRequisition(m_foreignSource);
+                }
+            } catch (Exception e) {
+                logger.warn("Can't retrieve requisition {}", m_foreignSource);
+            }
+            Requisition newReq = buildVMwareRequisition();
+            if (curReq == null) {
+                if (newReq == null) {
+                    // FIXME Is this correct ? This is the old behavior
+                    newReq = new Requisition(m_foreignSource);
+                }
+            } else {
+                if (newReq == null) {
+                    // If there is a requisition and the vCenter is not responding for some reason, it is better to use the old requisition,
+                    // instead of returning an empty one, which can cause the lost of all the nodes from the DB.
+                    newReq = curReq;
+                } else {
+                    // If there is already a requisition, retrieve the custom assets and categories from the old one, and put them on the new one.
+                    // The VMWare related assets and categories will be preserved.
+                    for (RequisitionNode newNode : newReq.getNodes()) {
+                        for (RequisitionNode curNode : curReq.getNodes()) {
+                            if (newNode.getForeignId().equals(curNode.getForeignId())) {
+                                for (RequisitionAsset asset : curNode.getAssets()) {
+                                    if (!asset.getName().startsWith("vmware")) {
+                                        newNode.putAsset(asset);
+                                    }
+                                }
+                                for (RequisitionCategory cat : curNode.getCategories()) {
+                                    if (!cat.getName().startsWith("VMWare")) {
+                                        newNode.putCategory(cat);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            stream = new ByteArrayInputStream(jaxBMarshal(newReq).getBytes());
         } catch (Throwable e) {
             logger.warn("Problem getting input stream: '{}'", e);
             throw new IOExceptionWithCause("Problem getting input stream: " + e, e);

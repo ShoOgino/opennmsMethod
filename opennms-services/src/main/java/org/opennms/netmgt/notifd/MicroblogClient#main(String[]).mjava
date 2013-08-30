@@ -1,0 +1,78 @@
+    public static void main(final String[] args) throws Exception {
+        System.out.println("=== Configure Microblog Authentication ===");
+        System.out.println("");
+
+        final String configPath = System.getProperty("opennms.home") + File.separator + "etc" + File.separator + "microblog-configuration.xml";
+        final File configFile = new File(configPath);
+        if (!configFile.exists()) usage();
+
+        String profile = null;
+        if (args.length > 0) {
+            profile = args[0];
+        }
+
+        try {
+            final MicroblogClient client = new MicroblogClient(new FileSystemResource(configFile));
+
+            int step = 1;
+            final BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+
+            if (!client.hasOAuth(profile)) {
+                System.out.println("This utility is for connecting OpenNMS notifications with Twitter, or any other");
+                System.out.println("microblog site which uses OAuth.  These examples will use Twitter URLs, but you");
+                System.out.println("should be able to do the equivalent with any Twitter-compatible site like identi.ca.");
+                System.out.println("");
+                System.out.println("If you wish to use a username and password instead, just enter them into your");
+                System.out.println("microblog-configuration.xml file.");
+                System.out.println("");
+                System.out.println("Step " + step++ + ".  Go to https://twitter.com/oauth_clients/new and create a Twitter");
+                System.out.println("\"application\" for your OpenNMS install.  If you have already created an application,");
+                System.out.println("you can get the info you need for the next steps at https://dev.twitter.com/apps/");
+                System.out.println("instead.");
+                System.out.println("");
+                System.out.print("Step " + step++ + ".  Enter your consumer key: ");
+                final String consumerKey = br.readLine();
+                System.out.println("");
+                System.out.print("Step " + step++ + ".  Enter your consumer secret: ");
+                final String consumerSecret = br.readLine();
+                System.out.println("");
+                
+                client.getProfile(profile).setOauthConsumerKey(consumerKey);
+                client.getProfile(profile).setOauthConsumerSecret(consumerSecret);
+
+                if (!client.hasOAuth(profile)) {
+                    System.err.println("Something went wrong, either your consumer key or secret were empty.  Bailing.");
+                    System.exit(1);
+                }
+            }
+
+            final MicroblogAuthorization auth = client.requestAuthorization(profile);
+
+            System.out.println("Step " + step++ + ".  Go to " + auth.getUrl());
+            System.out.println("in your browser and authorize OpenNMS.");
+            System.out.println("");
+            System.out.print("Step " + step++ + ".  Type your PIN from the web page, or hit ENTER if there is no PIN: ");
+
+            final String pin = br.readLine();
+            AccessToken token = null;
+            if (pin == null || pin.length() == 0 || !pin.matches("^[0-9]*$")) {
+                System.err.println("No pin, or pin input was not numeric.  Trying pinless auth.");
+                token = auth.retrieveToken();
+            } else {
+                token = auth.retrieveToken(pin);
+            }
+
+            System.out.println("");
+            System.out.println("Step " + step + ".  There is no step " + step++ + ".");
+            System.out.println("");
+            System.out.print("Saving tokens to "+ configPath + "... ");
+            client.saveAccessToken(profile, token);
+            System.out.println("done");
+            System.out.println("");
+        } catch (final Exception e) {
+            System.err.println("Failed to get access token.");
+            if (e instanceof RuntimeException) throw (RuntimeException)e;
+            throw new RuntimeException(e);
+        }
+    }
+
