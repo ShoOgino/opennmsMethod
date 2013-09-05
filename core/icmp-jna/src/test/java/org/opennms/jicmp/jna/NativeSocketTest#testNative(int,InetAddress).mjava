@@ -1,26 +1,34 @@
-    private void testNative(int family, InetAddress address) throws Exception {
-        String[] cmds = new String[] { "nativeEcho", "nativeEcho2", "quitNative" };
+    private void testNative(final int family, final InetAddress address) throws Exception {
+        final String[] cmds = new String[] { "nativeEcho", "nativeEcho2", "quitNative" };
         NativeDatagramSocket socket = null;
 
         try {
-            socket = NativeDatagramSocket.create(family, NativeDatagramSocket.SOCK_DGRAM,
-                    NativeDatagramSocket.IPPROTO_UDP);
+            socket = NativeDatagramSocket.create(family, NativeDatagramSocket.SOCK_DGRAM, NativeDatagramSocket.IPPROTO_UDP);
 
-            for(String cmd : cmds) {
+            for(final String cmd : cmds) {
+                final NativeDatagramSocket sock = socket;
+                final FutureTask<NativeDatagramPacket> task = new FutureTask<NativeDatagramPacket>(new Callable<NativeDatagramPacket>() {
+                    @Override public NativeDatagramPacket call() throws Exception {
+                        printf("Sending cmd: %s\n", cmd);
+                        final ByteBuffer buf = UTF_8.encode(cmd);
+                        final NativeDatagramPacket p = new NativeDatagramPacket(buf, address, 7777); 
+                        sock.send(p);
 
-                printf("Sending cmd: %s\n", cmd);
-                
-                ByteBuffer buf = UTF_8.encode(cmd);
+                        printf("Receiving...\n");
+                        final NativeDatagramPacket r = new NativeDatagramPacket(128);
+                        sock.receive(r);
+                        printf("Received.\n");
 
-                NativeDatagramPacket p = new NativeDatagramPacket(buf, address, 7777); 
+                        return r;
+                    }
 
-                socket.send(p);
+                });
 
-                NativeDatagramPacket r = new NativeDatagramPacket(128);
-                socket.receive(r);
-                
-                String response = UTF_8.decode(r.getContent()).toString();
+                m_executor.execute(task);
+                final NativeDatagramPacket r = task.get(10, TimeUnit.SECONDS);
+                assertNotNull(r);
 
+                final String response = UTF_8.decode(r.getContent()).toString();
                 printf("Received Response: %s from %s:%d\n", response, r.getAddress().getHostAddress(), r.getPort());
 
                 assertEquals(cmd, response);
