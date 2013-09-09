@@ -6,18 +6,16 @@
         LOG.debug("In DataSender sendData()");
 
         // loop through and send info
-        for (RTCCategory cat : m_categories.values()) {
+        for (final RTCCategory cat : m_categories.values()) {
             // get label
-            String catlabel = cat.getLabel();
-
+            final String catlabel = cat.getLabel();
             LOG.debug("DataSender:sendData(): Category '{}'", catlabel);
 
             // get the post info for this category
-            Set<HttpPostInfo> urlList = m_catUrlMap.get(catlabel);
+            final Set<HttpPostInfo> urlList = m_catUrlMap.get(catlabel);
             if (urlList == null || urlList.size() <= 0) {
                 // a category that no one is listening for?
                 LOG.debug("DataSender: category '{}' has no listeners", catlabel);
-
                 continue;
             }
 
@@ -25,61 +23,47 @@
 
             // Run at a higher than normal priority since we do have to send
             // the update on time
-            int oldPriority = setCurrentThreadPriority(Thread.MAX_PRIORITY);
+            final int oldPriority = setCurrentThreadPriority(Thread.MAX_PRIORITY);
 
-            EuiLevel euidata = null;
+            final EuiLevel euidata;
             try {
                 euidata = m_euiMapper.convertToEuiLevelXML(cat);
-            } catch (java.lang.OutOfMemoryError oe) {
-                LOG.warn("DataSender: unable to convert data to xml for category: '{}'", catlabel, oe);
+            } catch (final RuntimeException e) {
+                LOG.warn("DataSender: unable to convert data to xml for category: '{}'", catlabel, e);
                 setCurrentThreadPriority(Thread.NORM_PRIORITY);
                 continue;
-            } catch (Throwable t) {
-                LOG.warn("DataSender: unable to convert data to xml for category: '{}'", catlabel, t);
-                setCurrentThreadPriority(Thread.NORM_PRIORITY);
             }
 
             // do a HTTP POST if subscribed
             if (urlList != null && urlList.size() > 0) {
-                Iterator<HttpPostInfo> urlIter = urlList.iterator();
+                final Iterator<HttpPostInfo> urlIter = urlList.iterator();
                 while (urlIter.hasNext()) {
-                    HttpPostInfo postInfo = urlIter.next();
+                    final HttpPostInfo postInfo = urlIter.next();
 
                     Reader inr = null;
                     InputStream inp = null;
                     try {
                         inr = new PipedMarshaller(euidata).getReader();
-
                         LOG.debug("DataSender: posting data to: {}", postInfo.getURLString());
-
                         inp = HttpUtils.post(postInfo.getURL(), inr, postInfo.getUser(), postInfo.getPassword(), 8 * HttpUtils.DEFAULT_POST_BUFFER_SIZE);
-
                         LOG.debug("DataSender: posted data for category: {}", catlabel);
-                        
 
-                        byte[] tmp = new byte[1024];
+
+                        final byte[] tmp = new byte[1024];
                         int bytesRead;
                         while ((bytesRead = inp.read(tmp)) != -1) {
                             if (LOG.isDebugEnabled()) {
-                                if (bytesRead > 0)
+                                if (bytesRead > 0) {
                                     LOG.debug("DataSender: post response: {}", new String(tmp, 0, bytesRead));
+                                }
                             }
                         }
 
                         postInfo.clearErrors();
 
-                    } catch (IOException e) {
+                    } catch (final Exception e) {
                         LOG.warn("DataSender: unable to send data for category: {} due to {}: {}", catlabel, e.getClass().getName(), e.getMessage(), e);
                         postInfo.incrementErrors();
-                        setCurrentThreadPriority(Thread.NORM_PRIORITY);
-                    } catch (java.lang.OutOfMemoryError e) {
-                        LOG.warn("DataSender: unable to send data for category: {} due to {}: {}", catlabel, e.getClass().getName(), e.getMessage(), e);
-                        setCurrentThreadPriority(Thread.NORM_PRIORITY);
-                    } catch (RuntimeException e) {
-                        LOG.warn("DataSender: unable to send data for category: {} due to {}: {}", catlabel, e.getClass().getName(), e.getMessage(), e);
-                        setCurrentThreadPriority(Thread.NORM_PRIORITY);
-                    } catch (Throwable t) {
-                        LOG.warn("DataSender: unable to send data for category: {} due to {}: {}", catlabel, t.getClass().getName(), t.getMessage(), t);
                         setCurrentThreadPriority(Thread.NORM_PRIORITY);
                     } finally {
                         IOUtils.closeQuietly(inp);
@@ -97,7 +81,7 @@
             }
 
             // return current thread to its previous priority
-            oldPriority = setCurrentThreadPriority(oldPriority);
+            setCurrentThreadPriority(oldPriority);
         }
     }
 
