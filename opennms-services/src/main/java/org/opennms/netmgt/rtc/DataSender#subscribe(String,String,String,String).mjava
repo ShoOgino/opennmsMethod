@@ -8,10 +8,10 @@
      * @param user a {@link java.lang.String} object.
      * @param passwd a {@link java.lang.String} object.
      */
-    public synchronized void subscribe(String url, String catlabel, String user, String passwd) {
+    public synchronized void subscribe(final String url, final String catlabel, final String user, final String passwd) {
         // send category data to the newly subscribed URL
         // look up info for this category
-        RTCCategory cat = m_categories.get(catlabel);
+        final RTCCategory cat = m_categories.get(catlabel);
         if (cat == null) {
             // oops! category for which we have no info!
             LOG.warn("RTC: No information available for category: {}", catlabel);
@@ -19,10 +19,10 @@
         }
 
         // create new HttpPostInfo
-        HttpPostInfo postInfo = null;
+        final HttpPostInfo postInfo;
         try {
             postInfo = new HttpPostInfo(url, catlabel, user, passwd);
-        } catch (MalformedURLException mue) {
+        } catch (final MalformedURLException mue) {
             LOG.warn("ERROR subscribing: Invalid URL '{}' - Data WILL NOT be SENT to the specified url", url);
             return;
         }
@@ -33,7 +33,7 @@
             urlList = new HashSet<HttpPostInfo>();
             m_catUrlMap.put(catlabel, urlList);
         }
-        
+
         if (!urlList.add(postInfo)) {
             LOG.debug("Already subscribed to URL: {}\tcatlabel: {}\tuser: {} - IGNORING LATEST subscribe event", url, catlabel, user);
         } else {
@@ -44,42 +44,32 @@
         Reader inr = null;
         InputStream inp = null;
         try {
-            // Run at a higher than normal priority since we do have to send
-            // the update on time
-            int oldPriority = setCurrentThreadPriority(Thread.MAX_PRIORITY);
-
-            EuiLevel euidata = m_euiMapper.convertToEuiLevelXML(cat);
-
-            inr = new PipedMarshaller(euidata).getReader();
-
             LOG.debug("DataSender: posting data to: {}", url);
 
+            // Run at a higher than normal priority since we do have to send
+            // the update on time
+            final int oldPriority = setCurrentThreadPriority(Thread.MAX_PRIORITY);
+
+            final EuiLevel euidata = m_euiMapper.convertToEuiLevelXML(cat);
+            inr = new PipedMarshaller(euidata).getReader();
             inp = HttpUtils.post(postInfo.getURL(), inr, user, passwd, 8 * HttpUtils.DEFAULT_POST_BUFFER_SIZE);
 
-            byte[] tmp = new byte[1024];
+            final byte[] tmp = new byte[1024];
             int bytesRead;
             while ((bytesRead = inp.read(tmp)) != -1) {
                 if (LOG.isDebugEnabled()) {
-                    if (bytesRead > 0)
+                    if (bytesRead > 0) {
                         LOG.debug("DataSender: post response: {}", new String(tmp, 0, bytesRead));
+                    }
                 }
             }
 
             // return current thread to its previous priority
-            oldPriority = setCurrentThreadPriority(oldPriority);
+            setCurrentThreadPriority(oldPriority);
 
             LOG.debug("DataSender: posted data for category: {}", catlabel);
-        } catch (IOException ioE) {
-            LOG.warn("DataSender:  Unable to send category '{}' to URL '{}'", catlabel, url, ioE);
-            setCurrentThreadPriority(Thread.NORM_PRIORITY);
-        } catch (java.lang.OutOfMemoryError oe) {
-            LOG.warn("DataSender:  Unable to send category '{}' to URL '{}'", catlabel, url, oe);
-            setCurrentThreadPriority(Thread.NORM_PRIORITY);
-        } catch (RuntimeException e) {
+        } catch (final Exception e) {
             LOG.warn("DataSender:  Unable to send category '{}' to URL '{}'", catlabel, url, e);
-            setCurrentThreadPriority(Thread.NORM_PRIORITY);
-        } catch (Throwable t) {
-            LOG.warn("DataSender:  Unable to send category '{}' to URL '{}'", catlabel, url, t);
             setCurrentThreadPriority(Thread.NORM_PRIORITY);
         } finally {
             IOUtils.closeQuietly(inp);
