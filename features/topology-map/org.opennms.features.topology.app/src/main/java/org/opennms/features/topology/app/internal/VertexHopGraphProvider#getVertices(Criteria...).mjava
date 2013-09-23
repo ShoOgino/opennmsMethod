@@ -1,0 +1,78 @@
+	/**
+	 * TODO: OVERRIDE THIS FUNCTION
+	 */
+	@Override
+	public List<Vertex> getVertices(Criteria... criteria) {
+		List<Vertex> retval = new ArrayList<Vertex>();
+		List<VertexRef> currentHops = new ArrayList<VertexRef>();
+		List<VertexRef> nextHops = new ArrayList<VertexRef>();
+		List<Vertex> allVertices = new ArrayList<Vertex>();
+
+		// Get the entire list of vertices
+		allVertices.addAll(m_delegate.getVertices(criteria));
+
+		// Find the vertices that match a required HopDistanceCriteria
+		for (Criteria criterium : criteria) {
+			VertexHopCriteria hdCriteria = (VertexHopCriteria)criterium;
+			for (Iterator<Vertex> itr = allVertices.iterator();itr.hasNext();) {
+				Vertex vertex = itr.next();
+				if (hdCriteria.contains(vertex)) {
+					// Put the vertex into the return value and remove it
+					// from the list of all eligible vertices
+					retval.add(vertex);
+					nextHops.add(vertex);
+					itr.remove();
+				}
+			}
+		}
+
+		// Clear the existing semantic zoom level values
+		m_semanticZoomLevels.clear();
+		int semanticZoomLevel = 0;
+
+		// Put a limit on the SZL in case we infinite loop for some reason
+		while (semanticZoomLevel < 100 && nextHops.size() > 0) {
+			currentHops.addAll(nextHops);
+			nextHops.clear();
+
+			for (VertexRef vertex : currentHops) {
+
+				// Mark the current vertex as belonging to a particular SZL
+				if (m_semanticZoomLevels.get(vertex) != null) {
+					throw new IllegalStateException("Calculating semantic zoom level for vertex that has already been calculated: " + vertex.toString());
+				}
+				m_semanticZoomLevels.put(vertex, semanticZoomLevel);
+
+				// Fetch all edges attached to this vertex
+				for (EdgeRef edgeRef : m_delegate.getEdgeIdsForVertex(vertex)) {
+					Edge edge = m_delegate.getEdge(edgeRef);
+
+					// Find everything attached to those edges
+					VertexRef nextVertex = null;
+					if (vertex.equals(edge.getSource().getVertex())) {
+						nextVertex = edge.getTarget().getVertex();
+					} else if (vertex.equals(edge.getTarget().getVertex())) {
+						nextVertex = edge.getSource().getVertex();
+					} else {
+						throw new IllegalStateException(String.format("Vertex %s was not the source or target of edge %s", vertex.toString(), edge.toString()));
+					}
+
+					// If we haven't assigned a SZL to the vertices that were located,
+					// then put the vertex into the next collection of hops
+					if (allVertices.contains(nextVertex)) {
+						nextHops.add(nextVertex);
+						allVertices.remove(nextVertex);
+					}
+				}
+			}
+
+			// Clear the temp list of current hops
+			currentHops.clear();
+
+			// Increment the semantic zoom level
+			semanticZoomLevel++;
+		}
+
+		return retval;
+	}
+
