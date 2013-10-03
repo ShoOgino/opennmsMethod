@@ -1,4 +1,6 @@
     public NodeMapWidget() {
+        m_handlerManager = new HandlerManager(this);
+
         m_div = Document.get().createDivElement();
         m_div.setId("gwt-map");
         m_div.getStyle().setWidth(100, Unit.PCT);
@@ -6,84 +8,44 @@
         setElement(m_div);
 
         setStyleName("v-openlayers");
-        logger.log(Level.INFO, "div ID = " + getElement().getId());
+        logger.log(Level.INFO, "NodeMapWidget(): div ID = " + getElement().getId());
 
-        m_filter = new MarkerFilter() {
+        m_filter = new MarkerFilterImpl("", 0);
+        m_markerContainer = new MarkerContainer(m_filter);
+
+        addAttachHandler(new Handler() {
             @Override
-            public boolean matches(final NodeMarker marker) {
-                if (marker.getSeverity() < m_minimumSeverity)
-                    return false;
-                if (m_searchString == null || "".equals(m_searchString))
-                    return true;
+            public void onAttachOrDetach(final AttachEvent event) {
+                if (event.isAttached()) {
+                    logger.log(Level.INFO, "NodeMapWidget.onAttach()");
 
-                final String searchString = m_searchString.toLowerCase();
-                // logger.log(Level.INFO, "searching: search string = " + searchString);
-
-                // /// handle foo: style search strings for text properties
-                // logger.log(Level.INFO, "checking property:search");
-                for (final String propertyName : marker.getTextPropertyNames()) {
-                    final String lowerPropertyName = propertyName.toLowerCase();
-                    if (searchString.startsWith(lowerPropertyName + ":")) {
-                        final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + ":\\s*", "");
-                        final String propertyValue = marker.getProperty(propertyName);
-                        if (propertyValue != null && propertyValue.toLowerCase().contains(searchStringWithoutPrefix)) {
-                            return true;
-                        } else {
-                            return false;
+                    Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+                        @Override public void execute() {
+                            initializeMap(m_div.getId());
                         }
-                    } else if (searchString.startsWith(lowerPropertyName + "=")) {
-                        final String searchStringWithoutPrefix = searchString.replaceFirst(lowerPropertyName + "=\\s*", "");
-                        final String propertyValue = marker.getProperty(propertyName);
-                        if (propertyValue != null && propertyValue.toLowerCase().equals(searchStringWithoutPrefix)) {
-                            return true;
-                        } else {
-                            return false;
+                    });
+
+                    m_markerContainer.onLoad();
+
+                    updateMarkerClusterLayer();
+                    m_filteredMarkersUpdatedHandler = new FilteredMarkersUpdatedEventHandler() {
+                        @Override
+                        public void onEvent(final NativeEvent nativeEvent) {
+                            logger.log(Level.INFO, "NodeMapWidget.onFilteredMarkersUpdated(), refreshing node map widgets");
+                            updateMarkerClusterLayer();
                         }
-                    }
-                }
+                    };
+                    DomEvent.addListener(m_filteredMarkersUpdatedHandler);
+                } else {
+                    logger.log(Level.INFO, "NodeMapwidget.onDetach()");
 
-                // /// special case: categories: -> category: search
-                if (searchString.startsWith("category:") || searchString.startsWith("categories:")) {
-                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y):\\s*", "");
-                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
-                    return match != MatchType.NONE;
-                } else if (searchString.startsWith("category=") || searchString.startsWith("categories=")) {
-                    final String searchStringWithoutPrefix = searchString.replaceFirst("categor(ies|y)=\\s*", "");
-                    final MatchType match = matchCategories(marker, searchStringWithoutPrefix);
-                    return match == MatchType.EXACT;
-                }
+                    if (m_filteredMarkersUpdatedHandler != null) DomEvent.removeListener(m_filteredMarkersUpdatedHandler);
 
-                // /// if no foo: style search strings, first search all text
-                // properties for a match
-                for (final String propertyName : marker.getTextPropertyNames()) {
-                    final String value = marker.getProperty(propertyName);
-                    if (value != null) {
-                        final String propertyValue = value.toLowerCase();
-                        if (propertyValue.contains(searchString)) {
-                            return true;
-                        }
-                    }
+                    m_markerContainer.onUnload();
+                    destroyMap();
                 }
-
-                // /// otherwise, search categories
-                return matchCategories(marker, searchString) != MatchType.NONE;
             }
-
-            private MatchType matchCategories(final NodeMarker marker, final String searchString) {
-                final JsArrayString categories = marker.getCategories();
-                for (int i = 0; i < categories.length(); i++) {
-                    final String category = categories.get(i).toLowerCase();
-                    if (category.equals(searchString)) {
-                        return MatchType.EXACT;
-                    } else if (category.contains(searchString)) {
-                        return MatchType.SUBSTRING;
-                    }
-                }
-                return MatchType.NONE;
-            }
-
-        };
-        m_markers = new MarkerContainer(m_filter);
-        logger.log(Level.INFO, "NodeMapWidget initialized");
+        });
+        logger.log(Level.INFO, "NodeMapWidget(): initialized");
     }
 
