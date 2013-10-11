@@ -1,7 +1,8 @@
     private void initializeSearchStateManager() {
-        m_stateManager = new SearchStateManager(m_inputBox, m_historyWrapper) {
+        m_stateManager = new SearchStateManager(m_inputBox, m_historyWrapper, m_eventManager) {
             @Override
             public void refresh() {
+                LOG.info("SearchControl.SearchStateManager.refresh()");
                 sendSearchStringSetEvent(m_inputBox.getValue());
 
                 final List<JSNodeMarker> markers = m_markerContainer.getMarkers();
@@ -19,56 +20,107 @@
                     }
                 }
                 
-                DomEvent.send(FilteredMarkersUpdatedEvent.createEvent());
+                m_eventManager.fireEvent(new FilteredMarkersUpdatedEvent());
             }
 
             @Override
             public void clearSearchInput() {
+                LOG.info("SearchControl.SearchStateManager.clearSearchInput()");
                 m_inputBox.setValue("");
                 sendSearchStringSetEvent("");
             }
 
             @Override
             public void focusAutocomplete() {
-                m_autoComplete.setFocus(true);
-                if (m_selectionModel.getSelectedObject() == null) {
-                    final List<JSNodeMarker> markers = m_markerContainer.getMarkers();
-                    if (markers.size() > 0) {
-                        m_selectionModel.setSelected(markers.get(0), true);
+                LOG.info("SearchControl.SearchStateManager.focusAutocomplete()");
+                Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+                    @Override public void execute() {
+                        if (m_selectionModel.getSelectedObject() == null) {
+                            final List<JSNodeMarker> markers = m_markerContainer.getMarkers();
+                            if (markers.size() > 0) {
+                                m_selectionModel.setSelected(markers.get(0), true);
+                            }
+                        }
+
+                        m_inputBox.getElement().blur();
+                        m_autoComplete.getElement().focus();
                     }
-                }
+                });
             }
 
             @Override
             public void showAutocomplete() {
+                LOG.info("SearchControl.SearchStateManager.showAutocomplete()");
                 final List<JSNodeMarker> markers = m_markerContainer.getMarkers();
                 if (markers.size() > 0) {
                     m_selectionModel.setSelected(markers.get(0), true);
                 }
                 m_autoComplete.setVisible(true);
                 updateAutocompleteStyle(m_autoComplete);
+                m_autoComplete.getElement().focus();
             }
 
             @Override
             public void hideAutocomplete() {
+                LOG.info("SearchControl.SearchStateManager.hideAutocomplete()");
                 m_autoComplete.setVisible(false);
             }
 
             @Override
             public void entrySelected() {
+                LOG.info("SearchControl.SearchStateManager.entrySelected()");
                 final NodeMarker selected = m_selectionModel.getSelectedObject();
                 if (selected != null) {
                     final String newSearchString = "nodeLabel=" + selected.getNodeLabel();
                     m_inputBox.setValue(newSearchString);
+                    focusInputBox();
                     sendSearchStringSetEvent(newSearchString);
+                } else {
+                    LOG.warning("entrySelected() but nothing in the selection model.");
                 }
             }
 
             @Override
             public void focusInput() {
-                m_inputBox.setFocus(true);
+                LOG.info("SearchControl.SearchStateManager.focusInput()");
+                focusInputBox();
             }
 
+            @Override
+            public void goDown() {
+                LOG.info("SearchControl.SearchStateManager.goDown()");
+                final SelectionModel<? super NodeMarker> sm = m_autoComplete.getSelectionModel();
+                final ListIterator<JSNodeMarker> iterator = m_markerContainer.getMarkers().listIterator();
+                while (iterator.hasNext()) {
+                    final JSNodeMarker marker = iterator.next();
+                    if (sm.isSelected(marker) && iterator.hasNext()) {
+                        LOG.info("SearchControl.SearchStateManager.goDown(): selected = " + marker);
+                        final JSNodeMarker nextMarker = iterator.next();
+                        sm.setSelected(marker, false);
+                        sm.setSelected(nextMarker, true);
+                        return;
+                    }
+                }
+                LOG.info("SearchControl.SearchStateManager.goDown(): no selected marker found");
+            }
+
+            @Override
+            public void goUp() {
+                final SelectionModel<? super NodeMarker> sm = m_autoComplete.getSelectionModel();
+                final List<JSNodeMarker> markers = m_markerContainer.getMarkers();
+                final ListIterator<JSNodeMarker> iterator = markers.listIterator(markers.size());
+                while (iterator.hasPrevious()) {
+                    final JSNodeMarker marker = iterator.previous();
+                    if (sm.isSelected(marker) && iterator.hasPrevious()) {
+                        final JSNodeMarker previousMarker = iterator.previous();
+                        sm.setSelected(marker, false);
+                        sm.setSelected(previousMarker, true);
+                        LOG.info("SearchControl.SearchStateManager.goUp(): selected = " + marker);
+                        return;
+                    }
+                }
+                LOG.info("SearchControl.SearchStateManager.goUp(): no selected marker found");
+            }
         };
     }
 

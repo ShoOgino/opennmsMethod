@@ -1,5 +1,6 @@
     public NodeMapWidget() {
-        m_handlerManager = new HandlerManager(this);
+        m_eventManager = new OpenNMSEventManager();
+        m_eventManager.addHandler(FilteredMarkersUpdatedEvent.TYPE, this);
 
         m_div = Document.get().createDivElement();
         m_div.setId("gwt-map");
@@ -10,38 +11,27 @@
         setStyleName("v-openlayers");
         logger.log(Level.INFO, "NodeMapWidget(): div ID = " + getElement().getId());
 
-        m_filter = new MarkerFilterImpl("", 0);
-        m_markerContainer = new MarkerContainer(m_filter);
-
         addAttachHandler(new Handler() {
             @Override
             public void onAttachOrDetach(final AttachEvent event) {
                 if (event.isAttached()) {
                     logger.log(Level.INFO, "NodeMapWidget.onAttach()");
 
+                    m_filter = new MarkerFilterImpl("", 0, m_eventManager);
+                    m_markerContainer = new MarkerContainer(m_filter, m_eventManager);
+
+                    m_filter.onLoad();
+                    m_markerContainer.onLoad();
+
                     Scheduler.get().scheduleDeferred(new ScheduledCommand() {
                         @Override public void execute() {
                             initializeMap(m_div.getId());
                         }
                     });
-
-                    m_markerContainer.onLoad();
-
-                    updateMarkerClusterLayer();
-                    m_filteredMarkersUpdatedHandler = new FilteredMarkersUpdatedEventHandler() {
-                        @Override
-                        public void onEvent(final NativeEvent nativeEvent) {
-                            logger.log(Level.INFO, "NodeMapWidget.onFilteredMarkersUpdated(), refreshing node map widgets");
-                            updateMarkerClusterLayer();
-                        }
-                    };
-                    DomEvent.addListener(m_filteredMarkersUpdatedHandler);
                 } else {
                     logger.log(Level.INFO, "NodeMapwidget.onDetach()");
-
-                    if (m_filteredMarkersUpdatedHandler != null) DomEvent.removeListener(m_filteredMarkersUpdatedHandler);
-
-                    m_markerContainer.onUnload();
+                    if (m_markerContainer != null) m_markerContainer.onUnload();
+                    if (m_filter != null) m_filter.onUnload();
                     destroyMap();
                 }
             }
