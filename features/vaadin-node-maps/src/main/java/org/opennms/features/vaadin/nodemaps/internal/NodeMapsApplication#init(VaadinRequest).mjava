@@ -1,8 +1,45 @@
     @Override
-    protected void init(VaadinRequest vaadinRequest) {
-        m_log.debug("initializing");
+    protected void init(final VaadinRequest vaadinRequest) {
+        m_request = vaadinRequest;
+        LOG.debug("initializing");
+
+        final VaadinApplicationContextImpl context = new VaadinApplicationContextImpl();
+        final UI currentUI = UI.getCurrent();
+        context.setSessionId(currentUI.getSession().getSession().getId());
+        context.setUiId(currentUI.getUIId());
+        context.setUsername(vaadinRequest.getRemoteUser());
+
+        Assert.notNull(m_alarmTable);
+        Assert.notNull(m_nodeTable);
+
+        m_alarmTable.setVaadinApplicationContext(context);
+        final EventProxy eventProxy = new EventProxy() {
+            @Override public <T> void fireEvent(final T eventObject) {
+                LOG.debug("got event: {}", eventObject);
+                if (eventObject instanceof VerticesUpdateEvent) {
+                    final VerticesUpdateEvent event = (VerticesUpdateEvent)eventObject;
+                    final List<Integer> nodeIds = new ArrayList<Integer>();
+                    for (final VertexRef ref : event.getVertexRefs()) {
+                        if ("nodes".equals(ref.getNamespace()) && ref.getId() != null) {
+                            nodeIds.add(Integer.valueOf(ref.getId()));
+                        }
+                    }
+                    m_mapWidgetComponent.setSelectedNodes(nodeIds);
+                    return;
+                }
+                LOG.warn("Unsure how to deal with event: {}", eventObject);
+            }
+            @Override public <T> void addPossibleEventConsumer(final T possibleEventConsumer) {
+                LOG.debug("(ignoring) add consumer: {}", possibleEventConsumer);
+                /* throw new UnsupportedOperationException("Not yet implemented!"); */
+            }
+        };
+
+        m_alarmTable.setEventProxy(eventProxy);
+        m_nodeTable.setEventProxy(eventProxy);
+
         createMapPanel(vaadinRequest.getParameter("search"));
-        createRootLayout(vaadinRequest);
+        createRootLayout();
         addRefresher();
     }
 
