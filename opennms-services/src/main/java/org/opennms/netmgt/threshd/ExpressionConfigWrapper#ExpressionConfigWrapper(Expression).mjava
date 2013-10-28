@@ -1,22 +1,27 @@
-	public ExpressionConfigWrapper(Expression expression) throws ThresholdExpressionException {
-		super(expression);
-		m_expression = expression;
+    public ExpressionConfigWrapper(Expression expression) throws ThresholdExpressionException {
+        super(expression);
+        m_expression = expression;
 
-		// Fetch an instance of the JEXL script engine
-		JexlEngine expressionParser = new JexlEngine();
-
-		BindingsSniffer sniffer = new BindingsSniffer();
-		sniffer.put("math", new MathBinding());
-		sniffer.put("datasources", new HashMap<String,Double>()); // To workaround NMS-5019
-
-		// Test parsing of the expression and collect the variable names by using
-		// a Bindings instance that sniffs all of the variable names
-		try {
-			expressionParser.createExpression(m_expression.getExpression()).evaluate(sniffer);
-		} catch (Throwable e) {
-			throw new ThresholdExpressionException("Could not parse threshold expression:" + e.getMessage(), e);
-		}
-
-		m_datasources = sniffer.getSniffedKeys();
-	}
+        JexlEngine expressionParser = new JexlEngine();
+        m_datasources = new ArrayList<String>();
+        try {
+            ExpressionImpl e = (ExpressionImpl) expressionParser.createExpression(m_expression.getExpression());
+            LOG.trace("List of Variables on the Expression: {}", e.getVariables());
+            for (List<String> list : e.getVariables()) { // Requires JEXL 2.1.x
+                if (list.get(0).equalsIgnoreCase("math")) {
+                    continue;
+                }
+                if (list.get(0).equalsIgnoreCase("datasources")) {
+                    // Include the internal parameter. See NMS-5019
+                    m_datasources.add(list.get(1).intern());
+                } else {
+                    // Include the first element, because datasources and math are the only composite elements
+                    m_datasources.add(list.get(0).intern());
+                }
+            }
+        } catch (Throwable e) {
+            throw new ThresholdExpressionException("Could not parse threshold expression:" + e.getMessage(), e);
+        }
+        LOG.trace("Threshold Variables: {}", m_datasources);
+    }
 
