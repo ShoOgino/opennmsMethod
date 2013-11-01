@@ -1,0 +1,49 @@
+    /**
+     * Execute upgrader.
+     *
+     * @throws Exception the exception
+     */
+    private void executeUpgrader() throws Exception {
+        JmxRrdMigratorOffline obj = new JmxRrdMigratorOffline();
+        obj.preExecute();
+        obj.execute();
+        obj.postExecute();
+        Assert.assertEquals(60, obj.badMetrics.size());
+
+        // Verify graph templates
+        File templates = new File("target/home/etc/snmp-graph.properties.d/jvm-graph.properties");
+        Pattern defRegex = Pattern.compile("DEF:.+:(.+\\..+):");
+        Pattern colRegex = Pattern.compile("\\.columns=(.+)$");
+        for (LineIterator it = FileUtils.lineIterator(templates); it.hasNext();) {
+            String line = it.next();
+            Matcher m = defRegex.matcher(line);
+            if (m.find()) {
+                String ds = m.group(1);
+                if (obj.badMetrics.contains(ds)) {
+                    Assert.fail("Bad metric found");
+                }
+            }
+            m = colRegex.matcher(line);
+            if (m.find()) {
+                String[] badColumns = m.group(1).split(",(\\s)?");
+                if (obj.badMetrics.containsAll(Arrays.asList(badColumns))) {
+                    Assert.fail("Bad metric found");
+                }
+            }
+        }
+
+        // Verify metric definitions
+        File metrics = new File("target/home/etc/jmx-datacollection-config.xml");
+        Pattern aliasRegex = Pattern.compile("alias=\"([^\"]+\\.[^\"]+)\"");
+        for (LineIterator it = FileUtils.lineIterator(metrics); it.hasNext();) {
+            String line = it.next();
+            Matcher m = aliasRegex.matcher(line);
+            if (m.find()) {
+                String ds = m.group(1);
+                if (obj.badMetrics.contains(ds)) {
+                    Assert.fail("Bad metric found");
+                }
+            }
+        }
+    }
+
