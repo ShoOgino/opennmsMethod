@@ -1,0 +1,83 @@
+    /**
+     * Fixes a JMX graph template file.
+     *
+     * @param jmxTemplateFile the JMX template file
+     * @throws OnmsUpgradeException the OpenNMS upgrade exception
+     */
+    private void fixJmxGraphTemplateFile(File jmxTemplateFile) throws OnmsUpgradeException {
+        try {
+            log("Updating JMX graph templates on %s\n", jmxTemplateFile);
+            zipFile(jmxTemplateFile);
+            backupFiles.add(new File(jmxTemplateFile.getAbsolutePath() + ZIP_EXT));
+            File outputFile = new File(jmxTemplateFile.getCanonicalFile() + ".temp");
+            FileWriter w = new FileWriter(outputFile);
+            Pattern defRegex = Pattern.compile("DEF:.+:(.+\\..+):");
+            Pattern colRegex = Pattern.compile("\\.columns=(.+)$");
+            Pattern incRegex = Pattern.compile("^include.directory=(.+)$");
+            List<File> externalFiles = new ArrayList<File>();
+            boolean override = false;
+            for (LineIterator it = FileUtils.lineIterator(jmxTemplateFile); it.hasNext();) {
+                String line = it.next();
+                Matcher m = incRegex.matcher(line);
+                if (m.find()) {
+                    File includeDirectory = new File(jmxTemplateFile.getParentFile(), m.group(1));
+                    if (includeDirectory.isDirectory()) {
+                        FilenameFilter propertyFilesFilter = new FilenameFilter() {
+                            @Override
+                            public boolean accept(File dir, String name) {
+                                return (name.endsWith(".properties"));
+                            }
+                        };
+                        for (File file : includeDirectory.listFiles(propertyFilesFilter)) {
+                            externalFiles.add(file);
+                        }
+                    }
+                }
+                m = colRegex.matcher(line);
+                if (m.find()) {
+                    String[] badColumns = m.group(1).split(",(\\s)?");
+                    for (String badDs : badColumns) {
+                        String fixedDs = getFixedDsName(badDs);
+                        if (fixedDs.equals(badDs)) {
+                            continue;
+                        }
+                        if (badMetrics.contains(badDs)) {
+                            override = true;
+                            log("  Replacing bad data source %s with %s on %s\n", badDs, fixedDs, line);
+                            line = line.replaceAll(badDs, fixedDs);
+                        } else {
+                            log("  Warning: a bad data source not related with JMX has been found: %s (this won't be updated)\n", badDs);
+                        }
+                    }
+                }
+                m = defRegex.matcher(line);
+                if (m.find()) {
+                    String badDs = m.group(1);
+                    if (badMetrics.contains(badDs)) {
+                        override = true;
+                        String fixedDs = getFixedDsName(badDs);
+                        log("  Replacing bad data source %s with %s on %s\n", badDs, fixedDs, line);
+                        line = line.replaceAll(badDs, fixedDs);
+                    } else {
+                        log("  Warning: a bad data source not related with JMX has been found: %s (this won't be updated)\n", badDs);
+                    }
+                }
+                w.write(line + "\n");
+            }
+            w.close();
+            if (override) {
+                FileUtils.deleteQuietly(jmxTemplateFile);
+                FileUtils.moveFile(outputFile, jmxTemplateFile);
+            } else {
+                FileUtils.deleteQuietly(outputFile);
+            }
+            if (!externalFiles.isEmpty()) {
+                for (File configFile : externalFiles) {
+                    fixJmxGraphTemplateFile(configFile);
+                }
+            }
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix " + jmxTemplateFile + " because " + e.getMessage(), e);
+        }
+    }
+
