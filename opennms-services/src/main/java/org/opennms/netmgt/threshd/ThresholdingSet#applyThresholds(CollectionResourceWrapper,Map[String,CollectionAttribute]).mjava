@@ -1,15 +1,12 @@
     /*
      * Apply thresholds definitions for specified resource using attribuesMap as current values.
      * Return a list of events to be send if some thresholds must be triggered or be rearmed.
-     */
-    /**
-     * <p>applyThresholds</p>
-     *
+     * 
      * @param resourceWrapper a {@link org.opennms.netmgt.threshd.CollectionResourceWrapper} object.
      * @param attributesMap a {@link java.util.Map} object.
      * @return a {@link java.util.List} object.
      */
-    protected List<Event> applyThresholds(CollectionResourceWrapper resourceWrapper, Map<String, CollectionAttribute> attributesMap) {
+    protected final List<Event> applyThresholds(CollectionResourceWrapper resourceWrapper, Map<String, CollectionAttribute> attributesMap) {
         List<Event> eventsList = new LinkedList<Event>();
         if (attributesMap == null || attributesMap.size() == 0) {
             LOG.debug("applyThresholds: Ignoring resource {} because required attributes map is empty.", resourceWrapper);
@@ -17,37 +14,49 @@
         }
         LOG.debug("applyThresholds: Applying thresholds on {} using {} attributes.", resourceWrapper, attributesMap.size());
         Date date = new Date();
-        for (ThresholdGroup group : m_thresholdGroups) {
-            Map<String,Set<ThresholdEntity>> entityMap = getEntityMap(group, resourceWrapper.getResourceTypeName());
-            if (entityMap != null) {
-                for(String key : entityMap.keySet()) {
-                    for (ThresholdEntity thresholdEntity : entityMap.get(key)) {
-                        if (passedThresholdFilters(resourceWrapper, thresholdEntity)) {
-                            LOG.info("applyThresholds: Processing threshold {} : {} on resource {}", key, thresholdEntity, resourceWrapper);
-                            Collection<String> requiredDatasources = thresholdEntity.getRequiredDatasources();
-                            Map<String, Double> values = new HashMap<String,Double>();
-                            boolean valueMissing = false;
-                            boolean relaxed = thresholdEntity.getThresholdConfig().getBasethresholddef().isRelaxed();
-                            for(String ds: requiredDatasources) {
-                                Double dsValue = resourceWrapper.getAttributeValue(ds);
-                                if(dsValue == null) {
-                                    LOG.info("applyThresholds: Could not get data source value for '{}', {}", ds, (relaxed ? "but the expression will be evaluated (relaxed mode enabled)" : "not evaluating threshold"));
-                                    valueMissing = true;
+        synchronized(m_thresholdGroups) {
+            for (ThresholdGroup group : m_thresholdGroups) {
+                Map<String,Set<ThresholdEntity>> entityMap = getEntityMap(group, resourceWrapper.getResourceTypeName());
+                if (entityMap != null) {
+                    for(String key : entityMap.keySet()) {
+                        for (ThresholdEntity thresholdEntity : entityMap.get(key)) {
+                            if (passedThresholdFilters(resourceWrapper, thresholdEntity)) {
+                                LOG.info("applyThresholds: Processing threshold {} : {} on resource {}", key, thresholdEntity, resourceWrapper);
+                                Collection<String> requiredDatasources = thresholdEntity.getRequiredDatasources();
+                                Map<String, Double> values = new HashMap<String,Double>();
+                                boolean valueMissing = false;
+                                boolean relaxed = thresholdEntity.getThresholdConfig().getBasethresholddef().isRelaxed();
+                                for(String ds: requiredDatasources) {
+                                    Double dsValue = resourceWrapper.getAttributeValue(ds);
+                                    if(dsValue == null) {
+                                        LOG.info("applyThresholds: Could not get data source value for '{}', {}", ds, (relaxed ? "but the expression will be evaluated (relaxed mode enabled)" : "not evaluating threshold"));
+                                        valueMissing = true;
+                                    }
+                                    values.put(ds,dsValue);
                                 }
-                                values.put(ds,dsValue);
-                            }
-                            if(!valueMissing || relaxed) {
-                                LOG.info("applyThresholds: All attributes found for {}, evaluating", resourceWrapper);
-                                resourceWrapper.setDsLabel(thresholdEntity.getDatasourceLabel());
-                                try {
-                                    List<Event> thresholdEvents = thresholdEntity.evaluateAndCreateEvents(resourceWrapper, values, date);
-                                    eventsList.addAll(thresholdEvents);
-                                } catch (Exception e) {
-                                    LOG.warn("applyThresholds: Can't evaluate {} on {} because {}", key, resourceWrapper, e.getMessage());
+                                if(!valueMissing || relaxed) {
+                                    LOG.info("applyThresholds: All attributes found for {}, evaluating", resourceWrapper);
+                                    resourceWrapper.setDsLabel(thresholdEntity.getDatasourceLabel());
+                                    try {
+                                        List<Event> thresholdEvents = thresholdEntity.evaluateAndCreateEvents(resourceWrapper, values, date);
+                                        eventsList.addAll(thresholdEvents);
+                                    } catch (Exception e) {
+                                        LOG.warn("applyThresholds: Can't evaluate {} on {} because {}", key, resourceWrapper, e.getMessage());
+                                    }
+                                    if(!valueMissing || relaxed) {
+                                        LOG.info("applyThresholds: All attributes found for " + resourceWrapper + ", evaluating");
+                                        resourceWrapper.setDsLabel(thresholdEntity.getDatasourceLabel());
+                                        try {
+                                            List<Event> thresholdEvents = thresholdEntity.evaluateAndCreateEvents(resourceWrapper, values, date);
+                                            eventsList.addAll(thresholdEvents);
+                                        } catch (Exception e) {
+                                            LOG.warn("applyThresholds: Can't evaluate " + key + " on " + resourceWrapper + " because " + e.getMessage(), e);
+                                        }
+                                    } 
                                 }
+                            } else {
+                                LOG.info("applyThresholds: Not processing threshold {} : {} because no filters matched", key, thresholdEntity);
                             }
-                        } else {
-                            LOG.info("applyThresholds: Not processing threshold {} : {} because no filters matched", key, thresholdEntity);
                         }
                     }
                 }
