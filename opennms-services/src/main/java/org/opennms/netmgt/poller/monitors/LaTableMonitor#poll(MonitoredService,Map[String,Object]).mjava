@@ -1,0 +1,83 @@
+    /**
+     * {@inheritDoc}
+     *
+     * <P>
+     * The poll() method is responsible for polling the specified address for
+     * SNMP service availability.
+     * </P>
+     * @exception RuntimeException
+     *                Thrown for any uncrecoverable errors.
+     */
+    public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+        NetworkInterface<InetAddress> iface = svc.getNetInterface();
+
+        PollStatus status = PollStatus.available();
+        InetAddress ipaddr = (InetAddress) iface.getAddress();
+
+        ArrayList errorStringReturn = new ArrayList();
+        
+        // Retrieve this interface's SNMP peer object
+        SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(ipaddr);
+        if (agentConfig == null) throw new RuntimeException("SnmpAgentConfig object not available for interface " + ipaddr);
+        final String hostAddress = InetAddressUtils.str(ipaddr);
+        log().debug("poll: setting SNMP peer attribute for interface " + hostAddress);
+        
+        agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout()));
+        agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters, "retry", ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries())));
+        agentConfig.setPort(ParameterMap.getKeyedInteger(parameters, "port", agentConfig.getPort()));
+        
+        if (log().isDebugEnabled()) log().debug("poll: service= SNMP address= " + agentConfig);
+        
+        try {
+            if (log().isDebugEnabled()) {
+                log().debug("PrTableMonitor.poll: SnmpAgentConfig address: " +agentConfig);
+            }
+            SnmpObjId laTableErrorSnmpObject = SnmpObjId.get(laTableErrorFlag);
+            
+            Map<SnmpInstId, SnmpValue> flagResults = SnmpUtils.getOidValues(agentConfig, "LaTableMonitor", laTableErrorSnmpObject);
+            
+            if(flagResults.size() == 0) {
+                log().debug("SNMP poll failed: no results, addr=" + hostAddress + " oid=" + laTableErrorSnmpObject);
+                return PollStatus.unavailable();
+            }
+
+            for (Map.Entry<SnmpInstId, SnmpValue> e : flagResults.entrySet()) { 
+                log().debug("poll: SNMPwalk poll succeeded, addr=" + hostAddress + " oid=" + laTableErrorSnmpObject + " instance=" + e.getKey() + " value=" + e.getValue());
+                
+                if (e.getValue().toString().equals("1")) {
+                	log().debug("LaTableMonitor.poll: found errorFlag=1");
+                	
+                	SnmpObjId laTableErrorMsgSnmpObject = SnmpObjId.get(laTableErrorMsg + "." + e.getKey().toString());
+                  String LaErrorMsg = SnmpUtils.get(agentConfig,laTableErrorMsgSnmpObject).toDisplayString();
+
+                  //Stash the error in an ArrayList to then enumerate over later
+                  errorStringReturn.add(LaErrorMsg);
+                }
+            }
+
+            //Check the arraylist and construct return value
+            if (errorStringReturn.size() > 0) {
+              String errormsg="";
+              int j = 0;
+              while (errorStringReturn.size() > j) {
+                errormsg+=errorStringReturn.get(j);
+                if (j < (errorStringReturn.size()-1)) { errormsg+= "\n"; }
+                j++;
+              }
+              return PollStatus.unavailable(errormsg);
+            }
+            else {
+              return status;
+            }
+
+        } catch (NumberFormatException e) {
+            status = logDown(Level.ERROR, "Number operator used on a non-number " + e.getMessage());
+        } catch (IllegalArgumentException e) {
+            status = logDown(Level.ERROR, "Invalid SNMP Criteria: " + e.getMessage());
+        } catch (Throwable t) {
+            status = logDown(Level.WARN, "Unexpected exception during SNMP poll of interface " + hostAddress, t);
+        }
+
+        return status;
+    }
+
