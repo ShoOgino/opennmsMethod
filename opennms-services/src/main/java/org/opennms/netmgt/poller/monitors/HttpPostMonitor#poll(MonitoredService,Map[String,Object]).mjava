@@ -12,20 +12,15 @@
     public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
         NetworkInterface<InetAddress> iface = svc.getNetInterface();
 
-        //
         // Process parameters
-        //
 
-        //
         // Get interface address from NetworkInterface
-        //
         if (iface.getType() != NetworkInterface.TYPE_INET)
           throw new NetworkInterfaceNotSupportedException("Unsupported interface type, only TYPE_INET currently supported");
 
         TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
 
         // Port
-        //
         int port = ParameterMap.getKeyedInteger(parameters, PARAMETER_PORT, DEFAULT_PORT);
 
         //URI
@@ -37,34 +32,28 @@
         //Password
         String strPasswd = ParameterMap.getKeyedString(parameters, PARAMETER_PASSWORD, null);
 
-        // BannerMatch
+        //BannerMatch
         String strBannerMatch = ParameterMap.getKeyedString(parameters, PARAMETER_BANNER, null);
 
-        // Scheme
+        //Scheme
         String strScheme = ParameterMap.getKeyedString(parameters, PARAMETER_SCHEME, DEFAULT_SCHEME);
 
-        // Payload
+        //Payload
         String strPayload = ParameterMap.getKeyedString(parameters, PARAMETER_PAYLOAD, null);
 
-        // Mimetype
+        //Mimetype
         String strMimetype = ParameterMap.getKeyedString(parameters, PARAMETER_MIMETYPE, DEFAULT_MIMETYPE);
 
-        // Charset
+        //Charset
         String strCharset = ParameterMap.getKeyedString(parameters, PARAMETER_CHARSET, DEFAULT_CHARSET);
 
-
-
-        // Get the address instance.
-        //
         InetAddress ipv4Addr = (InetAddress) iface.getAddress();
 
         final String hostAddress = InetAddressUtils.str(ipv4Addr);
-		    if (log().isDebugEnabled()) {
-          log().debug("poll: address = " + hostAddress + ", port = " + port + ", " + tracker);
-        }
+        
+        LOGGER.debug("poll: address = " + hostAddress + ", port = " + port + ", " + tracker);
 
         // Give it a whirl
-        //
         PollStatus serviceStatus = PollStatus.unavailable();
 
         for (tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt()) {
@@ -94,31 +83,23 @@
                 StringBuilder sb = new StringBuilder(strScheme);
                 sb.append("://").append(hostAddress).append(":").append(port).append(strURI);
 
-                if (log().isDebugEnabled()) {
-                  log().debug("HttpPostMonitor: Constructed URL is " + sb);
-                }
+                LOGGER.debug("HttpPostMonitor: Constructed URL is " + sb);
 
                 HttpPost post = new HttpPost(new URI(sb.toString()));
                 post.setEntity(postReq);
                 HttpResponse response = client.execute(httpHost, post);
 
-                if (log().isDebugEnabled()) {
-                  log().debug("HttpPostMonitor: Status Line is " + response.getStatusLine());
-                }
+                LOGGER.debug("HttpPostMonitor: Status Line is " + response.getStatusLine());
 
                 if (response.getStatusLine().getStatusCode() > 399) {
-                  log().warn("HttpPostMonitor: Got response status code " + response.getStatusLine().getStatusCode());
-                  if (log().isDebugEnabled()) {
-                    log().debug("HttpPostMonitor: Received server response: " + response.getStatusLine());
-                    log().debug("HttpPostMonitor: Failing on bad status code");
-                  }
-                  serviceStatus = PollStatus.unavailable("HTTP(S) Status code " + response.getStatusLine().getStatusCode());
-                  break;
+                    LOGGER.info("HttpPostMonitor: Got response status code " + response.getStatusLine().getStatusCode());
+                    LOGGER.debug("HttpPostMonitor: Received server response: " + response.getStatusLine());
+                    LOGGER.debug("HttpPostMonitor: Failing on bad status code");
+                    serviceStatus = PollStatus.unavailable("HTTP(S) Status code " + response.getStatusLine().getStatusCode());
+                    break;
                 }
 
-                if (log().isDebugEnabled()) {
-                  log().debug("HttpPostMonitor: Response code is valid");
-                }
+                LOGGER.debug("HttpPostMonitor: Response code is valid");
                 double responseTime = tracker.elapsedTimeInMillis();
 
                 HttpEntity entity = response.getEntity();
@@ -126,44 +107,45 @@
                 String Strresponse = IOUtils.toString(responseStream);
 
                 if (Strresponse == null)
-                  continue;
-                if (log().isDebugEnabled()) {
-                  log().debug("HttpPostMonitor: banner = " + Strresponse);
-                  log().debug("HttpPostMonitor: responseTime= " + responseTime + "ms");
-                }
+                    continue;
+
+                LOGGER.debug("HttpPostMonitor: banner = " + Strresponse);
+                LOGGER.debug("HttpPostMonitor: responseTime= " + responseTime + "ms");
 
                 //Could it be a regex?
                 if (strBannerMatch.charAt(0)=='~'){
-                  if (!Strresponse.matches(strBannerMatch.substring(1))) {
-                    serviceStatus = PollStatus.unavailable("Banner does not match Regex '"+strBannerMatch+"'");
-                    break;
-                  }
-                  else {
-                    serviceStatus = PollStatus.available(responseTime);
-                  }
+                    if (!Strresponse.matches(strBannerMatch.substring(1))) {
+                        serviceStatus = PollStatus.unavailable("Banner does not match Regex '"+strBannerMatch+"'");
+                        break;
+                    }
+                    else {
+                        serviceStatus = PollStatus.available(responseTime);
+                    }
                 }
                 else {
-                  if (Strresponse.indexOf(strBannerMatch) > -1) {
-                    serviceStatus = PollStatus.available(responseTime);
-                  }
-                  else {
-                    serviceStatus = PollStatus.unavailable("Did not find expected Text '"+strBannerMatch+"'");
-                    break;
-                  }
+                    if (Strresponse.indexOf(strBannerMatch) > -1) {
+                        serviceStatus = PollStatus.available(responseTime);
+                    }
+                    else {
+                        serviceStatus = PollStatus.unavailable("Did not find expected Text '"+strBannerMatch+"'");
+                        break;
+                    }
                 }
 
             } catch (URISyntaxException e) {
-                serviceStatus = logDown(Level.WARN, "URISyntaxException: " + e);
+                String reason = "URISyntaxException for URI: " + strURI + " " + e.getMessage();
+                LOGGER.debug(reason, e);
+                serviceStatus = PollStatus.unavailable(reason);
                 break;
             } catch (Exception e) {
-                serviceStatus = logDown(Level.DEBUG, "Exception: " + e);
+                String reason = "Exception: " + e.getMessage();
+                LOGGER.debug(reason, e);
+                serviceStatus = PollStatus.unavailable(reason);
                 break;
             }
         }
 
-        //
         // return the status of the service
-        //
         return serviceStatus;
     }
 
