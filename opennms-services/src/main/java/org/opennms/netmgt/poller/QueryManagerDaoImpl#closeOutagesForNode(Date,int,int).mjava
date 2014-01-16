@@ -7,9 +7,19 @@
      */
     @Override
     public void closeOutagesForNode(Date closeDate, int eventId, int nodeId) {
-        Timestamp closeTime = new Timestamp(closeDate.getTime());
-        final String DB_CLOSE_OUTAGES_FOR_NODE = "UPDATE outages set ifregainedservice = ?, svcRegainedEventId = ? where outages.nodeId = ? AND (outages.ifregainedservice IS NULL)";
-        Updater svcUpdater = new Updater(m_dataSource, DB_CLOSE_OUTAGES_FOR_NODE);
-        svcUpdater.execute(closeTime, Integer.valueOf(eventId), Integer.valueOf(nodeId));
+        Criteria criteria = new Criteria(OnmsOutage.class);
+        criteria.setAliases(Arrays.asList(new Alias[] {
+            new Alias("monitoredService.ipInterface", "ipInterface", JoinType.LEFT_JOIN),
+            new Alias("ipInterface.node", "node", JoinType.LEFT_JOIN)
+        }));
+        criteria.addRestriction(new EqRestriction("node.id", nodeId));
+        criteria.addRestriction(new NullRestriction("ifRegainedService"));
+        List<OnmsOutage> outages = m_outageDao.findMatching(criteria);
+        
+        for (OnmsOutage outage : outages) {
+            outage.setIfRegainedService(closeDate);
+            outage.setServiceRegainedEvent(m_eventDao.get(eventId));
+            m_outageDao.save(outage);
+        }
     }
 

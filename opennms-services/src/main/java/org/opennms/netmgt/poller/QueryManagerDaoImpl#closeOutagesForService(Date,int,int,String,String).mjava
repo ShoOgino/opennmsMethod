@@ -9,9 +9,22 @@
      */
     @Override
     public void closeOutagesForService(Date closeDate, int eventId, int nodeId, String ipAddr, String serviceName) {
-        Timestamp closeTime = new Timestamp(closeDate.getTime());
-        final String DB_CLOSE_OUTAGES_FOR_SERVICE = "UPDATE outages set ifregainedservice = ?, svcRegainedEventId = ? where outageid in (select outages.outageid from outages, service where outages.nodeid = ? AND outages.ipaddr = ? AND outages.serviceid = service.serviceId AND service.servicename = ? AND outages.ifregainedservice IS NULL)";
-        Updater svcUpdater = new Updater(m_dataSource, DB_CLOSE_OUTAGES_FOR_SERVICE);
-        svcUpdater.execute(closeTime, Integer.valueOf(eventId), Integer.valueOf(nodeId), ipAddr, serviceName);
+        Criteria criteria = new Criteria(OnmsOutage.class);
+        criteria.setAliases(Arrays.asList(new Alias[] {
+            new Alias("monitoredService.ipInterface", "ipInterface", JoinType.LEFT_JOIN),
+            new Alias("monitoredService.serviceType", "serviceType", JoinType.LEFT_JOIN),
+            new Alias("ipInterface.node", "node", JoinType.LEFT_JOIN)
+        }));
+        criteria.addRestriction(new EqRestriction("node.id", nodeId));
+        criteria.addRestriction(new EqRestriction("ipInterface.ipAddress", addr(ipAddr)));
+        criteria.addRestriction(new EqRestriction("serviceType.name", serviceName));
+        criteria.addRestriction(new NullRestriction("ifRegainedService"));
+        List<OnmsOutage> outages = m_outageDao.findMatching(criteria);
+        
+        for (OnmsOutage outage : outages) {
+            outage.setIfRegainedService(closeDate);
+            outage.setServiceRegainedEvent(m_eventDao.get(eventId));
+            m_outageDao.save(outage);
+        }
     }
 
