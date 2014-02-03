@@ -9,7 +9,8 @@
         Package example1 = m_linkdConfig.getPackage("example1");
         example1.setUseLldpDiscovery(false);
         example1.setUseOspfDiscovery(false);
-        
+        example1.setUseIsisDiscovery(false);
+
         final OnmsNode ciscorouter = m_nodeDao.findByForeignId("linkd", CISCO_C870_NAME);
 
         assertTrue(m_linkd.scheduleNodeCollection(ciscorouter.getId()));
@@ -17,8 +18,8 @@
         assertTrue(m_linkd.runSingleSnmpCollection(ciscorouter.getId()));
 
         // linkd has 1 linkable node
-        assertEquals(1, m_linkd.getLinkableNodes().size());
-        LinkableNode linkNode = m_linkd.getLinkableNodes().iterator().next();
+        assertEquals(1, m_linkd.getLinkableNodesOnPackage("example1").size());
+        LinkableNode linkNode = m_linkd.getLinkableNodesOnPackage("example1").iterator().next();
         
         // linkabble node is not null
         assertTrue(linkNode != null);
@@ -58,12 +59,14 @@
         * CISCO_C870:10.255.255.2:001f6cd034e7:12:Vlan1
         * CISCO_C870:65.41.39.146:00000c03b09e:14:BVI1
         */
+
+        final Set<String> macAddresses = m_linkd.getMacAddressesOnPackage(packageName);
+        assertEquals(2, macAddresses.size());
+        List<AtInterface> ats = m_linkd.getAtInterfaces(packageName, "001f6cd034e7");
+        assertNotNull(ats);
         
-        assertEquals("should have saved 2 ip to mac",2, m_linkd.getAtInterfaces(packageName).size());        
-        
-        List<AtInterface> ats = m_linkd.getAtInterfaces(packageName).get("001f6cd034e7");
         assertEquals(3, ats.size());
-        for (AtInterface at :ats) {
+        for (final AtInterface at :ats) {
             if( at.getIpAddress().getHostAddress().equals("172.20.1.1"))
                 assertEquals(12, at.getIfIndex().intValue());
             else if( at.getIpAddress().getHostAddress().equals("172.20.2.1"))
@@ -74,7 +77,7 @@
                 assertTrue("ip: "+ at.getIpAddress().getHostAddress() + "does not match any known ip address", false);
         }
 
-        ats = m_linkd.getAtInterfaces(packageName).get("00000c03b09e");
+        ats = m_linkd.getAtInterfaces(packageName, "00000c03b09e");
         assertEquals(1, ats.size());
         for (AtInterface at : ats) {
             if( at.getIpAddress().getHostAddress().equals("65.41.39.146"))
@@ -86,11 +89,13 @@
         
         // Now Let's test the database
         //0 atinterface in database
-        assertEquals(4, m_atInterfaceDao.findAll().size());
+        assertEquals(4, m_atInterfaceDao.countAll());
 
-        final OnmsCriteria criteria = new OnmsCriteria(OnmsIpRouteInterface.class);
-        criteria.createAlias("node", "node");
-        criteria.add(Restrictions.eq("node.id", ciscorouter.getId()));
+        final Criteria criteria = new Criteria(OnmsIpRouteInterface.class);
+        criteria.setAliases(Arrays.asList(new Alias[] {
+            new Alias("node", "node", JoinType.LEFT_JOIN)
+        }));
+        criteria.addRestriction(new EqRestriction("node.id", ciscorouter.getId()));
         final List<OnmsIpRouteInterface> iproutes = m_ipRouteInterfaceDao.findMatching(criteria);
         // 7 route entry in database
         for (OnmsIpRouteInterface iproute: iproutes) {

@@ -12,7 +12,8 @@
         }
 
         int outageCount = 0;
-        Connection conn = Vault.getDbConnection();
+        final Connection conn = DataSourceFactory.getInstance().getConnection();
+        final DBUtils d = new DBUtils(OutageFactory.class, conn);
 
         try {
             StringBuffer select = new StringBuffer("SELECT COUNT(OUTAGEID) AS OUTAGECOUNT FROM OUTAGES " + "JOIN NODE USING(NODEID) " + "JOIN IPINTERFACE ON OUTAGES.NODEID=IPINTERFACE.NODEID AND OUTAGES.IPADDR=IPINTERFACE.IPADDR " + "JOIN IFSERVICES ON OUTAGES.NODEID=IFSERVICES.NODEID AND OUTAGES.IPADDR=IFSERVICES.IPADDR AND OUTAGES.SERVICEID=IFSERVICES.SERVICEID " + "LEFT OUTER JOIN SERVICE ON OUTAGES.SERVICEID=SERVICE.SERVICEID " + "LEFT OUTER JOIN NOTIFICATIONS ON SVCLOSTEVENTID=NOTIFICATIONS.NOTIFYID " + "WHERE (NODE.NODETYPE != 'D' AND IPINTERFACE.ISMANAGED != 'D' AND IFSERVICES.STATUS != 'D') " + "AND ");
@@ -23,23 +24,22 @@
                 select.append(filter.getParamSql());
             }
 
-            PreparedStatement stmt = conn.prepareStatement(select.toString());
-            
+            final PreparedStatement stmt = conn.prepareStatement(select.toString());
+            d.watch(stmt);
+
             int parameterIndex = 1;
             for (Filter filter : filters) {
-            	parameterIndex += filter.bindParam(stmt, parameterIndex);
+                parameterIndex += filter.bindParam(stmt, parameterIndex);
             }
-            
-            ResultSet rs = stmt.executeQuery();
+
+            final ResultSet rs = stmt.executeQuery();
+            d.watch(rs);
 
             if (rs.next()) {
                 outageCount = rs.getInt("OUTAGECOUNT");
             }
-
-            rs.close();
-            stmt.close();
         } finally {
-            Vault.releaseDbConnection(conn);
+            d.cleanUp();
         }
 
         return outageCount;

@@ -4,21 +4,21 @@
     @Override
     public void run() {
         // perform rescan of the node
-        DbNodeEntry dbNodeEntry = getNode();
-        
+        final DbNodeEntry dbNodeEntry = getNode();
+
         if (dbNodeEntry == null) {
             return;
         }
-        
+
         if (dbNodeEntry.getForeignSource() != null) {
             LOG.info("Skipping rescan of node {} since it was imported with foreign source {}", getNodeId(), dbNodeEntry.getForeignSource());
             return;
         }
-        
+
         LOG.debug("start rescanning node: {}", getNodeId());
 
-        DbIpInterfaceEntry[] dbInterfaces = getInterfaces(dbNodeEntry);
-        
+        final DbIpInterfaceEntry[] dbInterfaces = getInterfaces(dbNodeEntry);
+
         if (dbInterfaces == null) {
             LOG.debug("no interfaces found in the database to rescan for node: {}", getNodeId());
             return;
@@ -26,24 +26,19 @@
 
         // this indicates whether or not we found an iface the responds to snmp
         boolean doesSnmp = true;
-        
+
         IpAddrTable ipAddTable = null;
         List<InetAddress> prevAddrList = null;
         boolean snmpcAgree = false;
         boolean gotSnmpc = false;
-        Map<String, IfCollector> collectorMap =
-            new HashMap<String, IfCollector>();
-        Map<String, IfCollector> nonSnmpCollectorMap =
-            new HashMap<String, IfCollector>();
-        Set<InetAddress> probedAddrs = new HashSet<InetAddress>();
+        Map<String, IfCollector> collectorMap = new HashMap<String, IfCollector>();
+        final Map<String, IfCollector> nonSnmpCollectorMap = new HashMap<String, IfCollector>();
+        final Set<InetAddress> probedAddrs = new HashSet<InetAddress>();
 
         boolean gotSnmpCollection = false;
-        DbIpInterfaceEntry oldPrimarySnmpInterface =
-            DbNodeEntry.getPrimarySnmpInterface(dbInterfaces);
+        final DbIpInterfaceEntry oldPrimarySnmpInterface = DbNodeEntry.getPrimarySnmpInterface(dbInterfaces);
         if (oldPrimarySnmpInterface != null) {
-            gotSnmpCollection =
-                scanPrimarySnmpInterface(oldPrimarySnmpInterface, collectorMap,
-                                         probedAddrs);
+            gotSnmpCollection = scanPrimarySnmpInterface(oldPrimarySnmpInterface, collectorMap, probedAddrs);
         }
 
         if (!gotSnmpCollection) {
@@ -60,27 +55,26 @@
                  * collect the information from the interface.
                  * NOTE: skip '127.*.*.*' and '0.0.0.0' addresses.
                  */
-				if (!scannableInterface(dbInterfaces, ifaddr)) {
+                if (!scannableInterface(dbInterfaces, ifaddr)) {
                     LOG.debug("run: skipping scan of address: {}", ifaddrString);
                     continue;
                 }
 
-				if (ifaddrString == null) {
-					LOG.debug("run: unable to scan inet address: {}", ifaddr);
-					continue;
-				}
-				
+                if (ifaddrString == null) {
+                    LOG.debug("run: unable to scan inet address: {}", ifaddr);
+                    continue;
+                }
+
                 LOG.debug("running collection for {}", ifaddrString);
 
-                IfCollector collector = new IfCollector(m_pluginManager, ifaddr, true, probedAddrs);
+                final IfCollector collector = new IfCollector(m_pluginManager, ifaddr, true, probedAddrs);
                 collector.run();
 
-                IfSnmpCollector snmpc = collector.getSnmpCollector();
+                final IfSnmpCollector snmpc = collector.getSnmpCollector();
                 if (snmpc != null) {
                     gotSnmpc = true;
                 }
-                if (snmpc != null && snmpc.hasIpAddrTable()
-                        && snmpc.getIfIndex(snmpc.getCollectorTargetAddress()) != -1) {
+                if (snmpc != null && snmpc.hasIpAddrTable() && snmpc.getIfIndex(snmpc.getCollectorTargetAddress()) != -1) {
                     if (areDbInterfacesInSnmpCollection(dbInterfaces, snmpc)) {
                         collectorMap.put(ifaddrString, collector);
                         gotSnmpCollection = true;
@@ -96,36 +90,15 @@
 
                         if (LOG.isDebugEnabled()) {
                             LOG.debug("SNMP data collected via {} does not agree with database.  Tentatively adding to the collectorMap and continuing", ifaddrString);
-                            for(InetAddress a : prevAddrList) {
+                            for(final InetAddress a : prevAddrList) {
                                 LOG.debug("IP address in list = {}", a);
                             }
                         }
                     } else if (ipAddTable != null && snmpcAgree == true) {
                         ipAddTable = snmpc.getIpAddrTable();
-                        List<InetAddress> addrList = ipAddTable.getIpAddresses();
+                        final List<InetAddress> addrList = ipAddTable.getIpAddresses();
 
-                        boolean listMatch = true;
-                        String jstring = null;
-                        String kstring = null;
-                        Iterator<InetAddress> j = prevAddrList.iterator();
-                        Iterator<InetAddress> k = addrList.iterator();
-                        while (j.hasNext()) {
-                            jstring = j.next().toString();
-                            if (k.hasNext()) {
-                                kstring = k.next().toString();
-                                if (jstring.equals(kstring)) {
-                                    LOG.debug("{} = {}", jstring, kstring);
-                                } else {
-                                    LOG.debug("{} != {}", jstring, kstring);
-                                    listMatch = false;
-                                }
-                            } else {
-                                listMatch = false;
-                            }
-                        }
-                        if (k.hasNext()) {
-                            listMatch = false;
-                        }
+                        boolean listMatch = addrList.size() == prevAddrList.size() && addrList.containsAll(prevAddrList);
                         if (listMatch) {
                             LOG.debug("Current and previous address lists match");
                         } else {
@@ -181,9 +154,9 @@
             m_eventList.add(createSnmpConflictsWithDbEvent(dbNodeEntry));
         }
 
+        final DBUtils d = new DBUtils();
+
         // Update the database
-        Date now = null;
-        Connection dbc = null;
         boolean updateCompleted = false;
         try {
             /*
@@ -198,7 +171,8 @@
             synchronized (Capsd.getDbSyncLock()) {
                 LOG.debug("Got capsd dbLock. processing {}", getNodeId());
                 // Get database connection
-                dbc = DataSourceFactory.getInstance().getConnection();
+                final Connection dbc = DataSourceFactory.getInstance().getConnection();
+                d.watch(dbc);
 
                 /*
                  * There is a slight possibility that the node being rescanned
@@ -209,51 +183,40 @@
                  */
                 if (!isNodeDeleted(dbc, getNodeId())) {
                     // Update interface information
-                    now = new Date();
-                    updateInterfaces(dbc, now, dbNodeEntry, collectorMap,
-                                     doesSnmp);
-                    
+                    final Date now = new Date();
+                    updateInterfaces(dbc, now, dbNodeEntry, collectorMap, doesSnmp);
+
                     if (doesSnmp) {
                         InetAddress oldPriIf = null;
                         if (oldPrimarySnmpInterface != null) {
                             oldPriIf = oldPrimarySnmpInterface.getIfAddress();
                         }
-                        InetAddress newSnmpPrimaryIf =
-                            updatePrimarySnmpInterface(dbc, dbNodeEntry,
-                                                       collectorMap, oldPriIf);
-
-                            updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf,
-                                       dbInterfaces, collectorMap);
+                        final InetAddress newSnmpPrimaryIf = updatePrimarySnmpInterface(dbc, dbNodeEntry, collectorMap, oldPriIf);
+                        updateNode(dbc, now, dbNodeEntry, newSnmpPrimaryIf, dbInterfaces, collectorMap);
                     }
                     updateCompleted = true;
                     m_eventList.add(createRescanCompletedEvent(dbNodeEntry));
                 }
             }
-        } catch (Throwable t) {
+        } catch (final Throwable t) {
             LOG.error("Error updating records for node ID {}", getNodeId(), t);
         } finally {
             // Finished with the database connection, close it.
-            try {
-                if (dbc != null) {
-                    dbc.close();
-                }
-            } catch (SQLException e) {
-                LOG.error("Error closing connection", e);
-            }
-            
+            d.cleanUp();
+
             // Remove the node we just scanned from the tracker set
-            synchronized (m_queuedRescanTracker) {
-                m_queuedRescanTracker.remove(getNodeId());
+            synchronized (s_queuedRescanTracker) {
+                s_queuedRescanTracker.remove(getNodeId());
             }
         }
 
         // Send events associcatd with the rescan
         if (updateCompleted) {
             // Send all events created during rescan process to eventd
-            for (Event event : m_eventList) {
+            for (final Event event : m_eventList) {
                 try {
                     EventIpcManagerFactory.getIpcManager().sendNow(event);
-                } catch (Throwable t) {
+                } catch (final Throwable t) {
                     LOG.warn("run: unexpected throwable exception caught while sending event", t);
                 }
             }

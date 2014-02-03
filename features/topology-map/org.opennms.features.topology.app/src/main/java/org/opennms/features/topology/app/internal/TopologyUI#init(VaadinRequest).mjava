@@ -1,30 +1,59 @@
 	@Override
     protected void init(final VaadinRequest request) {
-        m_headerHtml =  getHeader(new HttpServletRequestVaadinImpl(request));
-        m_graphContainer.setLayoutAlgorithm(new FRLayoutAlgorithm());
+        FontAwesomeIcons.load(new ThemeResource("font-awesome/css/font-awesome.min.css"));
+
+        m_headerHtml = getHeader(new HttpServletRequestVaadinImpl(request));
 
         //create VaadinApplicationContext
-        m_applicationContext = serviceManager.createApplicationContext(new VaadinApplicationContextCreator() {
+        m_applicationContext = m_serviceManager.createApplicationContext(new VaadinApplicationContextCreator() {
             @Override
             public VaadinApplicationContext create(OnmsServiceManager manager) {
-                VaadinApplicationContextImpl context = new VaadinApplicationContextImpl(manager);
+                VaadinApplicationContextImpl context = new VaadinApplicationContextImpl();
                 context.setSessionId(request.getWrappedSession().getId());
                 context.setUiId(getUIId());
                 context.setUsername(request.getRemoteUser());
                 return context;
             }
         });
-        m_verticesUpdateManager = new OsgiVerticesUpdateManager(m_applicationContext);
+        m_verticesUpdateManager = new OsgiVerticesUpdateManager(m_serviceManager, m_applicationContext);
 
-        loadUserSettings(request);
+        // Add a request handler that parses incoming focusNode and szl query parameters
+        getSession().addRequestHandler(new RequestHandler() {
+            @Override
+            public boolean handleRequest(VaadinSession session, VaadinRequest request, VaadinResponse response) throws IOException {
+                loadGraphProvider(request);
+                loadVertexHopCriteria(request, m_graphContainer);
+                loadSemanticZoomLevel(request, m_graphContainer);
+                m_graphContainer.redoLayout();
+                return false; // No response was written
+            }
+        });
+
+        // Set the algorithm last so that the criteria and SZLs are
+        // in place before we run the layout algorithm.
+        m_graphContainer.setLayoutAlgorithm(new FRLayoutAlgorithm());
+
+        loadUserSettings(m_applicationContext);
+
         setupListeners();
         createLayouts();
+        // Set up an error handler for UI-level exceptions
         setupErrorHandler();
+        // Add an auto refresh handler to the GraphContainer
+        setupAutoRefresher();
 
-        // notifiy osgi-listeners, otherwise initialization would not work
+        // the layout must be created BEFORE loading the hop criteria and the semantic zoom level
+        loadGraphProvider(request);
+        loadVertexHopCriteria(request, m_graphContainer);
+        loadSemanticZoomLevel(request, m_graphContainer);
+        m_graphContainer.redoLayout();
+
+        // notify OSGi listeners, otherwise initialization would not work
         m_graphContainer.addChangeListener(m_verticesUpdateManager);
         m_selectionManager.addSelectionListener(m_verticesUpdateManager);
         m_verticesUpdateManager.selectionChanged(m_selectionManager);
         m_verticesUpdateManager.graphChanged(m_graphContainer);
+
+        m_serviceManager.getEventRegistry().addPossibleEventConsumer(this, m_applicationContext);
     }
 
