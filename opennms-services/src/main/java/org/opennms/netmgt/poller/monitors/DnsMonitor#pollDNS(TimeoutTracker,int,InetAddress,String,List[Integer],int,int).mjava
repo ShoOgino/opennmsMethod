@@ -1,4 +1,4 @@
-    private PollStatus pollDNS(final TimeoutTracker timeoutTracker, final int port, final InetAddress address, final String lookup, final List<Integer> fatalCodes) {
+    private PollStatus pollDNS(final TimeoutTracker timeoutTracker, final int port, final InetAddress address, final String lookup, final List<Integer> fatalCodes, int minAnswers, int maxAnswers) {
     	final String addr = InetAddressUtils.str(address);
         for (timeoutTracker.reset(); timeoutTracker.shouldRetry(); timeoutTracker.nextAttempt()) {
             try {
@@ -20,9 +20,21 @@
 
                 if (fatalCodes.contains(rcode)) {
                     return logDown(Level.DEBUG, "Received an invalid DNS response for address: " + addr);
+                } else if (minAnswers != DEFAULT_MIN_ANSWERS || maxAnswers != DEFAULT_MAX_ANSWERS) {
+                    int numAnswers = response.getSectionArray(Section.ANSWER).length;
+                    boolean tooFewAnswers = numAnswers < minAnswers;
+                    boolean tooManyAnswers = numAnswers > maxAnswers;
+                    if (tooFewAnswers) {
+                        return logDown(Level.WARN, "Response contained only " + numAnswers + " answer(s), but at least " + minAnswers + " answers(s) are needed.");
+                    }
+                    if (tooManyAnswers) {
+                        return logDown(Level.WARN, "Response contained " + numAnswers + " answer(s), but " + minAnswers + " or fewer answers(s) are needed.");
+                    }
+                    return logUp(Level.DEBUG, responseTime, "valid DNS response received with " +numAnswers + " answer(s), responseTime = " + responseTime + "ms");
                 } else {
-                    return logUp(Level.DEBUG, responseTime, "valid DNS request received, responseTime= " + responseTime + "ms");
+                    return logUp(Level.DEBUG, responseTime, "valid DNS response received, responseTime = " + responseTime + "ms");
                 }
+
             } catch (final InterruptedIOException e) {
                 // No response received, retry without marking the poll failed. If we get this condition over and over until 
                 // the retries are exhausted, it will leave serviceStatus null and we'll get the log message at the bottom 
@@ -34,7 +46,7 @@
                 return logDown(Level.WARN, "IOException while polling address: " + addr + " " + e.getMessage(), e);
             }
         }
-       
+
         return logDown(Level.DEBUG, "Never received valid DNS response for address: " + addr);
     }
 
