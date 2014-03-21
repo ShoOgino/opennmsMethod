@@ -1,0 +1,57 @@
+    /**
+     * This method processes the <SearchQuery> that the user has typed and returns a <SearchResult> list
+     * of matching IP addresses as well as the query string itself, which is collapsible, to act
+     * as a subnet container.
+     * 
+     */
+    @Override
+    public List<SearchResult> query(SearchQuery searchQuery, GraphContainer graphContainer) {
+    	
+		String queryString = searchQuery.getQueryString();
+    	Logger logger = LoggerFactory.getLogger(getClass());
+		logger.info("Query: '{}'", queryString);
+    	
+    	CriteriaBuilder bldr = new CriteriaBuilder(OnmsIpInterface.class);
+    	
+		bldr.iplike("ipAddress", queryString).orderBy("ipAddress", true);
+		Criteria dbQueryCriteria = bldr.toCriteria();
+		List<OnmsIpInterface> ips = m_ipInterfaceDao.findMatching(dbQueryCriteria);
+		logger.info("Query found: '{}' IP interfaces.", ips.size());
+		
+        List<SearchResult> results = new ArrayList<SearchResult>();
+
+		if (ips.size() == 0) {
+			return results;
+		} else {
+			if (isIpLikeQuery(queryString)) {
+				logger.debug("Adding iplike search spec to the search results.");
+				SearchResult searchResult = new SearchResult(getSearchProviderNamespace(), queryString, queryString);
+				searchResult.setCollapsed(false);
+				searchResult.setCollapsible(true);
+				results.add(searchResult);
+			}
+		}
+
+		Set<String> ipAddrs = new HashSet<String>();
+		
+		logger.info("Creating IP address set.");
+		for (OnmsIpInterface ip : ips) {
+			logger.debug("Adding '{}' to set of IPs.");
+			ipAddrs.add(ip.getIpAddress().getHostAddress());
+		}
+		
+		logger.info("Building search result from set of IPs.");
+		IPLOOP: for (String ip : ipAddrs) {
+			
+			if (findCriterion(ip, graphContainer) != null) {
+				continue IPLOOP;
+
+			} else {
+				results.add(createSearchResult(ip));
+
+			}
+		}
+		
+        return results;
+    }
+
