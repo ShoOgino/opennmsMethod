@@ -7,11 +7,13 @@
      */
     public SystemDefPanel(final DataCollectionConfigDao dataCollectionConfigDao, final DatacollectionGroup source, final Logger logger) {
 
-        if (dataCollectionConfigDao == null)
+        if (dataCollectionConfigDao == null) {
             throw new RuntimeException("dataCollectionConfigDao cannot be null.");
+        }
 
-        if (source == null)
+        if (source == null) {
             throw new RuntimeException("source cannot be null.");
+        }
 
         addStyleName("light");
 
@@ -20,7 +22,8 @@
         for (Group group : source.getGroups()) {
             groupNames.add(group.getName());
         }
-        // Adding all defined systemDefs
+
+        // Adding all defined groups
         groupNames.addAll(dataCollectionConfigDao.getAvailableMibGroups());
 
         systemDefTable = new SystemDefTable(source.getSystemDefs());
@@ -30,38 +33,57 @@
 
         final EditorToolbar bottomToolbar = new EditorToolbar() {
             @Override
-            public void save() {
+            public boolean save() {
                 SystemDef systemDef = systemDefForm.getSystemDef();
+                if (!isNew && !systemDef.getName().equals(systemDefForm.getSystemDefName())) {
+                    Set<String> collections = getParentCollections(dataCollectionConfigDao, systemDef.getName());
+                    if (!collections.isEmpty()) {
+                        final String msg = "The systemDef cannot be renamed because it is being referenced by:\n" + collections.toString();
+                        Notification.show(msg, Notification.Type.WARNING_MESSAGE);
+                        return false;
+                    }
+                }
                 logger.info("SNMP SystemDef " + systemDef.getName() + " has been " + (isNew ? "created." : "updated."));
                 try {
                     systemDefForm.commit();
                     systemDefForm.setReadOnly(true);
                     systemDefTable.refreshRowCache();
+                    return true;
                 } catch (CommitException e) {
                     String msg = "Can't save the changes: " + e.getMessage();
                     logger.error(msg);
                     Notification.show(msg, Notification.Type.ERROR_MESSAGE);
+                    return false;
                 }
             }
             @Override
-            public void delete() {
+            public boolean delete() {
                 Object systemDefId = systemDefTable.getValue();
                 if (systemDefId != null) {
                     SystemDef systemDef = systemDefTable.getSystemDef(systemDefId);
+                    Set<String> collections = getParentCollections(dataCollectionConfigDao, systemDef.getName());
+                    if (!collections.isEmpty()) {
+                        final String msg = "The systemDef cannot be deleted because it is being referenced by:\n" + collections.toString();
+                        Notification.show(msg, Notification.Type.WARNING_MESSAGE);
+                        return false;
+                    }
                     logger.info("SNMP SystemDef " + systemDef.getName() + " has been removed.");
                     systemDefTable.select(null);
                     systemDefTable.removeItem(systemDefId);
                     systemDefTable.refreshRowCache();
                 }
+                return true;
             }
             @Override
-            public void edit() {
+            public boolean edit() {
                 systemDefForm.setReadOnly(false);
+                return true;
             }
             @Override
-            public void cancel() {
+            public boolean cancel() {
                 systemDefForm.discard();
                 systemDefForm.setReadOnly(true);
+                return true;
             }
         };
         bottomToolbar.setVisible(false);
@@ -69,16 +91,22 @@
         systemDefTable.addValueChangeListener(new Property.ValueChangeListener() {
             @Override
             public void valueChange(ValueChangeEvent event) {
-                Object systemDefId = systemDefTable.getValue();
-                if (systemDefId != null) {
-                    systemDefForm.setSystemDef(systemDefTable.getSystemDef(systemDefId));
+                if (systemDefForm.isVisible() && !systemDefForm.isReadOnly()) {
+                    systemDefTable.select(selectedSystemDefId);
+                    Notification.show("A system definition seems to be being edited.\nPlease save or cancel your current changes.", Notification.Type.WARNING_MESSAGE);
+                } else {
+                    Object systemDefId = systemDefTable.getValue();
+                    if (systemDefId != null) {
+                        selectedSystemDefId = systemDefId;
+                        systemDefForm.setSystemDef(systemDefTable.getSystemDef(systemDefId));
+                    }
+                    systemDefForm.setReadOnly(true);
+                    systemDefForm.setVisible(systemDefId != null);
+                    bottomToolbar.setReadOnly(true);
+                    bottomToolbar.setVisible(systemDefId != null);
                 }
-                systemDefForm.setReadOnly(true);
-                systemDefForm.setVisible(systemDefId != null);
-                bottomToolbar.setReadOnly(true);
-                bottomToolbar.setVisible(systemDefId != null);
             }
-        });   
+        });
 
         final Button add = new Button("Add SNMP SystemDef", new Button.ClickListener() {
             @Override
