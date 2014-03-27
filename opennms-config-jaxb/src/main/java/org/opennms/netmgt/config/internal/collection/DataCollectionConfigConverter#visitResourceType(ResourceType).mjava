@@ -1,0 +1,49 @@
+    @Override
+    public void visitResourceType(final ResourceType resourceType) {
+        //LOG.debug("visitResourceType({})", resourceType);
+        final ResourceTypeImpl type = new ResourceTypeImpl(resourceType.getName(), resourceType.getLabel());
+        if (resourceType.getResourceLabel() != null && !resourceType.getResourceLabel().trim().isEmpty()) {
+            type.setResourceLabelTemplate(resourceType.getResourceLabel());
+        }
+        final String strategy = resourceType.getStorageStrategy().getClazz();
+        if (strategy.endsWith(".SiblingColumnStorageStrategy")) {
+            for (final Parameter parameter : resourceType.getStorageStrategy().getParameters()) {
+                if ("sibling-column-name".equals(parameter.getKey())) {
+                    final String name = parameter.getValue();
+                    if (name != null && !name.trim().isEmpty()) {
+                        type.setResourceNameTemplate("${" + name + "}");
+                        break;
+                    }
+                }
+            }
+        } else if (strategy.endsWith(".IndexStorageStrategy")) {
+            type.setResourceNameTemplate("${index}");
+            if (type.getResourceLabelExpression() == null || type.getResourceLabelExpression().getTemplate() == null) {
+                type.setResourceLabelTemplate("${index}");
+            }
+        }
+        
+        final Set<String> parameters = new TreeSet<String>();
+        parameters.addAll(getParameters(type.getResourceKindExpression()));
+        parameters.addAll(getParameters(type.getResourceLabelExpression()));
+        parameters.addAll(getParameters(type.getResourceNameExpression()));
+
+        for (final String parameter : parameters) {
+            if (m_columns.containsKey(parameter)) {
+                final ColumnImpl column = m_columns.get(parameter);
+                //LOG.debug("adding column {} to resource type {}", column, type.getTypeName());
+                type.addColumn(column);
+            } else if (m_mibs.containsKey(parameter)) {
+                final MibObjectImpl mib = m_mibs.get(parameter);
+                //LOG.debug("adding mib {} to resource type {}", mib, type.getTypeName());
+                type.addColumn(new ColumnImpl(mib));
+            } else {
+                if (!"index".equals(parameter)) {
+                    LOG.warn("Unable to locate column/mibObject for parameter: {}", parameter);
+                }
+            }
+        }
+        
+        m_currentDataCollectionGroup.addResourceType(type);
+    }
+
