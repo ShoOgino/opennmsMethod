@@ -1,9 +1,9 @@
     private SnmpAgentConfig getAgentConfig(final InetAddress agentInetAddress, final int requestedSnmpVersion) {
+        SnmpPeerFactory.getReadLock().lock();
         try {
-            SnmpPeerFactory.getReadLock().lock();
             if (m_config == null) {
                 final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
-                if (requestedSnmpVersion == VERSION_UNSPECIFIED) {
+                if (requestedSnmpVersion == SnmpAgentConfig.VERSION_UNSPECIFIED) {
                     agentConfig.setVersion(SnmpAgentConfig.DEFAULT_VERSION);
                 } else {
                     agentConfig.setVersion(requestedSnmpVersion);
@@ -17,52 +17,12 @@
             // Now set the defaults from the m_config
             setSnmpAgentConfig(agentConfig, new Definition(), requestedSnmpVersion);
 
-            // Attempt to locate the node
-            DEFLOOP: for (final Definition def : m_config.getDefinitions()) {
-                // check the specifics first
-                for (final String saddr : def.getSpecifics()) {
-                    try {
-                        final InetAddress addr = InetAddressUtils.addr(saddr);
-                        if (addr != null && addr.equals(agentConfig.getAddress())) {
-                            setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                            break DEFLOOP;
-                        }
-                    } catch (final IllegalArgumentException e) {
-                        LOG.debug("Error while reading SNMP config <specific> tag: {}", saddr, e);
-                    }
-                }
-
-                // check the ranges
-                //
-                final ByteArrayComparator comparator = new ByteArrayComparator();
-
-                for (final Range rng : def.getRanges()) {
-                    final byte[] addr = agentConfig.getAddress().getAddress();
-                    final byte[] begin = InetAddressUtils.toIpAddrBytes(rng.getBegin());
-                    final byte[] end = InetAddressUtils.toIpAddrBytes(rng.getEnd());
-                    
-                    boolean inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
-                    if (comparator.compare(begin, end) <= 0) {
-                        inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
-                    } else {
-                        LOG.warn("{} has an 'end' that is earlier than its 'beginning'!", rng);
-                        inRange = InetAddressUtils.isInetAddressInRange(addr, end, begin);
-                    }
-                    if (inRange) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                }
-
-                // check the matching ip expressions
-                for (final String ipMatch : def.getIpMatches()) {
-                    if (IPLike.matches(agentInetAddress, ipMatch)) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                }
-
-            } // end DEFLOOP
+            final AddressSnmpConfigVisitor visitor = new AddressSnmpConfigVisitor(agentInetAddress);
+            m_config.visit(visitor);
+            final Definition matchingDef = visitor.getDefinition();
+            if (matchingDef != null) {
+                setSnmpAgentConfig(agentConfig, matchingDef, requestedSnmpVersion);
+            }
             return agentConfig;
         } finally {
             SnmpPeerFactory.getReadLock().unlock();
