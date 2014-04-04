@@ -1,0 +1,83 @@
+    /**
+     * This method processes the <SearchQuery> that the user has typed and returns a <SearchResult> list
+     * of matching IP addresses as well as the query string itself, which is collapsible, to act
+     * as a subnet container.
+     * 
+     */
+    @Override
+    public List<SearchResult> query(SearchQuery searchQuery, GraphContainer graphContainer) {
+    	LOG.info("SearchProvider->query: called with search query: '{}'", searchQuery);
+
+        List<SearchResult> results = new ArrayList<SearchResult>();
+        
+		String queryString = searchQuery.getQueryString();
+		
+		if (!isAlarmQuery(queryString)) {
+			LOG.debug("SearchProvider->query: query not Alarm compatible.");
+			return results;
+		}
+    	
+    	CriteriaBuilder bldr = new CriteriaBuilder(OnmsAlarm.class);
+    	
+    	bldr.ilike("uei", "%"+queryString+"%").orderBy("node");
+    	
+		Criteria dbQueryCriteria = bldr.toCriteria();
+		List<OnmsAlarm> alarms;
+		
+		//Here to catch query exceptions and avoid unnecessary exception messages in the Vaadin UI
+		//Mainly do to not having yet found the perfect iplike regex that supports IPLIKE syntax 
+		//for both IPv4 and IPv6 IPLIKE expressions in the isIpLikeQuery method.  The current Pattern
+		//test currently fails not catching octets ending in '-' such as '10.7-.*.*' and only supports
+		//IPv4 addresses.  This just lets us fail to the underlying IPLIKE stored procedure.  The IPLIKE
+		//Utils class might be a good place to have a static method that validates the query string
+		//since it seems to do something very similar in its matches method.
+        try {
+            alarms = m_AlarmDao.findMatching(dbQueryCriteria);
+            if (alarms.size() == 0) {
+                return results;
+                
+            //FIXME: make this work the criteria is going to have to support alarmId and alarm severity
+//            } else {
+//                if (isAlarmQuery(queryString)) {
+//                    LOG.debug("SearchProvider->query: adding Alarm search spec '{}' to the search results.", queryString);
+//                    SearchResult searchResult = new SearchResult(getSearchProviderNamespace(), queryString, queryString);
+//                    searchResult.setCollapsed(true);
+//                    searchResult.setCollapsible(true);
+//                    results.add(searchResult);
+//                }
+            }
+
+            Set<AlarmSearchResult> queryResults = new HashSet<AlarmSearchResult>();
+            
+            LOG.info("SearchProvider->query: creating IP address set.");
+            for (OnmsAlarm alarm : alarms) {
+                String nodeLabel = alarm.getNodeLabel();
+                LOG.debug("SearchProvider->query: adding '{}' to set of nodes.", nodeLabel);
+                
+                AlarmSearchResult result = new AlarmSearchResult(alarm.getId(), alarm.getNodeId(), queryString, alarm.getNodeLabel());
+                queryResults.add(result);
+                
+            }
+            
+            LOG.info("SearchProvider->query: building search result from set of alarms.");
+            IPLOOP: for (AlarmSearchResult result : queryResults) {
+                
+                if (findCriterion(String.valueOf(result.getAlarmId()), graphContainer) != null) {
+                    continue IPLOOP;
+
+                } else {
+                    results.add(result);
+                }
+            }
+            
+            LOG.info("SearchProvider->query: found: '{}' alarms.", alarms.size());
+            
+        } catch (Exception e) {
+            LOG.error("SearchProvider-query: caught exception during alarm query: {}", e);
+            
+        }
+		
+		LOG.info("SearchProvider->query: built search result with {} results.", results.size());
+        return results;
+    }
+
