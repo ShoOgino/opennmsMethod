@@ -1,32 +1,30 @@
     private void getLinksFromBridge(Collection<LinkableNode> linkableNodes) {
         LOG.info("getLinksFromBridge: finding links using Bridge Discovery");
         BridgeTopology topology = new BridgeTopology();
+        List<LinkableNode> bridgeNodes = new ArrayList<LinkableNode>();
         for (final LinkableNode curNode : linkableNodes) {
-            LOG.debug("getLinksFromBridge: Iterating on LinkableNode's found node with nodeid/sysoid/ipaddress {}/{}/{}",
-                      curNode.getNodeId(), curNode.getSysoid(),
-                      str(curNode.getSnmpPrimaryIpAddr()));
-            if (!curNode.isBridgeNode()) {
-                LOG.debug("getLinksFromBridge:  skipping no bridge node nodeid {}",
-                          curNode.getNodeId());
-                continue;
+            if (curNode.isBridgeNode()) {
+                LOG.debug("getLinksFromBridge: found LinkableNode nodeid/sysoid/ipaddress {}/{}/{}",
+                          curNode.getNodeId(), curNode.getSysoid(),
+                          str(curNode.getSnmpPrimaryIpAddr()));
+                bridgeNodes.add(curNode);
             }
+        }
 
+        for (final LinkableNode curNode : bridgeNodes) {
             final InetAddress curIpAddr = curNode.getSnmpPrimaryIpAddr();
             final Integer curNodeId = curNode.getNodeId();
             topology.addBridgeAssociatedMac(curNodeId,
                                             curNode.getMacIdentifiers());
-            LOG.info("getLinksFromBridge: parsing bridge: nodeid {}, IP address {}, with {} VLANs",
-                     curNodeId, str(curIpAddr),
-                     curNode.getBridgeIdentifiers().size());
             if (curNode.getStpInterfaces().size() == 0)
                 LOG.info("getLinksFromBridge: no spanning tree info found on bridge with nodeid {} and ip address {}",
                          curNodeId, str(curIpAddr));
             for (final Map.Entry<Integer, List<OnmsStpInterface>> me : curNode.getStpInterfaces().entrySet()) {
                 final Integer vlan = me.getKey();
                 final String curBaseBridgeAddress = curNode.getBridgeIdentifier(vlan);
-                LOG.debug("getLinksFromBridge: parsing Spanning Tree Protocol Data:  nodeid {}, bridge identifier {}, VLAN {} with {} stp ports",
-                          curNodeId, curBaseBridgeAddress, vlan,
-                          curNode.getStpInterfaces().get(vlan).size());
+                LOG.info("getLinksFromBridge: parsing Spanning Tree Protocol Data:  nodeid {}, bridge identifier {}, VLAN {} with {} stp ports",
+                         curNodeId, curBaseBridgeAddress, vlan,
+                         curNode.getStpInterfaces().get(vlan).size());
                 String designatedRoot = null;
                 if (curNode.hasStpRoot(vlan)) {
                     designatedRoot = curNode.getStpRoot(vlan);
@@ -64,7 +62,7 @@
                         continue;
                     }
                     if (curNode.isBridgeIdentifier(stpPortDesignatedBridge.substring(4))) {
-                        LOG.info("getLinksFromBridge:  bridge identifier {}, VLAN {}: designated bridge for port {} is bridge itself, skipping",
+                        LOG.info("getLinksFromBridge: bridge identifier {}, VLAN {}: designated bridge for port {} is bridge itself, skipping",
                                  curBaseBridgeAddress, vlan, stpbridgeport);
                         continue;
                     }
@@ -85,10 +83,6 @@
                                   stpPortDesignatedBridge);
                         continue; // no saving info if no nodeid
                     }
-                    LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: designated nodeid {} found for stp designated bridge address {}.",
-                              curBaseBridgeAddress, vlan,
-                              designatedNode.getNodeId(),
-                              stpPortDesignatedBridge);
                     topology.parseSTPEntry(curNodeId,
                                            stpbridgeport,
                                            curNode.getBridgeForwadingTableOnBridgePort(stpbridgeport),
@@ -96,11 +90,13 @@
                                            designatedbridgeport,
                                            designatedNode.getBridgeForwadingTableOnBridgePort(designatedbridgeport));
                 }
-                LOG.debug("getLinksFromBridge: end Spanning Tree Protocol Data:  nodeid {}, bridge identifier {}, VLAN {}.",
-                          curNodeId, curBaseBridgeAddress, vlan);
             }
-            for (final Entry<Integer,Set<String>> curBridgePort : curNode.getBridgeForwardingTable().entrySet()) {
-                topology.parseBFTEntry(curNodeId,
+
+        }
+
+        for (final LinkableNode curNode : bridgeNodes) {
+            for (final Entry<Integer, Set<String>> curBridgePort : curNode.getBridgeForwardingTable().entrySet()) {
+                topology.parseBFTEntry(curNode.getNodeId(),
                                        curBridgePort.getKey(),
                                        curBridgePort.getValue());
             }
@@ -112,13 +108,13 @@
             Integer curIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes,
                                                                 curNodeId,
                                                                 link.getBridgeTopologyPort().getBridgePort());
+            macParsed = addLinks(macParsed, link.getMacs(), curNodeId,
+                                 curIfIndex, DiscoveryProtocol.bridge);
             if (link.getDesignatebridgePort() != null) {
                 Integer endNodeId = link.getDesignatebridgePort().nodeid;
                 Integer endIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes,
                                                                     endNodeId,
                                                                     link.getDesignatebridgePort().bridgePort);
-                macParsed = addLinks(macParsed, link.getMacs(), curNodeId,
-                                     curIfIndex, DiscoveryProtocol.bridge);
                 final NodeToNodeLink lk = new NodeToNodeLink(
                                                              curNodeId,
                                                              curIfIndex,
