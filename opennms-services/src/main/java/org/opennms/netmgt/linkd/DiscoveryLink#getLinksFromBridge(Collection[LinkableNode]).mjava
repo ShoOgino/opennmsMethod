@@ -2,190 +2,133 @@
         LOG.info("getLinksFromBridge: finding links using Bridge Discovery");
         BridgeTopology topology = new BridgeTopology();
         for (final LinkableNode curNode : linkableNodes) {
-            LOG.debug("getLinksFromBridge: Iterating on LinkableNode's found node with nodeid/sysoid/ipaddress {}/{}/{}", curNode.getNodeId(),curNode.getSysoid(),str(curNode.getSnmpPrimaryIpAddr()));
+            LOG.debug("getLinksFromBridge: Iterating on LinkableNode's found node with nodeid/sysoid/ipaddress {}/{}/{}",
+                      curNode.getNodeId(), curNode.getSysoid(),
+                      str(curNode.getSnmpPrimaryIpAddr()));
             if (!curNode.isBridgeNode()) {
-                LOG.debug("getLinksFromBridge:  skipping no bridge node nodeid {}", curNode.getNodeId());
+                LOG.debug("getLinksFromBridge:  skipping no bridge node nodeid {}",
+                          curNode.getNodeId());
                 continue;
             }
-            
-            final InetAddress cupIpAddr = curNode.getSnmpPrimaryIpAddr();
+
+            final InetAddress curIpAddr = curNode.getSnmpPrimaryIpAddr();
             final Integer curNodeId = curNode.getNodeId();
-            topology.addBridgeAssociatedMac(curNodeId, curNode.getMacIdentifiers());
-
-            LOG.info("getLinksFromBridge: parsing bridge nodeid {} IP address {} with {} VLANs", curNodeId, str(cupIpAddr), curNode.getStpInterfaces().size());
-
+            topology.addBridgeAssociatedMac(curNodeId,
+                                            curNode.getMacIdentifiers());
+            LOG.info("getLinksFromBridge: parsing bridge: nodeid {}, IP address {}, with {} VLANs",
+                     curNodeId, str(curIpAddr),
+                     curNode.getBridgeIdentifiers().size());
+            if (curNode.getStpInterfaces().size() == 0)
+                LOG.info("getLinksFromBridge: no spanning tree info found on bridge with nodeid {} and ip address {}",
+                         curNodeId, str(curIpAddr));
             for (final Map.Entry<Integer, List<OnmsStpInterface>> me : curNode.getStpInterfaces().entrySet()) {
                 final Integer vlan = me.getKey();
                 final String curBaseBridgeAddress = curNode.getBridgeIdentifier(vlan);
-                LOG.info("getLinksFromBridge: trying to find Spanning Tree links:  bridge identifier {}, VLAN {} with {} bridge ports",
-                         curBaseBridgeAddress, vlan,
-                         curNode.getStpInterfaces().get(vlan).size());
-
+                LOG.debug("getLinksFromBridge: parsing Spanning Tree Protocol Data:  nodeid {}, bridge identifier {}, VLAN {} with {} stp ports",
+                          curNodeId, curBaseBridgeAddress, vlan,
+                          curNode.getStpInterfaces().get(vlan).size());
                 String designatedRoot = null;
-
                 if (curNode.hasStpRoot(vlan)) {
                     designatedRoot = curNode.getStpRoot(vlan);
                 } else {
-                    LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root bridge identifier not found. Skipping.",
-                              curBaseBridgeAddress, vlan);
+                    LOG.info("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root bridge identifier not found. Skipping.",
+                             curBaseBridgeAddress, vlan);
                     continue;
                 }
-
                 if (designatedRoot == null
                         || designatedRoot.equals("0000000000000000")) {
                     LOG.warn("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root {} is invalid. Skipping: {}",
                              curBaseBridgeAddress, vlan, designatedRoot);
                     continue;
                 }
-                // check if designated
-                // bridge is itself
-                // if bridge is STP root bridge itself exiting
-                // searching on linkablesnmpnodes
-
                 if (curNode.isBridgeIdentifier(designatedRoot.substring(4))) {
-                    LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root {} is the bridge itself. Skipping.",
-                              curBaseBridgeAddress, vlan, designatedRoot);
+                    LOG.info("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root {} is the bridge itself. Skipping.",
+                             curBaseBridgeAddress, vlan, designatedRoot);
                     continue;
                 }
-
-                // Now parse STP bridge port info to get designated bridge
-                LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root {} is another bridge. {} Parsing stp interfaces.",
-                          curBaseBridgeAddress, vlan, designatedRoot);
-
+                LOG.info("getLinksFromBridge: bridge identifier {}, VLAN {}: stp designated root {} is another bridge. {} Parsing stp interfaces.",
+                         curBaseBridgeAddress, vlan, designatedRoot);
                 for (final OnmsStpInterface stpIface : me.getValue()) {
                     final int stpbridgeport = stpIface.getBridgePort();
                     final String stpPortDesignatedPort = stpIface.getStpPortDesignatedPort();
                     final String stpPortDesignatedBridge = stpIface.getStpPortDesignatedBridge();
-
-                    LOG.debug("getLinksFromBridge: parsing bridge port {} with stp designated bridge {} and stp designated port {}",
-                              stpbridgeport, stpPortDesignatedBridge,
-                              stpPortDesignatedPort);
-
+                    LOG.info("getLinksFromBridge: bridge identifier {}, VLAN {}: parsing bridge port {} with stp designated bridge {} and stp designated port {}",
+                             curBaseBridgeAddress, vlan, stpbridgeport,
+                             stpPortDesignatedBridge, stpPortDesignatedPort);
                     if (stpPortDesignatedBridge == null
                             || stpPortDesignatedBridge.equals("0000000000000000")
                             || stpPortDesignatedBridge.equals("")) {
-                        LOG.warn("getLinksFromBridge: designated bridge is invalid, skipping: {}",
+                        LOG.warn("getLinksFromBridge: bridge identifier {}, VLAN {}: designated bridge is invalid, skipping: {}",
+                                 curBaseBridgeAddress, vlan,
                                  stpPortDesignatedBridge);
                         continue;
                     }
-
                     if (curNode.isBridgeIdentifier(stpPortDesignatedBridge.substring(4))) {
-                        LOG.debug("getLinksFromBridge: designated bridge for port {} is bridge itself, skipping",
-                                  stpbridgeport);
+                        LOG.info("getLinksFromBridge:  bridge identifier {}, VLAN {}: designated bridge for port {} is bridge itself, skipping",
+                                 curBaseBridgeAddress, vlan, stpbridgeport);
                         continue;
                     }
-
                     if (stpPortDesignatedPort == null
                             || stpPortDesignatedPort.equals("0000")) {
-                        LOG.warn("getLinksFromBridge: designated port is invalid: {}. skipping",
+                        LOG.warn("getLinksFromBridge: bridge identifier {}, VLAN {}: designated port is invalid: {}. skipping",
+                                 curBaseBridgeAddress, vlan,
                                  stpPortDesignatedPort);
                         continue;
                     }
-
-                    // A Port Identifier shall be encoded as two octets,
-                    // taken to represent an unsigned binary number. If
-                    // two Port Identifiers are numerically compared, the
-                    // lesser number denotes the Port of better priority.
-                    // The more significant octet of a Port Identifier is
-                    // a settable priority component that permits the
-                    // relative priority of Ports on the same Bridge to be
-                    // managed (17.13.7 and Clause 14). The less
-                    // significant twelve bits is the Port Number
-                    // expressed as an unsigned binary number. The value 0
-                    // is not used as a Port Number. NOTE -- The number of
-                    // bits that are considered to be part of the Port
-                    // Number (12 bits) differs from the 1998 and prior
-                    // versions of this standard (formerly, the priority
-                    // component was 8 bits and the Port Number component
-                    // also 8 bits). This change acknowledged that modern
-                    // switched LAN infrastructures call for increasingly
-                    // large numbers of Ports to be supported in a single
-                    // Bridge. To maintain management compatibility with
-                    // older implementations, the priority component is
-                    // still considered, for management purposes, to be an
-                    // 8-bit value, but the values that it can be set to
-                    // are restricted to those where the least significant
-                    // 4 bits are zero (i.e., only the most significant 4
-                    // bits are settable).
                     int designatedbridgeport = 8191 & Integer.parseInt(stpPortDesignatedPort,
                                                                        16);
-
-                    // try to see if designated bridge is linkable SNMP node
-
                     final LinkableNode designatedNode = getNodeFromMacIdentifierOfBridgeNode(linkableNodes,
                                                                                              stpPortDesignatedBridge.substring(4));
-
                     if (designatedNode == null) {
-                        LOG.debug("getLinksFromBridge: no nodeid found for stp bridge address {}. Nothing to save.",
+                        LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: no nodeid found for stp designated bridge address {}. Nothing to save.",
+                                  curBaseBridgeAddress, vlan,
                                   stpPortDesignatedBridge);
                         continue; // no saving info if no nodeid
                     }
-
-                    final int designatednodeid = designatedNode.getNodeId();
-
-                    LOG.debug("getLinksFromBridge: found designated nodeid {}",
-                              designatednodeid);
-
-                    // this is a backbone port so try adding to Bridge class
-                    // get the ifindex on node
-
-                    final int curIfIndex = curNode.getIfindexFromBridgePort(stpbridgeport);
-
-                    if (curIfIndex == -1) {
-                        LOG.warn("getLinksFromBridge: got invalid ifindex on node: {}",
-                                 curNode.toString());
-                    }
-
-                    final int designatedifindex = designatedNode.getIfindexFromBridgePort(designatedbridgeport);
-
-                    if (designatedifindex == -1) {
-                        LOG.warn("getLinksFromBridge: got invalid ifindex on designated node: {}",
-                                 designatedNode.toString());
-                    }
-
-                    LOG.debug("getLinksFromBridge: adding to topology link: ");
-                    LOG.debug("getLinksFromBridge: down level bridge port {}, ifindex {}, node {}",
-                              stpbridgeport, curIfIndex, curNodeId);
-                    LOG.debug("getLinksFromBridge: designated bridge port {}, ifindex {}, node {}",
-                              designatedbridgeport, designatedifindex,
-                              designatednodeid);
-                    LOG.debug("");
-
-
-                    topology.parseDesignatedBridge(curNodeId, stpbridgeport, curNode.getBridgeForwadingTableOnBridgePort(stpbridgeport),designatednodeid, designatedbridgeport, designatedNode.getBridgeForwadingTableOnBridgePort(designatedbridgeport));
+                    LOG.debug("getLinksFromBridge: bridge identifier {}, VLAN {}: designated nodeid {} found for stp designated bridge address {}.",
+                              curBaseBridgeAddress, vlan,
+                              designatedNode.getNodeId(),
+                              stpPortDesignatedBridge);
+                    topology.parseSTPEntry(curNodeId,
+                                           stpbridgeport,
+                                           curNode.getBridgeForwadingTableOnBridgePort(stpbridgeport),
+                                           designatedNode.getNodeId(),
+                                           designatedbridgeport,
+                                           designatedNode.getBridgeForwadingTableOnBridgePort(designatedbridgeport));
                 }
+                LOG.debug("getLinksFromBridge: end Spanning Tree Protocol Data:  nodeid {}, bridge identifier {}, VLAN {}.",
+                          curNodeId, curBaseBridgeAddress, vlan);
             }
-            LOG.info("getLinksFromBridge: done parsing spanning tree on bridge with nodeid {} and ip address {} with {} VLANs", curNodeId, str(cupIpAddr), curNode.getStpInterfaces().size());
-
-            for (final Integer curBridgePort : curNode.getBridgeForwardingTable().keySet()) {
-                LOG.debug("getLinksFromBridge: parsing bridge port {} with forwarded MAC address {}", curBridgePort, curNode.getBridgeForwadingTableOnBridgePort(curBridgePort).toString());
-
-                final int curIfIndex = curNode.getIfindexFromBridgePort(curBridgePort);
-                
-                if (curIfIndex == -1) {
-                    LOG.warn("getLinksFromBridge: got invalid ifIndex on bridge port {}", curBridgePort);
-                }
-
-                topology.parseBFTEntry(curNodeId,curBridgePort, curNode.getBridgeForwadingTableOnBridgePort(curBridgePort));
-
+            for (final Entry<Integer,Set<String>> curBridgePort : curNode.getBridgeForwardingTable().entrySet()) {
+                topology.parseBFTEntry(curNodeId,
+                                       curBridgePort.getKey(),
+                                       curBridgePort.getValue());
             }
-            LOG.info("getLinksFromBridge: done parsing bridge node with ID {}", curNodeId);
         }
 
         List<String> macParsed = new ArrayList<String>();
-        for (BridgeTopologyLink link: topology.getTopology()) {
-          Integer curNodeId = link.getBridgePort().getNodeid();
-          Integer curIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes, curNodeId, link.getBridgePort().getBridgePort());
-          Integer endNodeId = link.getDesignatebridgePort().nodeid;
-          Integer endIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes, endNodeId, link.getDesignatebridgePort().bridgePort);
-          macParsed = addLinks(macParsed,link.getMacs(), curNodeId          , curIfIndex,DiscoveryProtocol.bridge);
-          final NodeToNodeLink lk = new NodeToNodeLink(
-                                                       curNodeId,
-                                                       curIfIndex, DiscoveryProtocol.bridge);
-          lk.setNodeparentid(endNodeId);
-          lk.setParentifindex(endIfIndex);
-          addNodetoNodeLink(lk);
-          LOG.info("getLinksFromBridge: saving bridge link: {}", lk.toString());
+        for (BridgeTopologyLink link : topology.getTopology()) {
+            Integer curNodeId = link.getBridgeTopologyPort().getNodeid();
+            Integer curIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes,
+                                                                curNodeId,
+                                                                link.getBridgeTopologyPort().getBridgePort());
+            if (link.getDesignatebridgePort() != null) {
+                Integer endNodeId = link.getDesignatebridgePort().nodeid;
+                Integer endIfIndex = getIfIndexFromNodeidBridgePort(linkableNodes,
+                                                                    endNodeId,
+                                                                    link.getDesignatebridgePort().bridgePort);
+                macParsed = addLinks(macParsed, link.getMacs(), curNodeId,
+                                     curIfIndex, DiscoveryProtocol.bridge);
+                final NodeToNodeLink lk = new NodeToNodeLink(
+                                                             curNodeId,
+                                                             curIfIndex,
+                                                             DiscoveryProtocol.bridge);
+                lk.setNodeparentid(endNodeId);
+                lk.setParentifindex(endIfIndex);
+                addNodetoNodeLink(lk);
+                LOG.info("getLinksFromBridge: saving bridge link: {}",
+                         lk.toString());
+            }
         }
         LOG.info("getLinksFromBridge: done finding links using Bridge Discovery");
 

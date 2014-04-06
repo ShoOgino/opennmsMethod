@@ -1,187 +1,45 @@
         public void parseBFTEntry(Integer nodeid, Integer bridgePort, Set<String> macs) {
-            /*
-            private boolean isNearestBridgeLink(Collection<LinkableNode> linkableNodes,LinkableNode bridge1, int bp1,
-                    LinkableNode bridge2, int bp2) {
-
-                LOG.debug("isNearestBridgeLink: bridge1/port1 {}/{} bridge2/port2 {}/{}", bridge1.getNodeId(), bp1, bridge2.getNodeId(), bp2);
-
-                Set<String> macsOnBridge2 = bridge2.getMacAddressesOnBridgePort(bp2);
-
-                Set<String> macsOnBridge1 = bridge1.getMacAddressesOnBridgePort(bp1);
-
-                if (macsOnBridge2 == null || macsOnBridge1 == null
-                        || macsOnBridge2.isEmpty() || macsOnBridge1.isEmpty()) {
-                    LOG.debug("isNearestBridgeLink: no macs found on at least one bridge port, nearest bridges found. Return true.");
-                    return true;
-                }
-
-                for (final String curMacOnBridge1 : macsOnBridge1) {
-                    LOG.debug("isNearestBridgeLink: parsing mac address {} on bridge1", curMacOnBridge1);
-
-                    // if MAC address is bridge identifier of bridge 2 continue
-                    if (bridge2.isBridgeIdentifier(curMacOnBridge1)) {
-                        LOG.debug("isNearestBridgeLink: mac address {} is bridge identifier on bridge2. Continue", curMacOnBridge1);
-                        continue;
-                    }
-                    // if MAC address is itself identifier of bridge1 continue
-                    if (bridge1.isBridgeIdentifier(curMacOnBridge1)) {
-                        LOG.debug("isNearestBridgeLink: mac address {} is bridge identifier on bridge1. Continue", curMacOnBridge1);
-                        continue;
-                    }
-                    // then no identifier of bridge one no identifier of bridge 2
-                    // bridge 2 contains
-                    if (macsOnBridge2.contains(curMacOnBridge1)
-                            && isMacIdentifierOfBridgeNode(linkableNodes,curMacOnBridge1)) {
-                        LOG.debug("isNearestBridgeLink: mac address {} is bridge identifier. Other bridge found. Return false", curMacOnBridge1);
-                        return false;
-                    }
-                }
-
-                return true;
+            LOG.info("parseBFTEntry: parsing node {}, port {}, macs {}", nodeid, bridgePort,macs);
+            BridgeTopologyPortCandidate bridgeportcandidate = new BridgeTopologyPortCandidate(nodeid, bridgePort, macs);
+            // first check if there is an entry for this from stp 
+            if ( parsed(bridgeportcandidate)) {
+                LOG.info("parseBFTEntry: node {}, port {} has been previuosly parsed. Skipping.", nodeid, bridgePort);
+                return;
             }
-
-            private Set<String> getMacsOnBridgeLink(LinkableNode bridge1, int bp1,
-                                                    LinkableNode bridge2, int bp2) {
-
-                Set<String> macsOnLink = new HashSet<String>();
-
-                Set<String> macsOnBridge1 = bridge1.getMacAddressesOnBridgePort(bp1);
-
-                Set<String> macsOnBridge2 = bridge2.getMacAddressesOnBridgePort(bp2);
-
-                if (macsOnBridge2 == null || macsOnBridge1 == null)
-                    return null;
-
-                if (macsOnBridge2.isEmpty() || macsOnBridge1.isEmpty())
-                    return null;
-
-                for (final String curMacOnBridge1 : macsOnBridge1) {
-                    if (bridge2.isBridgeIdentifier(curMacOnBridge1))
-                        continue;
-                    if (macsOnBridge2.contains(curMacOnBridge1))
-                        macsOnLink.add(curMacOnBridge1);
-                }
-                return macsOnLink;
-            }
-
-            private boolean isMacIdentifierOfBridgeNode(Collection<LinkableNode> linkableNodes, String macAddress) {
-                for (final LinkableNode curNode : linkableNodes) {
-                    if (curNode.isBridgeIdentifier(macAddress))
-                        return true;
-                }
-                return false;
-            }
-
-            private List<LinkableNode> getBridgesFromMacs(Collection<LinkableNode> linkableNodes,final Set<String> macs) {
-                List<LinkableNode> bridges = new ArrayList<LinkableNode>();
-                for (final String mac: macs) {
-                    for (final LinkableNode curNode : linkableNodes) {
-                        if (curNode.hasMacAddress(mac)) 
-                            bridges.add(curNode);
-                        else {
-                            for (final String curBridgeIdentifier : curNode.getBridgeIdentifiers()) {
-                                if (mac.equals(curBridgeIdentifier))
-                                    bridges.add(curNode);
+            
+            for (String mac : macs) {
+                LOG.info("parseBFTEntry: parsing node {}, port {}, mac {}",
+                         nodeid, bridgePort, mac);
+                if (bridgeAssociatedMacAddressMap.containsKey(mac)) {
+                    Integer targetNodeid = bridgeAssociatedMacAddressMap.get(mac);
+                    LOG.info("parseBFTEntry: parsing node {}, port {}, mac {}: mac belong to bridge {}",
+                             nodeid, bridgePort, mac, targetNodeid);
+                    for (BridgeTopologyLink link : bridgelinks) {
+                        if (link.contains(targetNodeid)) {
+                            for (String macsOnTarget : link.getMacs()) {
+                                if (bridgeAssociatedMacAddressMap.containsKey(macsOnTarget)
+                                        && bridgeAssociatedMacAddressMap.get(macsOnTarget).intValue() == nodeid.intValue()) {
+                                    link.setDesignatedbridgePort(bridgeportcandidate);
+                                    LOG.info("parseBFTEntry: parsing node {}, port {}, mac {}: linked to bridge {}, port {}",
+                                             nodeid,
+                                             bridgePort,
+                                             mac,
+                                             targetNodeid,
+                                             link.getBridgeTopologyPort().getBridgePort());
+                                    return;
+                                }
                             }
                         }
                     }
                 }
-                return bridges;
             }
-
-            private int getBridgePortOnEndBridge(final LinkableNode startBridge,
-                    final LinkableNode endBridge) {
-
-                for (final String curBridgeIdentifier : startBridge.getBridgeIdentifiers()) {
-                    LOG.debug("getBridgePortOnEndBridge: parsing bridge identifier {}", curBridgeIdentifier);
-
-                    if (endBridge.hasMacAddress(curBridgeIdentifier)) {
-                        return getBridgePort(endBridge, curBridgeIdentifier);
-                    } else {
-                        LOG.debug("getBridgePortOnEndBridge: bridge identifier not found on node {}", endBridge.getNodeId());
-                    }
-                }
-                for (final String mac : startBridge.getMacIdentifiers()) {
-                    LOG.debug("getBridgePortOnEndBridge: parsing mac identifier {}", mac);
-                    if (endBridge.hasMacAddress(mac)) {
-                        return getBridgePort(endBridge, mac);
-                    } else {
-                        LOG.debug("getBridgePortOnEndBridge: bridge identifier not found on node {}", endBridge.getNodeId());
-                    }
-                }
-                return -1;
-            }
-
-            private int getBridgePort(final LinkableNode node, final String mac) {
-                for (final Integer port : node.getBridgePortsFromMac(mac)) {
-                    if (node.isBackBoneBridgePort(port)) {
-                        LOG.debug("getBridgePort: found backbone bridge port {} .... Skipping.", port);
-                        continue;
-                    }
-                    LOG.debug("getBridgePort: using MAC address table found bridge port {} on node {}", port, node.getNodeId());
-                    return port;
-                }
-                return -1;
-            }
-            */
-
-            
-            // Then find the bridges whose MAC addresses are learned on
-            // bridge port
-//            final List<LinkableNode> bridgesOnPort = getBridgesFromMacs(bridgeNodes.values(),macs);
-
-//            if (bridgesOnPort.isEmpty()) {
-//                LOG.debug("getLinksFromBridge: no bridges macs found on port {}. Saving MACs.", curBridgePort);
-//                macParsed = addLinks(macParsed,macs, curNodeId, curIfIndex,DiscoveryProtocol.bridge);
-//                continue;
-//            } 
-            // a bridge MAC address was found on port so you should
-            // analyze what happens
-//            LOG.debug("getLinksFromBridge: bridges macs found on port {}. Searching nearest.", curBridgePort);
-
-            // one among these bridges should be the node more close
-            // to the curnode, curport
-//            for (final LinkableNode endNode : bridgesOnPort) {
-//                final int endNodeid = endNode.getNodeId();
-//                if (curNodeId == endNodeid) {
-//                    LOG.debug("getLinksFromBridge: curnode and target node are the same. Skipping.");
-//                    continue;
-//                }
-//                final int endBridgePort = getBridgePortOnEndBridge(curNode,
-//                                                                   endNode);
-//                // The bridge port should be valid! This control is
-//                // not properly done
-//                if (endBridgePort == -1) {
-//                    LOG.warn("getLinksFromBridge: no valid port found on bridge nodeid {} for node bridge identifiers nodeid {}. Skipping.", endNodeid, curNodeId);
-//                    continue;
-//                }
-
-                // Try to found a new
-//                final boolean isTargetNode = isNearestBridgeLink(bridgeNodes.values(),curNode,
-//                                                                 curBridgePort,
-//                                                                 endNode,
-//                                                                 endBridgePort);
-//                if (!isTargetNode)
-//                    continue;
-
-//                final int endIfindex = endNode.getIfindex(endBridgePort);
-//                if (endIfindex == -1) {
-//                    LOG.warn("getLinksFromBridge: got invalid ifindex on designated bridge port {}", endBridgePort);
-//                    continue;
-//                }
-
-//                LOG.debug("getLinksFromBridge: backbone port found for node {}. Adding backbone bridge port {}", curNodeId, curBridgePort);
-
-//                curNode.addBackBoneBridgePorts(curBridgePort);
-//                bridgeNodes.put(curNodeId, curNode);
-
-//                LOG.debug("getLinksFromBridge: backbone port found for node {}. Adding to backbone bridge port {}", endNodeid, endBridgePort);
-
-//                endNode.addBackBoneBridgePorts(endBridgePort);
-//                bridgeNodes.put(endNodeid, endNode);
-
-                // finding links between two backbone ports
-//            }
-    
+            LOG.info("parseBFTEntry: node {}, port {}, mac {}:: added to topology",
+                     nodeid,
+                     bridgePort,
+                     macs);
+            bridgelinks.add(new BridgeTopologyLink(bridgeportcandidate));
+            //     is backbone?
+            //     is local?
+            // found designated bridge...I have to found designated port
         }
 
