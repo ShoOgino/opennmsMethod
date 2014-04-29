@@ -11,96 +11,96 @@
      * @throws org.exolab.castor.xml.ValidationException if any.
      */
     public Collection<Integer> acknowledgeNotice(final Event event, final String uei, final String[] matchList) throws SQLException, IOException, MarshalException, ValidationException {
-        Connection connection = null;
         List<Integer> notifIDs = new LinkedList<Integer>();
-        final DBUtils d = new DBUtils(getClass());
+        final DBUtils dbUtils = new DBUtils(getClass());
 
         try {
             // First get most recent event ID from notifications 
             // that match the matchList, then get all notifications
             // with this event ID
-            connection = getConnection();
-            d.watch(connection);
-            int eventID = 0;
-            boolean wasAcked = false;
-            StringBuffer sql = new StringBuffer("SELECT eventid FROM notifications WHERE eventuei=? ");
+            Connection connection = getConnection();
+            dbUtils.watch(connection);
+
+            // Verify if parameter matching is required
+            boolean matchParameters = false;
             for (int i = 0; i < matchList.length; i++) {
-                sql.append("AND ").append(matchList[i]).append("=? ");
+                if (matchList[i].startsWith("parm[")) {
+                    matchParameters = true;
+                    break;
+                }
+            }
+
+            StringBuffer sql = new StringBuffer(matchParameters ? "SELECT n.eventid FROM notifications n, events e WHERE n.eventid = e.eventid AND n.eventuei=? " : "SELECT n.eventid FROM notifications n WHERE n.eventuei=? ");
+            for (int i = 0; i < matchList.length; i++) {
+                if (matchList[i].startsWith("parm[")) {
+                    sql.append("AND e.eventparms LIKE ? ");
+                } else {
+                    sql.append("AND n.").append(matchList[i]).append("=? ");
+                }
             }
             sql.append("ORDER BY eventid desc limit 1");
             PreparedStatement statement = connection.prepareStatement(sql.toString());
-            d.watch(statement);
+            dbUtils.watch(statement);
             statement.setString(1, uei);
-    
+
             for (int i = 0; i < matchList.length; i++) {
                 if (matchList[i].equals("nodeid")) {
                     statement.setLong(i + 2, event.getNodeid());
                 }
-    
+
                 if (matchList[i].equals("interfaceid")) {
                     statement.setString(i + 2, event.getInterface());
                 }
-    
+
                 if (matchList[i].equals("serviceid")) {
                     statement.setInt(i + 2, getServiceId(event.getService()));
                 }
-            }
-    
-            ResultSet results = statement.executeQuery();
-            d.watch(results);
-            if (results != null && results.next()) {
-                eventID = results.getInt(1);
 
-                LOG.debug("EventID for notice(s) to be acked: {}", eventID);
-
-
-                sql = new StringBuffer("SELECT notifyid, answeredby, respondtime FROM notifications WHERE eventID=?");
-    
-                statement = connection.prepareStatement(sql.toString());
-                statement.setInt(1, eventID);
-    
-                results = statement.executeQuery();
-    
-                if (results != null) {
-                    while (results.next()) {
-                        int notifID = results.getInt(1);
-                        String ansBy = results.getString(2);
-                        Timestamp ts = results.getTimestamp(3);
-                        if(ansBy == null) {
-                            ansBy = "auto-acknowledged";
-                            ts = new Timestamp((new Date()).getTime());
-                        } else if(ansBy.indexOf("auto-acknowledged") > -1) {
-
-                            LOG.debug("Notice has previously been auto-acknowledged. Skipping...");
-                            continue;
-                        } else {
-                            wasAcked = true;
-                            ansBy = ansBy + "/auto-acknowledged";
+                if (matchList[i].startsWith("parm[")) {
+                    String match = matchList[i];
+                    String key = null;
+                    String param = null;
+                    String value = null;
+                    try {
+                        key = match.substring(match.indexOf("[") + 1, match.indexOf("]"));
+                    } catch (Exception e) {}
+                    if (key != null) {
+                        int numkey = 0;
+                        if (key.startsWith("#")) {
+                            try {
+                                numkey = Integer.parseInt(key.substring(1));
+                            } catch (Exception e) {}
                         }
-
-                        LOG.debug("Matching DOWN notifyID = {}, was acked by user = {}, ansBy = {}", ansBy, notifID, wasAcked);
-                        final PreparedStatement update = connection.prepareStatement(getConfigManager().getConfiguration().getAcknowledgeUpdateSql());
-                        d.watch(update);
-    
-                        update.setString(1, ansBy);
-                        update.setTimestamp(2, ts);
-                        update.setInt(3, notifID);
-    
-                        update.executeUpdate();
-                        update.close();
-                        if(wasAcked) {
-                            notifIDs.add(-1 * notifID);
-                        } else {
-                            notifIDs.add(notifID);
+                        int idx = 0;
+                        for (Parm p : event.getParmCollection()) {
+                            if (numkey > 0) {
+                                if (numkey == idx) {
+                                    param = p.getParmName();
+                                    value = p.getValue().getContent();
+                                }
+                            } else {
+                                if (p.getParmName().equalsIgnoreCase(key)) {
+                                    param = p.getParmName();
+                                    value = p.getValue().getContent();
+                                }
+                            }
+                            idx++;
                         }
                     }
+                    statement.setString(i + 2, '%' + param + '=' + value + '%');
                 }
-            } else {
+            }
 
+            ResultSet results = statement.executeQuery();
+            dbUtils.watch(results);
+            if (results != null && results.next()) {
+                int eventID = results.getInt(1);
+                notifIDs = doAcknowledgeNotificationsFromEvent(connection, dbUtils, eventID);
+            } else {
                 LOG.debug("No matching DOWN eventID found");
             }
         } finally {
-            d.cleanUp();
+            dbUtils.cleanUp();
         }
         return notifIDs;
     }
