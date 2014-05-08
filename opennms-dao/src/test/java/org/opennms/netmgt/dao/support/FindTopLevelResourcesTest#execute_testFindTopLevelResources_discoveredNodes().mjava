@@ -1,0 +1,48 @@
+    /*
+     * On environments where all the nodes have been discovered (i.e. they are not part of a requisition),
+     * the top level resources are always going to be built using NodeResourceType.
+     * no matter if storeByForeignSource is enabled or not.
+     */
+    private void execute_testFindTopLevelResources_discoveredNodes() throws Exception {
+        List<OnmsNode> nodes = new ArrayList<OnmsNode>();
+
+        OnmsNode n1 = new OnmsNode();
+        n1.setId(1);
+        n1.setLabel("node1");
+        OnmsIpInterface ip1 = new OnmsIpInterface();
+        ip1.setId(11);
+        ip1.setIpAddress(InetAddressUtils.addr("10.0.0.1"));
+        ip1.setNode(n1);
+        n1.addIpInterface(ip1);
+        nodes.add(n1);
+
+        expect(m_dataCollectionConfigDao.getLastUpdate()).andReturn(new Date(System.currentTimeMillis())).times(2);
+        expect(m_dataCollectionConfigDao.getConfiguredResourceTypes()).andReturn(new HashMap<String, ResourceType>());
+        expect(m_nodeDao.get(n1.getId())).andReturn(n1).times(2); // TODO ResponseTimeResourceType is called as many time as resources the node has.
+        expect(m_locationMonitorDao.findStatusChangesForNodeForUniqueMonitorAndInterface(n1.getId())).andReturn(new ArrayList<LocationMonitorIpInterface>(0));
+        expect(m_nodeDao.findAll()).andReturn(nodes);
+
+        File snmpDir = m_fileAnticipator.tempDir("snmp");
+        File nodeDir = m_fileAnticipator.tempDir(snmpDir, n1.getId().toString());
+        m_fileAnticipator.tempFile(nodeDir, "foo" + RrdUtils.getExtension());
+
+        File responseDir = m_fileAnticipator.tempDir("response");
+        File ipDir = m_fileAnticipator.tempDir(responseDir, ip1.getIpAddress().getHostAddress());
+        m_fileAnticipator.tempFile(ipDir, "foo" + RrdUtils.getExtension());
+
+        m_easyMockUtils.replayAll();
+        m_resourceDao.afterPropertiesSet();
+
+        List<OnmsResource> resources = m_resourceDao.findTopLevelResources();
+        Assert.assertNotNull(resources);
+        Collections.sort(resources);
+        Assert.assertEquals(1, resources.size());
+        List<OnmsResource> children = resources.get(0).getChildResources();
+        Collections.sort(children);
+        Assert.assertEquals(2, children.size());
+        Assert.assertEquals("node[1].responseTime[10.0.0.1]", children.get(0).getId());
+        Assert.assertEquals("node[1].nodeSnmp[]", children.get(1).getId());
+
+        m_easyMockUtils.verifyAll();
+    }
+
