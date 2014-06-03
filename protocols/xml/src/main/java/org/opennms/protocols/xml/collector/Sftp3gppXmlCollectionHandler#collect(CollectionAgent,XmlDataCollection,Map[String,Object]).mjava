@@ -4,11 +4,13 @@
     @Override
     public XmlCollectionSet collect(CollectionAgent agent, XmlDataCollection collection, Map<String, Object> parameters) throws CollectionException {
         // Create a new collection set.
-        XmlCollectionSet collectionSet = new XmlCollectionSet(agent);
+        XmlCollectionSet collectionSet = new XmlCollectionSet();
         collectionSet.setCollectionTimestamp(new Date());
         collectionSet.setStatus(ServiceCollector.COLLECTION_UNKNOWN);
 
         // TODO We could be careful when handling exceptions because parsing exceptions will be treated different from connection or retrieval exceptions
+        DateTime startTime = new DateTime();
+        Sftp3gppUrlConnection connection = null;
         try {
             File resourceDir = new File(getRrdRepository().getRrdBaseDir(), Integer.toString(agent.getNodeId()));
             for (XmlSource source : collection.getXmlSources()) {
@@ -16,41 +18,41 @@
                     throw new CollectionException("The 3GPP SFTP Collection Handler can only use the protocol " + Sftp3gppUrlHandler.PROTOCOL);
                 }
                 String urlStr = parseUrl(source.getUrl(), agent, collection.getXmlRrd().getStep());
-                Request request = parseRequest(source.getRequest(), agent);
+                Request request = parseRequest(source.getRequest(), agent, collection.getXmlRrd().getStep());
                 URL url = UrlFactory.getUrl(urlStr, request);
-                String lastFile = getLastFilename(resourceDir, url.getPath());
-                Sftp3gppUrlConnection connection = (Sftp3gppUrlConnection) url.openConnection();
+                String lastFile = Sftp3gppUtils.getLastFilename(getServiceName(), resourceDir, url.getPath());
+                connection = (Sftp3gppUrlConnection) url.openConnection();
                 if (lastFile == null) {
                     lastFile = connection.get3gppFileName();
                     LOG.debug("collect(single): retrieving file from {}{}{} from {}", url.getPath(), File.separatorChar, lastFile, agent.getHostAddress());
-                    Document doc = getXmlDocument(urlStr, source.getRequest());
+                    Document doc = getXmlDocument(urlStr, request);
                     fillCollectionSet(agent, collectionSet, source, doc);
-                    setLastFilename(resourceDir, url.getPath(), lastFile);
-                    deleteFile(connection, lastFile);
+                    Sftp3gppUtils.setLastFilename(getServiceName(), resourceDir, url.getPath(), lastFile);
+                    Sftp3gppUtils.deleteFile(connection, lastFile);
                 } else {
                     connection.connect();
                     List<String> files = connection.getFileList();
                     long lastTs = connection.getTimeStampFromFile(lastFile);
-                    DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                    DocumentBuilder builder = factory.newDocumentBuilder();
-                    factory.setIgnoringComments(true);
                     boolean collected = false;
                     for (String fileName : files) {
                         if (connection.getTimeStampFromFile(fileName) > lastTs) {
                             LOG.debug("collect(multiple): retrieving file {} from {}", fileName, agent.getHostAddress());
                             InputStream is = connection.getFile(fileName);
-                            Document doc = builder.parse(is);
-                            IOUtils.closeQuietly(is);
-                            fillCollectionSet(agent, collectionSet, source, doc);
-                            setLastFilename(resourceDir, url.getPath(), fileName);
-                            deleteFile(connection, fileName);
+                            try {
+                                Document doc = getXmlDocument(is, request);
+                                IOUtils.closeQuietly(is);
+                                fillCollectionSet(agent, collectionSet, source, doc);
+                            } finally {
+                                IOUtils.closeQuietly(is);
+                            }
+                            Sftp3gppUtils.setLastFilename(getServiceName(), resourceDir, url.getPath(), fileName);
+                            Sftp3gppUtils.deleteFile(connection, fileName);
                             collected = true;
                         }
                     }
                     if (!collected) {
                         LOG.warn("collect: could not find any file after {} on {}", lastFile, agent);
                     }
-                    connection.disconnect();
                 }
             }
             collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
@@ -58,6 +60,11 @@
         } catch (Exception e) {
             collectionSet.setStatus(ServiceCollector.COLLECTION_FAILED);
             throw new CollectionException(e.getMessage(), e);
+        } finally {
+            String status = collectionSet.getStatus() == ServiceCollector.COLLECTION_SUCCEEDED ? "finished" : "failed";
+            DateTime endTime = new DateTime();
+            LOG.debug("collect: {} collection {}: duration: {} ms", status, collection.getName(), endTime.getMillis()-startTime.getMillis());
+            UrlFactory.disconnect(connection);
         }
     }
 
