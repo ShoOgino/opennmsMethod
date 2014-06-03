@@ -1,0 +1,58 @@
+    /**
+     * <p>doAcknowledgeNotificationsFromEvent</p>
+     *
+     * @param connection a {@link java.sql.Connection} object.
+     * @param dbUtils a {@link org.opennms.core.utils.DBUtils} object.
+     * @param eventID a {@link java.lang.Integer} object.
+     * @return a {@link java.util.List} object.
+     * @throws java.sql.SQLException if any.
+     * @throws java.io.IOException if any.
+     * @throws org.exolab.castor.xml.MarshalException if any.
+     * @throws org.exolab.castor.xml.ValidationException if any.
+     */
+    private List<Integer> doAcknowledgeNotificationsFromEvent(final Connection connection, final DBUtils dbUtils, int eventID) 
+            throws SQLException, IOException, MarshalException, ValidationException {
+        List<Integer> notifIDs = new LinkedList<Integer>();
+        LOG.debug("EventID for notice(s) to be acked: {}", eventID);
+
+        PreparedStatement statement = connection.prepareStatement("SELECT notifyid, answeredby, respondtime FROM notifications WHERE eventID=?");
+        dbUtils.watch(statement);
+        statement.setInt(1, eventID);
+
+        ResultSet results = statement.executeQuery();
+        boolean wasAcked = false;
+        if (results != null) {
+            dbUtils.watch(results);
+            while (results.next()) {
+                int notifID = results.getInt(1);
+                String ansBy = results.getString(2);
+                Timestamp ts = results.getTimestamp(3);
+                if(ansBy == null) {
+                    ansBy = "auto-acknowledged";
+                    ts = new Timestamp((new Date()).getTime());
+                } else if(ansBy.indexOf("auto-acknowledged") > -1) {
+                    LOG.debug("Notice has previously been auto-acknowledged. Skipping...");
+                    continue;
+                } else {
+                    wasAcked = true;
+                    ansBy = ansBy + "/auto-acknowledged";
+                }
+                LOG.debug("Matching DOWN notifyID = {}, was acked by user = {}, ansBy = {}", notifID, wasAcked, ansBy);
+                final PreparedStatement update = connection.prepareStatement(getConfigManager().getConfiguration().getAcknowledgeUpdateSql());
+                dbUtils.watch(update);
+                update.setString(1, ansBy);
+                update.setTimestamp(2, ts);
+                update.setInt(3, notifID);
+                update.executeUpdate();
+                update.close();
+                if(wasAcked) {
+                    notifIDs.add(-1 * notifID);
+                } else {
+                    notifIDs.add(notifID);
+                }
+            }
+        }
+
+        return notifIDs;
+    }
+

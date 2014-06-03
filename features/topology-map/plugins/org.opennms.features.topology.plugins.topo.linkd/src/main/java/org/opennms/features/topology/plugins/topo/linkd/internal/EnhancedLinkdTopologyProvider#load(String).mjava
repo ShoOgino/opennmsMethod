@@ -1,0 +1,130 @@
+    @Override
+    @Transactional
+    public void load(String filename) throws MalformedURLException, JAXBException {
+        if (filename != null) {
+            LOG.warn("Filename that was specified for linkd topology will be ignored: " + filename + ", using " + getConfigurationFile() + " instead");
+        }
+        try{
+            //TODO: change to one query from the database that will return all links plus elements joined
+            //This reset container is set in here for the demo, don't commit
+
+            resetContainer();
+            List<LldpLink> allLinks = m_lldpLinkDao.findAll();
+            Set<LldpLinkDetail> combinedLinkDetails = new HashSet<LldpLinkDetail>();
+            for (LldpLink sourceLink : allLinks) {
+                LOG.debug("loadtopology: parsing link: " + sourceLink);
+                OnmsNode sourceNode = sourceLink.getNode();
+                LldpElement sourceElement = sourceNode.getLldpElement();
+                LOG.debug("loadtopology: found source node: " + sourceNode.getLabel());
+                Vertex source = getVertex(getVertexNamespace(), sourceNode.getNodeId());
+                if (source == null) {
+                    LOG.debug("loadtopology: adding source node as vertex: " + sourceNode.getLabel());
+                    source = getVertex(sourceNode);
+                    addVertices(source);
+                }
+
+                for (LldpLink targetLink : allLinks) {
+                    OnmsNode targetNode = targetLink.getNode();
+                    LldpElement targetLldpElement = targetNode.getLldpElement();
+
+                    //Compare the remote data to the targetNode element data
+                    boolean bool1 = sourceLink.getLldpRemPortId().equals(targetLink.getLldpPortId()) && targetLink.getLldpRemPortId().equals(sourceLink.getLldpPortId());
+                    boolean bool2 = sourceLink.getLldpRemPortDescr().equals(targetLink.getLldpPortDescr()) && targetLink.getLldpRemPortDescr().equals(sourceLink.getLldpPortDescr());
+                    boolean bool3 = sourceLink.getLldpRemChassisId().equals(targetLldpElement.getLldpChassisId()) && targetLink.getLldpRemChassisId().equals(sourceElement.getLldpChassisId());
+                    boolean bool4 = sourceLink.getLldpRemSysname().equals(targetLldpElement.getLldpSysname()) && targetLink.getLldpRemSysname().equals(sourceElement.getLldpSysname());
+                    boolean bool5 = sourceLink.getLldpRemPortIdSubType() == targetLink.getLldpPortIdSubType() && targetLink.getLldpRemPortIdSubType() == sourceLink.getLldpPortIdSubType();
+
+                    if (bool1 && bool2 && bool3 && bool4 && bool5) {
+                        Vertex target = getVertex(getVertexNamespace(), targetNode.getNodeId());
+                        if (target == null) {
+                            target = getVertex(targetNode);
+                        }
+
+                        LldpLinkDetail linkDetail = new LldpLinkDetail(
+                                Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
+                                source, sourceLink, target, targetLink);
+                        combinedLinkDetails.add(linkDetail);
+                    }
+                }
+
+            }
+
+            //Adding all deduplicated links
+            for (LldpLinkDetail linkDetail : combinedLinkDetails) {
+                AbstractEdge edge = connectVertices(linkDetail.getId(), linkDetail.getSource(), linkDetail.getTarget());
+                edge.setTooltipText(getEdgeTooltipText(linkDetail.getSourceLink(), linkDetail.getTargetLink(), linkDetail.getSource(), linkDetail.getTarget()));
+            }
+        } catch (Exception e){   }
+
+        LOG.debug("loadtopology: adding nodes without links: " + isAddNodeWithoutLink());
+        if (isAddNodeWithoutLink()) {
+
+            List<OnmsNode> allNodes;
+            allNodes = getAllNodesNoACL();
+
+            for (OnmsNode onmsnode: allNodes) {
+                String nodeId = onmsnode.getNodeId();
+                if (getVertex(getVertexNamespace(), nodeId) == null) {
+                    LOG.debug("loadtopology: adding link-less node: " + onmsnode.getLabel());
+                    addVertices(getVertex(onmsnode));
+                }
+            }
+
+        }
+
+        File configFile = new File(getConfigurationFile());
+        if (configFile.exists() && configFile.canRead()) {
+            LOG.debug("loadtopology: loading topology from configuration file: " + getConfigurationFile());
+            WrappedGraph graph = getGraphFromFile(configFile);
+
+            // Add all groups to the topology
+            for (WrappedVertex eachVertexInFile: graph.m_vertices) {
+                if (eachVertexInFile.group) {
+                    LOG.debug("loadtopology: adding group to topology: " + eachVertexInFile.id);
+                    if (eachVertexInFile.namespace == null) {
+                        eachVertexInFile.namespace = getVertexNamespace();
+                        LoggerFactory.getLogger(this.getClass()).warn("Setting namespace on vertex to default: {}", eachVertexInFile);
+                    }
+                    if (eachVertexInFile.id == null) {
+                        LoggerFactory.getLogger(this.getClass()).warn("Invalid vertex unmarshalled from {}: {}", getConfigurationFile(), eachVertexInFile);
+                    }
+                    AbstractVertex newGroupVertex = addGroup(eachVertexInFile.id, eachVertexInFile.iconKey, eachVertexInFile.label);
+                    newGroupVertex.setIpAddress(eachVertexInFile.ipAddr);
+                    newGroupVertex.setLocked(eachVertexInFile.locked);
+                    if (eachVertexInFile.nodeID != null) newGroupVertex.setNodeID(eachVertexInFile.nodeID);
+                    if (!newGroupVertex.equals(eachVertexInFile.parent)) newGroupVertex.setParent(eachVertexInFile.parent);
+                    newGroupVertex.setSelected(eachVertexInFile.selected);
+                    newGroupVertex.setStyleName(eachVertexInFile.styleName);
+                    newGroupVertex.setTooltipText(eachVertexInFile.tooltipText);
+                    if (eachVertexInFile.x != null) newGroupVertex.setX(eachVertexInFile.x);
+                    if (eachVertexInFile.y != null) newGroupVertex.setY(eachVertexInFile.y);
+                }
+            }
+            for (Vertex vertex: getVertices()) {
+                if (vertex.getParent() != null && !vertex.equals(vertex.getParent())) {
+                    LOG.debug("loadtopology: setting parent of " + vertex + " to " + vertex.getParent());
+                    setParent(vertex, vertex.getParent());
+                }
+            }
+            // Add all children to the specific group
+            // Attention: We ignore all other attributes, they do not need to be merged!
+            for (WrappedVertex eachVertexInFile : graph.m_vertices) {
+                if (!eachVertexInFile.group && eachVertexInFile.parent != null) {
+                    final Vertex child = getVertex(eachVertexInFile);
+                    final Vertex parent = getVertex(eachVertexInFile.parent);
+                    if (child == null || parent == null) continue;
+                    LOG.debug("loadtopology: setting parent of " + child + " to " + parent);
+                    if (!child.equals(parent)) setParent(child, parent);
+                }
+            }
+        } else {
+            LOG.debug("loadtopology: could not load topology configFile:" + getConfigurationFile());
+        }
+        LOG.debug("Found " + getGroups().size() + " groups");
+        LOG.debug("Found " + getVerticesWithoutGroups().size() + " vertices");
+        LOG.debug("Found " + getEdges().size() + " edges");
+
+
+
+    }
+

@@ -1,0 +1,53 @@
+    /*
+     * On environments where all the nodes have been discovered (i.e. they are not part of a requisition),
+     * the top level resources are always going to be built using NodeResourceType.
+     * no matter if storeByForeignSource is enabled or not.
+     */
+    private void execute_testFindTopLevelResources_discoveredNodes() throws Exception {
+        final List<OnmsNode> nodes = new ArrayList<OnmsNode>();
+
+        OnmsNode n1 = createNode(1, "node1", null, null, "10.0.0.1"); // Node on the DB with RRD Data
+        nodes.add(n1);
+        OnmsNode n2 = createNode(2, "node2", null, null, "10.0.0.2"); // Node on the DB with No RRD Data
+        nodes.add(n2);
+
+        expect(m_dataCollectionConfigDao.getLastUpdate()).andReturn(new Date(System.currentTimeMillis())).times(2);
+        expect(m_dataCollectionConfigDao.getConfiguredResourceTypes()).andReturn(new HashMap<String, ResourceType>());
+        expect(m_nodeDao.findAll()).andReturn(nodes);
+
+        expect(m_nodeDao.get(n1.getId())).andReturn(n1).times(2); // TODO ResponseTimeResourceType is the responsible for this.
+        expect(m_locationMonitorDao.findStatusChangesForNodeForUniqueMonitorAndInterface(n1.getId())).andReturn(new ArrayList<LocationMonitorIpInterface>(0));
+
+        // Common directories
+        File snmpDir = m_fileAnticipator.tempDir(ResourceTypeUtils.SNMP_DIRECTORY);
+        File responseDir = m_fileAnticipator.tempDir(ResourceTypeUtils.RESPONSE_DIRECTORY);
+
+        // RRD Directory for n1
+        File nodeDir = m_fileAnticipator.tempDir(snmpDir, n1.getId().toString());
+        m_fileAnticipator.tempFile(nodeDir, "data" + RrdUtils.getExtension());
+
+        // RRD Directory for an orphan node
+        File orphanDir = m_fileAnticipator.tempDir(snmpDir, "100");
+        m_fileAnticipator.tempFile(orphanDir, "data" + RrdUtils.getExtension());
+
+        // Response Time RRD Directory for n1
+        File ipDir = m_fileAnticipator.tempDir(responseDir, n1.getIpInterfaces().iterator().next().getIpAddress().getHostAddress());
+        m_fileAnticipator.tempFile(ipDir, "icmp" + RrdUtils.getExtension());
+
+        m_easyMockUtils.replayAll();
+        m_resourceDao.afterPropertiesSet();
+
+        // Verify node1
+        List<OnmsResource> resources = m_resourceDao.findTopLevelResources();
+        Assert.assertNotNull(resources);
+        Collections.sort(resources);
+        Assert.assertEquals(1, resources.size());
+        List<OnmsResource> children = resources.get(0).getChildResources();
+        Collections.sort(children);
+        Assert.assertEquals(2, children.size());
+        Assert.assertEquals("node[1].responseTime[10.0.0.1]", children.get(0).getId());
+        Assert.assertEquals("node[1].nodeSnmp[]", children.get(1).getId());
+
+        m_easyMockUtils.verifyAll();
+    }
+
