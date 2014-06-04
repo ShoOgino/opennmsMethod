@@ -1,16 +1,58 @@
-	protected List<Difference> getDifferences(final String xmlA, final String xmlB) throws SAXException, IOException {
-		final DetailedDiff myDiff = new DetailedDiff(XMLUnit.compareXML(xmlA, xmlB));
-		final List<Difference> retDifferences = new ArrayList<Difference>();
+    protected List<Difference> getDifferences(final String xmlA, final String xmlB) {
+        DetailedDiff myDiff;
+        try {
+            myDiff = new DetailedDiff(XMLUnit.compareXML(xmlA, xmlB));
+        } catch (final Exception e) {
+            throw new RuntimeException(e);
+        }
+        final List<Difference> retDifferences = new ArrayList<Difference>();
         @SuppressWarnings("unchecked")
-		final List<Difference> allDifferences = myDiff.getAllDifferences();
+        final List<Difference> allDifferences = myDiff.getAllDifferences();
         if (allDifferences.size() > 0) {
-            for (final Difference d : allDifferences) {
-            	if (d.getDescription().equals("namespace URI")) {
-            		LogUtils.infof(this, "Ignoring namspace difference: %s", d);
-            	} else {
-                	LogUtils.warnf(this, "Found difference: %s", d);
-                	retDifferences.add(d);
-            	}
+            DIFFERENCES: for (final Difference d : allDifferences) {
+                final NodeDetail controlNodeDetail = d.getControlNodeDetail();
+                final String control = controlNodeDetail.getValue();
+                final NodeDetail testNodeDetail = d.getTestNodeDetail();
+                final String test = testNodeDetail.getValue();
+
+                if (d.getDescription().equals("namespace URI")) {
+                    if (control != null && !"null".equals(control)) {
+                        if (ignoreNamespace(control.toLowerCase())) {
+                            LogUtils.tracef(this, "Ignoring %s: %s", d.getDescription(), d);
+                            continue DIFFERENCES;
+                        }
+                    }
+                    if (test != null && !"null".equals(test)) {
+                        if (ignoreNamespace(test.toLowerCase())) {
+                            LogUtils.tracef(this, "Ignoring %s: %s", d.getDescription(), d);
+                            continue DIFFERENCES;
+                        }
+                    }
+                } else if (d.getDescription().equals("namespace prefix")) {
+                    if (control != null && !"null".equals(control)) {
+                        if (ignorePrefix(control.toLowerCase())) {
+                            LogUtils.tracef(this, "Ignoring %s: %s", d.getDescription(), d);
+                            continue DIFFERENCES;
+                        }
+                    }
+                    if (test != null && !"null".equals(test)) {
+                        if (ignorePrefix(test.toLowerCase())) {
+                            LogUtils.tracef(this, "Ignoring %s: %s", d.getDescription(), d);
+                            continue DIFFERENCES;
+                        }
+                    }
+                } else if (d.getDescription().equals("xsi:schemaLocation attribute")) {
+                    LogUtils.debugf(this, "Schema location '%s' does not match.  Ignoring.", controlNodeDetail.getValue() == null? testNodeDetail.getValue() : controlNodeDetail.getValue());
+                    continue DIFFERENCES;
+                }
+
+                if (ignoreDifference(d)) {
+                    LogUtils.debugf(this, "ignoreDifference matched.  Ignoring difference: %s: %s", d.getDescription(), d);
+                    continue DIFFERENCES;
+                } else {
+                    LogUtils.warnf(this, "Found difference: %s: %s", d.getDescription(), d);
+                    retDifferences.add(d);
+                }
             }
         }
         return retDifferences;

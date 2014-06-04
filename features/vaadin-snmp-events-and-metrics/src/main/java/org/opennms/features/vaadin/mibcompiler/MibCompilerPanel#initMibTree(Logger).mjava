@@ -16,7 +16,6 @@
             }
         }
 
-        mibsTree.setContainerDataSource(mibsContainer);
         mibsTree.expandItemsRecursively(COMPILED);
         mibsTree.expandItemsRecursively(PENDING);
 
@@ -26,7 +25,7 @@
                 if (target == null) {
                     return new Action[] {};
                 }
-                Object parent = mibsContainer.getParent(target);
+                Object parent = mibsTree.getParent(target);
                 if (parent == null) {
                     return new Action[] {};
                 }
@@ -53,7 +52,7 @@
                                 String source = mibsTree.getParent(fileName).toString();
                                 File file = new File(PENDING.equals(source) ? MIBS_PENDING_DIR : MIBS_COMPILED_DIR, fileName);
                                 if (file.delete()) {
-                                    mibsContainer.removeItem(fileName);
+                                    mibsTree.removeItem(fileName);
                                     logger.info("MIB " + file + " has been successfully removed.");
                                 } else {
                                     getApplication().getMainWindow().showNotification("Can't delete " + file);
@@ -72,10 +71,28 @@
                 }
                 if (action == ACTION_COMPILE) {
                     if (parseMib(logger, new File(MIBS_PENDING_DIR, fileName))) {
-                        mibsTree.removeItem(target);
-                        addTreeItem(fileName, COMPILED);
-                        File file = new File(MIBS_PENDING_DIR, fileName);
-                        file.renameTo(new File(MIBS_COMPILED_DIR, file.getName()));
+                        // Renaming the file to be sure that the target name is correct and always has a file extension.
+                        final String mibFileName = mibParser.getMibName() + MIB_FILE_EXTENTION;
+                        final File currentFile = new File(MIBS_PENDING_DIR, fileName);
+                        final File suggestedFile = new File(MIBS_COMPILED_DIR, mibFileName);
+                        if (suggestedFile.exists()) {
+                            MessageBox mb = new MessageBox(getApplication().getMainWindow(),
+                                                           "Are you sure?",
+                                                           MessageBox.Icon.QUESTION,
+                                                           "The MIB " + mibFileName + " already exist on the compiled directory?<br/>Override the existing file could break other compiled mibs, so proceed with caution.<br/>This cannot be undone.",
+                                                           new MessageBox.ButtonConfig(MessageBox.ButtonType.YES, "Yes"),
+                                                           new MessageBox.ButtonConfig(MessageBox.ButtonType.NO, "No"));
+                            mb.addStyleName(Runo.WINDOW_DIALOG);
+                            mb.show(new EventListener() {
+                                public void buttonClicked(ButtonType buttonType) {
+                                    if (buttonType == MessageBox.ButtonType.YES) {
+                                        renameFile(logger, currentFile, suggestedFile);
+                                    }
+                                }
+                            });
+                        } else {
+                            renameFile(logger, currentFile, suggestedFile);
+                        }
                     }
                 }
                 if (action == ACTION_EVENTS) {

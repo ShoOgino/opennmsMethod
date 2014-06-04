@@ -1,0 +1,88 @@
+    protected void initializeServerWithConfig(final JUnitHttpServer config) {
+        Server server = null;
+        if (config.https()) {
+            server = new Server();
+            final SslContextFactory factory = new SslContextFactory(config.keystore());
+            factory.setKeyStorePath(config.keystore());
+            factory.setKeyStorePassword(config.keystorePassword());
+            factory.setKeyManagerPassword(config.keyPassword());
+            factory.setTrustStore(config.keystore());
+            factory.setTrustStorePassword(config.keystorePassword());
+            
+            final SslSocketConnector connector = new SslSocketConnector(factory);
+            connector.setPort(config.port());
+            server.setConnectors(new Connector[] { connector });
+        } else {
+            server = new Server(config.port());
+        }
+        m_server = server;
+        final ContextHandler context1 = new ContextHandler();
+        context1.setContextPath("/");
+        context1.setWelcomeFiles(new String[]{"index.html"});
+        context1.setResourceBase(config.resource());
+        context1.setClassLoader(Thread.currentThread().getContextClassLoader());
+        context1.setVirtualHosts(config.vhosts());
+        
+        final ContextHandler context = context1;
+
+        Handler topLevelHandler = null;
+        final HandlerList handlers = new HandlerList();
+
+        if (config.basicAuth()) {
+            // check for basic auth if we're configured to do so
+                LogUtils.debugf(this, "configuring basic auth");
+
+            final HashLoginService loginService = new HashLoginService("MyRealm", config.basicAuthFile());
+            loginService.setRefreshInterval(300000);
+            m_server.addBean(loginService);
+
+            final ConstraintSecurityHandler security = new ConstraintSecurityHandler();
+
+            final Set<String> knownRoles = new HashSet<String>();
+            knownRoles.add("user");
+            knownRoles.add("admin");
+            knownRoles.add("moderator");
+
+            final Constraint constraint = new Constraint();
+            constraint.setName("auth");
+            constraint.setAuthenticate(true);
+            constraint.setRoles(knownRoles.toArray(new String[0]));
+
+            final ConstraintMapping mapping = new ConstraintMapping();
+            mapping.setPathSpec("/*");
+            mapping.setConstraint(constraint);
+
+            security.setConstraintMappings(Collections.singletonList(mapping), knownRoles);
+            security.setAuthenticator(new BasicAuthenticator());
+            security.setLoginService(loginService);
+            security.setStrict(false);
+            security.setRealmName("MyRealm");
+            
+            security.setHandler(context);
+            topLevelHandler = security;
+        } else {
+                topLevelHandler = context;
+        }
+
+        final Webapp[] webapps = config.webapps();
+        if (webapps != null) {
+            for (final Webapp webapp : webapps) {
+                final WebAppContext wac = new WebAppContext();
+                wac.setWar(webapp.path());
+                wac.setContextPath(webapp.context());
+                handlers.addHandler(wac);
+            }
+        }
+
+        final ResourceHandler rh = new ResourceHandler();
+        rh.setWelcomeFiles(new String[]{"index.html"});
+        rh.setResourceBase(config.resource());
+        handlers.addHandler(rh);
+
+        // fall through to default
+        handlers.addHandler(new DefaultHandler());
+
+        context.setHandler(handlers);
+        m_server.setHandler(topLevelHandler);        
+    }
+

@@ -1,0 +1,41 @@
+    /**
+     * Gets the interfaces to merge.
+     *
+     * @return the list of interfaces to merge
+     * @throws OnmsUpgradeException the OpenNMS upgrade exception
+     */
+    protected List<SnmpInterfaceUpgrade> getInterfacesToMerge() throws OnmsUpgradeException {
+        List<SnmpInterfaceUpgrade> interfacesToMerge = new ArrayList<SnmpInterfaceUpgrade>();
+        Connection conn = getDbConnection();
+        final DBUtils db = new DBUtils(getClass());
+        db.watch(conn);
+        try {
+            Statement st = conn.createStatement();
+            db.watch(st);
+            String query = "SELECT n.nodeid, n.foreignsource, n.foreignid, i.snmpifdescr, i.snmpifname, i.snmpphysaddr from node n, snmpinterface i where n.nodeid = i.nodeid and i.snmpphysaddr is not null order by n.nodeid, i.snmpifdescr";
+            ResultSet rs = st.executeQuery(query);
+            db.watch(rs);
+            int count = 0;
+            while (rs.next()) {
+                count++;
+                SnmpInterfaceUpgrade intf = new SnmpInterfaceUpgrade(rs, isStoreByForeignSourceEnabled());
+                if (intf.shouldMerge()) {
+                    interfacesToMerge.add(intf);
+                }
+                log("  Should merge %s ? %s\n", intf, intf.shouldMerge());
+            }
+            log("  Found %s of %s SNMP interfaces that require a merge.\n", interfacesToMerge.size(), count);
+        } catch (Throwable t) {
+            log("Error: can't retrieve the required data from the OpenNMS Database or there were problems while processing them.\n");
+            String reason = t.getMessage();
+            if (reason == null) {
+                reason = "Unknown";
+            }
+            log("Reason(%s): %s\n", t.getClass().getName(), reason);
+            t.printStackTrace(); // TODO This is not elegant, but it helps.
+        } finally {
+            db.cleanUp();
+        }
+        return interfacesToMerge;
+    }
+
