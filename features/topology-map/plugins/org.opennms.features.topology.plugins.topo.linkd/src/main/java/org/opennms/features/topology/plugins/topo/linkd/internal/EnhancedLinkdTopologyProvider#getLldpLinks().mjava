@@ -1,0 +1,47 @@
+    private void getLldpLinks() {
+        List<LldpLink> allLinks = m_lldpLinkDao.findAll();
+        Set<LldpLinkDetail> combinedLinkDetails = new HashSet<LldpLinkDetail>();
+        for (LldpLink sourceLink : allLinks) {
+            LOG.debug("loadtopology: parsing link: " + sourceLink);
+            OnmsNode sourceNode = sourceLink.getNode();
+            LldpElement sourceElement = sourceNode.getLldpElement();
+            LOG.debug("loadtopology: found source node: " + sourceNode.getLabel());
+            Vertex source = getVertex(getVertexNamespace(), sourceNode.getNodeId());
+            if (source == null) {
+                LOG.debug("loadtopology: adding source node as vertex: " + sourceNode.getLabel());
+                source = getVertex(sourceNode);
+                addVertices(source);
+            }
+
+            for (LldpLink targetLink : allLinks) {
+                OnmsNode targetNode = targetLink.getNode();
+                LldpElement targetLldpElement = targetNode.getLldpElement();
+
+                //Compare the remote data to the targetNode element data
+                boolean bool1 = sourceLink.getLldpRemPortId().equals(targetLink.getLldpPortId()) && targetLink.getLldpRemPortId().equals(sourceLink.getLldpPortId());
+                boolean bool2 = sourceLink.getLldpRemPortDescr().equals(targetLink.getLldpPortDescr()) && targetLink.getLldpRemPortDescr().equals(sourceLink.getLldpPortDescr());
+                boolean bool3 = sourceLink.getLldpRemChassisId().equals(targetLldpElement.getLldpChassisId()) && targetLink.getLldpRemChassisId().equals(sourceElement.getLldpChassisId());
+                boolean bool4 = sourceLink.getLldpRemSysname().equals(targetLldpElement.getLldpSysname()) && targetLink.getLldpRemSysname().equals(sourceElement.getLldpSysname());
+                boolean bool5 = sourceLink.getLldpRemPortIdSubType() == targetLink.getLldpPortIdSubType() && targetLink.getLldpRemPortIdSubType() == sourceLink.getLldpPortIdSubType();
+
+                if (bool1 && bool2 && bool3 && bool4 && bool5) {
+                    Vertex target = getVertex(getVertexNamespace(), targetNode.getNodeId());
+                    if (target == null) {
+                        target = getVertex(targetNode);
+                    }
+
+                    LldpLinkDetail linkDetail = new LldpLinkDetail(
+                            Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
+                            source, sourceLink, target, targetLink);
+                    combinedLinkDetails.add(linkDetail);
+                }
+            }
+
+        }
+
+        for (LldpLinkDetail linkDetail : combinedLinkDetails) {
+            AbstractEdge edge = connectVertices(linkDetail.getId(), linkDetail.getSource(), linkDetail.getTarget(), LLDP_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(linkDetail));
+        }
+    }
+
