@@ -1,5 +1,4 @@
-    @Override
-    public void step() {
+    public void stepOld() {
 
         double currentForce;
 
@@ -16,19 +15,15 @@
                 EdgeData edgeData = getEdgeData(e);
                 double lSqrt = Math.sqrt(l);
                 double distance = m_alpha * edgeData.getStrength() * (lSqrt - edgeData.getDistance()) / lSqrt;
-                //double distance = edgeData.getStrength() * (lSqrt - edgeData.getDistance()) / lSqrt;
 
                 xDelta *= distance;
                 yDelta *= distance;
 
                 currentForce = srcVertexData.getWeight() / (targetVertexData.getWeight() + srcVertexData.getWeight());
-                //currentForce = 0.5;
                 targetVertexData.offset(-(xDelta * currentForce), -(yDelta * currentForce));
 
                 currentForce = 1 - currentForce;
                 srcVertexData.offset(xDelta * currentForce, yDelta * currentForce);
-                
-                //System.err.println("Edge Length: " + srcVertexData.distance(targetVertexData));
 
             }
 
@@ -49,42 +44,61 @@
 
         //Compute quad tree center of mass and apply charge force
         if(getDefaultCharge() != 0){
+            
+            DblBoundingBox bounds = new DblBoundingBox(0,0,getSize().getWidth(), getSize().getHeight());
+            //for(V v : getGraph().getVertices()) {
+            //    VertexData vData = getVertexData(v);
+            //    DblBoundingBox rounded = new DblBoundingBox((int)vData.getX(), (int)vData.getY(), 1, 1);
+            //    bounds.addBoundingbox(rounded);
+            //}
+            
+            QuadTree<VertexData> quadTree = new QuadTree<VertexData>(bounds);
+            for(V v : getGraph().getVertices()) {
+                VertexData vData = getVertexData(v);
+                quadTree.insert(vData, vData.getCharge(), vData);
+            }
 
-            for(V v1 : getGraph().getVertices()) {
-                VertexData vData1 = getVertexData(v1); 
-                for(V v2 : getGraph().getVertices()) {
-                    VertexData vData2 = getVertexData(v2);
-                    
-                    double dx = vData2.getX() - vData1.getX();
-                    double dy = vData2.getY() - vData1.getY();
-                    double d = dx*dx + dy*dy;
-                    
-                    if (d > 0) {
-                        double k = m_alpha * vData2.getCharge() / d;
-                        double px = dx*k;
-                        double py = dy*k;
+            for(V v: getGraph().getVertices()) {
+                final VertexData vData = getVertexData(v);
+                quadTree.visit(new Visitor<VertexData>() {
+
+                    @Override
+                    public boolean visitNode(Node<VertexData> n) {
                         
-                        //vData1.offsetPrevious(px, py);
-                        vData1.offset(px, py);
-                    } else {
-                        //vData1.offsetPrevious(0.5-Math.random(), 0.5-Math.random());
-                        vData1.offset(0.5-Math.random(), 0.5-Math.random());
+                        if (n.isLeaf() && vData == n.getValue()) return true;
+                        
+                        double dx = n.getX() - vData.getX();
+                        double dy = n.getY() - vData.getY();
+                        double dw = n.getWidth();
+                        double dSquared = dx*dx + dy*dy;
+
+                        if (dw*dw/m_thetaSquared < dSquared) {
+                            double force = n.getCharge() / dSquared;
+                            vData.offset(- (dx*force), - (dy*force));
+                            return true;
+                        }
+                        
+                        if (n.isLeaf()) {
+                            if (dSquared == 0) {
+                                vData.offset(1, 1);
+                            } else {
+                                double force = n.getCharge() / dSquared;
+                                vData.offset(- (dx*force), - (dy*force));
+                            }
+                            return true;
+                        }
+                        
+                        return false;
+                        
                     }
                     
-                }
+                });
             }
         }
         
         
-        // position verlet integration
         for(V v : getGraph().getVertices()) {
             VertexData vData = getVertexData(v);
-            double tempX = vData.getX();
-            double tempY = vData.getY();
-            double x = vData.getX() + (vData.getPrevious().getX() - vData.getX())*getFriction();
-            double y = vData.getY() + (vData.getPrevious().getY() - vData.getY())*getFriction();
-            vData.setLocation(x, y);
-            vData.setPrevious(tempX, tempY);
             Point2D location = transform(v);
             //System.err.printf("Setting location of %s to (%f, %f)%n", v, vData.getX(), vData.getY());
             location.setLocation(vData.getX(), vData.getY());
