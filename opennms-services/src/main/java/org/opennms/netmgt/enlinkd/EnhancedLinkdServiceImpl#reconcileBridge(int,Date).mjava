@@ -6,6 +6,7 @@
 		m_bridgeStpLinkDao.deleteByNodeIdOlderThen(nodeId, now);
 		m_bridgeStpLinkDao.flush();
 		
+		Map<Integer,Integer> bridgeportifindex = m_nodebridgeportifindex.get(nodeId);
 		Map<Integer,Set<String>> bft = m_bftMap.remove(nodeId);
 		if (bft == null || bft.isEmpty())
 			return;
@@ -17,24 +18,18 @@
 		for (BridgeMacLink maclink: m_bridgeMacLinkDao.findAll()) {
 			if (maclink.getNode().getId().intValue() == nodeId)
 				continue;
-			if (macs.contains(maclink.getMacAddress())) {
-				Map<Integer,Set<String>> nodesavedtopology = new HashMap<Integer, Set<String>>();
-				if (savedtopology.containsKey(maclink.getNode().getId())) 
-					nodesavedtopology = savedtopology.get(maclink.getNode().getId());
-				Set<String> macsonport = new HashSet<String>();
-				if (nodesavedtopology.containsKey(maclink.getBridgePort()))
-					macsonport = nodesavedtopology.get(maclink.getBridgePort());
-				macsonport.add(maclink.getMacAddress());
-				nodesavedtopology.put(maclink.getBridgePort(), macsonport);
-				savedtopology.put(maclink.getNode().getId(), nodesavedtopology);
-				break;	
-			}
+			Map<Integer,Set<String>> nodesavedtopology = new HashMap<Integer, Set<String>>();
+			if (savedtopology.containsKey(maclink.getNode().getId())) 
+				nodesavedtopology = savedtopology.get(maclink.getNode().getId());
+			Set<String> macsonport = new HashSet<String>();
+			if (nodesavedtopology.containsKey(maclink.getBridgePort()))
+				macsonport = nodesavedtopology.get(maclink.getBridgePort());
+			macsonport.add(maclink.getMacAddress());
+			nodesavedtopology.put(maclink.getBridgePort(), macsonport);
+			savedtopology.put(maclink.getNode().getId(), nodesavedtopology);
 		}
 		
 		BridgeTopology topology = new BridgeTopology();
-		for (Integer savednode: savedtopology.keySet()) {
-			topology.addTopology(savednode, savedtopology.get(savednode),new HashSet<Integer>());
-		}
 		Set<Integer> targets = new HashSet<Integer>();
 		targets.add(nodeId);
 		for (BridgeBridgeLink bblink: m_bridgeBridgeLinkDao.findByNodeId(nodeId)) {
@@ -47,13 +42,17 @@
 			nodesavedtopology.put(bblink.getBridgePort(), new HashSet<String>());
 			topology.addTopology(bblink.getNode().getId(), nodesavedtopology, targets);
 		}
+		for (Integer savednode: savedtopology.keySet()) {
+			topology.parseBFT(savednode, savedtopology.get(savednode));
+		}
 		topology.parseBFT(nodeId, bft);
 
 		// now check the topology with the old one
 		// delete the not found links
 		for (BridgeTopologyLink btl: topology.getTopology()) {
-				saveLink(btl);
+			saveLink(btl, nodeId, bridgeportifindex);
 		}
+		
 		for (Integer curNodeId: savedtopology.keySet()) {
 			m_bridgeMacLinkDao.deleteByNodeIdOlderThen(curNodeId, now);
 		}
