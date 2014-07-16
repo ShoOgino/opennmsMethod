@@ -1,0 +1,52 @@
+    @Test
+    @JUnitSnmpAgents(value={
+        @JUnitSnmpAgent(host=DLINK1_IP, port=161, resource=DLINK1_SNMP_RESOURCE),
+    })
+    public void testDot1dStpPortTableWalk() throws Exception {
+
+    	String trackerName = "dot1dbaseStpTable";
+    	final List<BridgeStpLink> links = new ArrayList<BridgeStpLink>();
+    	SnmpAgentConfig  config = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(DLINK1_IP));
+        Dot1dStpPortTableTracker tracker = new Dot1dStpPortTableTracker() {
+            @Override
+        	public void processDot1dStpPortRow(final Dot1dStpPortRow row) {
+            	links.add(row.getLink());
+            }
+        };
+
+        SnmpWalker walker =  SnmpUtils.createWalker(config, trackerName, tracker);
+
+        walker.start();
+
+        try {
+            walker.waitFor();
+            if (walker.timedOut()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent timed out while scanning the {} table", trackerName);
+            }  else if (walker.failed()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent failed while scanning the {} table: {}", trackerName,walker.getErrorMessage());
+            }
+        } catch (final InterruptedException e) {
+            LOG.error("run: collection interrupted, exiting",e);
+            return;
+        }
+
+        assertEquals(26, links.size());
+        int i = 0;
+        for (BridgeStpLink link: links) {
+        	assertEquals(++i, link.getStpPort().intValue());
+        	assertEquals(128, link.getStpPortPriority().intValue());
+        	if (link.getStpPort() <= 6 || link.getStpPort() == 24 )
+        		assertEquals(BridgeDot1dStpPortState.DOT1D_STP_PORT_STATUS_FORWARDING, link.getStpPortState());
+        	else
+        		assertEquals(BridgeDot1dStpPortState.DOT1D_STP_PORT_STATUS_DISABLED, link.getStpPortState());
+        	assertEquals(BridgeDot1dStpPortEnable.DOT1D_STP_PORT_ENABLED, link.getStpPortEnable());
+        	assertEquals(2000000,link.getStpPortPathCost().intValue());
+        	assertEquals("0000000000000000",link.getDesignatedRoot());
+        	assertEquals(0,link.getDesignatedCost().intValue());
+        	assertEquals("0000000000000000",link.getDesignatedBridge());
+        	assertEquals("0000",link.getDesignatedPort());
+        }
+    }
+
