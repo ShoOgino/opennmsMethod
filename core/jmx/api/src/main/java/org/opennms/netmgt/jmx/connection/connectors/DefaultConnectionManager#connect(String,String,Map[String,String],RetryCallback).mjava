@@ -1,0 +1,34 @@
+    @Override
+    public WiuConnectionWrapper connect(String connectionName, String ipAddress, Map<String, String> properties, RetryCallback retryCallback) throws MBeanServerConnectionException {
+        if (!connectorMap.containsKey(connectionName)) {
+            throw new MBeanServerConnectionException("No Connector available for connection name '" + connectionName + "'");
+        }
+
+        // if null, use dummy implementation
+        if (retryCallback == null) {
+            retryCallback = NULL_CALLBACK;
+        }
+
+        MBeanServerConnectionException lastException = null;
+        final MBeanServerConnector connector = connectorMap.get(connectionName);
+        for (int i = 0; i < retries; i++) {
+            LOG.debug("{}/{}: Try connecting to {}", (i+1), retries, ipAddress);
+            retryCallback.onRetry();
+            try {
+                WiuConnectionWrapper connectionWrapper = connector.createConnection(ipAddress, properties);
+                if (connectionWrapper == null) {
+                    throw new MBeanServerConnectionException("Received null connection");
+                }
+                return connectionWrapper;
+            } catch (MBeanServerConnectionException mbex) {
+                LOG.debug("Connection could not be established", mbex);
+                lastException = mbex;
+            }
+        }
+
+        if (lastException != null) {
+            throw lastException;
+        }
+        throw new MBeanServerConnectionException("Connection could not be established. Reason: No retries left.");
+    }
+
