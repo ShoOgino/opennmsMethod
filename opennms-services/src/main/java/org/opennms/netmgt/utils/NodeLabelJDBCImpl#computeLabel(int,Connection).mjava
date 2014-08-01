@@ -28,23 +28,38 @@
      * @deprecated Update this to use modern DAO methods instead of raw SQL
      */
     public NodeLabelJDBCImpl computeLabel(final int nodeID, final Connection dbConnection) throws SQLException {
-        // Issue SQL query to retrieve NetBIOS name associated with the node
         String netbiosName = null;
-        
-        OnmsNode node = nodeDao.get(nodeID);
-        
-        netbiosName = node.getNetBiosName();
-        
-        if (netbiosName != null) {
-        	// Truncate sysName if it exceeds max node label length
-            if (netbiosName.length() > MAX_NODE_LABEL_LENGTH) {
-                netbiosName = netbiosName.substring(0, MAX_NODE_LABEL_LENGTH);
+        PreparedStatement stmt = null;
+        ResultSet rs = null;
+        final DBUtils d = new DBUtils(NodeLabelJDBCImpl.class);
+
+        try {
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NETBIOS_NAME);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+
+            rs = stmt.executeQuery();
+            d.watch(rs);
+
+            // Process result set, retrieve node's sysname
+            while (rs.next()) {
+                netbiosName = rs.getString(1);
             }
-            return new NodeLabelJDBCImpl(netbiosName, NodeLabelSource.NETBIOS);
-        }
-        
-        LOG.debug("NodeLabel.computeLabel: returning NetBIOS name as nodeLabel: {}", netbiosName);
+
+            if (netbiosName != null) {
+                // Truncate sysName if it exceeds max node label length
+                if (netbiosName.length() > MAX_NODE_LABEL_LENGTH) {
+                    netbiosName = netbiosName.substring(0, MAX_NODE_LABEL_LENGTH);
+                }
+
+                LOG.debug("NodeLabel.computeLabel: returning NetBIOS name as nodeLabel: {}", netbiosName);
                     
+                return new NodeLabelJDBCImpl(netbiosName, NodeLabelSource.NETBIOS);
+            }
+        } finally {
+            d.cleanUp();
+        }
+
         // OK, if we get this far the node has no NetBIOS name associated with it so,
         // retrieve the primary interface select method property which indicates
         // the method to use for determining which interface on a multi-interface
@@ -63,25 +78,23 @@
         List<InetAddress> ipv4AddrList = new ArrayList<InetAddress>();
         List<String> ipHostNameList = new ArrayList<String>();
 
-        final org.opennms.core.criteria.Criteria criteria = new org.opennms.core.criteria.Criteria(OnmsIpInterface.class)
-        .setAliases(Arrays.asList(new Alias[] {
-            new Alias("ipInterfaces","ipInterfaces", JoinType.LEFT_JOIN)
-        }))
-        .addRestriction(new EqRestriction("ipInterfaces.nodeId", nodeID))
-        .addRestriction(new EqRestriction("ipInterfaces.isManaged", "M"));
-        
-        List<OnmsIpInterface> ints = ipInterfaceDao.findMatching(criteria);
-        
-        for (OnmsIpInterface one: ints) {
-        	InetAddress inetAddr = one.getIpAddress();
-        	ipv4AddrList.add(inetAddr);
-        	String hostName = one.getIpHostName();
-        	if (hostName == null || hostName.equals(inetAddr.toString()))
-                ipHostNameList.add("");
-            else
-                ipHostNameList.add(hostName);
+               
+        // Issue SQL query to retrieve all managed interface IP addresses from 'ipinterface' table
+        try {
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_MANAGED_INTERFACES);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+            rs = stmt.executeQuery();
+            d.watch(rs);
+
+            // Process result set, store retrieved addresses/host names in lists
+            loadAddressList(rs, ipv4AddrList, ipHostNameList);
+        } catch (Throwable e) {
+            LOG.warn("Exception thrown while fetching managed interfaces: {}", e.getMessage(), e);
+        } finally {
+            d.cleanUp();
         }
-        
+
         InetAddress primaryAddr = selectPrimaryAddress(ipv4AddrList, method);
 
         // Make sure we found a primary address!!!
@@ -93,25 +106,19 @@
 
             ipv4AddrList.clear();
             ipHostNameList.clear();
-            
-            final org.opennms.core.criteria.Criteria crit = new org.opennms.core.criteria.Criteria(OnmsIpInterface.class)
-            .setAliases(Arrays.asList(new Alias[] {
-                new Alias("ipInterfaces","ipInterfaces", JoinType.LEFT_JOIN)
-            }))
-            .addRestriction(new EqRestriction("ipInterfaces.nodeId", nodeID))
-            .addRestriction(new NeRestriction("ipInterfaces.isManaged", "M"));
-            
-            List<OnmsIpInterface> sec = ipInterfaceDao.findMatching(crit);
-            
-            for (OnmsIpInterface two : sec) {
-            	InetAddress inetAddr = two.getIpAddress();
-            	ipv4AddrList.add(inetAddr);
-            	String hostName = two.getIpHostName();
-            	if (hostName == null || hostName.equals(inetAddr.toString()))
-                    ipHostNameList.add("");
-                else
-                    ipHostNameList.add(hostName);
-            	
+
+            try {
+                // retrieve all non-managed interface IP addresses from 'ipinterface' table
+                stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_NON_MANAGED_INTERFACES);
+                d.watch(stmt);
+                stmt.setInt(1, nodeID);
+                rs = stmt.executeQuery();
+                d.watch(rs);
+                loadAddressList(rs, ipv4AddrList, ipHostNameList);
+            } catch (Throwable e) {
+                LOG.warn("Exception thrown while fetching managed interfaces: {}", e.getMessage(), e);
+            } finally {
+                d.cleanUp();
             }
 
             primaryAddr = selectPrimaryAddress(ipv4AddrList, method);
@@ -144,8 +151,19 @@
         // retrieve sysName for the node
         String primarySysName = null;
         
-        OnmsNode sysNode = nodeDao.get(nodeID);
-        primarySysName = sysNode.getSysName();
+                
+        try {
+            stmt = dbConnection.prepareStatement(SQL_DB_RETRIEVE_SYSNAME);
+            d.watch(stmt);
+            stmt.setInt(1, nodeID);
+            rs = stmt.executeQuery();
+            d.watch(rs);
+            while (rs.next()) {
+                primarySysName = rs.getString(1);
+            }
+        } finally {
+            d.cleanUp();
+        }
 
         if (primarySysName != null && primarySysName.length() > 0) {
             // Truncate sysName if it exceeds max node label length
