@@ -1,0 +1,60 @@
+    @Override
+    protected List<EdgeAlarmStatusSummary> getEdgeAlarmSummaries(List<Integer> linkIds) {
+        //Bridge Links are different, don't need the linkIds
+
+        Map<String, Multimap<String, EdgeAlarmStatusSummary>> summaryMap = new HashMap();
+        for(BridgeMacTopologyLink link : m_multimapLinks.values()) {
+            String key = link.getNodeId() + ":" + link.getBridgePortIfIndex();
+
+            if (!summaryMap.containsKey(key)){
+                Multimap<String, EdgeAlarmStatusSummary> multimap = HashMultimap.create();
+                multimap.put(key, new EdgeAlarmStatusSummary(link.getNodeId(), link.getBridgePort(), null));
+                summaryMap.put(key, multimap);
+            }
+
+            summaryMap.get(key).put(link.getTargetNodeId() + ":" + link.getSourceIfIndex(), new EdgeAlarmStatusSummary(link.getNodeId(), link.getTargetNodeId(), null));
+
+        }
+
+        List<OnmsAlarm> alarms = getLinkDownAlarms();
+        for(OnmsAlarm alarm : alarms){
+            String key = alarm.getNodeId() + ":" + alarm.getIfIndex();
+            if (summaryMap.containsKey(key)) {
+                Collection<EdgeAlarmStatusSummary> summaries = summaryMap.get(key).values();
+
+                for (EdgeAlarmStatusSummary summary : summaries) {
+                    summary.setEventUEI(alarm.getUei());
+                }
+            } else {
+                for (Multimap<String, EdgeAlarmStatusSummary> mMap : summaryMap.values()){
+                    if (mMap.containsKey(key)){
+                        Collection<EdgeAlarmStatusSummary> summaries = mMap.get(key);
+
+                        for (EdgeAlarmStatusSummary summary : summaries) {
+                            summary.setEventUEI(alarm.getUei());
+
+                            for (String mapKey : mMap.keySet()){
+                                Collection<EdgeAlarmStatusSummary> sumrs = mMap.get(mapKey);
+                                for (EdgeAlarmStatusSummary eStatus : sumrs) {
+                                    if(eStatus.getId().equals(summary.getId())){
+                                        eStatus.setEventUEI(alarm.getUei());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+
+            }
+        }
+
+
+        List<EdgeAlarmStatusSummary> ret_val = new ArrayList<EdgeAlarmStatusSummary>();
+        for (String summaryMapKey : summaryMap.keySet()) {
+            ret_val.addAll(summaryMap.get(summaryMapKey).values());
+        }
+
+        return ret_val;
+    }
+
