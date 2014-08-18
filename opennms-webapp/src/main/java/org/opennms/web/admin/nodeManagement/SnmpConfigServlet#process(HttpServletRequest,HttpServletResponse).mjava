@@ -1,0 +1,45 @@
+	/*
+	 * Processes the request.
+	 */
+	private void process(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		SnmpInfo snmpInfo = createFromRequest(request);
+		String firstIPAddress = request.getParameter("firstIPAddress");
+		String lastIPAddress = request.getParameter("lastIPAddress");
+		String ipAddress = request.getParameter("ipAddress");
+		log.debug("doPost: snmpInfo:" + snmpInfo.toString() + 
+				", firstIpAddress:" + firstIPAddress + 
+				", lastIpAddress:" + lastIPAddress);
+
+		final SnmpConfigServletAction action = determineAction(request);
+		boolean sendEvent = parseCheckboxValue(request.getParameter("sendEventOption"));
+		boolean saveLocally = parseCheckboxValue(request.getParameter("saveLocallyOption"));
+		switch (action) {
+			case GetConfigForIp:
+				request.setAttribute("snmpConfigForIp",
+						new SnmpInfo(
+								SnmpPeerFactory.getInstance().getAgentConfig(InetAddressUtils.addr(ipAddress))));
+				request.setAttribute("firstIPAddress", ipAddress);
+				break;
+			case Save:
+				boolean success = false;
+				SnmpEventInfo eventInfo = snmpInfo.createEventInfo(firstIPAddress, lastIPAddress);
+				if (saveLocally) {
+					SnmpPeerFactory.getInstance().define(eventInfo);
+					SnmpPeerFactory.saveCurrent();
+					success |= true;
+				}
+				if (sendEvent) {
+					success |= sendEvent(eventInfo.createEvent("web ui"));
+				}
+				if (success) request.setAttribute("success", "success"); // the value doesn't matter, but it must be not null
+				break;
+			default:
+			case Default:
+				break;
+		}
+		request.setAttribute("snmpConfig", Files.toString(SnmpPeerFactory.getFile(), Charsets.UTF_8));
+
+		RequestDispatcher dispatcher = this.getServletContext().getRequestDispatcher("/admin/snmpConfig.jsp");
+		dispatcher.forward(request, response);
+	}
+
