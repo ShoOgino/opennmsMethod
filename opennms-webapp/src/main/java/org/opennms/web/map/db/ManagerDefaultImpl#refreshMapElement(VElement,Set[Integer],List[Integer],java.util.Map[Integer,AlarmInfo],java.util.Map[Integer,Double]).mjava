@@ -1,0 +1,62 @@
+    private VElement refreshMapElement(VElement ve, Set<Integer> nodesBySource,
+            List<Integer> deletedNodeids,
+            java.util.Map<Integer, AlarmInfo> outagedNodes,
+            java.util.Map<Integer, Double> avails) throws MapsException {
+
+        if (dbManager.isElementDeleted(ve.getId(), ve.getType())) {
+            ve.setAvail(mapsPropertiesFactory.getUndefinedAvail().getMin());
+            ve.setStatus(mapsPropertiesFactory.getUnknownStatus().getId());
+            ve.setSeverity(mapsPropertiesFactory.getIndeterminateSeverity().getId());
+            LOG.warn("refresh: The map with id={} was deleted", ve.getId());
+            return ve;
+        } 
+        //reset status
+        ve.setStatus(-1);
+        Set<Integer> nodesonve = getNodeidsOnElement(ve);
+        LOG.debug("refresh: found nodes on Map element :{}", nodesonve.toString());
+        if (nodesonve.size() == 0) return ve;
+            
+        for (Integer nextNodeId : nodesonve) {
+            LOG.debug("refresh: Iterating on Map nodes with nodeid = {}", nextNodeId);
+            double avail = 100/nodesonve.size();
+            int status = mapsPropertiesFactory.getDefaultStatus().getId();
+            int severity = mapsPropertiesFactory.getDefaultSeverity().getId();
+            
+            if (deletedNodeids.contains(nextNodeId)) {
+                severity = mapsPropertiesFactory.getIndeterminateSeverity().getId(); 
+                status = mapsPropertiesFactory.getUnknownStatus().getId();
+            } else if (nodesBySource.contains(nextNodeId)) {
+                int srcstatus = mapsPropertiesFactory.getStatus(dataSource.getStatus(nextNodeId));
+                if (srcstatus >= 0)
+                    status =srcstatus;
+                LOG.debug("refresh: got status from alternative source. Value is {}", srcstatus);
+                int srcseverity = mapsPropertiesFactory.getSeverity(dataSource.getSeverity(nextNodeId));
+                if (srcseverity >= 0)
+                    severity = srcseverity;
+                LOG.debug("refresh: got severity from alternative source. Value is {}", srcseverity);
+                if (mapsPropertiesFactory.isAvailEnabled()) {
+                    double srcavail = dataSource.getAvailability(nextNodeId);
+                    if (srcavail >= 0 )
+                        avail = srcavail/nodesonve.size();
+                    LOG.debug("refresh: got availability from alternative source. Value is {}", srcavail);
+                }
+            } else {
+                AlarmInfo oi = outagedNodes.get(nextNodeId);
+                if (oi != null) {
+                    status = oi.getStatus();
+                    severity = oi.getSeverity();
+                }
+                if (mapsPropertiesFactory.isAvailEnabled()
+                            && (nextNodeId != null)
+                            && (avails.get(nextNodeId) != null)) {
+                    avail = avails.get(nextNodeId).doubleValue()/nodesonve.size();
+                }
+            }
+            ve=recalculateMapElementStatus(ve, severity,status, avail);
+        }
+                
+        
+        return recalculateSeverity(ve, nodesonve.size());
+
+    }
+
