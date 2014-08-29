@@ -1,71 +1,66 @@
     private SnmpAgentConfig getAgentConfig(final InetAddress agentInetAddress, final int requestedSnmpVersion) {
-        SnmpPeerFactory.getReadLock().lock();
-        try {
-            if (getSnmpConfig() == null) {
-                final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
-                if (requestedSnmpVersion == VERSION_UNSPECIFIED) {
-                    agentConfig.setVersion(SnmpAgentConfig.DEFAULT_VERSION);
-                } else {
-                    agentConfig.setVersion(requestedSnmpVersion);
-                }
-
-                return agentConfig;
+        if (getSnmpConfig() == null) {
+            final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
+            if (requestedSnmpVersion == VERSION_UNSPECIFIED) {
+                agentConfig.setVersion(SnmpAgentConfig.DEFAULT_VERSION);
+            } else {
+                agentConfig.setVersion(requestedSnmpVersion);
             }
 
-            final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
-
-            // Now set the defaults from the getSnmpConfig()
-            setSnmpAgentConfig(agentConfig, new Definition(), requestedSnmpVersion);
-
-            // Attempt to locate the node
-            DEFLOOP: for (final Definition def : getSnmpConfig().getDefinitionCollection()) {
-                // check the specifics first
-                for (final String saddr : def.getSpecificCollection()) {
-                    try {
-                        final InetAddress addr = InetAddressUtils.addr(saddr);
-                        if (addr != null && addr.equals(agentConfig.getAddress())) {
-                            setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                            break DEFLOOP;
-                        }
-                    } catch (final IllegalArgumentException e) {
-                        LogUtils.debugf(this, e, "Error while reading SNMP config <specific> tag: %s", saddr);
-                    }
-                }
-
-                // check the ranges
-                //
-                final ByteArrayComparator comparator = new ByteArrayComparator();
-
-                for (final Range rng : def.getRangeCollection()) {
-                    final byte[] addr = agentConfig.getAddress().getAddress();
-                    final byte[] begin = InetAddressUtils.toIpAddrBytes(rng.getBegin());
-                    final byte[] end = InetAddressUtils.toIpAddrBytes(rng.getEnd());
-                    
-                    boolean inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
-                    if (comparator.compare(begin, end) <= 0) {
-                        inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
-                    } else {
-                        LogUtils.warnf(this, "%s has an 'end' that is earlier than its 'beginning'!", rng);
-                        inRange = InetAddressUtils.isInetAddressInRange(addr, end, begin);
-                    }
-                    if (inRange) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                }
-
-                // check the matching ip expressions
-                for (final String ipMatch : def.getIpMatchCollection()) {
-                    if (IPLike.matches(agentInetAddress, ipMatch)) {
-                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
-                        break DEFLOOP;
-                    }
-                }
-
-            } // end DEFLOOP
             return agentConfig;
-        } finally {
-            SnmpPeerFactory.getReadLock().unlock();
         }
+
+        final SnmpAgentConfig agentConfig = new SnmpAgentConfig(agentInetAddress);
+
+        // Now set the defaults from the getSnmpConfig()
+        setSnmpAgentConfig(agentConfig, new Definition(), requestedSnmpVersion);
+
+        // Attempt to locate the node
+        DEFLOOP: for (final Definition def : getSnmpConfig().getDefinitionCollection()) {
+            // check the specifics first
+            for (final String saddr : def.getSpecificCollection()) {
+                try {
+                    final InetAddress addr = InetAddressUtils.addr(saddr);
+                    if (addr != null && addr.equals(agentConfig.getAddress())) {
+                        setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                        break DEFLOOP;
+                    }
+                } catch (final IllegalArgumentException e) {
+                    LogUtils.debugf(this, e, "Error while reading SNMP config <specific> tag: %s", saddr);
+                }
+            }
+
+            // check the ranges
+            //
+            final ByteArrayComparator comparator = new ByteArrayComparator();
+
+            for (final Range rng : def.getRangeCollection()) {
+                final byte[] addr = agentConfig.getAddress().getAddress();
+                final byte[] begin = InetAddressUtils.toIpAddrBytes(rng.getBegin());
+                final byte[] end = InetAddressUtils.toIpAddrBytes(rng.getEnd());
+
+                boolean inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
+                if (comparator.compare(begin, end) <= 0) {
+                    inRange = InetAddressUtils.isInetAddressInRange(addr, begin, end);
+                } else {
+                    LogUtils.warnf(this, "%s has an 'end' that is earlier than its 'beginning'!", rng);
+                    inRange = InetAddressUtils.isInetAddressInRange(addr, end, begin);
+                }
+                if (inRange) {
+                    setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                    break DEFLOOP;
+                }
+            }
+
+            // check the matching ip expressions
+            for (final String ipMatch : def.getIpMatchCollection()) {
+                if (IPLike.matches(agentInetAddress, ipMatch)) {
+                    setSnmpAgentConfig(agentConfig, def, requestedSnmpVersion);
+                    break DEFLOOP;
+                }
+            }
+
+        } // end DEFLOOP
+        return agentConfig;
     }
 
