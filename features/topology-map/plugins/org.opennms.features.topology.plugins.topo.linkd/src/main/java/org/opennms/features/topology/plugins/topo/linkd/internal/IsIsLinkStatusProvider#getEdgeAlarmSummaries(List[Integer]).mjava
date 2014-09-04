@@ -1,0 +1,34 @@
+    @Override
+    protected List<EdgeAlarmStatusSummary> getEdgeAlarmSummaries(List<Integer> linkIds) {
+        Criteria criteria = new Criteria(IsIsLink.class);
+        criteria.addRestriction(new InRestriction("id", linkIds));
+
+        List<IsIsLink> links = getIsisLinkDao().findMatching(criteria);
+        Multimap<String, EdgeAlarmStatusSummary> summaryMap = HashMultimap.create();
+        for (IsIsLink sourceLink : links) {
+            OnmsNode sourceNode = sourceLink.getNode();
+            IsIsElement sourceElement = sourceNode.getIsisElement();
+            for (IsIsLink targetLink : links) {
+                boolean isisAdjIndexCheck = sourceLink.getIsisISAdjIndex() == targetLink.getIsisISAdjIndex();
+                boolean isisSysIdCheck = targetLink.getIsisISAdjNeighSysID().equals(sourceElement.getIsisSysID());
+                if (isisAdjIndexCheck && isisSysIdCheck) {
+                    summaryMap.put(sourceNode.getNodeId() + ":" + sourceLink.getIsisCircIfIndex(),
+                            new EdgeAlarmStatusSummary(sourceLink.getId(), targetLink.getId(), null));
+                }
+            }
+        }
+
+        List<OnmsAlarm> alarms = getLinkDownAlarms();
+        for (OnmsAlarm alarm : alarms) {
+            String key = alarm.getNodeId() + ":" + alarm.getIfIndex();
+            if (summaryMap.containsKey(key)) {
+                Collection<EdgeAlarmStatusSummary> summaries = summaryMap.get(key);
+                for (EdgeAlarmStatusSummary summary : summaries) {
+                    summary.setEventUEI(alarm.getUei());
+                }
+
+            }
+        }
+        return new ArrayList<EdgeAlarmStatusSummary>(summaryMap.values());
+    }
+
