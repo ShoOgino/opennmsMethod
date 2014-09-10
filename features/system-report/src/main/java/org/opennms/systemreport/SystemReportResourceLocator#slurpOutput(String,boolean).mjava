@@ -1,0 +1,44 @@
+    @Override
+    public String slurpOutput(final String commandString, final boolean ignoreExitCode) {
+        final CommandLine command = CommandLine.parse(commandString);
+        LOG.debug("running: {}", commandString);
+        
+        final Map<String,String> environment = new HashMap<String,String>(System.getenv());
+        environment.put("COLUMNS", "2000");
+        DataInputStream input = null;
+        PipedInputStream pis = null;
+        OutputSuckingParser parser = null;
+        String outputText = null;
+        final DefaultExecutor executor = new DefaultExecutor();
+    
+        final PipedOutputStream output = new PipedOutputStream();
+        final PumpStreamHandler streamHandler = new PumpStreamHandler(output, output);
+        executor.setWatchdog(new ExecuteWatchdog(m_maxProcessWait));
+        executor.setStreamHandler(streamHandler);
+    
+        try {
+            LOG.trace("executing '{}'", commandString);
+            pis = new PipedInputStream(output);
+            input = new DataInputStream(pis);
+            parser = new OutputSuckingParser(input);
+            parser.start();
+            final int exitValue = executor.execute(command, environment);
+            IOUtils.closeQuietly(output);
+            parser.join(m_maxProcessWait);
+            if (!ignoreExitCode && exitValue != 0) {
+                LOG.debug("error running '{}': exit value was {}", commandString, exitValue);
+            } else {
+                outputText = parser.getOutput();
+            }
+            LOG.trace("finished '{}'", commandString);
+        } catch (final Exception e) {
+            LOG.debug("Failed to run '{}'", commandString, e);
+        } finally {
+            IOUtils.closeQuietly(output);
+            IOUtils.closeQuietly(input);
+            IOUtils.closeQuietly(pis);
+        }
+        
+        return outputText;
+    }
+
