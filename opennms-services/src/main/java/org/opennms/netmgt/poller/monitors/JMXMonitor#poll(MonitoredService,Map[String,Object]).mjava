@@ -1,52 +1,39 @@
-    /* (non-Javadoc)
-     * @see org.opennms.netmgt.poller.monitors.ServiceMonitor#poll(org.opennms.netmgt.poller.monitors.NetworkInterface, java.util.Map, org.opennms.netmgt.config.poller.Package)
+    /**
+     * {@inheritDoc}
      */
-    /** {@inheritDoc} */
     @Override
     public PollStatus poll(MonitoredService svc, Map<String, Object> map) {
 
-        NetworkInterface<InetAddress> iface = svc.getNetInterface();
+        final NetworkInterface<InetAddress> iface = svc.getNetInterface();
+        final InetAddress ipv4Addr = iface.getAddress();
 
-        PollStatus     serviceStatus = PollStatus.unavailable();
-        String         dsName        = null;
-        InetAddress    ipv4Addr      = (InetAddress)iface.getAddress();
-        
-        ConnectionWrapper connection = null;
-
-
+        PollStatus serviceStatus = PollStatus.unavailable();
         try {
-            
-            int retry = ParameterMap.getKeyedInteger(map, "retry", 3);
+            final Timer timer = new Timer();
+            final JmxConnectionManager connectionManager = new DefaultConnectionManager(ParameterMap.getKeyedInteger(map, "retry", 3));
+            final JmxConnectionManager.RetryCallback retryCallback = new JmxConnectionManager.RetryCallback() {
+                @Override
+                public void onRetry() {
+                    timer.reset();
+                }
+            };
 
-            long t0 = 0;
-            for (int attempts=0; attempts <= retry && !serviceStatus.isAvailable(); attempts++) {
-                try {
-                    t0 = System.nanoTime();
-                    connection = getMBeanServerConnection(map, ipv4Addr);
-                    if (connection != null) {
-                        connection.getMBeanServer().getMBeanCount();
-                        long nanoResponseTime = System.nanoTime() - t0;
-                        serviceStatus = PollStatus.available(nanoResponseTime / 1000000.0);
-                        break;
-                    }
-                }
-                catch(IOException e) {
-                    String reason = dsName+": IOException while polling address: " + ipv4Addr;
-                    LOG.debug(reason);
-                    serviceStatus = PollStatus.unavailable(reason);
-                    break;
-                }
+            try (JmxServerConnectionWrapper connection = connectionManager.connect(getConnectionName(), InetAddrUtils.str(ipv4Addr), JmxUtils.convertToStringMap(map), retryCallback)) {
+
+                connection.getMBeanServerConnection().getMBeanCount();
+                long nanoResponseTime = System.nanoTime() - timer.getStartTime();
+                serviceStatus = PollStatus.available(nanoResponseTime / 1000000.0);
+            } catch (JmxServerConnectionException mbse) {
+                // Number of retries exceeded
+                String reason = "IOException while polling address: " + ipv4Addr;
+                LOG.debug(reason);
+                serviceStatus = PollStatus.unavailable(reason);
             }
         } catch (Throwable e) {
-            String reason = dsName+" Monitor - failed! " + InetAddressUtils.str(ipv4Addr);
+            String reason = "Monitor - failed! " + InetAddressUtils.str(ipv4Addr);
             LOG.debug(reason);
             serviceStatus = PollStatus.unavailable(reason);
-        } finally {
-            if (connection != null) {
-                connection.close();
-            }
         }
-        
         return serviceStatus;
     }
 
