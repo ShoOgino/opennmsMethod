@@ -3,30 +3,19 @@
     @Override
     public void updateNode(final OnmsNode node, boolean rescanExisting) {
 
-    	final OnmsNode dbNode = m_nodeDao.getHierarchy(node.getId());
+        final OnmsNode dbNode = m_nodeDao.getHierarchy(node.getId());
 
-        final Set<OnmsCategory> existingCategories = dbNode.getCategories();
-        final Set<OnmsCategory> newCategories = node.getCategories();
+        // on an update, leave categories alone, let the NodeScan handle applying requisitioned categories
+        node.setCategories(dbNode.getCategories());
 
-        dbNode.mergeNode(node, m_eventForwarder, false);
+        final EventAccumulator accumulator = new EventAccumulator(m_eventForwarder);
+        dbNode.mergeNode(node, accumulator, false);
 
         m_nodeDao.update(dbNode);
         m_nodeDao.flush();
 
+        accumulator.flush();
         final EntityVisitor eventAccumlator = new UpdateEventVisitor(m_eventForwarder, rescanExisting);
-
-        node.visit(eventAccumlator);
-        
-        boolean categoriesChanged = false;
-        if (existingCategories.size() != newCategories.size()) categoriesChanged = true;
-        if (!categoriesChanged && !existingCategories.containsAll(newCategories)) categoriesChanged = true;
-        if (!categoriesChanged && !newCategories.containsAll(existingCategories)) categoriesChanged = true;
-
-        if (categoriesChanged) {
-            final EventBuilder bldr = new EventBuilder(EventConstants.NODE_CATEGORY_MEMBERSHIP_CHANGED_EVENT_UEI, "OnmsNode.mergeNodeAttributes");
-            bldr.setNode(dbNode);
-            bldr.addParam(EventConstants.PARM_NODE_LABEL, dbNode.getLabel());
-            m_eventForwarder.sendNow(bldr.getEvent());
-        }
+        dbNode.visit(eventAccumlator);
     }
 
