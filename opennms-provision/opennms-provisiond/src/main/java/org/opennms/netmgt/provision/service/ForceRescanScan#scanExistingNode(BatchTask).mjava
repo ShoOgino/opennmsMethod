@@ -1,0 +1,29 @@
+    /**
+     * <p>scanExistingNode</p>
+     *
+     * @param phase a {@link org.opennms.core.tasks.BatchTask} object.
+     */
+    protected void scanExistingNode(final BatchTask phase) {
+        LOG.info("Attempting to re-scan node with Id {}", m_nodeId);
+        final OnmsNode node = m_provisionService.getNode(m_nodeId);
+        if (node != null) {
+            OnmsIpInterface iface = m_provisionService.getPrimaryInterfaceForNode(node);
+            if (iface == null) { // NMS-6380, a discovered node added with wrong SNMP settings doesn't have a primary interface yet.
+                iface = node.getIpInterfaces().isEmpty() ? null : node.getIpInterfaces().iterator().next();
+            } else {
+                LOG.info("The node with ID OP does not have a primary interface", m_nodeId);
+            }
+            if (iface == null) {
+                LOG.info("The node with ID {} does not have any IP addresses", m_nodeId);
+            } else {
+                phase.getBuilder().addSequence(
+                    new NodeInfoScan(node, iface.getIpAddress(), node.getForeignSource(), createScanProgress(), m_agentConfigFactory, m_provisionService, node.getId()),
+                    new IpInterfaceScan(node.getId(), iface.getIpAddress(), node.getForeignSource(), m_provisionService),
+                    new NodeScan(node.getId(), node.getForeignSource(), node.getForeignId(), m_provisionService, m_eventForwarder, m_agentConfigFactory, m_taskCoordinator)
+                );
+            }
+        } else {
+            LOG.info("Can't find node with ID {}", m_nodeId);
+        }
+    }
+
