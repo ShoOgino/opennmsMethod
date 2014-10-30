@@ -1,4 +1,4 @@
-	private static PollerFrontEnd getPollerFrontEnd(AbstractApplicationContext context) {
+	private PollerFrontEnd getPollerFrontEnd(final AbstractApplicationContext context) {
 		PollerFrontEnd frontEnd = (PollerFrontEnd) context.getBean("pollerFrontEnd");
 
 		frontEnd.addPropertyChangeListener(new PropertyChangeListener() {
@@ -9,13 +9,13 @@
 				Object newValue = e.getNewValue();
 
 				// if exitNecessary becomes true.. then return true
-				if ("exitNecessary".equals(propName) && Boolean.TRUE.equals(newValue)) {
+				if (PollerFrontEndStates.exitNecessary.toString().equals(propName) && Boolean.TRUE.equals(newValue)) {
 					LOG.info("shouldExit: Exiting because exitNecessary is TRUE");
 					return true;
 				}
 
 				// if started becomes false the we should exit
-				if ("started".equals(propName) && Boolean.FALSE.equals(newValue)) {
+				if (PollerFrontEndStates.started.toString().equals(propName) && Boolean.FALSE.equals(newValue)) {
 					LOG.info("shouldExit: Exiting because started is now false");
 					return true;
 				}
@@ -26,8 +26,30 @@
 
 			@Override
 			public void propertyChange(PropertyChangeEvent e) {
-				if (!m_shuttingDown && shouldExit(e)) {
-					System.exit(10);
+				if (shouldExit(e)) {
+					// MVR: gracefully shutdown scheduler, otherwise context.close() will raise 
+					// an exception. See #NMS-6966 for more details.
+					if (context.isActive()) {
+						try {
+							LOG.info("Shutting down PollerFrontEnd scheduler");
+							((Scheduler)context.getBean("scheduler")).shutdown();
+						} catch (SchedulerException ex) {
+							LOG.warn("Shutting down PollerFrontEnd scheduler failed", ex);
+						}
+						LOG.info("PollerFrontEnd scheduler shutdown complete");
+
+						// now close the application context
+						context.close();
+					}
+
+					new Thread() {
+						public void run() {
+							// Sleep for a couple of seconds so that the other
+							// PropertyChangeListeners get a chance to fire
+							try { Thread.sleep(5000); } catch (InterruptedException e) {}
+							System.exit(10);
+						}
+					}.start();
 				}
 			}
 		});
