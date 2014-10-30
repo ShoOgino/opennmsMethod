@@ -4,19 +4,23 @@
     /** {@inheritDoc} */
     @Override
     public int send(List<Argument> arguments) {
-        
+
         m_arguments = arguments;
-        
+
         String url = getUrl();
         if (url == null) {
-			LOG.warn("send: url argument is null, HttpNotification requires a URL");
-        		return 1;
+            LOG.warn("send: url argument is null, HttpNotification requires a URL");
+            return 1;
         }
-        
-        DefaultHttpClient client = new DefaultHttpClient();
+
+        final HttpClientWrapper clientWrapper = HttpClientWrapper.create()
+                .setConnectionTimeout(3000)
+                .setSocketTimeout(3000)
+                .useSystemProxySettings();
+
         HttpUriRequest method = null;
-        List<NameValuePair> posts = getPostArguments();
-                
+        final List<NameValuePair> posts = getPostArguments();
+
         if (posts == null) {
             method = new HttpGet(url);
             LOG.info("send: No \"post-\" arguments..., continuing with an HTTP GET using URL: {}", url);
@@ -27,7 +31,7 @@
             }
             method = new HttpPost(url);
             try {
-                UrlEncodedFormEntity entity = new UrlEncodedFormEntity(posts, "UTF-8");
+                final UrlEncodedFormEntity entity = new UrlEncodedFormEntity(posts, "UTF-8");
                 ((HttpPost)method).setEntity(entity);
             } catch (UnsupportedEncodingException e) {
                 // Should never happen
@@ -37,7 +41,7 @@
         String contents = null;
         int statusCode = -1;
         try {
-            HttpResponse response = client.execute(method);
+            CloseableHttpResponse response = clientWrapper.execute(method);
             statusCode = response.getStatusLine().getStatusCode();
             contents = EntityUtils.toString(response.getEntity());
             LOG.info("send: Contents is: {}", contents);
@@ -45,12 +49,11 @@
             LOG.error("send: IO problem with HTTP post/response: {}", e);
             throw new RuntimeException("Problem with HTTP post: "+e.getMessage());
         } finally {
-            // Do we need to do any cleanup?
-            // method.releaseConnection();
+            IOUtils.closeQuietly(clientWrapper);
         }
-        
+
         doSql(contents);
-        
+
         return statusCode;
     }
 

@@ -1,0 +1,37 @@
+    /**
+     * Preemptively pass basic authentication headers, rather than waiting for the server
+     * to response asking for it.
+     */
+    public HttpClientWrapper usePreemptiveAuth() {
+        /**
+         * Add an HttpRequestInterceptor that will perform preemptive authentication
+         * @see http://hc.apache.org/httpcomponents-client-4.0.1/tutorial/html/authentication.html
+         */
+        final HttpRequestInterceptor preemptiveAuth = new HttpRequestInterceptor() {
+            @Override
+            public void process(final HttpRequest request, final HttpContext context) throws IOException {
+                if (context instanceof HttpClientContext) {
+                    final HttpClientContext clientContext = (HttpClientContext)context;
+                    final AuthState authState = clientContext.getTargetAuthState();
+                    final CredentialsProvider credsProvider = clientContext.getCredentialsProvider();
+                    final HttpHost targetHost = clientContext.getTargetHost();
+                    // If not authentication scheme has been initialized yet
+                    if (authState.getAuthScheme() == null) {
+                        final AuthScope authScope = new AuthScope(targetHost.getHostName(), targetHost.getPort());
+                        // Obtain credentials matching the target host
+                        final Credentials creds = credsProvider.getCredentials(authScope);
+                        // If found, generate BasicScheme preemptively
+                        if (creds != null) {
+                            authState.update(new BasicScheme(), creds);
+                        }
+                    }
+                } else {
+                    throw new IllegalArgumentException("Not sure how to handle a non-HttpClientContext context.");
+                }
+            }
+
+        };
+        m_httpClientBuilder.addInterceptorFirst(preemptiveAuth);
+        return this;
+    }
+

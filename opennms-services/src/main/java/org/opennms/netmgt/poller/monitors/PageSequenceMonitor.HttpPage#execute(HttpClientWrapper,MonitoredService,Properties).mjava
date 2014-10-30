@@ -1,4 +1,4 @@
-        void execute(DefaultHttpClient client, MonitoredService svc, Properties sequenceProperties) {
+        void execute(final HttpClientWrapper clientWrapper, final MonitoredService svc, final Properties sequenceProperties) {
             try {
                 URI uri = getURI(svc);
                 PageSequenceHttpUriRequest method = getMethod(uri);
@@ -13,27 +13,22 @@
                     } else {  // Add the port if it is non-standard
                         host = new HttpHost(getVirtualHost(svc), uri.getPort());
                     }
-                    // method.getParams().setParameter(ClientPNames.VIRTUAL_HOST, host);
-                    method.setHeader("Host", host.toHostString()); // This will override the Host header as the HttpClient always going to add it even if it is not specified.
+                    clientWrapper.setVirtualHost(host.toHostString());
                 }
 
-                if (getUserAgent() != null) {
-                    method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, getUserAgent());
+                if (getUserAgent() != null && !getUserAgent().trim().isEmpty()) {
+                    clientWrapper.setUserAgent(getUserAgent());
                 } else {
-                    method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, "OpenNMS PageSequenceMonitor (Service name: " + svc.getSvcName() + ")");
+                    clientWrapper.setUserAgent("OpenNMS PageSequenceMonitor (Service name: " + svc.getSvcName() + ")");
                 }
 
                 if ("https".equals(uri.getScheme())) {
                     if (Boolean.parseBoolean(m_page.getDisableSslVerification())) {
-                        final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
-                        final Scheme https = registry.getScheme("https");
-
-                        // Override the trust validation with a lenient implementation
-                        final SSLSocketFactory factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-
-                        final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
-                        // This will replace the existing "https" schema
-                        registry.register(lenient);
+                        try {
+                            clientWrapper.useRelaxedSSL("https");
+                        } catch (final GeneralSecurityException e) {
+                            LOG.warn("Failed configure relaxed SSL for PageSequence {}", svc.getSvcName(), e);
+                        }
                     }
                 }
 
@@ -45,14 +40,14 @@
                     String userInfo = getUserInfo();
                     String[] streetCred = userInfo.split(":", 2);
                     if (streetCred.length == 2) {
-                        client.getCredentialsProvider().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(streetCred[0], streetCred[1]));
+                        clientWrapper.addBasicCredentials(streetCred[0], streetCred[1]);
                     } else { 
                         LOG.warn("Illegal value found for username/password HTTP credentials: {}", userInfo);
                     }
                 }
 
                 long startTime = System.nanoTime();
-                HttpResponse response = client.execute(method);
+                CloseableHttpResponse response = clientWrapper.execute(method);
                 long endTime = System.nanoTime();
                 m_responseTime = (endTime - startTime)/1000000.0;
 
@@ -92,14 +87,15 @@
                     updateSequenceProperties(sequenceProperties, matcher);
                 }
 
-            } catch (NoSuchAlgorithmException e) {
-                // Should never happen
-                throw new PageSequenceMonitorException("Could not find appropriate SSL context provider", e);
             } catch (URISyntaxException e) {
                 throw new IllegalArgumentException("unable to construct URL for page", e);
             } catch (IOException e) {
                 LOG.debug("I/O Error", e);
                 throw new PageSequenceMonitorException("I/O Error", e);
+            } finally {
+                if (clientWrapper != null) {
+                    clientWrapper.closeResponse();
+                }
             }
         }
 
