@@ -10,74 +10,41 @@
      * @return an array of {@link java.lang.String} objects.
      * @throws java.sql.SQLException if any.
      */
+    @Override
     public String[] getCriticalPathData(String criticalPathIp, String criticalPathServiceName) {
         String[] result = new String[4];
-        int count = 0;
-        OnmsNode node = new OnmsNode();
 
-        //private static final String GET_NODELABEL_BY_IP = "SELECT nodelabel FROM node WHERE nodeid IN (SELECT nodeid FROM ipinterface WHERE ipaddr=? AND ismanaged!='D')";
-        
-        final org.opennms.core.criteria.Criteria criteria = new org.opennms.core.criteria.Criteria(OnmsNode.class)
-        .setAliases(Arrays.asList(new Alias[] {
-            new Alias("ipInterfaces","ipInterfaces", JoinType.LEFT_JOIN)
-        }))
-        .addRestriction(new EqRestriction("ipInterfaces.ipAddress", InetAddressUtils.addr(criticalPathIp)))
-        //TODO: Replace D with a constant
-        .addRestriction(new NeRestriction("ipInterfaces.isManaged", "D"));
+        // Fetch all non-deleted nodes that have the critical path IP address
 
-        List<OnmsNode> nList = nodeDao.findMatching(criteria);
+        List<OnmsNode> nList = nodeDao.findByIpAddressAndService(InetAddressUtils.addr(criticalPathIp), criticalPathServiceName);
+
         if(nList.size() < 1) {
-        	return result;
+            // Didn't find the critical node so just return an empty result
+            return result;
+        } else if(nList.size() == 1) {
+            OnmsNode node = nList.get(0);
+            result[0] = node.getLabel();
+            result[1] = node.getNodeId();
+        } else if(nList.size() > 1) {
+            OnmsNode node = nList.get(0);
+            result[0] = "(" + nList.size() + " nodes have this IP)";
+            result[1] = node.getNodeId();
         }
-        else if(nList.size() == 1) {
-        	node = nList.get(0);
-        	result[0] = node.getLabel();
-        }
-        else if(nList.size() > 1) {
-        	result[0] = "(" + nList.size() + " nodes have this IP)";
-        }
-        
-        result[1] = node.getNodeId();
-        result[2] = Integer.toString(nList.size());
-        
-        //"SELECT count(*) FROM outages WHERE ipaddr=? AND ifregainedservice IS NULL AND serviceid=(SELECT serviceid FROM service WHERE servicename=?)";
-                   
-        final org.opennms.core.criteria.Criteria crit = new org.opennms.core.criteria.Criteria(OnmsOutage.class)
-        .setAliases(Arrays.asList(new Alias[] {
-            new Alias("monitoredService","monitoredService", JoinType.LEFT_JOIN),
-            new Alias("monitoredService.serviceType","serviceType", JoinType.LEFT_JOIN),
-            new Alias("monitoredService.ipInterface","ipInterface", JoinType.LEFT_JOIN)
-        }))
-        .addRestriction(new NullRestriction("ifRegainedService"))
-        .addRestriction(new EqRestriction("serviceType.name", criticalPathServiceName))
-        .addRestriction(new EqRestriction("ipInterface.ipAddress",InetAddressUtils.addr(criticalPathIp)));
-        	
-        List<OnmsOutage> oList = outageDao.findMatching(crit);
-        
-        count = oList.size();
 
-        if(count > 0) {
-        	final org.opennms.core.criteria.Criteria tres = new org.opennms.core.criteria.Criteria(OnmsMonitoredService.class)
-        	.setAliases(Arrays.asList(new Alias[] {
-        			new Alias("serviceType","monitoredService.serviceType", JoinType.LEFT_JOIN)
-                	}))
-                	.addRestriction(new EqRestriction("status", StatusType.ACTIVE))
-                	.addRestriction(new EqRestriction("serviceType.name", criticalPathServiceName))
-                	.addRestriction(new EqRestriction("ipAddress",InetAddressUtils.addr(criticalPathIp)));
-            	
-        	List<OnmsMonitoredService> oms = monitoredServiceDao.findMatching(tres);
+        result[2] = String.valueOf(pathOutageDao.getNodesForPathOutage(InetAddressUtils.addr(criticalPathIp), criticalPathServiceName).size());
 
-        	count = oms.size();
-        	if(count > 0) {
-        		result[3] = "Critical";
-        	} else {
-        		result[3] = "Normal";
-        	}
-        	for (OnmsMonitoredService open: oms) {
-        		result[3] = open.getStatus();
-        	}
+        OnmsMonitoredService service = monitoredServiceDao.get(Integer.valueOf(result[1]), InetAddressUtils.addr(criticalPathIp), criticalPathServiceName);
+
+        if (service != null) {
+            OnmsOutage outage = outageDao.currentOutageForService(service);
+
+            if(outage == null) {
+                result[3] = "Normal";
+            } else {
+                result[3] = "Critical";
+            }
         } else {
-        	result[3] = "Cleared";
+            result[3] = "Cleared";
         }
         
         return result;
