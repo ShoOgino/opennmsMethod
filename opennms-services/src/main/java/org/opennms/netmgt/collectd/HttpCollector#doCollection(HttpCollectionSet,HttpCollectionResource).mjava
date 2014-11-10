@@ -11,23 +11,18 @@
      * @throws HttpCollectorException
      */
     private static void doCollection(final HttpCollectionSet collectionSet, final HttpCollectionResource collectionResource) throws HttpCollectorException {
-
-        DefaultHttpClient client = null;
-        HttpUriRequest method = null;
-
+        HttpRequestBase method = null;
+        HttpClientWrapper clientWrapper = null;
         try {
-            HttpParams params = buildParams(collectionSet);
-            client = new DefaultHttpClient(params);
+            final HttpVersion httpVersion = computeVersion(collectionSet.getUriDef());
+
+            clientWrapper = HttpClientWrapper.create()
+                    .setConnectionTimeout(ParameterMap.getKeyedInteger(collectionSet.getParameters(), ParameterName.TIMEOUT.toString(), DEFAULT_SO_TIMEOUT))
+                    .setSocketTimeout(ParameterMap.getKeyedInteger(collectionSet.getParameters(), ParameterName.TIMEOUT.toString(), DEFAULT_SO_TIMEOUT))
+                    .useBrowserCompatibleCookies();
+
             if ("https".equals(collectionSet.getUriDef().getUrl().getScheme())) {
-                final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
-                final Scheme https = registry.getScheme("https");
-
-                // Override the trust validation with a lenient implementation
-                final SSLSocketFactory factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-
-                final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
-                // This will replace the existing "https" schema
-                registry.register(lenient);
+                clientWrapper.useRelaxedSSL("https");
             }
 
             String key = ParameterName.RETRY.toString();
@@ -35,30 +30,40 @@
                 key = ParameterName.RETRIES.toString();
             }
             Integer retryCount = ParameterMap.getKeyedInteger(collectionSet.getParameters(), key, DEFAULT_RETRY_COUNT);
-            client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler(retryCount, false));
+            clientWrapper.setRetries(retryCount);
+
             method = buildHttpMethod(collectionSet);
-            method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, determineUserAgent(collectionSet, params));
+            method.setProtocolVersion(httpVersion);
+            final String userAgent = determineUserAgent(collectionSet);
+            if (userAgent != null && !userAgent.trim().isEmpty()) {
+                clientWrapper.setUserAgent(userAgent);
+            }
+            final HttpClientWrapper wrapper = clientWrapper;
 
-            buildCredentials(collectionSet, client, method);
+            if (collectionSet.getUriDef().getUrl().getUserInfo() != null) {
+                final String userInfo = collectionSet.getUriDef().getUrl().getUserInfo();
+                final String[] streetCred = userInfo.split(":", 2);
+                if (streetCred.length == 2) {
+                    wrapper.addBasicCredentials(streetCred[0], streetCred[1]);
+                } else { 
+                    LOG.warn("Illegal value found for username/password HTTP credentials: {}", userInfo);
+                }
+            }
 
-            LOG.info("doCollection: collecting for client: {} using method: {}", client, method);
-            HttpResponse response = client.execute(method);
+            LOG.info("doCollection: collecting using method: {}", method);
+            final CloseableHttpResponse response = clientWrapper.execute(method);
             //Not really a persist as such; it just stores data in collectionSet for later retrieval
-            persistResponse(collectionSet, collectionResource, client, response);
+            persistResponse(collectionSet, collectionResource, response);
         } catch (URISyntaxException e) {
             throw new HttpCollectorException("Error building HttpClient URI", e);
         } catch (IOException e) {
             throw new HttpCollectorException("IO Error retrieving page", e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new HttpCollectorException("Could not find EmptyKeyRelaxedTrustSSLContext to allow connection to untrusted HTTPS hosts", e);
         } catch (PatternSyntaxException e) {
             throw new HttpCollectorException("Invalid regex specified in HTTP collection configuration", e);
         } catch (Throwable e) {
             throw new HttpCollectorException("Unexpected exception caught during HTTP collection", e);
         } finally {
-            if (client != null) {
-                client.getConnectionManager().shutdown();
-            }
+            IOUtils.closeQuietly(clientWrapper);
         }
     }
 

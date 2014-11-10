@@ -1,5 +1,4 @@
     public static void main(String[] args) {
-
         Options options = new Options();
         Option oI = new Option("i", "ipaddress", true, "IP Address to test [required]");
         oI.setRequired(true);
@@ -21,6 +20,8 @@
             System.exit(1);
         }
 
+        initialize();
+
         final String packageName = cmd.getOptionValue('P');
         final String monitorClass = cmd.getOptionValue('c');
         final String ipAddress = cmd.getOptionValue('i');
@@ -36,33 +37,31 @@
             }
         }
 
-        MonitoredService monSvc = new MonitoredService() {
-            public String getSvcUrl() {
-                return null;
-            }
-            public String getSvcName() {
-                return serviceName;
-            }
-            public String getIpAddr() {
-                return ipAddress;
-            }
-            public int getNodeId() {
-                return 0;
-            }
-            public String getNodeLabel() {
-                return getIpAddr();
-            }
-            public NetworkInterface<InetAddress> getNetInterface() {
-                return new InetNetworkInterface(getAddress());
-            }
-            public InetAddress getAddress() {
-                final InetAddress addr = InetAddressUtils.addr(ipAddress);
-                if (addr == null) {
-                    throw new IllegalStateException("Error getting localhost address");
+        final InetAddress addr = InetAddressUtils.addr(ipAddress);
+        if (addr == null) {
+            throw new IllegalStateException("Error getting InetAddress object for " + ipAddress);
+        }
+
+        final IpInterfaceDao dao = BeanUtils.getBean("daoContext", "ipInterfaceDao", IpInterfaceDao.class);
+        final TransactionTemplate tt = BeanUtils.getBean("daoContext", "transactionTemplate", TransactionTemplate.class);
+        MonitoredService monSvc = tt.execute(new TransactionCallback<MonitoredService>() {
+            @Override
+            public MonitoredService doInTransaction(TransactionStatus status) {
+                final List<OnmsIpInterface> ips = dao.findByIpAddress(ipAddress);
+                if (ips == null  || ips.size() == 0) {
+                    System.err.printf("Error: Can't find the IP address %s on the database\n", ipAddress);
+                    return null;
                 }
-                return addr;
+                if (ips.size() > 1) {
+                    System.out.printf("Warning: there are several IP interface objects associated with the IP address %s (picking the first one)\n", ipAddress);
+                }
+                OnmsNode n = ips.get(0).getNode();
+                return new SimpleMonitoredService(addr, n.getId(), n.getLabel(), serviceName);
             }
-        };
+        });
+        if (monSvc == null) {
+            System.exit(1);
+        }
 
         try {
             PollerConfigFactory.init();
@@ -108,7 +107,13 @@
         if (config.isPolledLocally(ipAddress, serviceName)) {
             for (Parameter p : svc.getParameters()) {
                 if (!parameters.containsKey(p.getKey())) {
-                    parameters.put(p.getKey(), p.getValue() == null ? p.getAnyObject() : p.getValue());
+                    String value = p.getValue();
+                    if (value == null) {
+                        try {
+                            value = JaxbUtils.marshal(p.getAnyObject());
+                        } catch (Exception e) {}
+                    }
+                    parameters.put(p.getKey(), value);
                 }
             }
             for (Entry<String,Object> e : parameters.entrySet()) {

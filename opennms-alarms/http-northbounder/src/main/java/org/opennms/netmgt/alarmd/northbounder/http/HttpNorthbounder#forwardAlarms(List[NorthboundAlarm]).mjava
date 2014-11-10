@@ -9,32 +9,27 @@
         int socketTimeout = 3000;
         Integer retryCount = Integer.valueOf(3);
         
-        HttpVersion httpVersion = determineHttpVersion(m_config.getHttpVersion());        
-        String policy = CookiePolicy.BROWSER_COMPATIBILITY;
-        
         URI uri = m_config.getURI();
+ 
+        final HttpClientWrapper clientWrapper = HttpClientWrapper.create()
+                .setConnectionTimeout(connectionTimeout)
+                .setSocketTimeout(socketTimeout)
+                .setRetries(retryCount)
+                .useBrowserCompatibleCookies();
         
-        DefaultHttpClient client = new DefaultHttpClient(buildParams(httpVersion, connectionTimeout,
-                socketTimeout, policy, m_config.getVirtualHost()));
-        
-        client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler(retryCount, false));
-        
+        if (m_config.getVirtualHost() != null && !m_config.getVirtualHost().trim().isEmpty()) {
+            clientWrapper.setVirtualHost(m_config.getVirtualHost());
+        }
+        if (m_config.getUserAgent() != null && !m_config.getUserAgent().trim().isEmpty()) {
+            clientWrapper.setUserAgent(m_config.getUserAgent());
+        }
+
         if ("https".equals(uri.getScheme())) {
-            final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
-            final Scheme https = registry.getScheme("https");
-
-            // Override the trust validation with a lenient implementation
-            SSLSocketFactory factory = null;
-            
             try {
-                factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-            } catch (Throwable e) {
-                throw new NorthbounderException(e);
+                clientWrapper.useRelaxedSSL("https");
+            } catch (final GeneralSecurityException e) {
+                throw new NorthbounderException("Failed to configure HTTP northbounder for relaxed SSL.", e);
             }
-
-            final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
-            // This will replace the existing "https" schema
-            registry.register(lenient);
         }
         
         HttpUriRequest method = null;
@@ -73,27 +68,26 @@
             //List<NameValuePair> getParms = null;
             method = new HttpGet(uri);
         }
-        
-        method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, m_config.getUserAgent());
+        HttpVersion httpVersion = determineHttpVersion(m_config.getHttpVersion());        
+        clientWrapper.setVersion(httpVersion);
 
         HttpResponse response = null;
         try {
-            response = client.execute(method);
-        } catch (ClientProtocolException e) {
-            throw new NorthbounderException(e);
-        } catch (IOException e) {
-            throw new NorthbounderException(e);
-        }
-        
-        if (response != null) {
+            response = clientWrapper.execute(method);
+
             int code = response.getStatusLine().getStatusCode();
             HttpResponseRange range = new HttpResponseRange("200-399");
             if (!range.contains(code)) {
                 LOG.debug("response code out of range for uri:{}.  Expected {} but received {}", uri, range, code);
                 throw new NorthbounderException("response code out of range for uri:" + uri + ".  Expected " + range + " but received " + code);
             }
+            LOG.debug("HTTP Northbounder received response: {}", response.getStatusLine().getReasonPhrase());
+        } catch (final ClientProtocolException e) {
+            throw new NorthbounderException(e);
+        } catch (final IOException e) {
+            throw new NorthbounderException(e);
+        } finally {
+            IOUtils.closeQuietly(clientWrapper);
         }
-        
-        LOG.debug(response != null ? response.getStatusLine().getReasonPhrase() : "Response was null");
     }
 

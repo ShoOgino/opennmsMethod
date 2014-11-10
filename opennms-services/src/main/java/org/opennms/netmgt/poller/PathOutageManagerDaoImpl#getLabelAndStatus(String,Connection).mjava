@@ -8,9 +8,8 @@
      * @return an array of {@link java.lang.String} objects.
      * @throws java.sql.SQLException if any.
      */
+    @Override
     public String[] getLabelAndStatus(String nodeIDStr, Connection conn) {
-    	int countManagedSvcs = 0;
-        int countOutages = 0;
         String[] result = new String[3];
         result[1] = "Cleared";
         result[2] = "Unmanaged";
@@ -18,40 +17,46 @@
         int nodeID = WebSecurityUtils.safeParseInt(nodeIDStr);
 
         OnmsNode node = nodeDao.get(nodeID);
-        result[0] = node.getLabel();
-            
-        List<OnmsMonitoredService> serve = monitoredServiceDao.findAll();
-           
-            
-        for (OnmsMonitoredService cur: serve) {
-        	if ("A".equals(cur.getStatus()) && nodeID == cur.getNodeId()) {
-          		countManagedSvcs++;
-          	}
+        if (node == null) {
+            // TODO Log that node could not be found in database
+            return result;
         }
-            
-        if(countManagedSvcs > 0) {
-            	
-           	List<OnmsOutage> out = outageDao.findAll();
-            	
-           	for (OnmsOutage outs: out) {
-           		if (outs.getServiceRegainedEvent() == null) {
-           			countOutages++;
-           		}
-           	}
-            	
-            if(countManagedSvcs == countOutages) {
-            	result[1] = "Critical";
-                result[2] = "All Services Down";
-            } else if(countOutages == 0) {
-                result[1] = "Normal";
-                result[2] = "All Services Up";
-            } else {
-                result[1] = "Minor";
-                result[2] = "Some Services Down";
+
+        result[0] = node.getLabel();
+
+        final org.opennms.core.criteria.Criteria crit = new org.opennms.core.criteria.Criteria(OnmsMonitoredService.class)
+        .setAliases(Arrays.asList(new Alias[] {
+            //new Alias("monitoredService","monitoredService", JoinType.LEFT_JOIN),
+            new Alias("ipInterface","ipInterface", JoinType.LEFT_JOIN)
+        }))
+        .addRestriction(new EqRestriction("status", "A"))
+        .addRestriction(new EqRestriction("ipInterface.node", node));
+
+        // Get all active services on the node
+        List<OnmsMonitoredService> services = monitoredServiceDao.findMatching(crit);
+
+        int countManagedSvcs = services.size();
+
+        // Count how many of these services have open outages
+        int countOutages = 0;
+        for (OnmsMonitoredService service : services) {
+            OnmsOutage out = outageDao.currentOutageForService(service);
+            if (out != null) {
+                countOutages++;
             }
         }
-        
+
+        if(countManagedSvcs == countOutages) {
+            result[1] = "Critical";
+            result[2] = "All Services Down";
+        } else if(countOutages == 0) {
+            result[1] = "Normal";
+            result[2] = "All Services Up";
+        } else {
+            result[1] = "Minor";
+            result[2] = "Some Services Down";
+        }
+
         return result;
-        
     }
 

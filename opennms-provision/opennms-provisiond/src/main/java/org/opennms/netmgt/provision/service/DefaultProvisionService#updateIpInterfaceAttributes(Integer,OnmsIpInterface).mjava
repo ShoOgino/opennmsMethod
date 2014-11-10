@@ -2,11 +2,11 @@
     @Transactional
     @Override
     public OnmsIpInterface updateIpInterfaceAttributes(final Integer nodeId, final OnmsIpInterface scannedIface) {
-    	final OnmsSnmpInterface snmpInterface = scannedIface.getSnmpInterface();
+        final OnmsSnmpInterface snmpInterface = scannedIface.getSnmpInterface();
         if (snmpInterface != null && snmpInterface.getIfIndex() != null) {
             scannedIface.setSnmpInterface(updateSnmpInterfaceAttributes(nodeId, snmpInterface));
         }
-        
+
         return new UpsertTemplate<OnmsIpInterface, IpInterfaceDao>(m_transactionManager, m_ipInterfaceDao) {
 
             @Override
@@ -18,19 +18,23 @@
 
             @Override
             protected OnmsIpInterface doUpdate(final OnmsIpInterface dbIface) {
+                final EventAccumulator accumulator = new EventAccumulator(m_eventForwarder);
+
                 if(dbIface.isManaged() && !scannedIface.isManaged()){
                     final Set<OnmsMonitoredService> monSvcs = dbIface.getMonitoredServices();
-                    
+
                     for(final OnmsMonitoredService monSvc : monSvcs){
-                        monSvc.visit(new DeleteEventVisitor(m_eventForwarder));
+                        monSvc.visit(new DeleteEventVisitor(accumulator));
                     }
                     monSvcs.clear();
                 }
-                
+
                 dbIface.mergeInterfaceAttributes(scannedIface);
                 LOG.info("Updating IpInterface {}", dbIface);
                 m_ipInterfaceDao.update(dbIface);
                 m_ipInterfaceDao.flush();
+                accumulator.flush();
+
                 return dbIface;
             }
 
@@ -38,17 +42,20 @@
             protected OnmsIpInterface doInsert() {
                 final OnmsNode dbNode = m_nodeDao.load(nodeId);
                 assertNotNull(dbNode, "no node found with nodeId %d", nodeId);
-                // for performance reasons we don't add the ip interface to the node so we avoid loading all the interfaces
+
+                // for performance reasons we don't add the IP interface to the node so we avoid loading all the interfaces
                 // setNode only sets the node in the interface
                 scannedIface.setNode(dbNode);
                 saveOrUpdate(scannedIface);
+                m_ipInterfaceDao.flush();
+
                 final AddEventVisitor visitor = new AddEventVisitor(m_eventForwarder);
                 scannedIface.visit(visitor);
-                m_ipInterfaceDao.flush();
+
                 return scannedIface;
             }
         }.execute();
-        
+
 
     }
 

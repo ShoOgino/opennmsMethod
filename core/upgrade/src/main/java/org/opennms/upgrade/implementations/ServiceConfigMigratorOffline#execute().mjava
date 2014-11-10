@@ -1,0 +1,56 @@
+    /* (non-Javadoc)
+     * @see org.opennms.upgrade.api.OnmsUpgrade#execute()
+     */
+    @Override
+    public void execute() throws OnmsUpgradeException {
+        try {
+            ServiceConfiguration currentCfg = JaxbUtils.unmarshal(ServiceConfiguration.class, configFile);
+            int index = 0;
+            for (Service baseSvc : baseConfig.getServiceCollection()) {
+                Service localSvc = getService(currentCfg, baseSvc.getName());
+                if (localSvc == null) {
+                    if (baseSvc.isEnabled()) {
+                        log("Adding new service %s\n", baseSvc.getName());
+                    } else {
+                        log("Marking service %s as disabled\n", baseSvc.getName());
+                    }
+                    currentCfg.getServiceCollection().add(index, baseSvc);
+                    continue;
+                }
+                if (!baseSvc.isEnabled()) {
+                    log("Disabling service %s because it is not on the default list of enabled services\n", localSvc.getName());
+                    localSvc.setEnabled(false);
+                }
+                if (localSvc.getClassName().equals("org.opennms.netmgt.poller.jmx.RemotePollerBackEnd")) {
+                    log("Fixing the class path for RemotePollerBackEnd.\n");
+                    localSvc.setClassName("org.opennms.netmgt.poller.remote.jmx.RemotePollerBackEnd");
+                }
+                if (localSvc.getName().equals("OpenNMS:Name=Linkd")) {
+                    log("Disabling Linkd (to promote EnhancedLinkd)\n");
+                    localSvc.setEnabled(false);
+                }
+                Attribute a = getLoggingPrefix(localSvc);
+                if (a != null) {
+                    log("Fixing logging prefix for service %s\n", localSvc.getName());
+                    String prefix = a.getValue().getContent().toLowerCase();
+                    a.getValue().setContent(prefix);
+                }
+                index++;
+            }
+            StringWriter sw = new StringWriter();
+            sw.write("<?xml version=\"1.0\"?>\n");
+            sw.write("<!-- NOTE!!!!!!!!!!!!!!!!!!!\n");
+            sw.write("The order in which these services are specified is important - for example, Eventd\n");
+            sw.write("will need to come up last so that none of the event topic subcribers loose any event.\n");
+            sw.write("\nWhen splitting services to run on mutiple VMs, the order of the services should be\n");
+            sw.write("maintained\n");
+            sw.write("-->\n");
+            JaxbUtils.marshal(currentCfg, sw);
+            FileWriter fw = new FileWriter(configFile);
+            fw.write(sw.toString());
+            fw.close();
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix services configuration because " + e.getMessage(), e);
+        }
+    }
+
