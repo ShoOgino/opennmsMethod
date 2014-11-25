@@ -2,72 +2,55 @@
      * (non-Javadoc)
      * @see org.opennms.api.integration.ticketing.Plugin#get(java.lang.String)
      */
+    @Override
     public Ticket get(String ticketId) throws PluginException {
+        Objects.requireNonNull(ticketId, "Please provide a ticketId");
+        Objects.requireNonNull(m_ticketConnector, "The GenericTicketConnector was not initialized properly");
 
-        Ticket opennmsTicket = new Ticket();
-        OTRSTicketGetResponse response;
+        OTRSTicketGet ticketGet = new OTRSTicketGet();
+        ticketGet.setUserLogin(m_configDao.getUserName());
+        ticketGet.setPassword(m_configDao.getPassword());
+        ticketGet.setTicketID(new BigInteger[] { new BigInteger(ticketId) });
 
-        if (ticketId == null) {
+        OTRSTicketGetResponse response = m_ticketConnector.ticketGet(ticketGet);
+        LOG.debug("TicketGet responded with {} tickets" + response.getTicketLength());
 
-            LOG.error("No OTRS ticketID available in OpenNMS Ticket");
-            throw new PluginException(
-                                      "No OTRS ticketID available in OpenNMS Ticket");
-
-        } else {
-
-            if (m_ticketConnector != null) {
-
-                OTRSTicketGet ticketGet = new OTRSTicketGet();
-                ticketGet.setUserLogin(m_configDao.getUserName());
-                ticketGet.setPassword(m_configDao.getPassword());
-
-                ticketGet.setTicketID(new BigInteger[] { new BigInteger(
-                                                                      ticketId) });
-
-                response = m_ticketConnector.ticketGet(ticketGet);
-
-                LOG.debug("reponded with " + response.getTicket().length
-                        + "tickets");
-
-                // add ticket basics from the OTRS ticket
-
-                opennmsTicket.setId(response.getTicket(0).getTicketID().toString());
-                opennmsTicket.setSummary(response.getTicket(0).getTitle());
-
-                // Note that we user "Owner" from the OTRS ticket here. There
-                // is nothing to ensure
-                // That this is a valid OpenNMS user
-
-                opennmsTicket.setUser(response.getTicket(0).getCustomerUserID());
-                opennmsTicket.setState(otrsToOpenNMSState(response.getTicket(0).getStateID()));
-
-                // add all the article details from the OTRS ticket
-                // this is not strictly essential as we have no way of viewing
-                // this atm.
-
-                String opennmsTicketDetails = "";
-
-                for (OTRSTicketGetResponseArticle article : response.getTicket(0).getArticle()) {
-                    LOG.debug("Adding Article details from OTRS article ID {}",
-                              article.getArticleID());
-                    opennmsTicketDetails = opennmsTicketDetails + "\n"
-                            + "From: " + article.getFrom() + "\n"
-                            + "Subject: " + article.getSubject() + "\n"
-                            + "Body: " + article.getBody() + "\n";
-                }
-
-                opennmsTicket.setDetails(opennmsTicketDetails);
-
-                return opennmsTicket;
-
-            } else {
-
-                LOG.error("No Ticket Connector Available to service request to OTRS");
-                throw new PluginException(
-                                          "No Ticket Connector Available to service request to OTRS");
-            }
-
+        if (response.getTicketLength() == 0) {
+            // TODO error handling in this case
         }
 
+        if (response.getTicketLength() > 1) {
+            LOG.warn("Received more than 1 tickets, ignore all except the first one.");
+        }
+
+        final OTRSTicketGetResponseTicket otrsTicket = response.getTicket(0);
+
+        Ticket opennmsTicket = new Ticket();
+        // add ticket basics from the OTRS ticket
+        opennmsTicket.setId(otrsTicket.getTicketID().toString());
+        opennmsTicket.setSummary(otrsTicket.getTitle());
+
+        // Note that we user "Owner" from the OTRS ticket here. There
+        // is nothing to ensure
+        // That this is a valid OpenNMS user
+        opennmsTicket.setUser(otrsTicket.getCustomerUserID());
+        opennmsTicket.setState(otrsToOpenNMSState(otrsTicket.getStateID()));
+
+        // add all the article details from the OTRS ticket
+        // this is not strictly essential as we have no way of viewing
+        // this atm.
+
+        String opennmsTicketDetails = "";
+        for (OTRSTicketGetResponseArticle article : otrsTicket.getArticle()) {
+            LOG.debug("Adding Article details from OTRS article ID {}", article.getArticleID());
+            opennmsTicketDetails = new StringBuilder().append(opennmsTicketDetails).append("\n")
+                    .append("From: ").append(article.getFrom()).append("\n")
+                    .append("Subject: ").append(article.getSubject()).append("\n")
+                    .append("Body: ").append(article.getBody()).append("\n").toString();
+        }
+
+        opennmsTicket.setDetails(opennmsTicketDetails);
+
+        return opennmsTicket;
     }
 
