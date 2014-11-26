@@ -1,0 +1,66 @@
+	// interfaceReparented: EventConstants.INTERFACE_REPARENTED_EVENT_UEI
+    @Test
+	public void testInterfaceReparented() throws Exception {
+
+		m_pollerConfig.setNodeOutageProcessingEnabled(true);
+
+		MockNode node1 = m_network.getNode(1);
+		MockNode node2 = m_network.getNode(2);
+
+		assertNotNull("Node 1 should have 192.168.1.1", node1.getInterface("192.168.1.1"));
+		assertNotNull("Node 1 should have 192.168.1.2", node1.getInterface("192.168.1.2"));
+		
+		assertNull("Node 2 should not yet have 192.168.1.2", node2.getInterface("192.168.1.2"));
+		assertNotNull("Node 2 should have 192.168.1.3", node2.getInterface("192.168.1.3"));
+
+		MockInterface dotTwo = m_network.getInterface(1, "192.168.1.2");
+		MockInterface dotThree = m_network.getInterface(2, "192.168.1.3");
+
+		Event reparentEvent = MockEventUtil.createReparentEvent("Test", "192.168.1.2", 1, 2);
+
+		// we are going to reparent to node 2 so when we bring down its only
+		// current interface we expect an interface down not the whole node.
+		anticipateDown(dotThree);
+
+		startDaemons();
+
+		final int waitTime = 2000;
+		final int verifyTime = 2000;
+
+		sleep(waitTime);
+
+		// move the reparented interface and send a reparented event
+		dotTwo.moveTo(node2);
+		m_db.reparentInterface(dotTwo.getIpAddr(), node1.getNodeId(), node2.getNodeId());
+
+		// send the reparent event to the daemons
+		m_eventMgr.sendEventToListeners(reparentEvent);
+
+		sleep(waitTime);
+
+		// now bring down the other interface on the new node
+		// System.err.println("Bring Down:"+node2Iface);
+		dotThree.bringDown();
+
+		verifyAnticipated(verifyTime);
+
+		resetAnticipated();
+		anticipateDown(node2);
+
+		// System.err.println("Bring Down:"+reparentedIface);
+		dotTwo.bringDown();
+
+		sleep(waitTime);
+
+		verifyAnticipated(verifyTime);
+
+		node1 = m_network.getNode(1);
+		node2 = m_network.getNode(2);
+
+		assertNotNull("Node 1 should still have 192.168.1.1", node1.getInterface("192.168.1.1"));
+		assertNull("Node 1 should no longer have 192.168.1.2", node1.getInterface("192.168.1.2"));
+		
+		assertNotNull("Node 2 should now have 192.168.1.2", node2.getInterface("192.168.1.2"));
+		assertNotNull("Node 2 should still have 192.168.1.3", node2.getInterface("192.168.1.3"));
+	}
+

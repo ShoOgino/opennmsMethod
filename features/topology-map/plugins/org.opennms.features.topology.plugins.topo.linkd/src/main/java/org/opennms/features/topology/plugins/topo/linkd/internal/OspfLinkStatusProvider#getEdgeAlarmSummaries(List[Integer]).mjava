@@ -1,0 +1,37 @@
+    @Override
+    protected List<EdgeAlarmStatusSummary> getEdgeAlarmSummaries(List<Integer> linkIds) {
+        org.opennms.core.criteria.Criteria criteria = new org.opennms.core.criteria.Criteria(OspfLink.class);
+        criteria.addRestriction(new InRestriction("id", linkIds));
+
+        List<OspfLink> links = getOspfLinkDao().findMatching(criteria);
+        Multimap<String, EdgeAlarmStatusSummary> summaryMap = HashMultimap.create();
+        for (OspfLink sourceLink : links) {
+            OnmsNode sourceNode = sourceLink.getNode();
+            for (OspfLink targetLink : links) {
+                boolean ipAddrCheck = sourceLink.getOspfRemIpAddr().equals(targetLink.getOspfIpAddr()) && targetLink.getOspfRemIpAddr().equals(sourceLink.getOspfIpAddr());
+                if (ipAddrCheck) {
+                    summaryMap.put(sourceNode.getNodeId() + ":" + sourceLink.getOspfIfIndex(),
+                            new EdgeAlarmStatusSummary(sourceLink.getId(), targetLink.getId(), null));
+                }
+            }
+        }
+
+        List<OnmsAlarm> alarms = getLinkDownAlarms();
+
+        for (OnmsAlarm alarm : alarms) {
+            String key = alarm.getNodeId() + ":" + alarm.getIfIndex();
+            if (summaryMap.containsKey(key)) {
+
+                Collection<EdgeAlarmStatusSummary> summaries = summaryMap.get(key);
+                for (EdgeAlarmStatusSummary summary : summaries) {
+                    summary.setEventUEI(alarm.getUei());
+                }
+
+            }
+
+        }
+
+        return new ArrayList<EdgeAlarmStatusSummary>(summaryMap.values());
+
+    }
+

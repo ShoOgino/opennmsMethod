@@ -1,0 +1,39 @@
+    /**
+     * Gets the root entity.
+     *
+     * @param agentConfig the agent configuration
+     * @param node the node
+     * @return the root entity
+     * @throws HardwareInventoryException the hardware inventory exception
+     */
+    private OnmsHwEntity getRootEntity(SnmpAgentConfig agentConfig, OnmsNode node) throws SnmpHardwareInventoryException {
+        LOG.debug("getRootEntity: Getting ENTITY-MIB using {}", agentConfig);
+
+        final List<SnmpObjId> vendorOidList = m_hwInventoryAdapterConfigDao.getConfiguration().getVendorOid(node.getSysObjectId());
+        final Map<String,String> replacementMap = m_hwInventoryAdapterConfigDao.getConfiguration().getReplacementMap();
+        final SnmpObjId[] vendorOids = vendorOidList.toArray(new SnmpObjId[vendorOidList.size()]);
+        final SnmpObjId[] allOids = (SnmpObjId[]) ArrayUtils.addAll(EntityPhysicalTableRow.ELEMENTS, vendorOids);
+        final EntityPhysicalTableTracker tracker = new EntityPhysicalTableTracker(m_vendorAttributes, allOids, replacementMap);
+        final String trackerName = tracker.getClass().getSimpleName() + '_' + node.getLabel();
+
+        final SnmpWalker walker = SnmpUtils.createWalker(agentConfig, trackerName, tracker);
+        walker.start();
+        try {
+            walker.waitFor();
+            if (walker.timedOut()) {
+                throw new SnmpHardwareInventoryException("Aborting entities scan: Agent timed out while scanning the " + trackerName + " table");
+            }  else if (walker.failed()) {
+                throw new SnmpHardwareInventoryException("Aborting entities scan: Agent failed while scanning the " + trackerName + " table: " + walker.getErrorMessage());
+            }
+        } catch (final InterruptedException e) {
+            throw new SnmpHardwareInventoryException("ENTITY-MIB node collection interrupted, exiting");
+        }
+
+        OnmsHwEntity root = tracker.getRootEntity();
+        if (root == null) {
+            throw new SnmpHardwareInventoryException("Cannot get root entity for node " + node.getLabel() + ", it seems like the node does not have an implementation for the entPhysicalTable of the ENTITY-MIB.");
+        }
+
+        return root;
+    }
+
