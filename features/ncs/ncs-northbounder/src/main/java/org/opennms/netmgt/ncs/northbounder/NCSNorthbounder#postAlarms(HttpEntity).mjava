@@ -3,57 +3,61 @@
 
         int connectionTimeout = 3000;
         int socketTimeout = 3000;
-        Integer retryCount = Integer.valueOf(3);
+        Integer retryCount = 3;
 
         HttpVersion httpVersion = determineHttpVersion(m_config.getHttpVersion());        
-        String policy = CookiePolicy.BROWSER_COMPATIBILITY;
 
         URI uri = m_config.getURI();
+        System.err.println("uri = " + uri);
 
-        DefaultHttpClient client = new DefaultHttpClient(buildParams(httpVersion, connectionTimeout,
-                                                                     socketTimeout, policy, m_config.getVirtualHost()));
-
-        client.setHttpRequestRetryHandler(new DefaultHttpRequestRetryHandler(retryCount, false));
+        final HttpClientWrapper clientWrapper = HttpClientWrapper.create()
+                .setSocketTimeout(socketTimeout)
+                .setConnectionTimeout(connectionTimeout)
+                .setRetries(retryCount)
+                .useBrowserCompatibleCookies()
+                .dontReuseConnections();
 
         if ("https".equals(uri.getScheme())) {
-            final SchemeRegistry registry = client.getConnectionManager().getSchemeRegistry();
-            final Scheme https = registry.getScheme("https");
-
-            // Override the trust validation with a lenient implementation
-            SSLSocketFactory factory = null;
-
             try {
-                factory = new SSLSocketFactory(SSLContext.getInstance(EmptyKeyRelaxedTrustSSLContext.ALGORITHM), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-            } catch (Throwable e) {
-                throw new NorthbounderException(e);
+                clientWrapper.useRelaxedSSL("https");
+            } catch (final GeneralSecurityException e) {
+                throw new NorthbounderException("Failed to configure Relaxed SSL handling.", e);
             }
-
-            final Scheme lenient = new Scheme(https.getName(), https.getDefaultPort(), factory);
-            // This will replace the existing "https" schema
-            registry.register(lenient);
         }
 
-        HttpEntityEnclosingRequestBase method = m_config.getMethod().getRequestMethod(uri);
+        final HttpEntityEnclosingRequestBase method = m_config.getMethod().getRequestMethod(uri);
 
+        if (m_config.getVirtualHost() != null && !m_config.getVirtualHost().trim().isEmpty()) {
+            method.setHeader(HTTP.TARGET_HOST, m_config.getVirtualHost());
+        }
+        if (m_config.getUserAgent() != null && !m_config.getUserAgent().trim().isEmpty()) {
+            method.setHeader(HTTP.USER_AGENT, m_config.getUserAgent());
+        }
+        method.setProtocolVersion(httpVersion);
         method.setEntity(entity);
 
-        method.getParams().setParameter(CoreProtocolPNames.USER_AGENT, m_config.getUserAgent());
-
-        HttpResponse response = null;
+        CloseableHttpResponse response = null;
         try {
-            response = client.execute(method);
+            System.err.println("execute: " + method);
+            response = clientWrapper.execute(method);
         } catch (ClientProtocolException e) {
             throw new NorthbounderException(e);
         } catch (IOException e) {
             throw new NorthbounderException(e);
+        } finally {
+            IOUtils.closeQuietly(clientWrapper);
         }
 
         if (response != null) {
-            int code = response.getStatusLine().getStatusCode();
-            HttpResponseRange range = new HttpResponseRange("200-399");
-            if (!range.contains(code)) {
-                LOG.warn("response code out of range for uri: {}.  Expected {} but received {}", uri, range, code);
-                throw new NorthbounderException("response code out of range for uri:" + uri + ".  Expected " + range + " but received " + code);
+            try {
+                int code = response.getStatusLine().getStatusCode();
+                final HttpResponseRange range = new HttpResponseRange("200-399");
+                if (!range.contains(code)) {
+                    LOG.warn("response code out of range for uri: {}.  Expected {} but received {}", uri, range, code);
+                    throw new NorthbounderException("response code out of range for uri:" + uri + ".  Expected " + range + " but received " + code);
+                }
+            } finally {
+                IOUtils.closeQuietly(clientWrapper);
             }
         }
 
