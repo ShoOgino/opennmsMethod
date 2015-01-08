@@ -1,4 +1,4 @@
-    private void doRequest(final HttpRequestBase request) throws ClientProtocolException, IOException, InterruptedException {
+    private Integer doRequest(final HttpRequestBase request) throws ClientProtocolException, IOException, InterruptedException {
         final CountDownLatch waitForCompletion = new CountDownLatch(1);
 
         final URI uri = request.getURI();
@@ -17,15 +17,16 @@
 
         final CloseableHttpClient client = HttpClients.createDefault();
 
-        final ResponseHandler<String> responseHandler = new ResponseHandler<String>() {
+        final ResponseHandler<Integer> responseHandler = new ResponseHandler<Integer>() {
             @Override
-            public String handleResponse(final HttpResponse response) throws ClientProtocolException, IOException {
+            public Integer handleResponse(final HttpResponse response) throws ClientProtocolException, IOException {
                 try {
                     final int status = response.getStatusLine().getStatusCode();
+                    // 400 because we return that if you try to delete something that is already deleted
                     // 404 because it's OK if it's already not there
-                    if (status >= 200 && status < 300 || status == 404) {
-                        final HttpEntity entity = response.getEntity();
-                        return entity != null ? EntityUtils.toString(entity) : null;
+                    if (status >= 200 && status < 300 || status == 400 || status == 404) {
+                        EntityUtils.consume(response.getEntity());
+                        return status;
                     } else {
                         throw new ClientProtocolException("Unexpected response status: " + status);
                     }
@@ -35,9 +36,10 @@
             }
         };
 
-        client.execute(targetHost, request, responseHandler, context);
+        final Integer status = client.execute(targetHost, request, responseHandler, context);
 
         waitForCompletion.await();
         client.close();
+        return status;
     }
 
