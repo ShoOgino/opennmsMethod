@@ -2,7 +2,7 @@
     @Override
     public PollStatus poll(MonitoredService svc, Map<String,Object> map) {
         PollStatus pollStatus = PollStatus.unresponsive();
-        DefaultHttpClient httpClient = new DefaultHttpClient();
+        HttpClientWrapper clientWrapper = HttpClientWrapper.create();
 
         try {
             final String hostAddress = InetAddressUtils.str(svc.getAddress());
@@ -14,71 +14,47 @@
             ub.setPath(ParameterMap.getKeyedString(map, "path", DEFAULT_PATH));
 
             String queryString = ParameterMap.getKeyedString(map,"queryString",null);
-            if (queryString != null)
-                ub.setQuery(queryString);
-
-            HttpGet getMethod = new HttpGet(ub.build());
-            httpClient.getParams().setIntParameter(CoreConnectionPNames.CONNECTION_TIMEOUT, ParameterMap.getKeyedInteger(map, "timeout", DEFAULT_TIMEOUT));
-            httpClient.getParams().setIntParameter(CoreConnectionPNames.SO_TIMEOUT, ParameterMap.getKeyedInteger(map, "timeout", DEFAULT_TIMEOUT));
-            httpClient.getParams().setParameter( CoreProtocolPNames.USER_AGENT, ParameterMap.getKeyedString(map,"user-agent",DEFAULT_USER_AGENT));
-
-            // Set the virtual host to the 'virtual-host' parameter or the host address if 'virtual-host' is not present
-            getMethod.getParams().setParameter(ClientPNames.VIRTUAL_HOST,
-                new HttpHost(
-                    ParameterMap.getKeyedString(map,"virtual-host", hostAddress), 
-                    ParameterMap.getKeyedInteger(map, "port", DEFAULT_PORT)
-                )
-            );
-
-            if(ParameterMap.getKeyedBoolean(map, "http-1.0", false)) {
-                httpClient.getParams().setParameter(CoreProtocolPNames.PROTOCOL_VERSION, HttpVersion.HTTP_1_0);
+            if (queryString != null && !queryString.trim().isEmpty()) {
+                final List<NameValuePair> params = URLEncodedUtils.parse(queryString, Charset.forName("UTF-8"));
+                ub.setParameters(params);
             }
 
-            for(Object okey : map.keySet()) {
-                String key = okey.toString();
+            final HttpGet getMethod = new HttpGet(ub.build());
+            clientWrapper.setConnectionTimeout(ParameterMap.getKeyedInteger(map, "timeout", DEFAULT_TIMEOUT))
+                .setSocketTimeout(ParameterMap.getKeyedInteger(map, "timeout", DEFAULT_TIMEOUT));
+
+            final String userAgent = ParameterMap.getKeyedString(map,"user-agent",DEFAULT_USER_AGENT);
+            if (userAgent != null && !userAgent.trim().isEmpty()) {
+                clientWrapper.setUserAgent(userAgent);
+            }
+
+            final String virtualHost = ParameterMap.getKeyedString(map,"virtual-host", hostAddress);
+            if (virtualHost != null && !virtualHost.trim().isEmpty()) {
+                clientWrapper.setVirtualHost(virtualHost);
+            }
+
+            if(ParameterMap.getKeyedBoolean(map, "http-1.0", false)) {
+                clientWrapper.setVersion(HttpVersion.HTTP_1_0);
+            }
+
+            for(final Object okey : map.keySet()) {
+                final String key = okey.toString();
                 if(key.matches("header_[0-9]+$")){
-                    String headerName  = ParameterMap.getKeyedString(map,key,null);
-                    String headerValue = ParameterMap.getKeyedString(map,key + "_value",null);
+                    final String headerName  = ParameterMap.getKeyedString(map,key,null);
+                    final String headerValue = ParameterMap.getKeyedString(map,key + "_value",null);
                     getMethod.setHeader(headerName, headerValue);
                 }
             }
 
-            if(ParameterMap.getKeyedBoolean(map,"auth-enabled",false)){
-                httpClient.getCredentialsProvider().setCredentials(AuthScope.ANY, new UsernamePasswordCredentials( ParameterMap.getKeyedString(map, "auth-user", DEFAULT_USER), ParameterMap.getKeyedString(map, "auth-password", DEFAULT_PASSWORD)));
+            if(ParameterMap.getKeyedBoolean(map,"auth-enabled",false)) {
+                clientWrapper.addBasicCredentials(ParameterMap.getKeyedString(map, "auth-user", DEFAULT_USER), ParameterMap.getKeyedString(map, "auth-password", DEFAULT_PASSWORD));
                 if (ParameterMap.getKeyedBoolean(map, "auth-preemptive", true)) {
-                    /**
-                     * Add an HttpRequestInterceptor that will perform preemptive auth
-                     * @see http://hc.apache.org/httpcomponents-client-4.0.1/tutorial/html/authentication.html
-                     */
-                    HttpRequestInterceptor preemptiveAuth = new HttpRequestInterceptor() {
-
-                        @Override
-                        public void process(final HttpRequest request, final HttpContext context) throws IOException {
-
-                            AuthState authState = (AuthState)context.getAttribute(ClientContext.TARGET_AUTH_STATE);
-                            CredentialsProvider credsProvider = (CredentialsProvider)context.getAttribute(ClientContext.CREDS_PROVIDER);
-                            HttpHost targetHost = (HttpHost)context.getAttribute(ExecutionContext.HTTP_TARGET_HOST);
-
-                            // If not auth scheme has been initialized yet
-                            if (authState.getAuthScheme() == null) {
-                                AuthScope authScope = new AuthScope(targetHost.getHostName(), targetHost.getPort());
-                                // Obtain credentials matching the target host
-                                Credentials creds = credsProvider.getCredentials(authScope);
-                                // If found, generate BasicScheme preemptively
-                                if (creds != null) {
-                                    authState.update(new BasicScheme(), creds);
-                                }
-                            }
-                        }
-
-                    };
-                    httpClient.addRequestInterceptor(preemptiveAuth, 0);
+                    clientWrapper.usePreemptiveAuth();
                 }
             }
 
-            LOG.debug("httpClient request with the following parameters: {}", httpClient);
             LOG.debug("getMethod parameters: {}", getMethod);
-            HttpResponse response = httpClient.execute(getMethod);
+            CloseableHttpResponse response = clientWrapper.execute(getMethod);
             int statusCode = response.getStatusLine().getStatusCode();
             String statusText = response.getStatusLine().getReasonPhrase();
             String expectedText = ParameterMap.getKeyedString(map,"response-text",null);
@@ -114,9 +90,7 @@
         } catch (URISyntaxException e) {
             LOG.info(e.getMessage());
         } finally {
-            if (httpClient != null) {
-                httpClient.getConnectionManager().shutdown();
-            }
+            IOUtils.closeQuietly(clientWrapper);
         }
         return pollStatus;
     }

@@ -1,0 +1,48 @@
+	@Transactional
+	private void convertFromModel(int nodeid, BridgeMacLink link) {
+		BridgeLinkNode linknode = new BridgeLinkNode();
+		if (bridgelinks.containsKey(link.getBridgePort())) {
+				linknode = bridgelinks.get(link.getBridgePort());
+		} else {
+			linknode.setBridgeLocalPort(getBridgePortString(link.getBridgePort(),link.getBridgePortIfIndex()));
+			linknode.setBridgeLocalVlan(link.getVlan());
+			linknode.setBridgeLinkCreateTime(Util.formatDateToUIString(link.getBridgeMacLinkCreateTime()));
+			linknode.setBridgeLinkLastPollTime(Util.formatDateToUIString(link.getBridgeMacLinkLastPollTime()));
+			bridgelinks.put(link.getBridgePort(), linknode);
+		}
+		
+		List<IpNetToMedia> ipnettomedias = m_ipNetToMediaDao.findByPhysAddress(link.getMacAddress());
+		if (ipnettomedias.isEmpty()) {
+			BridgeLinkRemoteNode remlinknode = new BridgeLinkRemoteNode();
+			OnmsSnmpInterface snmp = getFromPhysAddress(link.getMacAddress());
+			if (snmp == null) {
+				remlinknode.setBridgeRemoteNode(link.getMacAddress()+ " No node associated in db");
+			} else {
+				remlinknode.setBridgeRemoteNode(snmp.getNode().getLabel());
+				remlinknode.setBridgeRemoteUrl(getNodeUrl(snmp.getNode().getId()));
+				
+				remlinknode.setBridgeRemotePort(getPortString(snmp));
+				remlinknode.setBridgeRemotePortUrl(getSnmpInterfaceUrl(snmp.getNode().getId(),snmp.getIfIndex()));
+			}
+			linknode.getBridgeLinkRemoteNodes().add(remlinknode);
+		}
+		for (IpNetToMedia ipnettomedia: ipnettomedias) {
+			BridgeLinkRemoteNode remlinknode = new BridgeLinkRemoteNode();
+			List<OnmsIpInterface> ips = m_ipInterfaceDao.findByIpAddress(ipnettomedia.getNetAddress().getHostAddress());
+			if (ips.isEmpty() ) {
+				remlinknode.setBridgeRemoteNode(str(ipnettomedia.getNetAddress())+"/"+link.getMacAddress()+ " No node associated in db");
+			} else if ( ips.size() > 1) {
+				remlinknode.setBridgeRemoteNode(str(ipnettomedia.getNetAddress())+"/"+link.getMacAddress()+ " duplicated ip multiple node associated in db");
+			}
+			for (OnmsIpInterface ip: ips) {
+				remlinknode.setBridgeRemoteNode(ip.getNode().getLabel());
+				remlinknode.setBridgeRemoteUrl(getNodeUrl(ip.getNode().getId()));
+				
+				remlinknode.setBridgeRemotePort(str(ipnettomedia.getNetAddress())+"/"+link.getMacAddress());
+				remlinknode.setBridgeRemotePortUrl(getIpInterfaceUrl(ip));
+			}
+			linknode.getBridgeLinkRemoteNodes().add(remlinknode);
+		}
+		
+	}
+

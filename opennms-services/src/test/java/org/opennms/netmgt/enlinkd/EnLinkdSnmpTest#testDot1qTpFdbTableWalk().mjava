@@ -1,0 +1,90 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=DLINK1_IP, port=161, resource=DLINK1_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=DLINK2_IP, port=161, resource=DLINK2_SNMP_RESOURCE)
+    })
+    public void testDot1qTpFdbTableWalk() throws Exception {
+
+    	String trackerName = "dot1qTpFdbTable";
+    	final Map<String,Integer> macs1 = new HashMap<String, Integer>();
+    	final Map<String,Integer> macs2 = new HashMap<String, Integer>();
+    	SnmpAgentConfig  config1 = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(DLINK1_IP));
+        Dot1qTpFdbTableTracker tracker1 = new Dot1qTpFdbTableTracker() {
+            @Override
+        	public void processDot1qTpFdbRow(final Dot1qTpFdbRow row) {
+            	macs1.put(row.getDot1qTpFdbAddress(),row.getDot1qTpFdbPort());
+            }
+        };
+
+        SnmpWalker walker =  SnmpUtils.createWalker(config1, trackerName, tracker1);
+
+        walker.start();
+
+        try {
+            walker.waitFor();
+            if (walker.timedOut()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent timed out while scanning the {} table", trackerName);
+            }  else if (walker.failed()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent failed while scanning the {} table: {}", trackerName,walker.getErrorMessage());
+            }
+        } catch (final InterruptedException e) {
+            LOG.error("run: collection interrupted, exiting",e);
+            return;
+        }
+
+        SnmpAgentConfig  config2 = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(DLINK2_IP));
+        Dot1qTpFdbTableTracker tracker2 = new Dot1qTpFdbTableTracker() {
+            @Override
+        	public void processDot1qTpFdbRow(final Dot1qTpFdbRow row) {
+            	macs2.put(row.getDot1qTpFdbAddress(),row.getDot1qTpFdbPort());
+            }
+        };
+
+        walker =  SnmpUtils.createWalker(config2, trackerName, tracker2);
+
+        walker.start();
+
+        try {
+            walker.waitFor();
+            if (walker.timedOut()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent timed out while scanning the {} table", trackerName);
+            }  else if (walker.failed()) {
+            	LOG.info(
+                        "run:Aborting node scan : Agent failed while scanning the {} table: {}", trackerName,walker.getErrorMessage());
+            }
+        } catch (final InterruptedException e) {
+            LOG.error("run: collection interrupted, exiting",e);
+            return;
+        }
+
+        assertEquals(59, macs1.size());
+        assertEquals(979, macs2.size());
+
+       for (Entry<String,Integer> entry: macs1.entrySet()) {
+        	if (macs2.containsKey(entry.getKey())) {
+                System.out.println("-----------mac on 1 learned on 2 port-----------------");
+        		System.out.println("Mac: " + entry.getKey());
+        		System.out.println("learned on PortOn1: " + entry.getValue());
+        		System.out.println("learned on PortOn2: " + macs2.get(entry.getKey()));
+        	} else {
+                System.out.println("-----------mac found on 1 not learned on 2 port-----------------");
+        		System.out.println("Mac: " + entry.getKey());
+        		System.out.println("learned on PortOn1: " + entry.getValue());
+        	}
+        }
+
+        for (Entry<String,Integer> entry: macs2.entrySet()) {
+        	if (macs1.containsKey(entry.getKey())) {
+           	    System.out.println("-----------mac on 2 learned on 1 port-----------------");
+        	    System.out.println("Mac: " + entry.getKey());
+        		System.out.println("learned on PortOn2: " + entry.getValue());
+        		System.out.println("learned on PortOn1: " + macs1.get(entry.getKey()));
+        	}
+        }
+
+        
+    }
+

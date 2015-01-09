@@ -2,7 +2,7 @@
      * This tests the capabilities of the cosmicClear automation as shipped in the standard build.
      * @throws InterruptedException 
      */
-    @Test
+    @Test(timeout=30000)
     @JUnitTemporaryDatabase(dirtiesContext=true,tempDbClass=MockDatabase.class)
     public final void testCosmicClearAutomation() throws InterruptedException {
         // create node down events with severity 6
@@ -11,15 +11,21 @@
         Thread.sleep(1000);
         // create node up event with severity 3
         bringNodeUpCreatingEvent(1);
-        Thread.sleep(1000);
-        
+
+        while (m_jdbcTemplate.queryForLong("select count(*) from alarms") != 3) {
+            Thread.sleep(100);
+        }
+
         // should have three alarms, one for each event
         assertEquals("should have one alarm for each event", 3, m_jdbcTemplate.queryForLong("select count(*) from alarms"));
 
         AutomationProcessor ap = new AutomationProcessor(VacuumdConfigFactory.getInstance().getAutomation("cosmicClear"));
         ap.run();
-        Thread.sleep(1000);
-        
+
+        while(m_jdbcTemplate.queryForLong("select count(*) from alarms where severity = 2") < 1) {
+            Thread.sleep(100);
+        }
+
         // the automation should have cleared the nodeDown for node 1 so it should now have severity CLEARED == 2
         assertEquals("alarms with severity == 2", 1, m_jdbcTemplate.queryForLong("select count(*) from alarms where severity = 2"));
 
@@ -29,8 +35,9 @@
         // run this automation again and make sure nothing happens since we've already processed the clear
         ap = new AutomationProcessor(VacuumdConfigFactory.getInstance().getAutomation("cosmicClear"));
         ap.run();
+
         Thread.sleep(1000);
-        
+
         // same as above
         assertEquals("alarms with severity == 2", 1, m_jdbcTemplate.queryForLong("select count(*) from alarms where severity = 2"));
 

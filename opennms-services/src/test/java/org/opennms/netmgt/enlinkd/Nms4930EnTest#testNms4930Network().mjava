@@ -1,0 +1,58 @@
+    /*
+     * The main fact is that this devices have only the Bridge MIb walk
+     * dlink_DES has STP disabled
+     * dlink_DGS has STP enabled but root is itself
+     * 
+     */
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=DLINK1_IP, port=161, resource=DLINK1_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=DLINK2_IP, port=161, resource=DLINK2_SNMP_RESOURCE)
+    })
+    public void testNms4930Network() throws Exception {
+
+        
+    	final OnmsNode dlink1 = m_nodeDao.findByForeignId("linkd", DLINK1_NAME);
+        final OnmsNode dlink2 = m_nodeDao.findByForeignId("linkd", DLINK2_NAME);
+        m_nodeDao.flush();
+
+        m_linkdConfig.getConfiguration().setUseBridgeDiscovery(true);
+        m_linkdConfig.getConfiguration().setUseCdpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseOspfDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseLldpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseIsisDiscovery(false);
+
+        assertTrue(!m_linkdConfig.useLldpDiscovery());
+        assertTrue(!m_linkdConfig.useCdpDiscovery());
+        assertTrue(!m_linkdConfig.useOspfDiscovery());
+        assertTrue(m_linkdConfig.useBridgeDiscovery());
+        assertTrue(!m_linkdConfig.useIsisDiscovery());
+
+        assertTrue(m_linkd.scheduleNodeCollection(dlink1.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(dlink2.getId()));
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+        
+        assertTrue(m_linkd.runSingleSnmpCollection(dlink1.getId()));
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(58,m_bridgeMacLinkDao.countAll());
+
+        assertTrue(m_linkd.runSingleSnmpCollection(dlink2.getId()));
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(659,m_bridgeMacLinkDao.countAll());
+        // Matt here you find that the macs on backbone port have all the same
+        // switch port
+        // the array "macsonbbport" is the intersection between 
+        // the mac address forwarding table of dlink1 port 24
+        // and the mac address forwarding table f dlink2 port 10
+        // The following code will print the links as they are discovered
+        for (String mac: macsonbbport) {
+        	List<BridgeMacLink> maclinks = m_bridgeMacLinkDao.findByMacAddress(mac);
+        	assertEquals(2,maclinks.size());
+    		printBackboneBridgeMacLink(maclinks.get(0),maclinks.get(1));
+        }
+
+        // Test the bridge link second query
+        assertTrue(m_linkd.runSingleSnmpCollection(dlink1.getId()));
+    }
+

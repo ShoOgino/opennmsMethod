@@ -1,0 +1,70 @@
+    /**
+     * <p>getFeed</p>
+     *
+     * @return a {@link com.sun.syndication.feed.synd.SyndFeed} object.
+     */
+    @Override
+    public SyndFeed getFeed() {
+        SyndFeed feed = new SyndFeedImpl();
+
+        feed.setTitle("Events");
+        feed.setDescription("OpenNMS Events");
+        feed.setLink(getUrlBase() + "event/list.htm");
+
+        List<SyndEntry> entries = new ArrayList<SyndEntry>();
+
+        try {
+            Event[] events;
+
+            ArrayList<Filter> filters = new ArrayList<Filter>();
+            if (this.getRequest().getParameter("node") != null) {
+                Integer nodeId = WebSecurityUtils.safeParseInt(this.getRequest().getParameter("node"));
+                filters.add(new NodeFilter(nodeId, getServletContext()));
+            }
+            if (this.getRequest().getParameter("severity") != null) {
+                String parameter = this.getRequest().getParameter("severity");
+                try {
+                    Integer severityId = WebSecurityUtils.safeParseInt(parameter);
+                    filters.add(new SeverityFilter(severityId));
+                } catch (NumberFormatException e) {
+                    for (OnmsSeverity sev : OnmsSeverity.values()) {
+                        if (sev.getLabel().equalsIgnoreCase(parameter)) {
+                            filters.add(new SeverityFilter(sev));
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            events = EventFactory.getEvents(SortStyle.TIME, AcknowledgeType.BOTH, filters.toArray(new Filter[] {}), this.getMaxEntries(), 0);
+
+            SyndEntry entry;
+            
+            for (Event event : events) {
+                entry = new SyndEntryImpl();
+                entry.setPublishedDate(event.getTime());
+                if (event.getAcknowledgeTime() != null) {
+                    entry.setTitle(sanitizeTitle(event.getLogMessage()) + " (Acknowledged by " + event.getAcknowledgeUser() + ")");
+                    entry.setUpdatedDate(event.getAcknowledgeTime());
+                } else {
+                    entry.setTitle(sanitizeTitle(event.getLogMessage()));
+                    entry.setUpdatedDate(event.getTime());
+                }
+                entry.setLink(getUrlBase() + "event/detail.jsp?id=" + event.getId());
+                entry.setAuthor("OpenNMS");
+                
+                SyndContent content = new SyndContentImpl();
+                content.setType("text/html");
+                content.setValue(event.getDescription());
+                entry.setDescription(content);
+                
+                entries.add(entry);
+            }
+        } catch (SQLException e) {
+            LOG.warn("unable to get event(s)", e);
+        }
+        
+        feed.setEntries(entries);
+        return feed;
+    }
+
