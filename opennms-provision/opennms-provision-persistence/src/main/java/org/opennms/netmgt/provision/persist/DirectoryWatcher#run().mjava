@@ -1,0 +1,63 @@
+    /* (non-Javadoc)
+     * @see java.lang.Runnable#run()
+     */
+    @Override
+    public void run() {
+        try (WatchService watcher = FileSystems.getDefault().newWatchService()) {
+            LOG.debug("registering create watcher on " + m_path.toAbsolutePath().toString());
+            m_path.register( watcher, StandardWatchEventKinds.ENTRY_MODIFY);
+            LOG.debug( "watcher registration complete for " + m_path.toAbsolutePath().toString() );
+            synchronized (this) {
+                this.notifyAll();
+            }
+            for ( ;; ) {
+                if (m_thread.isInterrupted()) {
+                    break;
+                }
+                WatchKey key = null;
+                try {
+                    LOG.debug("waiting for create event");
+                    key = watcher.take();
+                    LOG.debug("got an event, process it");
+                }
+                catch (InterruptedException ie) {
+                    LOG.info("interruped, must be time to shut down...");
+                    break;
+                }
+
+                for (WatchEvent<?> eventUnknown : key.pollEvents()) {
+                    @SuppressWarnings("unchecked")
+                    WatchEvent<Path> event = (WatchEvent<Path>) eventUnknown;
+                    WatchEvent.Kind<Path> kind = event.kind();
+                    String fileName = event.context().toString();
+                    File file = new File(m_directory, fileName);
+                    if (file.isDirectory()) { // Ignoring changes on directories.
+                        continue;
+                    }
+                    switch (kind.name()) {
+                    case "ENTRY_CREATE":
+                        LOG.info("created {} in {}.", fileName, m_directory);
+                        getContents(fileName);
+                        break;
+                    case "ENTRY_MODIFY":
+                        LOG.info("modified {} in {}.", fileName, m_directory);
+                        m_contents.remove(fileName);
+                        getContents(fileName);
+                        break;
+                    case "ENTRY_DELETE":
+                        LOG.info("deleted {} from {}.", fileName, m_directory);
+                        m_contents.remove(fileName);
+                        break;
+                    }
+                    if (! key.reset()) {
+                        break;
+                    }
+                }
+            }
+        }
+        catch ( IOException ioe ) {
+            LOG.error(ioe.getMessage(), ioe);
+        }
+        LOG.info("existing run loop");
+    }
+
