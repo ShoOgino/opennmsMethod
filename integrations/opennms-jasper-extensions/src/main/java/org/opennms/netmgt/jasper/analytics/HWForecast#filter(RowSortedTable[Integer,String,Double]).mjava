@@ -1,0 +1,65 @@
+    @Override
+    public void filter(RowSortedTable<Integer, String, Double> table) throws RScriptException {
+        Preconditions.checkArgument(table.containsColumn("Timestamp"), "Data source must have a 'Timestamp' column.");
+
+        // Determine the index of the first and last non-NaN values
+        // Assume the values between these are contiguous
+        Point rowsWithValues = DataSourceUtils.getRowsWithValues(table, m_config.getInputColumn());
+        int firstRowWithValues = rowsWithValues.x;
+        int lastRowWithValues = rowsWithValues.y;
+
+        // Make sure we have some samples
+        int numSampleRows = lastRowWithValues - firstRowWithValues;
+        if (numSampleRows < 1) {
+            LOG.error("Insufficent values in column for forecasting. Excluding forecast columns from data source.");
+            return;
+        }
+
+        // Determine the step size
+        Date lastTimestamp = new Date(table.get(lastRowWithValues, "Timestamp").longValue());
+        long stepInMs = (long)(table.get(lastRowWithValues, "Timestamp") - table.get(lastRowWithValues-1, "Timestamp"));
+
+        // Calculate the number of samples per period
+        int numSamplesPerPeriod = (int)Math.floor(m_config.getPeriod() * 1000 / stepInMs);
+        numSamplesPerPeriod = Math.max(1, numSamplesPerPeriod);
+
+        // Calculate the number of steps to forecast
+        int numForecasts = numSamplesPerPeriod * m_config.getNumPeriodsToForecast();
+
+        // Script arguments
+        Map<String, Object> arguments = Maps.newHashMap();
+        arguments.put("columnToForecast", m_config.getInputColumn());
+        arguments.put("numSamplesPerSeason", numSamplesPerPeriod);
+        arguments.put("numForecasts", numForecasts);
+        arguments.put("confidenceLevel", m_config.getConfidenceLevel());
+        // Array indices in R start at 1
+        arguments.put("firstIndex", firstRowWithValues+1);
+        arguments.put("lastIndex", lastRowWithValues+1);
+
+        // Make the forecasts
+        RScriptExecutor executor = new RScriptExecutor();
+        RScriptOutput output = executor.exec(PATH_TO_R_SCRIPT, new RScriptInput(table, arguments));
+        ImmutableTable<Integer, String, Double> outputTable = output.getTable();
+
+        // The output table contains the fitted values, followed
+        // by the requested number of forecasted values
+        int numOutputRows = outputTable.rowKeySet().size();
+        int numFittedValues = numOutputRows - numForecasts;
+
+        // Add the fitted values to rows where the input column has values
+        for (int i = 0; i < numFittedValues; i++) {
+            int idxTarget = i + (numSampleRows - numFittedValues) + firstRowWithValues + 1;
+            table.put(idxTarget, m_config.getOutputPrefix() + "Fit", outputTable.get(i, "fit"));
+        }
+
+        // Append the forecasted values and include the time stamp with the appropriate step
+        for (int i = numFittedValues; i < numOutputRows; i++) {
+            int idxForecast = i - numFittedValues + 1;
+            int idxTarget = lastRowWithValues + idxForecast;
+            table.put(idxTarget, m_config.getOutputPrefix() + "Fit", outputTable.get(i, "fit"));
+            table.put(idxTarget, m_config.getOutputPrefix() + "Lwr", outputTable.get(i, "lwr"));
+            table.put(idxTarget, m_config.getOutputPrefix() + "Upr", outputTable.get(i, "upr"));
+            table.put(idxTarget, "Timestamp", (double)new Date(lastTimestamp.getTime() + stepInMs * idxForecast).getTime());
+        }
+    }
+
