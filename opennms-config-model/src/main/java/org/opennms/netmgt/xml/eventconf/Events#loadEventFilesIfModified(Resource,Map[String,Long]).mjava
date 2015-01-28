@@ -1,0 +1,49 @@
+    public void loadEventFilesIfModified(Resource configResource, Map<String, Long> lastModifiedEventFiles) throws IOException {
+        // Remove any event files that we're previously loaded, and no
+        // longer appear in the list of event files
+        for(Iterator<Map.Entry<String, Events>> it = m_loadedEventFiles.entrySet().iterator(); it.hasNext(); ) {
+            String eventFile = it.next().getKey();
+            if(!m_eventFiles.contains(eventFile)) {
+                // The event file was previously loaded and has been removed
+                // from the list of event files
+                it.remove();
+            }
+        }
+
+        // Conditionally load or reload the event files
+        for(String eventFile : m_eventFiles) {
+            Resource eventResource = getRelative(configResource, eventFile);
+            long lastModified = eventResource.lastModified();
+
+            // Determine whether or not the file should be loaded
+            boolean shouldLoadFile = true;
+            if (lastModifiedEventFiles.containsKey(eventFile)
+                    && lastModifiedEventFiles.get(eventFile) == lastModified) {
+                shouldLoadFile = false;
+                // If we opt out to load a particular file, it must
+                // be already loaded
+                assert(m_loadedEventFiles.containsKey(eventFile));
+            }
+
+            // Skip any files that don't need to be loaded
+            if (!shouldLoadFile) {
+                continue;
+            }
+
+            lastModifiedEventFiles.put(eventFile, lastModified);
+
+            Events events = JaxbUtils.unmarshal(Events.class, eventResource);
+            if (events.getEventCount() <= 0) {
+                throw new IllegalStateException("Uh oh! An event file "+eventResource.getFile()+" with no events has been laoded!");
+            }
+            if (events.getGlobal() != null) {
+                throw new ObjectRetrievalFailureException(Resource.class, eventResource, "The event resource " + eventResource + " included from the root event configuration file cannot have a 'global' element", null);
+            }
+            if (events.getEventFileCollection().size() > 0) {
+                throw new ObjectRetrievalFailureException(Resource.class, eventResource, "The event resource " + eventResource + " included from the root event configuration file cannot include other configuration files: " + StringUtils.collectionToCommaDelimitedString(events.getEventFileCollection()), null);
+            }
+
+            m_loadedEventFiles.put(eventFile, events);
+        }
+    }
+
