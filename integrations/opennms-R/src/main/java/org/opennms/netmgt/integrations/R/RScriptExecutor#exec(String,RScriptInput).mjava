@@ -1,0 +1,88 @@
+    /**
+     * Executes by given script by:
+     *   - Searching both the classpath and the filesystem for the path
+     *   - Copying the script at the given path to a temporary file and
+     *     performing variable substitution with the arguments using Freemarker.
+     *   - Invoking the script with commons-exec
+     *   - Converting the input table to CSV and passing this to the process via stdin
+     *   - Parsing stdout, expecting CSV output, and converting this to an immutable table
+     */
+    public RScriptOutput exec(String script, RScriptInput input) throws RScriptException {
+        Preconditions.checkNotNull(script, "script argument");
+        Preconditions.checkNotNull(input, "input argument");
+
+        // Grab the script/template
+        Template template;
+        try {
+            template = m_freemarkerConfiguration.getTemplate(script);
+        } catch (IOException e) {
+            throw new RScriptException("Failed to read the script.", e);
+        }
+
+        // Create a temporary file
+        File scriptOnDisk;
+        try {
+            scriptOnDisk = File.createTempFile("Rcsript", "R");
+            scriptOnDisk.deleteOnExit();
+        } catch (IOException e) {
+            throw new RScriptException("Failed to create a temporary file.", e);
+        }
+
+        // Perform variable substitution and write the results to the temporary file
+        try (FileOutputStream fos = new FileOutputStream(scriptOnDisk);
+                Writer out = new OutputStreamWriter(fos);) {
+            template.process(input.getArguments(), out);
+        } catch (IOException | TemplateException e) {
+            throw new RScriptException("Failed to process the template.", e);
+        }
+
+        // Convert the input matrix to a CSV string which will be passed to the script via stdin.
+        // The table may be large, so we try and avoid writing it to disk
+        StringBuilder inputTableAsCsv;
+        try {
+            inputTableAsCsv = toCsv(input.getTable());
+        } catch (IOException e) {
+            throw new RScriptException("Failed to convert the input table to CSV.", e);
+        }
+
+        // Invoke Rscript against the script (located in a temporary file)
+        CommandLine cmdLine = new CommandLine(RSCRIPT_BINARY);
+        cmdLine.addArgument(scriptOnDisk.getAbsolutePath());
+
+        // Use commons-exec to execute the process
+        DefaultExecutor executor = new DefaultExecutor();
+
+        // Use the CharSequenceInputStream in order to avoid explicitly converting
+        // the StringBuilder a string and then an array of bytes.
+        InputStream stdin = new CharSequenceInputStream(inputTableAsCsv, Charset.forName("UTF-8"));
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        executor.setStreamHandler(new PumpStreamHandler(stdout, stderr, stdin));
+
+        // Fail if we get a non-zero exit code
+        executor.setExitValue(0);
+
+        // Fail if the process takes too long
+        ExecuteWatchdog watchdog = new ExecuteWatchdog(SCRIPT_TIMEOUT_MS);
+        executor.setWatchdog(watchdog);
+
+        // Execute
+        try {
+            executor.execute(cmdLine);
+        } catch (IOException e) {
+            LOG.error("Failed to invoke Rscript. Stdin: {} Stderr: {}, Stdout: {}",
+                    inputTableAsCsv, stderr, stdout);
+            throw new RScriptException("An error occured while executing Rscript, or the requested script.", e);
+        }
+
+        // Parse and return the results
+        try {
+            ImmutableTable<Integer, String, Double> table = fromCsv(stdout.toString());
+            return new RScriptOutput(table);
+        } catch (Throwable t) {
+            LOG.error("Failed to parse the scripts output. Stdin: {} Stderr: {}, Stdout: {}",
+                    inputTableAsCsv, stderr, stdout);
+            throw new RScriptException("Failed to parse the script's output.", t);
+        }
+    }
+
