@@ -1,11 +1,11 @@
     /**
-     * Post a given <code>InputStream</code> s data to a URL using BASIC
+     * Post a given <code>Reader</code> s data to a URL using BASIC
      * authentication, the given username and password, and a buffer size.
      *
      * @param url
      *            the <code>URL</code> to post to
-     * @param dataStream
-     *            an input stream containing the data to send
+     * @param dataReader
+     *            an input reader containing the data to send
      * @param username
      *            the username to use in the BASIC authentication
      * @param password
@@ -17,8 +17,8 @@
      * to get the HTTP server's response.
      * @throws java.io.IOException if any.
      */
-    public static InputStream post(URL url, InputStream dataStream, String username, String password, int bufSize) throws IOException {
-        if (url == null || dataStream == null) {
+    public static InputStream post(URL url, Reader dataReader, String username, String password, int bufSize, int timeout) throws IOException {
+        if (url == null || dataReader == null) {
             throw new IllegalArgumentException("Cannot take null parameters.");
         }
 
@@ -35,6 +35,9 @@
         // in a post we both write output and read input
         conn.setDoOutput(true);
         conn.setDoInput(true);
+        if (timeout > 0) {
+            conn.setConnectTimeout(timeout);
+        }
 
         try {
             // the name of this method is post after all
@@ -51,18 +54,31 @@
             String authString = new String(Base64.encodeBase64(authBytes));
             conn.setRequestProperty("Authorization", "Basic " + authString);
         }
+        
+        // set the mime type
+        conn.setRequestProperty("Content-type", "text/xml; charset=\"utf-8\"");
 
         // get the out-going HTTP connection
-        OutputStream ostream = conn.getOutputStream();
+        OutputStreamWriter ostream = new OutputStreamWriter(conn.getOutputStream(), "US-ASCII");
+
+        // log data
+        LOG.debug("HTTP Post: Current time: {}", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.GregorianCalendar().getTime()));
+        LOG.debug("Data posted:");
 
         // initialize a buffer to use to read and write
-        byte[] b = new byte[bufSize];
+        char[] b = new char[bufSize];
 
         // write the given data stream over the out-going HTTP connection
-        int bytesRead = dataStream.read(b, 0, bufSize);
+        int bytesRead = dataReader.read(b, 0, bufSize);
+        if (bytesRead > 0 && LOG.isDebugEnabled())
+            LOG.debug(new String(b, 0, bytesRead));
+
         while (bytesRead > 0) {
             ostream.write(b, 0, bytesRead);
-            bytesRead = dataStream.read(b, 0, bufSize);
+            bytesRead = dataReader.read(b, 0, bufSize);
+
+            if (bytesRead > 0 && LOG.isDebugEnabled())
+                LOG.debug(new String(b, 0, bytesRead));
         }
 
         // close the out-going HTTP connection
