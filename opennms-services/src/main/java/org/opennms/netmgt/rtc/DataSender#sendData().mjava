@@ -6,7 +6,7 @@
         LOG.debug("In DataSender sendData()");
 
         // loop through and send info
-        for (final RTCCategory cat : m_categories.values()) {
+        for (final RTCCategory cat : m_dataMgr.getCategories().values()) {
             // get label
             final String catlabel = cat.getLabel();
             LOG.debug("DataSender:sendData(): Category '{}'", catlabel);
@@ -21,16 +21,11 @@
 
             LOG.debug("DataSender: category '{}' has listeners - converting to xml...", catlabel);
 
-            // Run at a higher than normal priority since we do have to send
-            // the update on time
-            final int oldPriority = setCurrentThreadPriority(Thread.MAX_PRIORITY);
-
             final EuiLevel euidata;
             try {
                 euidata = m_euiMapper.convertToEuiLevelXML(cat);
             } catch (final Throwable t) {
                 LOG.warn("DataSender: unable to convert data to xml for category: '{}'", catlabel, t);
-                setCurrentThreadPriority(Thread.NORM_PRIORITY);
                 continue;
             }
 
@@ -45,7 +40,7 @@
                     try {
                         inr = new PipedMarshaller(euidata).getReader();
                         LOG.debug("DataSender: posting data to: {}", postInfo.getURLString());
-                        inp = HttpUtils.post(postInfo.getURL(), inr, postInfo.getUser(), postInfo.getPassword(), 8 * HttpUtils.DEFAULT_POST_BUFFER_SIZE);
+                        inp = HttpUtils.post(postInfo.getURL(), inr, postInfo.getUser(), postInfo.getPassword(), 8 * HttpUtils.DEFAULT_POST_BUFFER_SIZE, HttpUtils.DEFAULT_CONNECT_TIMEOUT);
                         LOG.debug("DataSender: posted data for category: {}", catlabel);
 
 
@@ -64,7 +59,6 @@
                     } catch (final Throwable t) {
                         LOG.warn("DataSender: unable to send data for category: {} due to {}: {}", catlabel, t.getClass().getName(), t.getMessage(), t);
                         postInfo.incrementErrors();
-                        setCurrentThreadPriority(Thread.NORM_PRIORITY);
                     } finally {
                         IOUtils.closeQuietly(inp);
                         IOUtils.closeQuietly(inr);
@@ -79,9 +73,6 @@
                     }
                 }
             }
-
-            // return current thread to its previous priority
-            setCurrentThreadPriority(oldPriority);
         }
     }
 
