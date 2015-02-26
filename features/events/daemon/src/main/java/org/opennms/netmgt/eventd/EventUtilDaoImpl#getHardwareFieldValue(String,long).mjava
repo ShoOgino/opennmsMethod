@@ -1,9 +1,54 @@
-    /**
-     * TODO: Reimplement this using DAO calls
-     */
     @Override
     public String getHardwareFieldValue(String parm, long nodeId) {
-        // TODO: Reimplement this using DAO calls
-        return null;
+        final Matcher matcher = HW_PARM_PATTERN.matcher(parm);
+        if (!matcher.matches()) {
+            LOG.warn("Unsupported hardware field parameter '{}'.", parm);
+            return null;
+        }
+        final String hwFieldSelector = matcher.group(1);
+        final String hwField = matcher.group(2).toLowerCase();
+
+        // Retrieve the entity with a like query
+        if (hwFieldSelector.startsWith("~")) {
+            final String likeQuery = hwFieldSelector.substring(1);
+            LOG.debug("Retrieving hardware field value {} on {} with like query {}",
+                    parm, nodeId, likeQuery);
+            Criteria criteria = new Criteria(OnmsHwEntity.class)
+                .setAliases(Arrays.asList(new Alias[] {
+                        new Alias("node","node", JoinType.LEFT_JOIN),
+                }))
+                .addRestriction(new EqRestriction("node.id", (int)nodeId))
+                .addRestriction(new LikeRestriction("entPhysicalName", likeQuery))
+                .setOrders(Arrays.asList(new Order[] {
+                        Order.desc("id")
+                }));
+            List<OnmsHwEntity> hwEntities = hwEntityDao.findMatching(criteria);
+            System.err.println(hwEntities);
+            if (hwEntities.size() < 1) {
+                return null;
+            }
+            return getStringPropertyByName(hwField, hwEntities.get(0), hwEntityDescriptorsByName);
+        }
+
+        // Retrieve the entity by index if the select is an integer
+        try {
+            int index = Integer.parseInt(hwFieldSelector);
+            OnmsHwEntity hwEntity = hwEntityDao.findEntityByIndex((int)nodeId, index);
+            if (hwEntity == null) {
+                // No entry with this index
+                return null;
+            }
+            return getStringPropertyByName(hwField, hwEntity, hwEntityDescriptorsByName);
+        } catch (NumberFormatException e) {
+            // pass
+        }
+
+        // Retrieve the entity by name
+        OnmsHwEntity hwEntity = hwEntityDao.findEntityByName((int)nodeId, hwFieldSelector);
+        if (hwEntity == null) {
+            // No entry with this name
+            return null;
+        }
+        return getStringPropertyByName(hwField, hwEntity, hwEntityDescriptorsByName);
     }
 
