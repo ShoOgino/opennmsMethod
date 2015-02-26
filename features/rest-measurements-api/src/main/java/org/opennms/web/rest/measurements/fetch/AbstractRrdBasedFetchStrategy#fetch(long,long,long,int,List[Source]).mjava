@@ -1,0 +1,55 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public FetchResults fetch(long start, long end, long step, int maxrows,
+            List<Source> sources) throws Exception {
+
+        final Map<String, Object> constants = Maps.newHashMap();
+
+        final Map<Source, String> rrdsBySource = Maps.newHashMap();
+        
+        for (final Source source : sources) {
+            // Grab the resource
+            final OnmsResource resource = m_resourceDao.getResourceById(source
+                    .getResourceId());
+            if (resource == null) {
+                LOG.error("No resource with id: {}", source.getResourceId());
+                return null;
+            }
+
+            // Grab the attribute
+            final RrdGraphAttribute rrdGraphAttribute = resource
+                    .getRrdGraphAttributes().get(source.getAttribute());
+            if (rrdGraphAttribute == null) {
+                LOG.error("No attribute with name: {}", source.getAttribute());
+                return null;
+            }
+
+            // Gather the values from strings.properties
+            for (final Map.Entry<String, String> propertyEntry : resource.getStringPropertyAttributes().entrySet()) {
+                final String propertyName = propertyEntry.getKey();
+
+                // Attempt to cast the value as a double, fall back to keeping it as a string
+                Object propertyValue;
+                try {
+                    propertyValue = Utils.toDouble(propertyEntry.getValue());
+                } catch (Throwable t) {
+                    propertyValue = propertyEntry.getValue();
+                }
+
+                constants.put(String.format("%s.%s", source.getLabel(), propertyName),
+                        propertyValue);
+            }
+
+            // Build the path to the archive
+            final String rrdFile = System.getProperty("rrd.base.dir")
+                    + File.separator + rrdGraphAttribute.getRrdRelativePath();
+
+            rrdsBySource.put(source, rrdFile);
+        }
+
+        // Fetch
+        return fetchMeasurements(start, end, step, maxrows, rrdsBySource, constants);
+    }
+
