@@ -1,0 +1,93 @@
+    /**
+     * Verifies that outages are properly opened and resolved
+     * when events arrive out of order.
+     *
+     * See NMS-7519 for details.
+     */
+    @Test
+    public void testNoDuplicateOutagesWithUpDownDown() throws InterruptedException {
+        final MockService httpService = m_network.getService(2, "192.168.1.3", "HTTP");
+        final MockService smtpService = m_network.getService(2, "192.168.1.3", "SMTP");
+
+        // Start the poller
+        startDaemons();
+
+        // Starting with 0 outages
+        List<OnmsOutage> httpOutages = getOutages(httpService);
+        assertEquals(0, httpOutages.size());
+
+        // Halts all nodeLostService events until at least 2
+        // of them a queued.
+        //
+        // The event bus should receive the following sequence:
+        //   nodeLostService
+        //   nodeGainedService
+        //   nodeLostService
+        //
+        // We're looking to reorder them as follows:
+        //   nodeGainedService
+        //   nodeLostService
+        //   nodeLostService
+        QueueMultipleDownsHook hook = new QueueMultipleDownsHook(2);
+        m_eventMgr.setSendNowHook(hook);
+
+        // Verify that the initial latch count is 2
+        waitForHookCount(hook, 2);
+
+        // Take the HTTP service down
+        httpService.bringDown();
+
+        // Wait for the latch count to decrease
+        waitForHookCount(hook, 1);
+
+        m_anticipator.reset();
+        m_anticipator.anticipateEvent(httpService.createUpEvent());
+
+        // Bring the HTTP service back up even though the nodeLostService
+        // event is still pending
+        httpService.bringUp();
+
+        m_anticipator.waitForAnticipated(10000);
+
+        // Take the HTTP service down again
+        httpService.bringDown();
+
+        // Wait for the latch count to decrease and send the queued events
+        waitForHookCount(hook, 0);
+
+        m_anticipator.reset();
+        m_anticipator.anticipateEvent(httpService.createUpEvent());
+
+        // Bring the HTTP service back online
+        httpService.bringUp();
+
+        m_anticipator.waitForAnticipated(10000);
+
+        // We've succeeded in altering the order of events for the
+        // HTTP service. Now we make sure that outage processing
+        // continues to work as expeceted on a different service
+        m_eventMgr.setSendNowHook(null);
+
+        m_anticipator.reset();
+        m_anticipator.anticipateEvent(httpService.createUpEvent());
+
+        smtpService.bringDown();
+
+        m_anticipator.waitForAnticipated(10000);
+
+        // Verifies that all of the outage fields are properly
+        // set for both outages affecting the HTTP service,
+        // even though the events we're send out of order
+        httpOutages = getOutages(httpService);
+        assertEquals(2, httpOutages.size());
+        assertNotNull(httpOutages.get(0).getIfRegainedService());
+        assertNotNull(httpOutages.get(0).getIfLostService());
+        assertNotNull(httpOutages.get(0).getIfRegainedService());
+        assertNotNull(httpOutages.get(0).getServiceRegainedEvent());
+
+        assertNotNull(httpOutages.get(1).getIfRegainedService());
+        assertNotNull(httpOutages.get(1).getIfLostService());
+        assertNotNull(httpOutages.get(1).getIfRegainedService());
+        assertNotNull(httpOutages.get(1).getServiceRegainedEvent());
+    }
+
