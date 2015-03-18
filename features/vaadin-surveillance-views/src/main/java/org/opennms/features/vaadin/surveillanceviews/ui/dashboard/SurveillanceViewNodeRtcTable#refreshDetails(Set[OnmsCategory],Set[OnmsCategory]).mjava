@@ -1,0 +1,61 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void refreshDetails(final Set<OnmsCategory> rowCategories, final Set<OnmsCategory> colCategories) {
+        if (m_future != null && !m_future.isDone()) {
+            m_future.cancel(true);
+        }
+
+        m_future = getSurveillanceViewService().getExecutorService().submit(new Callable<List<SurveillanceViewService.NodeRtc>>() {
+            @Override
+            public List<SurveillanceViewService.NodeRtc> call() throws Exception {
+                /**
+                 * calculate and retrieve the RTC instances
+                 */
+                return getSurveillanceViewService().getNodeRtcsForCategories(rowCategories, colCategories);
+            }
+        });
+
+        m_future.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<SurveillanceViewService.NodeRtc> nodeRtcs = m_future.get();
+                    getUI().access(new Runnable() {
+                        @Override
+                        public void run() {
+                            /**
+                             * empty the container
+                             */
+                            m_beanItemContainer.removeAllItems();
+
+                            /**
+                             * add items to the container
+                             */
+                            if (nodeRtcs != null && !nodeRtcs.isEmpty()) {
+                                for (SurveillanceViewService.NodeRtc nodeRtc : nodeRtcs) {
+                                    m_beanItemContainer.addItem(nodeRtc);
+                                }
+                            }
+
+                            /**
+                             * sort the iterms
+                             */
+                            sort(new Object[]{"node"}, new boolean[]{true});
+
+                            /**
+                             * refresh the table
+                             */
+                            refreshRowCache();
+                        }
+                    });
+                } catch (InterruptedException e) {
+                    LOG.error("Interrupted", e);
+                } catch (ExecutionException e) {
+                    LOG.error("Exception in task", e.getCause());
+                }
+            }
+        }, MoreExecutors.sameThreadExecutor());
+    }
+
