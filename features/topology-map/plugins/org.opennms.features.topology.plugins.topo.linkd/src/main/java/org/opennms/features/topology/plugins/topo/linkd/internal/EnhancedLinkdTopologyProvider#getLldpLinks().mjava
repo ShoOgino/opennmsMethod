@@ -1,8 +1,14 @@
     private void getLldpLinks() {
         List<LldpLink> allLinks = m_lldpLinkDao.findAll();
         Set<LldpLinkDetail> combinedLinkDetails = new HashSet<LldpLinkDetail>();
+        Set<Integer> parsed = new HashSet<Integer>();
         for (LldpLink sourceLink : allLinks) {
-            LOG.debug("loadtopology: parsing link: " + sourceLink);
+            LOG.debug("loadtopology: parsing source link: " + sourceLink);
+            if (parsed.contains(sourceLink.getId())) {
+                LOG.debug("loadtopology: already parsed: source link: " + sourceLink);
+                continue;
+            }
+            parsed.add(sourceLink.getId());
             OnmsNode sourceNode = sourceLink.getNode();
             LldpElement sourceElement = sourceNode.getLldpElement();
             LOG.debug("loadtopology: found source node: " + sourceNode.getLabel());
@@ -13,29 +19,52 @@
                 addVertices(source);
             }
 
-            for (LldpLink targetLink : allLinks) {
-                OnmsNode targetNode = targetLink.getNode();
-                LldpElement targetLldpElement = targetNode.getLldpElement();
-
+            LldpLink targetLink = null;
+            for (LldpLink link : allLinks) {
+                LOG.debug("loadtopology: try target link: " + sourceLink);
+                if (parsed.contains(link.getId())) {
+                    LOG.debug("loadtopology: already parsed: target link: " + sourceLink);
+                    continue;
+                }
+                LldpElement element = link.getNode().getLldpElement();
                 //Compare the remote data to the targetNode element data
-                boolean bool1 = sourceLink.getLldpRemPortId().equals(targetLink.getLldpPortId()) && targetLink.getLldpRemPortId().equals(sourceLink.getLldpPortId());
-                boolean bool2 = sourceLink.getLldpRemPortDescr().equals(targetLink.getLldpPortDescr()) && targetLink.getLldpRemPortDescr().equals(sourceLink.getLldpPortDescr());
-                boolean bool3 = sourceLink.getLldpRemChassisId().equals(targetLldpElement.getLldpChassisId()) && targetLink.getLldpRemChassisId().equals(sourceElement.getLldpChassisId());
-                boolean bool4 = sourceLink.getLldpRemSysname().equals(targetLldpElement.getLldpSysname()) && targetLink.getLldpRemSysname().equals(sourceElement.getLldpSysname());
-                boolean bool5 = sourceLink.getLldpRemPortIdSubType() == targetLink.getLldpPortIdSubType() && targetLink.getLldpRemPortIdSubType() == sourceLink.getLldpPortIdSubType();
+                if (!sourceLink.getLldpRemChassisId().equals(element.getLldpChassisId()) || !link.getLldpRemChassisId().equals(sourceElement.getLldpChassisId())) 
+                    continue;
+                boolean bool1 = sourceLink.getLldpRemPortId().equals(link.getLldpPortId()) && link.getLldpRemPortId().equals(sourceLink.getLldpPortId());
+                boolean bool2 = sourceLink.getLldpRemPortDescr().equals(link.getLldpPortDescr()) && link.getLldpRemPortDescr().equals(sourceLink.getLldpPortDescr());
+                boolean bool3 = sourceLink.getLldpRemPortIdSubType() == link.getLldpPortIdSubType() && link.getLldpRemPortIdSubType() == sourceLink.getLldpPortIdSubType();
 
-                if (bool1 && bool2 && bool3 && bool4 && bool5) {
-                    Vertex target = getVertex(getVertexNamespace(), targetNode.getNodeId());
-                    if (target == null) {
-                        target = getVertex(targetNode);
-                    }
-
-                    LldpLinkDetail linkDetail = new LldpLinkDetail(
-                            Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
-                            source, sourceLink, target, targetLink);
-                    combinedLinkDetails.add(linkDetail);
+                if (bool1 && bool2 && bool3) {
+                    targetLink=link;
+                    parsed.add(targetLink.getId());
+                    LOG.debug("loadtopology: found target link: " + targetLink);
+                    break;
                 }
             }
+            
+            if (targetLink == null) {
+                final org.opennms.core.criteria.Criteria criteria = new org.opennms.core.criteria.Criteria(OnmsNode.class).addRestriction(new EqRestriction("sysName", sourceLink.getLldpRemSysname()));
+                List<OnmsNode> nodes = m_nodeDao.findMatching(criteria);
+                if (nodes.size() == 1) {
+                    targetLink = reverseLldpLink(nodes.get(0), sourceLink.getNode().getLldpElement(), sourceLink); 
+                    LOG.debug("loadtopology: found target link using sysname: " + targetLink);
+                }
+            }
+            
+            if (targetLink == null) {
+                LOG.debug("loadtopology: cannot found target for link: " + sourceLink);
+                continue;
+            }
+                
+            OnmsNode targetNode = targetLink.getNode();
+            Vertex target = getVertex(getVertexNamespace(), targetNode.getNodeId());
+            if (target == null) {
+                LOG.debug("loadtopology: adding target node as vertex: " + targetNode.getLabel());
+                target = getVertex(targetNode);
+                addVertices(target);
+            }
+            combinedLinkDetails.add(new LldpLinkDetail(Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
+                                                       source, sourceLink, target, targetLink));
 
         }
 
