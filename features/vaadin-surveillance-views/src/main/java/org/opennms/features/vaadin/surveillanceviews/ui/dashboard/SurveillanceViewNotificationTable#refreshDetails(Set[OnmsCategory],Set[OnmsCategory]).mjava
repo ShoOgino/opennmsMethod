@@ -1,0 +1,77 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void refreshDetails(final Set<OnmsCategory> rowCategories, final Set<OnmsCategory> colCategories) {
+        if (m_future != null && !m_future.isDone()) {
+            m_future.cancel(true);
+        }
+
+        m_future = getSurveillanceViewService().getExecutorService().submit(new Callable<List<Notification>>() {
+            @Override
+            public List<Notification> call() throws Exception {
+                /**
+                 * create the custom severity map
+                 */
+                Map<OnmsNotification, String> customSeverity = new HashMap<>();
+
+                /**
+                 * retrieve the matching notifications
+                 */
+                List<OnmsNotification> onmsNotifications = getSurveillanceViewService().getNotificationsForCategories(rowCategories, colCategories, customSeverity);
+
+                /**
+                 * create the notifications list
+                 */
+                List<Notification> notifications = new ArrayList<>();
+
+                for (OnmsNotification onmsNotification : onmsNotifications) {
+                    notifications.add(new Notification(onmsNotification.getNotifyId(), onmsNotification.getNodeId(), onmsNotification.getNodeLabel(), onmsNotification.getPageTime(), onmsNotification.getRespondTime(), onmsNotification.getAnsweredBy(), onmsNotification.getTextMsg(), onmsNotification.getServiceType() != null ? onmsNotification.getServiceType().getName() : "", customSeverity.get(onmsNotification)));
+                }
+
+                return notifications;
+            }
+        });
+
+        m_future.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<Notification> notifications = m_future.get();
+                    getUI().access(new Runnable() {
+                        @Override
+                        public void run() {
+                            /**
+                             * empty the bean container
+                             */
+                            m_beanItemContainer.removeAllItems();
+
+                            /**
+                             * add items to container
+                             */
+                            if (notifications != null && !notifications.isEmpty()) {
+                                for (Notification notification : notifications) {
+                                    m_beanItemContainer.addItem(notification);
+                                }
+                            }
+
+                            /**
+                             * sort the items
+                             */
+                            sort(new Object[]{"pageTime"}, new boolean[]{false});
+
+                            /**
+                             * refresh the table
+                             */
+                            refreshRowCache();
+                        }
+                    });
+                } catch (InterruptedException e) {
+                    LOG.error("Interrupted", e);
+                } catch (ExecutionException e) {
+                    LOG.error("Exception in task", e.getCause());
+                }
+            }
+        }, MoreExecutors.sameThreadExecutor());
+    }
+
