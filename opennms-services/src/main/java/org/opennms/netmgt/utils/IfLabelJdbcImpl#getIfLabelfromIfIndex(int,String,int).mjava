@@ -1,0 +1,66 @@
+    /**
+     * <p>getIfLabelfromIfIndex</p>
+     *
+     * @param nodeId a int.
+     * @param ipAddr a {@link java.lang.String} object.
+     * @param ifIndex a int.
+     * @return a {@link java.lang.String} object.
+     */
+    public String getIfLabelfromIfIndex(final int nodeId, final String ipAddr, final int ifIndex) {
+        if (ipAddr == null) {
+            throw new IllegalArgumentException("Cannot take null parameters.");
+        }
+
+        String inetAddr = org.opennms.core.utils.InetAddressUtils.normalize(ipAddr);
+
+        if (ifIndex == -1) {
+        	return getIfLabel(nodeId, inetAddr);
+        }
+        
+        class LabelHolder {
+            private String m_label;
+
+            public void setLabel(String label) {
+                m_label = label;
+            }
+
+            public String getLabel() {
+                return m_label;
+            }
+        }
+        
+        final LabelHolder holder = new LabelHolder();
+        
+        String query = "" +
+        		"SELECT DISTINCT snmpifname, snmpifdescr,snmpphysaddr " +
+        		"  FROM snmpinterface, ipinterface " +
+        		" WHERE (ipinterface.ismanaged!='D') " +
+        		"   AND ipinterface.nodeid=snmpinterface.nodeid " +
+        		"   AND ifindex=snmpifindex " +
+        		"   AND ipinterface.nodeid= "+nodeId+
+        		"   AND ipinterface.ipaddr= '"+inetAddr+"'"+
+        		"   AND ipinterface.ifindex= "+ifIndex;
+        
+        
+        Querier q = new Querier(DataSourceFactory.getInstance(), query, new RowProcessor() {
+
+            @Override
+            public void processRow(ResultSet rs) throws SQLException {
+                String name = rs.getString("snmpifname");
+                String descr = rs.getString("snmpifdescr");
+                String physAddr = rs.getString("snmpphysaddr");
+
+                if (name != null || descr != null) {
+                    holder.setLabel(getIfLabel(name, descr, physAddr));
+                } else {
+                    LOG.warn("Interface (nodeId/ipAddr={}/{}) has no ifName and no ifDescr...setting to label to 'no_ifLabel'.", nodeId, ipAddr);
+                    holder.setLabel("no_ifLabel");
+                }
+            }
+            
+        });
+        q.execute();
+        
+        return holder.getLabel();
+    }
+
