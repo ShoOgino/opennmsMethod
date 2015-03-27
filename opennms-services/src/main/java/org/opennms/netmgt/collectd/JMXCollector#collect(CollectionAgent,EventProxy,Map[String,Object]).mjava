@@ -1,207 +1,75 @@
     /**
      * {@inheritDoc}
-     *
+     * <p/>
      * Perform data collection.
      */
     @Override
     public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, Object> map) {
-        InetAddress ipaddr = agent.getAddress();
-        JMXNodeInfo nodeInfo = agent.getAttribute(NODE_INFO_KEY);
-        Map<String, BeanInfo> mbeans = nodeInfo.getMBeans();
-        String collDir = serviceName;
+        final Map<String, String> stringMap = JmxUtils.convertToStringMap(map);
+        final InetAddress ipaddr = agent.getAddress();
+        final JMXNodeInfo nodeInfo = agent.getAttribute(NODE_INFO_KEY);
+        final String collectionName = agent.getAttribute("collectionName");
+        final String port = ParameterMap.getKeyedString(map, ParameterName.PORT.toString(), null);
+        final String friendlyName = ParameterMap.getKeyedString(map, ParameterName.FRIENDLY_NAME.toString(), port);
+        final String collDir = JmxUtils.getCollectionDirectory(stringMap, friendlyName, serviceName);
+        final int retries = ParameterMap.getKeyedInteger(map, ParameterName.RETRY.toString(), 3);
 
-        boolean useMbeanForRrds = ParameterMap.getKeyedBoolean(map, ParameterName.USE_MBEAN_NAME_FOR_RRDS.toString(), false);
-        String port = ParameterMap.getKeyedString(map, ParameterName.PORT.toString(), null);
-        String friendlyName = ParameterMap.getKeyedString(map, ParameterName.FRIENDLY_NAME.toString(), port);
-        if (useFriendlyName) {
-            collDir = friendlyName;
-        }
-
-        JMXCollectionResource collectionResource = new JMXCollectionResource(agent, collDir);
-        SingleResourceCollectionSet collectionSet = new SingleResourceCollectionSet(collectionResource, new Date());
-        
-        ConnectionWrapper connection = null;
+        // result objects
+        final JMXCollectionResource collectionResource = new JMXCollectionResource(agent, collDir);
+        final SingleResourceCollectionSet collectionSet = new SingleResourceCollectionSet(collectionResource, new Date());
 
         LOG.debug("connecting to {} on node ID {}", InetAddressUtils.str(ipaddr), nodeInfo.getNodeId());
 
         try {
-            connection = getMBeanServerConnection(map, ipaddr);
+            // create config for JmxCollector
+            final JmxCollectorConfig config = new JmxCollectorConfig();
+            config.setAgentAddress(InetAddressUtils.str(ipaddr));
+            config.setConnectionName(getConnectionName());
+            config.setRetries(retries);
+            config.setServiceProperties(stringMap);
+            config.setJmxCollection(JMXDataCollectionConfigFactory.getInstance().getJmxCollection(collectionName));
 
-            if (connection == null) {
-                return collectionSet;
-            }
+            final JmxCollector jmxCollector = new DefaultJmxCollector();
+            jmxCollector.collect(config, new JmxSampleProcessor() {
 
-            MBeanServerConnection mbeanServer = connection.getMBeanServer();
+                private final Map<String, AttributeGroupType> groupNameAttributeGroupTypeMap = new HashMap<>();
 
-            int retry = ParameterMap.getKeyedInteger(map, ParameterName.RETRY.toString(), 3);
-            for (int attempts = 0; attempts <= retry; attempts++) {
-                LOG.debug("collecting {} on node ID {}, attempt number {}", InetAddressUtils.str(ipaddr), nodeInfo.getNodeId(), attempts + 1);
-                try {
-                    /*
-                     * Iterate over the mbeans, for each object name perform a
-                     * getAttributes, the update the RRD.
-                     */
+                @Override
+                public void process(JmxAttributeSample attributeSample) {
+                    final String objectName = attributeSample.getMbean().getObjectname();
+                    final String attributeName = attributeSample.getCollectedAttribute().getName();
+                    final AttributeGroupType attribGroupType = getAttributeGroupType(attributeSample.getMbean());
 
-                    for (Iterator<BeanInfo> iter = mbeans.values().iterator(); iter.hasNext();) {
-                        BeanInfo beanInfo = iter.next();
-                        String mbeanName = beanInfo.getMbeanName();
-                        String objectName = beanInfo.getObjectName();
-                        String excludeList = beanInfo.getExcludes();
-                        //All JMX collected values are per node
-                        String obj = useMbeanForRrds ? mbeanName : objectName;
-                        AttributeGroupType attribGroupType=new AttributeGroupType(fixGroupName(obj), AttributeGroupType.IF_TYPE_ALL);
-                        
-                        List<String> attribNames = beanInfo.getAttributeNames();
-                        List<String> compAttribNames = beanInfo.getCompositeAttributeNames();
-                        
-                        for (String compAttribName : compAttribNames) {
-                            if (attribNames.contains(compAttribName) ) {
-                                attribNames.remove(compAttribName);
-                                String[] ac = compAttribName.split("\\|", -1);       
-                                String attrName = ac[0];
-                                if (!attribNames.contains(attrName)) {
-                                    attribNames.add(attrName);
-                                }
-                            }
-                        }                        
-                        //LOG.debug(" JMXCollector: processed the following attributes: {}", attribNames);
-                        //LOG.debug(" JMXCollector: processed the following Composite Attributes: {}", compAttribNames);
-                        
-                        String[] attrNames = attribNames.toArray(new String[attribNames.size()]);
-
-                        if (objectName.indexOf('*') == -1) {      
-                            LOG.debug("{} Collector - getAttributes: {}, # attributes: {}, # composite attribute members: {}", serviceName, objectName, attrNames.length, compAttribNames.size());
-                            try {
-                                ObjectName oName = new ObjectName(objectName);
-                                if (mbeanServer.isRegistered(oName)) {
-                                    AttributeList attrList = mbeanServer.getAttributes(oName, attrNames);
-                                    Map<String, JMXDataSource> dsMap = nodeInfo.getDsMap();
-                                    for(Object attribute : attrList) {
-                                        List<String> compositeMemberKeys = new ArrayList<String>();
-                                        Boolean isComposite = false;
-                                        Attribute attrib=(Attribute)attribute;
-                                        for (String compAttrName : compAttribNames ) {
-                                            String[] attribKeys = compAttrName.split("\\|", -1);
-                                            if (attrib.getName().equals(attribKeys[0])) {
-                                                compositeMemberKeys.add(attribKeys[1]);
-                                                isComposite = true;
-                                            }
-                                        }
-                                        if (isComposite) {
-                                            try {
-                                                CompositeData cd = (CompositeData)attrib.getValue();
-                                                 for (String key : compositeMemberKeys) {
-                                                     /*
-                                                     value = cd.get(key);
-                                                     
-                                                     log.debug(" JMXCollector - got CompositeData: " + 
-                                                               objectName + "|" + attrib.getName() + "|" + key + " |-> " + cd.get(key).toString());
-                                                     */
-                                                     JMXDataSource ds = dsMap.get(objectName + "|" + attrib.getName() + "|" + key);
-                                                     JMXCollectionAttributeType attribType=new JMXCollectionAttributeType(ds, null, null, attribGroupType);
-                                                     collectionResource.setAttributeValue(attribType, cd.get(key).toString());
-                                                 }
-                                            } catch (final ClassCastException cce) {
-                                                LOG.debug("{} Collection - getAttributes (try CompositeData) - ERROR: Failed to cast attribute value to type CompositeData!", serviceName, cce);
-                                            }
-                                        }
-                                        else {
-                                            // this is a normal attribute, so fallback to default handler
-                                            JMXDataSource ds = dsMap.get(objectName + "|" + attrib.getName());
-                                            JMXCollectionAttributeType attribType=new JMXCollectionAttributeType(ds, null, null, attribGroupType);
-                                            collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
-                                        }
-                                    }  
-                                }
-                            } catch (final InstanceNotFoundException e) {
-                                LOG.error("Unable to retrieve attributes from {}", objectName, e);
-                            }
-                        } else {
-                            /*
-                             * This section is for ObjectNames that use the
-                             * '*' wildcard
-                             */
-                            Set<ObjectName> mbeanSet = getObjectNames(mbeanServer, objectName);
-                            for (Iterator<ObjectName> objectNameIter = mbeanSet.iterator(); objectNameIter.hasNext(); ) {
-                                ObjectName oName = objectNameIter.next();
-                                LOG.debug("{} Collector - getAttributesWC: {}, # attributes: {}, alias: {}", serviceName, oName, attrNames.length, beanInfo.getKeyAlias());
-
-                                try {
-                                    if (excludeList == null) {
-                                        // the exclude list doesn't apply
-                                        if (mbeanServer.isRegistered(oName)) {
-                                            AttributeList attrList = mbeanServer.getAttributes(oName,
-                                                                          attrNames);
-                                            Map<String, JMXDataSource> dsMap = nodeInfo.getDsMap();
-
-                                            for(Object attribute : attrList) {
-                                                Attribute attrib=(Attribute)attribute;
-                                                JMXDataSource ds = dsMap.get(objectName + "|"
-                                                             + attrib.getName());
-                                                JMXCollectionAttributeType attribType=
-                                                    new JMXCollectionAttributeType(ds, 
-                                                                                   oName.getKeyProperty(beanInfo.getKeyField()),  
-                                                                                   beanInfo.getKeyAlias(), 
-                                                                                   attribGroupType);
-                                                
-                                                collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
-                                            }
-
-                                        }
-                                    } else {
-                                        /*
-                                         * filter out calls if the key field
-                                         * matches an entry in the exclude
-                                         * list
-                                         */
-                                        String keyName = oName.getKeyProperty(beanInfo.getKeyField());
-                                        boolean found = false;
-                                        StringTokenizer st = new StringTokenizer(
-                                                                                 excludeList,
-                                                                                 ",");
-                                        while (st.hasMoreTokens()) {
-                                            if (keyName.equals(st.nextToken())) {
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                        if (!found) {
-                                            if (mbeanServer.isRegistered(oName)) {
-                                                AttributeList attrList = mbeanServer.getAttributes(oName, attrNames);
-                                                Map<String, JMXDataSource> dsMap = nodeInfo.getDsMap();
-
-                                                for(Object attribute : attrList) {
-                                                    Attribute attrib=(Attribute)attribute;
-                                                    JMXDataSource ds = dsMap.get(objectName + "|" + attrib.getName());
-                                                    JMXCollectionAttributeType attribType = new JMXCollectionAttributeType(ds, 
-                                                                                       oName.getKeyProperty(beanInfo.getKeyField()),  
-                                                                                       beanInfo.getKeyAlias(), 
-                                                                                       attribGroupType);
-                                                    
-                                                    collectionResource.setAttributeValue(attribType, attrib.getValue().toString());
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (final InstanceNotFoundException e) {
-                                    LOG.error("Error retrieving attributes for {}", oName, e);
-                                }
-                            }
-                        }
-                    }
-                    break;
-                } catch (final Exception e) {
-                    LOG.debug("{} Collector.collect: IOException while collecting address: {}", serviceName, agent.getAddress(), e);
+                    JMXDataSource ds = nodeInfo.getDsMap().get(objectName + "|" + attributeName);
+                    JMXCollectionAttributeType attribType = new JMXCollectionAttributeType(ds, attribGroupType);
+                    collectionResource.setAttributeValue(attribType, attributeSample.getCollectedValueAsString());
                 }
-            }
+
+                @Override
+                public void process(JmxCompositeSample compositeSample) {
+                    final String objectName = compositeSample.getMbean().getObjectname();
+                    final String attributeName = compositeSample.getCollectedAttribute().getName();
+                    final AttributeGroupType attribGroupType = getAttributeGroupType(compositeSample.getMbean());
+
+                    JMXDataSource ds = nodeInfo.getDsMap().get(objectName + "|" + attributeName + "|" + compositeSample.getCompositeKey());
+                    JMXCollectionAttributeType attribType = new JMXCollectionAttributeType(ds, attribGroupType);
+                    collectionResource.setAttributeValue(attribType, compositeSample.getCollectedValueAsString());
+                }
+
+                private AttributeGroupType getAttributeGroupType(Mbean mbean) {
+                    //All JMX collected values are per node
+                    final String groupName = JmxUtils.getGroupName(stringMap, mbean);
+                    if (!groupNameAttributeGroupTypeMap.containsKey(groupName)) {
+                        final AttributeGroupType attribGroupType = new AttributeGroupType(fixGroupName(groupName), AttributeGroupType.IF_TYPE_ALL);
+                        groupNameAttributeGroupTypeMap.put(groupName, attribGroupType);
+                    }
+                    return groupNameAttributeGroupTypeMap.get(groupName);
+                }
+            });
         } catch (final Exception e) {
-            LOG.error("Error getting MBeanServer", e);
-        } finally {
-            if (connection != null) {
-                connection.close();
-            }
+            LOG.debug("{} Collector.collect: IOException while collecting address: {}", serviceName, agent.getAddress(), e);
         }
-        
+
         collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
         return collectionSet;
     }
