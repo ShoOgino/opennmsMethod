@@ -1,0 +1,68 @@
+    /**
+     * Returns a list of node RTC calculations for the given criterias.
+     *
+     * @param serviceCriteria the service criteria
+     * @param outageCriteria  the outage criteries
+     * @return the list of {@link org.opennms.features.vaadin.surveillanceviews.service.SurveillanceViewService.NodeRtc} instances
+     */
+    private List<NodeRtc> getNodeListForCriteria(final Criteria serviceCriteria, final Criteria outageCriteria) {
+        List<Order> ordersService = new ArrayList<>();
+        ordersService.add(Order.asc("node.label"));
+        ordersService.add(Order.asc("node.id"));
+        ordersService.add(Order.asc("ipInterface.ipAddress"));
+        ordersService.add(Order.asc("serviceType.name"));
+        serviceCriteria.setOrders(ordersService);
+
+        Date periodEnd = new Date(System.currentTimeMillis());
+        Date periodStart = new Date(periodEnd.getTime() - (24 * 60 * 60 * 1000));
+
+        outageCriteria.addRestriction(Restrictions.any(Restrictions.isNull("ifRegainedService"), Restrictions.ge("ifLostService", periodStart), Restrictions.ge("ifRegainedService", periodStart)));
+
+        List<Order> ordersOutage = new ArrayList<>();
+        ordersOutage.add(Order.asc("monitoredService"));
+        ordersOutage.add(Order.asc("ifLostService"));
+        outageCriteria.setOrders(ordersOutage);
+
+        List<OnmsMonitoredService> services = m_monitoredServiceDao.findMatching(serviceCriteria);
+        List<OnmsOutage> outages = m_outageDao.findMatching(outageCriteria);
+
+        Map<OnmsMonitoredService, Long> serviceDownTime = calculateServiceDownTime(periodEnd, periodStart, outages);
+
+        List<NodeRtc> model = new ArrayList<>();
+
+        OnmsNode lastNode = null;
+        int serviceCount = 0;
+        int serviceDownCount = 0;
+        long downMillisCount = 0;
+        for (OnmsMonitoredService service : services) {
+            if (!service.getIpInterface().getNode().equals(lastNode) && lastNode != null) {
+                Double availability = calculateAvailability(serviceCount, downMillisCount);
+
+                model.add(new NodeRtc(lastNode, serviceCount, serviceDownCount, availability));
+
+                serviceCount = 0;
+                serviceDownCount = 0;
+                downMillisCount = 0;
+            }
+
+            serviceCount++;
+            if (service.isDown()) {
+                serviceDownCount++;
+            }
+
+            Long downMillis = serviceDownTime.get(service);
+            if (downMillis != null) {
+                downMillisCount += downMillis;
+            }
+
+            lastNode = service.getIpInterface().getNode();
+        }
+        if (lastNode != null) {
+            Double availability = calculateAvailability(serviceCount, downMillisCount);
+
+            model.add(new NodeRtc(lastNode, serviceCount, serviceDownCount, availability));
+        }
+
+        return model;
+    }
+
