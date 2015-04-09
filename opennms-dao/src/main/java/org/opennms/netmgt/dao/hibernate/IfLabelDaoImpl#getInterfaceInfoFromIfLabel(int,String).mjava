@@ -1,0 +1,89 @@
+    /**
+     * Return a map of useful SNMP information for the interface specified by
+     * the nodeId and ifLabel. Essentially a "decoding" algorithm for the
+     * ifLabel.
+     *
+     * @param nodeId
+     *            Node id
+     * @param ifLabel
+     *            Interface label of format: <description>- <macAddr>
+     * @return Map of SNMP info keyed by 'snmpInterface' table column names for
+     *         the interface specified by nodeId and ifLabel args.
+     * @throws SQLException
+     *             if error occurs accessing the database.
+     */
+    @Override
+    public Map<String, String> getInterfaceInfoFromIfLabel(int nodeId, String ifLabel) {
+        if (ifLabel == null) {
+            throw new IllegalArgumentException("Cannot take null parameters.");
+        }
+
+        final Map<String, String> info = new HashMap<String, String>();
+        String desc = ifLabel;
+        String mac = null;
+
+        // first I have to strip off the MAC address from the end, if there is
+        // one
+        int dashIndex = ifLabel.lastIndexOf('-');
+
+        if (dashIndex >= 0) {
+            desc = ifLabel.substring(0, dashIndex);
+            mac = ifLabel.substring(dashIndex + 1, ifLabel.length());
+        }
+        
+       final String desc2 = desc;
+       final String mac2 = mac;
+ 
+        LOG.debug("getInterfaceInfoFromIfLabel: desc={} mac={}", desc, mac);
+
+        String queryDesc = desc.replace('_', '%');
+
+        OnmsSnmpInterface iface = m_snmpInterfaceDao.findByNodeIdAndDescription(nodeId, queryDesc);
+
+        if (iface != null) {
+            // If the description portion of ifLabel matches an entry
+            // in the snmpinterface table...
+
+            /*
+             * When Cisco Express Forwarding (CEF) or some ATM encapsulations
+             * (AAL5) are used on Cisco routers, an additional entry might be 
+             * in the ifTable for these sub-interfaces, but there is no
+             * performance data available for collection.  This check excludes
+             * ifTable entries where ifDescr contains "-cef".  See bug #803.
+             */
+            if (iface.getIfDescr() != null) {
+                if (Pattern.matches(".*-cef.*", iface.getIfDescr())) {
+                    return Collections.unmodifiableMap(info);
+                }
+            }
+
+            if ((AlphaNumeric.parseAndReplace(iface.getIfName(), '_').equals(desc2)) || (AlphaNumeric.parseAndReplace(iface.getIfDescr(), '_').equals(desc2))) {
+
+                // If the MAC address portion of the ifLabel matches
+                // an entry in the snmpinterface table...
+                if (mac2 == null || mac2.equals(iface.getPhysAddr())) {
+                    // Get extra information about the interface
+                    info.put("id", String.valueOf(iface.getId()));
+                    info.put("nodeid", String.valueOf(iface.getNodeId()));
+                    info.put("snmpipadentnetmask", String.valueOf(iface.getNetMask()));
+                    info.put("snmpphysaddr", String.valueOf(iface.getPhysAddr()));
+                    info.put("snmpifindex", String.valueOf(iface.getIfIndex()));
+                    info.put("snmpifdescr", String.valueOf(iface.getIfDescr()));
+                    info.put("snmpiftype", String.valueOf(iface.getIfType()));
+                    info.put("snmpifname", String.valueOf(iface.getIfName()));
+                    info.put("snmpifspeed", String.valueOf(iface.getIfSpeed()));
+                    info.put("snmpifadminstatus", String.valueOf(iface.getIfAdminStatus()));
+                    info.put("snmpifoperstatus", String.valueOf(iface.getIfOperStatus()));
+                    info.put("snmpifalias", String.valueOf(iface.getIfAlias()));
+                    info.put("snmpcollect", String.valueOf(iface.getCollect()));
+                    info.put("snmplastcapsdpoll", String.valueOf(iface.getLastCapsdPoll()));
+                    info.put("snmppoll", String.valueOf(iface.getPoll()));
+                    info.put("snmplastsnmppoll", String.valueOf(iface.getLastSnmpPoll()));
+                }
+            }
+        }
+
+        // The map will remain empty if the information was not located in the DB
+        return Collections.unmodifiableMap(info);
+    }
+
