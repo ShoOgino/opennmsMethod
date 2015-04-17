@@ -1,0 +1,86 @@
+    /**
+     * Optimized method for calculating the category statistics
+     * that aims to reduce the number of calls to the database.
+     *
+     * In its current form, getOutageTimeInWindow() is called for
+     * every service in the category, which is not ideal.
+     */
+    @Override
+    public synchronized EuiLevel getEuiLevel(RTCCategory category) {
+        final Header header = new Header();
+        header.setVer("1.9a");
+        header.setMstation("");
+
+        // current time
+        final Date curDate = new Date();
+        final long curTime = curDate.getTime();
+
+        // get the rolling window
+        final long rWindow = 24L * 60L * 60L * 1000L;
+
+        LOG.debug("curdate: {}", curDate);
+
+        // create the data
+        final EuiLevel level = new EuiLevel();
+
+        // set created in m_header and add to level
+        header.setCreated(EventConstants.formatToString(curDate));
+        level.setHeader(header);
+
+        final Category levelCat = new Category();
+
+        // category label
+        levelCat.setCatlabel(category.getLabel());
+
+        double outageTimeInCategory = 0.0;
+        int numServicesInCategory = 0;
+
+        final Date windowStart = new Date(curTime - rWindow);
+        final Date windowEnd = new Date(curTime);
+
+        // nodes in this category
+        for (final int nodeID : getNodes(category)) {
+
+            // find the list of monitored services for this node
+            final Criteria criteria = createServiceCriteriaForNodeInCategory(nodeID, category);
+            final List<OnmsMonitoredService> services = m_monitoredServiceDao.findMatching(criteria);
+
+            // sum the outage time for all of the node's services
+            final double outageTime = services.stream()
+                    .mapToDouble(service -> getOutageTimeInWindow(service, windowStart, windowEnd))
+                    .sum();
+
+            // count the number of services that are currently down
+            final long numServicesDown = services.stream()
+                    .filter(service -> m_outageDao.currentOutageForService(service) != null)
+                    .count();
+
+            final Node levelNode = new Node();
+            levelNode.setNodeid(nodeID);
+
+            // value for this node for this category
+            levelNode.setNodevalue(RTCUtils.getOutagePercentage(outageTime, rWindow, services.size()));
+
+            // node service count
+            levelNode.setNodesvccount(services.size());
+
+            // node service down count
+            levelNode.setNodesvcdowncount(numServicesDown);
+
+            // add the node
+            levelCat.addNode(levelNode);
+
+            // update the category statistics
+            numServicesInCategory += services.size();
+            outageTimeInCategory += outageTimeInCategory;
+        }
+
+        // calculate the outage percentage using tallied values
+        levelCat.setCatvalue(RTCUtils.getOutagePercentage(outageTimeInCategory, rWindow, numServicesInCategory));
+
+        // add category
+        level.addCategory(levelCat);
+
+        return level;
+    }
+
