@@ -1,9 +1,6 @@
     /**
      * Optimized method for calculating the category statistics
      * that aims to reduce the number of calls to the database.
-     *
-     * In its current form, getOutageTimeInWindow() is called for
-     * every service in the category, which is not ideal.
      */
     @Override
     public synchronized EuiLevel getEuiLevel(RTCCategory category) {
@@ -36,24 +33,39 @@
         double outageTimeInCategory = 0.0;
         int numServicesInCategory = 0;
 
+        // window bounds
         final Date windowStart = new Date(curTime - rWindow);
         final Date windowEnd = new Date(curTime);
 
-        // nodes in this category
-        for (final int nodeID : getNodes(category)) {
+        final Collection<Integer> nodes = getNodes(category);
+        final List<String> serviceNames = category.getServiceCollection();
 
-            // find the list of monitored services for this node
-            final Criteria criteria = createServiceCriteriaForNodeInCategory(nodeID, category);
-            final List<OnmsMonitoredService> services = m_monitoredServiceDao.findMatching(criteria);
+        // retrieve all of the services in this category, grouped by node
+        final Map<Integer, List<OnmsMonitoredService>> servicesByNode = getServices(nodes, serviceNames);
+
+        // flatten the list of services in this category
+        final List<OnmsMonitoredService> allServices = Lists.newLinkedList();
+        servicesByNode.values().forEach(allServices::addAll);
+
+        // retrieve the outages associated with the list of services that fall within our window
+        final Map<Integer, List<OnmsOutage>> outagesByService = getOutages(allServices, windowStart, windowEnd);
+
+        // calculate the node level statistics
+        for (final int nodeID : nodes) {
+            List<OnmsMonitoredService> services = servicesByNode.get(nodeID);
+            if (services == null) {
+                // Use an empty list if this particular node has no services
+                services = Lists.newArrayList();
+            }
 
             // sum the outage time for all of the node's services
             final double outageTime = services.stream()
-                    .mapToDouble(service -> getOutageTimeInWindow(service, windowStart, windowEnd))
+                    .mapToDouble(service -> getOutageTimeInWindow(outagesByService.get(service.getId()), windowStart, windowEnd))
                     .sum();
 
             // count the number of services that are currently down
             final long numServicesDown = services.stream()
-                    .filter(service -> m_outageDao.currentOutageForService(service) != null)
+                    .filter(service -> hasOngoingOutage(outagesByService.get(service.getId())))
                     .count();
 
             final Node levelNode = new Node();
