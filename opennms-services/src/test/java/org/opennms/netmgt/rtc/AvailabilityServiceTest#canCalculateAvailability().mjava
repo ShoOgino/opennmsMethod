@@ -1,0 +1,49 @@
+    @Test
+    public void canCalculateAvailability() throws Exception {
+        final MockNetwork mockNetwork = new MockNetwork();
+        // This test depends on the specifics in the standard network definition
+        mockNetwork.createStandardNetwork();
+        m_mockDatabase.populate(mockNetwork);
+
+        final RTCCategory rtcCat = EasyMock.createNiceMock(RTCCategory.class);
+        EasyMock.expect(rtcCat.getLabel()).andReturn("NOC").anyTimes();
+        EasyMock.expect(rtcCat.getNodes()).andReturn(Lists.newArrayList(1, 2)).anyTimes();
+        EasyMock.replay(rtcCat);
+
+        // Verify the availability when no outages are present
+        EuiLevel euiLevel = m_availabilityService.getEuiLevel(rtcCat);
+        assertEquals(1, euiLevel.getCategoryCount());
+
+        Category category = euiLevel.getCategory(0);
+        assertEquals(100.0, category.getCatvalue(), 0.001);
+        assertEquals(2, category.getNodeCount());
+
+        // Assumes the nodes are sorted
+        assertEquals(4, category.getNode(0).getNodesvccount());
+        assertEquals(2, category.getNode(1).getNodesvccount());
+
+        // Create an outage that is both open and closed within the window
+        final Date now = new Date();
+        final Date oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
+        final Date thirtyMinutesAgo = new Date(now.getTime() - (30 * 60 * 1000));
+
+        final OnmsMonitoredService icmpService = toMonitoredService(mockNetwork.getService(1, "192.168.1.1", "ICMP"));
+
+        OnmsOutage outage = new OnmsOutage();
+        outage.setMonitoredService(icmpService);
+        outage.setIfLostService(oneHourAgo);
+        outage.setIfRegainedService(thirtyMinutesAgo);
+        m_outageDao.save(outage);
+        m_outageDao.flush();
+
+        // Verify the availability when outages are present
+        euiLevel = m_availabilityService.getEuiLevel(rtcCat);
+        assertEquals(1, euiLevel.getCategoryCount());
+
+        category = euiLevel.getCategory(0);
+        // This number should only need to be adjusted if the duration of the outage
+        // or the number of services in the category changes
+        assertEquals(99.6527, category.getCatvalue(), 0.001);
+        assertEquals(2, category.getNodeCount());
+    }
+
