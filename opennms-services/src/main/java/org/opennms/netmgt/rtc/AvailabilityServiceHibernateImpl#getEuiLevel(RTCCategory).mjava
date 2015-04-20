@@ -1,8 +1,14 @@
     /**
-     * Optimized method for calculating the category statistics
-     * that aims to reduce the number of calls to the database.
+     * Optimized method for calculating the category statistics.
+     *
+     * We start off by retrieving outages affecting the nodes and services
+     * in the given category, and group these by node id.
+     *
+     * Using the outages, we calculate node-level statistics
+     * and tally the values to calculate the category statistics.
      */
     @Override
+    @Transactional(readOnly=true)
     public synchronized EuiLevel getEuiLevel(RTCCategory category) {
         final Header header = new Header();
         header.setVer("1.9a");
@@ -37,45 +43,39 @@
         final Date windowStart = new Date(curTime - rWindow);
         final Date windowEnd = new Date(curTime);
 
-        final Collection<Integer> nodes = getNodes(category);
+        // category specifics
+        final List<Integer> nodeIds = getNodes(category);
         final List<String> serviceNames = category.getServiceCollection();
 
-        // retrieve all of the services in this category, grouped by node
-        final Map<Integer, List<OnmsMonitoredService>> servicesByNode = getServices(nodes, serviceNames);
-
-        // flatten the list of services in this category
-        final List<OnmsMonitoredService> allServices = Lists.newLinkedList();
-        servicesByNode.values().forEach(allServices::addAll);
-
-        // retrieve the outages associated with the list of services that fall within our window
-        final Map<Integer, List<OnmsOutage>> outagesByService = getOutages(allServices, windowStart, windowEnd);
+        // retrieve the outages associated with the given nodes, only retrieving those that affect our window
+        final Map<Integer, List<OnmsOutage>> outagesByNode = getOutages(nodeIds, serviceNames, windowStart, windowEnd);
 
         // calculate the node level statistics
-        for (final int nodeID : nodes) {
-            List<OnmsMonitoredService> services = servicesByNode.get(nodeID);
-            if (services == null) {
-                // Use an empty list if this particular node has no services
-                services = Lists.newArrayList();
+        for (final int nodeId : nodeIds) {
+            List<OnmsOutage> outages = outagesByNode.get(nodeId);
+            if (outages == null) {
+                outages = Lists.newArrayList();
             }
 
-            // sum the outage time for all of the node's services
-            final double outageTime = services.stream()
-                    .mapToDouble(service -> getOutageTimeInWindow(outagesByService.get(service.getId()), windowStart, windowEnd))
-                    .sum();
+            // sum the outage time
+            final double outageTime = getOutageTimeInWindow(outages, windowStart, windowEnd);
 
-            // count the number of services that are currently down
-            final long numServicesDown = services.stream()
-                    .filter(service -> hasOngoingOutage(outagesByService.get(service.getId())))
+            // determine the number of services
+            final int numServices = getNumServices(nodeId, serviceNames);
+
+            // count the number of outstanding outages
+            final long numServicesDown = outages.stream()
+                    .filter(outage -> outage.getIfRegainedService() == null)
                     .count();
 
             final Node levelNode = new Node();
-            levelNode.setNodeid(nodeID);
+            levelNode.setNodeid(nodeId);
 
             // value for this node for this category
-            levelNode.setNodevalue(RTCUtils.getOutagePercentage(outageTime, rWindow, services.size()));
+            levelNode.setNodevalue(RTCUtils.getOutagePercentage(outageTime, rWindow, numServices));
 
             // node service count
-            levelNode.setNodesvccount(services.size());
+            levelNode.setNodesvccount(numServices);
 
             // node service down count
             levelNode.setNodesvcdowncount(numServicesDown);
@@ -84,7 +84,7 @@
             levelCat.addNode(levelNode);
 
             // update the category statistics
-            numServicesInCategory += services.size();
+            numServicesInCategory += numServices;
             outageTimeInCategory += outageTime;
         }
 
