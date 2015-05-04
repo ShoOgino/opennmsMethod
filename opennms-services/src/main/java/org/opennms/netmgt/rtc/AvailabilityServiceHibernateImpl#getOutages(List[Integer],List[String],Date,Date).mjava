@@ -1,0 +1,31 @@
+    private Map<Integer, List<OnmsOutage>> getOutages(List<Integer> nodeIds, List<String> serviceNames, Date start, Date end) {
+        if (nodeIds == null || nodeIds.size() == 0) {
+            return Maps.newHashMap();
+        }
+
+        final CriteriaBuilder builder = new CriteriaBuilder(OnmsOutage.class)
+            // The outage must have started before the end of the window
+            .le("ifLostService", end)
+            .or(new NullRestriction("ifRegainedService"), // The outage is ongoing
+                new AllRestriction( // or the outage was cleared somewhere in the window
+                    new GtRestriction("ifRegainedService", start),
+                    new LeRestriction("ifRegainedService", end))
+            )
+            // Only select outages affecting our nodes
+            .alias("monitoredService", "monitoredService")
+            .alias("monitoredService.ipInterface", "ipInterface")
+            .alias("ipInterface.node", "node")
+            .eq("ipInterface.isManaged", "M")
+            .in("node.id", nodeIds);
+
+        // Only select outages affecting services with the given names, if set
+        if (serviceNames != null && serviceNames.size() > 0) {
+            builder.alias("monitoredService.serviceType", "serviceType")
+            .in("serviceType.name", serviceNames);
+        }
+
+        // Retrieve the outages and group them by node id
+        return m_outageDao.findMatching(builder.toCriteria()).stream()
+            .collect(Collectors.groupingBy(outage -> outage.getNodeId()));
+    }
+
