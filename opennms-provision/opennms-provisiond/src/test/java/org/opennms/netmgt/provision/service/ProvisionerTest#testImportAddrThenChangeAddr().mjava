@@ -6,28 +6,25 @@
         @JUnitSnmpAgent(host="198.51.100.204", port=161, resource="classpath:snmpTestData4.properties")
     })
     public void testImportAddrThenChangeAddr() throws Exception {
+        // Node has 198.51.100.201 as a primary IP address
         importFromResource("classpath:/requisition_then_scan2.xml", Boolean.TRUE.toString());
 
-        final List<OnmsNode> nodes = getNodeDao().findAll();
-        final OnmsNode node = nodes.get(0);
-
-        final NodeScan scan = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
-        runScan(scan);
+        runPendingScans();
 
         m_nodeDao.flush();
 
         assertEquals(2, getInterfaceDao().countAll());
 
         System.err.println("-------------------------------------------------------------------------");
-        // wait long enough for dates to roll over
+
+        // Wait long enough for the previously discovered interfaces services
+        // to become obsolete (the milliseconds are trimmed when comparing the dates)
         Thread.sleep(1000);
 
-        m_mockSnmpDataProvider.setDataForAddress(new SnmpAgentAddress(InetAddressUtils.addr("198.51.100.201"), 161), m_resourceLoader.getResource("classpath:snmpTestData4.properties"));
-
+        // Node has 198.51.100.202 as a primary IP address
         importFromResource("classpath:/requisition_primary_addr_changed.xml", Boolean.TRUE.toString());
 
-        final NodeScan scan2 = m_provisioner.createNodeScan(node.getId(), node.getForeignSource(), node.getForeignId());
-        runScan(scan2);
+        runPendingScans();
 
         m_nodeDao.flush();
 
@@ -37,10 +34,8 @@
         //Verify node count
         assertEquals(1, getNodeDao().countAll());
 
-        LOG.debug("found: {}", getInterfaceDao().findAll());
-
         //Verify ipinterface count
-        assertEquals(2, getInterfaceDao().countAll());
+        assertEquals("Unexpected number of interfaces found: "+getInterfaceDao().findAll(), 2, getInterfaceDao().countAll());
 
         //Verify ifservices count - discover snmp service on other if
         assertEquals("Unexpected number of services found: "+getMonitoredServiceDao().findAll(), 2, getMonitoredServiceDao().countAll());
@@ -50,7 +45,6 @@
 
         //Verify snmpInterface count
         assertEquals(6, getSnmpInterfaceDao().countAll());
-
 
         // Node Delete
         importFromResource("classpath:/nonodes-snmp.xml", Boolean.TRUE.toString());
