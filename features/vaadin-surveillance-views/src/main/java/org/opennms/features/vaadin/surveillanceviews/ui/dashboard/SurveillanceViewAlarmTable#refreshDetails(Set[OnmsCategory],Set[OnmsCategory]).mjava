@@ -1,0 +1,73 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void refreshDetails(final Set<OnmsCategory> rowCategories, final Set<OnmsCategory> colCategories) {
+        if (m_future != null && !m_future.isDone()) {
+            return;
+        }
+
+        m_future = getSurveillanceViewService().getExecutorService().submit(new Callable<List<Alarm>>() {
+            @Override
+            public List<Alarm> call() throws Exception {
+                /**
+                 * retrieve the matching alarms
+                 */
+                List<OnmsAlarm> onmsAlarms = getSurveillanceViewService().getAlarmsForCategories(rowCategories, colCategories);
+
+                List<Alarm> alarms = new ArrayList<>();
+
+                Map<Integer, OnmsNode> nodeMap = new HashMap<>();
+
+                for (OnmsAlarm onmsAlarm : onmsAlarms) {
+                    if (!nodeMap.containsKey(onmsAlarm.getNodeId())) {
+                        nodeMap.put(onmsAlarm.getNodeId(), getSurveillanceViewService().getNodeForId(onmsAlarm.getNodeId()));
+                    }
+
+                    alarms.add(new Alarm(onmsAlarm.getId(), onmsAlarm.getUei(), onmsAlarm.getSeverityId(), onmsAlarm.getSeverity().getLabel(), nodeMap.get(onmsAlarm.getNodeId()).getLabel(), onmsAlarm.getNodeId(), onmsAlarm.getLogMsg(), onmsAlarm.getCounter(), onmsAlarm.getFirstEventTime(), onmsAlarm.getLastEventTime()));
+                }
+                return alarms;
+            }
+        });
+
+        m_future.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<Alarm> alarms = m_future.get();
+                    getUI().access(new Runnable() {
+                        @Override
+                        public void run() {
+                            /**
+                             * empty the container
+                             */
+                            m_beanItemContainer.removeAllItems();
+
+                            /**
+                             * add items to container
+                             */
+                            if (alarms != null && !alarms.isEmpty()) {
+                                for (Alarm alarm : alarms) {
+                                    m_beanItemContainer.addItem(alarm);
+                                }
+                            }
+                            /**
+                             * sort the alarms
+                             */
+                            sort(new Object[]{"severityId", "lastEventTime"}, new boolean[]{false, false});
+
+                            /**
+                             * refresh the table
+                             */
+                            refreshRowCache();
+                        }
+                    });
+                } catch (InterruptedException e) {
+                    LOG.error("Interrupted", e);
+                } catch (ExecutionException e) {
+                    LOG.error("Exception in task", e.getCause());
+                }
+            }
+        }, MoreExecutors.sameThreadExecutor());
+    }
+

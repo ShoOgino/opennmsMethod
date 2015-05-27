@@ -1,0 +1,51 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected FetchResults fetchMeasurements(long start, long end, long step, int maxrows,
+            Map<Source, String> rrdsBySource, Map<String, Object> constants) throws RrdException {
+
+        final long startInSeconds = (long) Math.floor(start / 1000);
+        final long endInSeconds = (long) Math.floor(end / 1000);
+
+        long stepInSeconds = (long) Math.floor(step / 1000);
+        // The step must be strictly positive
+        if (stepInSeconds <= 0) {
+            stepInSeconds = 1;
+        }
+
+        final DataProcessor dproc = new DataProcessor(startInSeconds, endInSeconds);
+        if (maxrows > 0) {
+            dproc.setPixelCount(maxrows);
+        }
+        dproc.setFetchRequestResolution(stepInSeconds);
+
+        for (final Map.Entry<Source, String> entry : rrdsBySource.entrySet()) {
+            final Source source = entry.getKey();
+            final String rrdFile = entry.getValue();
+
+            dproc.addDatasource(source.getLabel(), rrdFile, source.getAttribute(),
+                    source.getAggregation());
+        }
+
+        try {
+            dproc.processData();
+        } catch (IOException e) {
+            throw new RrdException("JRB processing failed.", e);
+        }
+
+        final long[] timestamps = dproc.getTimestamps();
+
+        // Convert the timestamps to milliseconds
+        for (int i = 0; i < timestamps.length; i++) {
+            timestamps[i] *= 1000;
+        }
+
+        final Map<String, double[]> columns = Maps.newHashMapWithExpectedSize(rrdsBySource.keySet().size());
+        for (Source source : rrdsBySource.keySet()) {
+            columns.put(source.getLabel(), dproc.getValues(source.getLabel()));
+        }
+
+        return new FetchResults(timestamps, columns, dproc.getStep() * 1000, constants);
+    }
+
