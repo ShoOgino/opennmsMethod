@@ -1,0 +1,221 @@
+    /**
+     * Constructor for instatiating this component.
+     *
+     * @param view                    the view to be displayed
+     * @param surveillanceViewService the surveillance view service
+     * @param dashboard               should the dashboard be displayed?
+     * @param enabled                 should links be enabled?
+     */
+    public SurveillanceViewTable(final View view, SurveillanceViewService surveillanceViewService, boolean dashboard, boolean enabled) {
+        /**
+         * call the super constructor
+         */
+        super(null);
+        /**
+         * set the fields
+         */
+        this.m_surveillanceViewService = surveillanceViewService;
+        this.m_enabled = enabled;
+        this.m_dashboard = dashboard;
+        this.m_view = view;
+        /**
+         * initialize this component with the view
+         */
+        refresh();
+
+        /**
+         * fill the categories map
+         */
+        List<OnmsCategory> onmsCategories = m_surveillanceViewService.getOnmsCategories();
+
+        for (OnmsCategory onmsCategory : onmsCategories) {
+            m_onmsCategoryMap.put(onmsCategory.getName(), onmsCategory);
+        }
+
+        /**
+         * initialize the table features
+         */
+        setSizeUndefined();
+        setWidth(100, Unit.PERCENTAGE);
+
+        setSelectable(true);
+        setMultiSelect(true);
+        setImmediate(true);
+        setSelectable(false);
+
+        /**
+         * set the base style name
+         */
+        addStyleName("surveillance-view");
+
+        /**
+         * add row header column
+         */
+        addGeneratedColumn("", new ColumnGenerator() {
+            @Override
+            public Object generateCell(Table table, final Object itemId, Object columnId) {
+                Label label = new Label((String) itemId);
+                label.setSizeFull();
+                label.addStyleName("white");
+                return label;
+            }
+        });
+
+        /**
+         * set header title for the row header column
+         */
+        setColumnHeader("", view.getName());
+        setColumnExpandRatio("", 1.0f);
+
+        /**
+         * create the other columns
+         */
+        for (ColumnDef columnDef : view.getColumns()) {
+            m_allColumnCategories.addAll(getOnmsCategoriesForNames(columnDef.getCategoryNames()));
+
+            addGeneratedColumn(columnDef.getLabel(), new Table.ColumnGenerator() {
+                public Object generateCell(Table source, final Object itemId, Object columnId) {
+
+                    int rowIndex = view.getRows().indexOf(view.getRowDef((String) itemId));
+                    int colIndex = view.getColumns().indexOf(view.getColumnDef((String) columnId));
+
+                    SurveillanceStatus surveillanceStatus = m_cells[rowIndex][colIndex];
+
+                    Label label = new Label(surveillanceStatus.getDownEntityCount() + " of " + surveillanceStatus.getTotalEntityCount());
+
+                    label.setSizeFull();
+                    label.addStyleName(surveillanceStatus.getStatus().toLowerCase());
+                    return label;
+                }
+            });
+
+            setColumnExpandRatio(columnDef.getLabel(), 1.0f);
+        }
+
+        /**
+         * gather all row categories
+         */
+        for (RowDef rowDef : view.getRows()) {
+            m_allRowCategories.addAll(getOnmsCategoriesForNames(rowDef.getCategoryNames()));
+
+            addItem(rowDef.getLabel());
+            setItemCaption(rowDef.getLabel(), rowDef.getLabel());
+        }
+        /**
+         * per default all is selected
+         */
+        m_selectedRowCategories = m_allRowCategories;
+        m_selectedColumnCategories = m_allColumnCategories;
+
+        /**
+         * page length is equal to the row count
+         */
+        this.setPageLength(this.getItemIds().size());
+
+        /**
+         * if dashboard is enabled...
+         */
+        if (m_dashboard) {
+            setCellStyleGenerator(new CellStyleGenerator() {
+                @Override
+                public String getStyle(Table table, Object itemId, Object propertyId) {
+                    /**
+                     * the row header column will not be faded out
+                     */
+                    if ("".equals(propertyId)) {
+                        return null;
+                    }
+
+                    if (m_selectedItemId != null && m_selectedPropertyId != null && m_selectedItemId.equals(itemId) && m_selectedPropertyId.equals(propertyId)) {
+                        return null;
+                    }
+
+                    if (m_selectedPropertyId == null && m_selectedItemId == null) {
+                        return null;
+                    }
+
+                    if (m_selectedItemId == null && m_selectedPropertyId != null && m_selectedPropertyId.equals(propertyId)) {
+                        return null;
+                    }
+
+                    if (m_selectedPropertyId == null && m_selectedItemId != null && m_selectedItemId.equals(itemId)) {
+                        return null;
+                    }
+
+                    return "marked";
+                }
+            });
+
+            /**
+             * ...add a click listener for cells...
+             */
+            addItemClickListener(new ItemClickEvent.ItemClickListener() {
+                @Override
+                public void itemClick(ItemClickEvent itemClickEvent) {
+                    String selectedColumn = (String) itemClickEvent.getPropertyId();
+                    if (!"".equals(selectedColumn)) {
+                        /**
+                         * this handles cell clicks
+                         */
+                        m_selectedItemId = itemClickEvent.getItemId();
+                        m_selectedPropertyId = itemClickEvent.getPropertyId();
+
+                        Notification.show(m_selectedItemId + "/" + m_selectedPropertyId + " selected");
+
+                        m_selectedRowCategories = getOnmsCategoriesForNames(view.getRowDef((String) itemClickEvent.getItemId()).getCategoryNames());
+                        m_selectedColumnCategories = getOnmsCategoriesForNames(view.getColumnDef((String) itemClickEvent.getPropertyId()).getCategoryNames());
+                    } else {
+                        /**
+                         * this handles row clicks
+                         */
+                        m_selectedItemId = itemClickEvent.getItemId();
+                        m_selectedPropertyId = null;
+
+                        Notification.show(m_selectedItemId + " selected");
+
+                        m_selectedRowCategories = getOnmsCategoriesForNames(view.getRowDef((String) itemClickEvent.getItemId()).getCategoryNames());
+                        m_selectedColumnCategories = m_allColumnCategories;
+                    }
+
+                    updateDetailsTable();
+                    markAsDirtyRecursive();
+                }
+            });
+
+            /**
+             * ...and a header click listener...
+             */
+            addHeaderClickListener(new HeaderClickListener() {
+                @Override
+                public void headerClick(HeaderClickEvent headerClickEvent) {
+                    if ("".equals(headerClickEvent.getPropertyId())) {
+                        /**
+                         * this handles the upper-left cell
+                         */
+                        m_selectedRowCategories = m_allRowCategories;
+                        m_selectedColumnCategories = m_allColumnCategories;
+
+                        m_selectedItemId = null;
+                        m_selectedPropertyId = null;
+
+                        Notification.show("All entries selected");
+                    } else {
+                        /**
+                         * this handles the rest of the header cells
+                         */
+                        m_selectedItemId = null;
+                        m_selectedPropertyId = headerClickEvent.getPropertyId();
+
+                        m_selectedRowCategories = m_allRowCategories;
+                        m_selectedColumnCategories = getOnmsCategoriesForNames(view.getColumnDef((String) headerClickEvent.getPropertyId()).getCategoryNames());
+
+                        Notification.show(m_selectedPropertyId + " selected");
+                    }
+
+                    updateDetailsTable();
+                    markAsDirtyRecursive();
+                }
+            });
+        }
+    }
+

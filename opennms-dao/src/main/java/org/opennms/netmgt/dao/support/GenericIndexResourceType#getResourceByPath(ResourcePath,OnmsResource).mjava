@@ -1,0 +1,147 @@
+    public OnmsResource getResourceByPath(final ResourcePath path, final OnmsResource parent) {
+        final Set<OnmsAttribute> set = new LazySet<OnmsAttribute>(new LazyResourceAttributeLoader(m_resourceStorageDao, path));
+        final String index = path.getName();
+        String label;
+        if (m_resourceLabelExpression == null) {
+            label = index;
+        } else {
+            SymbolTable symbolTable = new SymbolTable() {
+                private int lastN;
+                private boolean lastNSet = false;
+                
+                @Override
+                public String getSymbolValue(String symbol) {
+                    if (symbol.equals("index")) {
+                        return index;
+                    }
+ 
+                    Matcher subIndexMatcher = SUB_INDEX_PATTERN.matcher(symbol);
+                    if (subIndexMatcher.matches()) {
+                        Matcher subIndexArgumentsMatcher = SUB_INDEX_ARGUMENTS_PATTERN.matcher(subIndexMatcher.group(1));
+                        if (!subIndexArgumentsMatcher.matches()) {
+                            // Invalid arguments
+                            return null;
+                        }
+                        
+                        List<String> indexElements = tokenizeIndex(index);
+                        
+                        int start;
+                        int offset;
+                        if ("n".equals(subIndexArgumentsMatcher.group(1)) && lastNSet) {
+                            start = lastN;
+                            lastNSet = false;
+                        } else if ("n".equals(subIndexArgumentsMatcher.group(1))) {
+                            // Invalid use of "n" when lastN is not set
+                            return null;
+                        } else {
+                            offset = Integer.parseInt(subIndexArgumentsMatcher.group(1));
+                            if (offset < 0) {
+                                start = indexElements.size() + offset;
+                            } else {
+                                start = offset;
+                            }
+                        }
+
+                        int end;
+                        if ("n".equals(subIndexArgumentsMatcher.group(2))) {
+                            end = start + Integer.parseInt(indexElements.get(start)) + 1;
+                            start++;
+                            lastN = end;
+                            lastNSet = true;
+                        } else {
+                            if (subIndexArgumentsMatcher.group(2) == null) {
+                                end = indexElements.size();
+                            } else {                            
+                                end = start + Integer.parseInt(subIndexArgumentsMatcher.group(2));
+                            }
+                        }
+                        
+                        if (start < 0 || start >= indexElements.size()) {
+                            // Bogus index start
+                            return null;
+                        }
+                        
+                        if (end < 0 || end > indexElements.size()) {
+                            // Bogus index end
+                            return null;
+                        }
+
+                        StringBuffer indexSubString = new StringBuffer();
+                        for (int i = start; i < end; i++) {
+                            if (indexSubString.length() != 0) {
+                                indexSubString.append(".");
+                            }
+                            
+                            indexSubString.append(indexElements.get(i));
+                        }
+                        
+                        return indexSubString.toString();
+                    }
+                    
+                    Matcher hexMatcher = HEX_PATTERN.matcher(symbol);
+                    if (hexMatcher.matches()) {
+                        String subSymbol = getSymbolValue(hexMatcher.group(1));
+                        List<String> indexElements = tokenizeIndex(subSymbol);
+                        
+                        StringBuffer hexString = new StringBuffer();
+                        for (String indexElement : indexElements) {
+                            if (hexString.length() > 0) {
+                                hexString.append(":");
+                            }
+                            try {
+                                hexString.append(String.format("%02X", Integer.parseInt(indexElement)));
+                            } catch (NumberFormatException e) {
+                                return null;
+                            }
+                        }
+                        
+                        return hexString.toString();
+                    }
+                    
+                    Matcher stringMatcher = STRING_PATTERN.matcher(symbol);
+                    if (stringMatcher.matches()) {
+                        String subSymbol = getSymbolValue(stringMatcher.group(1));
+                        List<String> indexElements = tokenizeIndex(subSymbol);
+                        
+                        StringBuffer stringString = new StringBuffer();
+                        for (String indexElement : indexElements) {
+                            stringString.append(String.format("%c", Integer.parseInt(indexElement)));
+                        }
+                        
+                        return stringString.toString();
+                    }
+                    
+                    for (OnmsAttribute attr : set) {
+                        if (symbol.equals(attr.getName())) {
+                            if (StringPropertyAttribute.class.isAssignableFrom(attr.getClass())) {
+                                StringPropertyAttribute stringAttr = (StringPropertyAttribute) attr;
+                                return stringAttr.getValue();
+                            }
+                            if (ExternalValueAttribute.class.isAssignableFrom(attr.getClass())) {
+                                ExternalValueAttribute extAttr = (ExternalValueAttribute) attr;
+                                return extAttr.getValue();
+                            }
+                        }
+                    }
+                    
+                    return null;
+                }
+
+                private List<String> tokenizeIndex(final String index) {
+                    List<String> indexElements = new ArrayList<String>();
+                    StringTokenizer t = new StringTokenizer(index, ".");
+                    while (t.hasMoreTokens()) {
+                        indexElements.add(t.nextToken());
+                    }
+                    return indexElements;
+                }
+            };
+            
+            label = PropertiesUtils.substitute(m_resourceLabelExpression, symbolTable);
+        }
+
+        final OnmsResource resource = new OnmsResource(index, label, this, set, path);
+        resource.setParent(parent);
+        return resource;
+    }
+

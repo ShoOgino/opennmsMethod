@@ -1,0 +1,40 @@
+    private static Map<OnmsMonitoredService, Long> calculateServiceDownTime(Date periodEnd, Date periodStart, List<OnmsOutage> outages) {
+        Map<OnmsMonitoredService, Long> map = new HashMap<OnmsMonitoredService, Long>();
+        for (OnmsOutage outage : outages) {
+            if (map.get(outage.getMonitoredService()) == null) {
+                map.put(outage.getMonitoredService(), 0L);
+            }
+            
+            Date begin;
+            if (outage.getIfLostService().before(periodStart)) {
+                begin = periodStart;
+            } else if (outage.getIfLostService().after(periodEnd)) {
+                LoggerFactory.getLogger(DefaultRtcService.class).warn("Outage beginning is after period end {}, discarding outage: {}", periodEnd, outage.toString());
+                continue;
+            } else {
+                begin = outage.getIfLostService();
+            }
+            
+            Date end;
+            if (outage.getIfRegainedService() == null) {
+                // If the outage hasn't ended yet, use the end of the period as the end time
+                end = periodEnd;
+            } else if (outage.getIfRegainedService().after(periodEnd)) {
+                // If the outage ended after the end of the period, use the end of the period as the end time
+                end = periodEnd;
+            } else {
+                end = outage.getIfRegainedService();
+            }
+
+            if (begin.after(end)) {
+                LoggerFactory.getLogger(DefaultRtcService.class).warn("Outage beginning is after outage end inside period {} to {}, discarding outage: {}", periodStart, periodEnd, outage.toString());
+                continue;
+            } else {
+                Long count = map.get(outage.getMonitoredService());
+                count += (end.getTime() - begin.getTime());
+                map.put(outage.getMonitoredService(), count);
+            }
+        }
+        return map;
+    }
+
