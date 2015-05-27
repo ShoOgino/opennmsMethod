@@ -1,0 +1,63 @@
+    @Override
+    public GraphResults findResults(String[] resourceIds, String[] reports, long start, long end, String relativeTime) {
+        if (resourceIds == null) {
+            throw new IllegalArgumentException("resourceIds argument cannot be null");
+        }
+        if (reports == null) {
+            throw new IllegalArgumentException("reports argument cannot be null");
+        }
+        if (end < start) {
+            throw new IllegalArgumentException("end time cannot be before start time");
+        }
+
+        GraphResults graphResults = new GraphResults();
+        graphResults.setStart(new Date(start));
+        graphResults.setEnd(new Date(end));
+        graphResults.setRelativeTime(relativeTime);
+        graphResults.setRelativeTimePeriods(m_periods);
+        graphResults.setReports(reports);
+
+        HashMap<String, List<OnmsResource>> resourcesMap = new HashMap<String, List<OnmsResource>>();
+
+        for (String resourceId : resourceIds) {
+            String[] values = parseResourceId(resourceId);
+            if (values == null) {
+                continue;
+            }
+            String parent = values[0];
+            String childType = values[1];
+            String childName = values[2];
+            LOG.debug("findResults: parent, childType, childName = {}, {}, {}", values[0], values[1], values[2]);
+            OnmsResource resource = null;
+            if (!resourcesMap.containsKey(parent)) {
+                List<OnmsResource> resourceList = m_resourceDao.getResourceById(resourceId).getChildResources();
+                if (resourceList == null) {
+                    LOG.warn("findResults: zero child resources found for {}", parent);
+                } else {
+                    resourcesMap.put(parent, resourceList);
+                    LOG.debug("findResults: add resourceList to map for {}", parent);
+                }
+            }
+            for (OnmsResource r : resourcesMap.get(parent)) {
+                if (childType.equals(r.getResourceType().getName())
+                        && childName.equals(r.getName())) {
+                    resource = r;
+                    LOG.debug("findResults: found resource in map{}", r.toString());
+                    break;
+                }
+            }
+            try {
+                graphResults.addGraphResultSet(createGraphResultSet(resourceId, resource, reports, graphResults));
+            } catch (IllegalArgumentException e) {
+                LOG.warn(e.getMessage(), e);
+                continue;
+            }
+        }
+
+        graphResults.setGraphTopOffsetWithText(m_rrdDao.getGraphTopOffsetWithText());
+        graphResults.setGraphLeftOffset(m_rrdDao.getGraphLeftOffset());
+        graphResults.setGraphRightOffset(m_rrdDao.getGraphRightOffset());
+
+        return graphResults;
+    }
+

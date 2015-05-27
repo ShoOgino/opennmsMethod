@@ -1,62 +1,15 @@
     /**
-     * Returns a list of resources for all the nodes.
-     *
-     * <ul>
-     * <li>A resource must be listed once no matter if storeByForeignSource is enabled or not</li>
-     * <li>Discovered nodes should have resources based on the nodeId</li>
-     * <li>A requisitioned node should have resources based on nodeSource if storeByForeignSource is enabled</li>
-     * <li>A requisitioned node should have resources based on nodeId if storeByForeignSource is not enabled</li>
-     * </ul>
-     * 
-     * <p>TODO It does not currently fully check that an IP address that is found to have
-     * distributed response time data is in the database on the proper node so it can have false positives.</p>
-     * 
-     * @return a {@link java.util.List} object.
+     * Returns the set of node resources for all nodes in
+     * the database that:
+     *   1) Are not deleted
+     *   2) Have one or more child resources
      */
     protected List<OnmsResource> findNodeResources() {
-        List<OnmsResource> resources = new LinkedList<OnmsResource>();
-
-        Set<Integer> snmpNodes = findSnmpNodeDirectories();
-        Set<String> nodeSources = findNodeSourceDirectories();
-        Set<String> responseTimeInterfaces = findChildrenMatchingFilter(new File(getRrdDirectory(), ResourceTypeUtils.RESPONSE_DIRECTORY), RrdFileConstants.INTERFACE_DIRECTORY_FILTER);
-        Set<String> distributedResponseTimeInterfaces = findChildrenChildrenMatchingFilter(new File(new File(getRrdDirectory(), ResourceTypeUtils.RESPONSE_DIRECTORY), "distributed"), RrdFileConstants.INTERFACE_DIRECTORY_FILTER);
-
-        List<OnmsNode> nodes = m_nodeDao.findAll();
-        Set<Integer> nodesFound = new TreeSet<Integer>();
-        for (OnmsNode node : nodes) {
-            // Only returns non-deleted nodes to fix NMS-2977
-            if (nodesFound.contains(node.getId()) || (node.getType() != null && node.getType().equals("D"))) {
-                continue;
-            }
-            boolean nodeIdfound = false;
-            boolean nodeSourcefound = false;
-            boolean responseTimeFound = false;
-            if (node.getForeignSource() != null && node.getForeignId() != null && nodeSources.contains(node.getForeignSource() + ":" + node.getForeignId())) {
-                nodeSourcefound = true;
-            } else if (snmpNodes.contains(node.getId())) {
-                nodeIdfound = true;
-            } else if (responseTimeInterfaces.size() > 0 || distributedResponseTimeInterfaces.size() > 0) {
-                for (final OnmsIpInterface ip : node.getIpInterfaces()) {
-                    final String addr = InetAddressUtils.str(ip.getIpAddress());
-                    if (responseTimeInterfaces.contains(addr) || distributedResponseTimeInterfaces.contains(addr)) {
-                        responseTimeFound = true;
-                        break;
-                    }
-                }
-            }
-            boolean storeByFS = ResourceTypeUtils.isStoreByForeignSource();
-            if (nodeSourcefound || (responseTimeFound && storeByFS)) {
-                LOG.debug("findNodeResources: adding resource for {}:{}", node.getForeignSource(), node.getForeignId());
-                resources.add(m_nodeSourceResourceType.createChildResource(node.getForeignSource() + ":" + node.getForeignId()));
-                nodesFound.add(node.getId());
-            }
-            if (nodeIdfound || (responseTimeFound && !storeByFS)) {
-                LOG.debug("findNodeResources: adding resources for nodeId {}", node.getId());
-                resources.add(m_nodeResourceType.createChildResource(node));
-                nodesFound.add(node.getId());
-            }
-        }
-
-        return resources;
+        return m_nodeDao.findAll().parallelStream()
+            // Only return non-deleted nodes - see NMS-2977
+            .filter(node -> node.getType() == null || !node.getType().equals("D"))
+            .map(node -> getResourceForNode(node))
+            .filter(resource -> resource.getChildResources().size() > 0)
+            .collect(Collectors.toList());
     }
 

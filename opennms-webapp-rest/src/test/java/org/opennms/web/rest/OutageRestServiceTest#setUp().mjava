@@ -1,0 +1,58 @@
+    @Before
+    @Override
+    public void setUp() throws Throwable {
+        super.setUp();
+        Assert.assertNotNull(populator);
+        Assert.assertNotNull(applicationDao);
+
+        populator.addExtension(new DatabasePopulator.Extension<ApplicationDao>() {
+
+            private OnmsOutage unresolvedOutage;
+
+            private OnmsEvent outageEvent;
+
+            private OnmsApplication application;
+
+            @Override
+            public DatabasePopulator.DaoSupport<ApplicationDao> getDaoSupport() {
+                return new DatabasePopulator.DaoSupport<>(ApplicationDao.class, applicationDao);
+            }
+
+            @Override
+            public void onPopulate(DatabasePopulator populator, ApplicationDao dao) {
+                OnmsDistPoller distPoller = populator.getDistPoller("localhost", "127.0.0.1");
+                outageEvent = populator.buildEvent(distPoller);
+                populator.getEventDao().save(outageEvent);
+                populator.getEventDao().flush();
+
+                // create the application
+                application = new OnmsApplication();
+                application.setName("Awesome Application");
+                dao.save(application);
+
+                // get the SNMP service from node 1 and assign the application to it
+                final OnmsMonitoredService svc = populator.getMonitoredServiceDao().get(populator.getNode1().getId(), InetAddressUtils.addr("192.168.1.2"), "HTTP");
+                svc.addApplication(application);
+                application.addMonitoredService(svc);
+                populator.getMonitoredServiceDao().saveOrUpdate(svc);
+                populator.getMonitoredServiceDao().flush();
+
+                // create a unresolved outage
+                unresolvedOutage = new OnmsOutage(new Date(), outageEvent, svc);
+                populator.getOutageDao().save(unresolvedOutage);
+                populator.getOutageDao().flush();
+            }
+
+            @Override
+            public void onShutdown(DatabasePopulator populator, ApplicationDao dao) {
+                // All other tables have been already deleted,
+                // Delete OnmsApplications
+                for (OnmsApplication application : dao.findAll()) {
+                    dao.delete(application);
+                }
+            }
+        });
+
+        populator.populateDatabase();
+    }
+

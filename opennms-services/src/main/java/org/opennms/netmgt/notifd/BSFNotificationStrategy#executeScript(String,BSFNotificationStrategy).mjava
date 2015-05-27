@@ -1,0 +1,74 @@
+    private static synchronized int executeScript(String fileName, BSFNotificationStrategy obj){
+        String lang = obj.getLangClass();
+        String engine = obj.getBsfEngine();
+        String runType = obj.getBsfRunType();
+        String[] extensions = obj.getFileExtensions();
+
+        LOG.info("Loading notification script from file '{}'", fileName);
+        File scriptFile = new File(fileName);
+        int ret = -1;
+        try {
+
+            if(lang==null) lang = BSFManager.getLangFromFilename(fileName);
+
+            // Declare some beans that can be used inside the script                    
+            HashMap<String,String> results = new HashMap<String,String>();
+            s_bsfManager.declareBean("results", results, Map.class);
+            declareBeans(obj);
+
+            if(engine != null && lang != null && extensions != null && extensions.length > 0 ){
+              //We register the scripting engine again no matter what since  
+                //BSFManager doesn't let us know what engine is currently registered
+                //for this language and it might not be the same as what we want. 
+                LOG.debug("Registering scripting engine '{}' for '{}'", engine, lang);
+                BSFManager.registerScriptingEngine(lang,engine,extensions);
+            }
+
+            if(scriptFile.exists() && scriptFile.canRead()){   
+                String code = IOUtils.getStringFromReader(new InputStreamReader(new FileInputStream(scriptFile), "UTF-8"));
+
+                // Check foot before firing
+                obj.checkAberrantScriptBehaviors(code);
+
+                // Execute the script
+                if("eval".equals(runType)){
+                    results.put("status", s_bsfManager.eval(lang, "BSFNotificationStrategy", 0, 0, code).toString());  
+                }else if("exec".equals(runType)){
+                    s_bsfManager.exec(lang, "BSFNotificationStrategy", 0, 0, code);
+                }else{
+                    LOG.warn("Invalid run-type parameter value '{}' for BSF notification script '{}'. Only 'eval' and 'exec' are supported.", runType, scriptFile);
+                }
+
+                // Check whether the script finished successfully
+                if ("OK".equals(results.get("status"))) {
+                    LOG.info("Execution succeeded and successful status passed back for script '{}'", scriptFile);
+                    ret = 0;
+                } else {
+                    LOG.warn("Execution succeeded for script '{}', but script did not indicate successful notification by putting an entry into the 'results' bean with key 'status' and value 'OK'", scriptFile);
+                    ret = -1;
+                }
+            } else {
+                LOG.warn("Cannot locate or read BSF script file '{}'. Returning failure indication.", fileName);
+                ret = -1;
+            }
+        } catch (BSFException e) {
+            LOG.warn("Execution of script '{}' failed with BSFException: {}", scriptFile, e.getMessage(), e);
+            ret = -1;
+        } catch (FileNotFoundException e){
+            LOG.warn("Could not find BSF script file '{}'.", fileName);
+            ret = -1;
+        } catch (IOException e) {
+            LOG.warn("Execution of script '{}' failed with IOException: {}", scriptFile, e.getMessage(), e);
+            ret = -1;
+        } catch (Throwable e) {
+            // Catch any RuntimeException throws
+            LOG.warn("Execution of script '{}' failed with unexpected throwable: {}", scriptFile, e.getMessage(), e);
+            ret = -1;
+        } finally { 
+            undeclareBean("results");
+            undeclareBeans(obj);
+        }
+        LOG.debug("Finished running BSF script notification.");
+        return ret;
+    }
+

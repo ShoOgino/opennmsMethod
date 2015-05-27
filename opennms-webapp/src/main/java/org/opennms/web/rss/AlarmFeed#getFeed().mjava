@@ -1,0 +1,61 @@
+    /**
+     * <p>getFeed</p>
+     *
+     * @return a {@link com.sun.syndication.feed.synd.SyndFeed} object.
+     */
+    @Override
+    public SyndFeed getFeed() {
+        SyndFeed feed = new SyndFeedImpl();
+
+        feed.setTitle("Alarms");
+        feed.setDescription("OpenNMS Alarms");
+        feed.setLink(getUrlBase() + "alarm/list.htm");
+
+        List<SyndEntry> entries = new ArrayList<SyndEntry>();
+
+        List<Filter> filters = new ArrayList<Filter>();
+        if (this.getRequest().getParameter("node") != null) {
+            Integer nodeId = WebSecurityUtils.safeParseInt(this.getRequest().getParameter("node"));
+            filters.add(new NodeFilter(nodeId, getServletContext()));
+        }
+        if (this.getRequest().getParameter("severity") != null) {
+            String sev = this.getRequest().getParameter("severity");
+            for (OnmsSeverity severity : OnmsSeverity.values()) {
+                if (severity.getLabel().equalsIgnoreCase(sev)) {
+                    filters.add(new SeverityFilter(severity));
+                }
+            }
+
+        }
+
+        OnmsCriteria queryCriteria = AlarmUtil.getOnmsCriteria(new AlarmCriteria(filters.toArray(new Filter[] {}), SortStyle.FIRSTEVENTTIME, AcknowledgeType.BOTH, this.getMaxEntries(), AlarmCriteria.NO_OFFSET));
+
+        OnmsAlarm[] alarms = m_webAlarmRepository.getMatchingAlarms(queryCriteria);
+
+        SyndEntry entry;
+        
+        for (OnmsAlarm alarm : alarms) {
+            entry = new SyndEntryImpl();
+            entry.setPublishedDate(alarm.getFirstEventTime());
+            if (alarm.getAckTime() != null) {
+                entry.setTitle(sanitizeTitle(alarm.getLogMsg()) + " (acknowledged by " + alarm.getAckUser() + ")");
+                entry.setUpdatedDate(alarm.getAckTime());
+            } else {
+                entry.setTitle(sanitizeTitle(alarm.getLogMsg()));
+                entry.setUpdatedDate(alarm.getFirstEventTime());
+            }
+            entry.setLink(getUrlBase() + "alarm/detail.htm?id=" + alarm.getId());
+            entry.setAuthor("OpenNMS");
+            
+            SyndContent content = new SyndContentImpl();
+            content.setType("text/html");
+            content.setValue(alarm.getDescription());
+            entry.setDescription(content);
+            
+            entries.add(entry);
+        }
+
+        feed.setEntries(entries);
+        return feed;
+    }
+
