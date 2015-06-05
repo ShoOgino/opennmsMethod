@@ -1,0 +1,82 @@
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Transactional
+    @Path("foreignsources")
+    public Response foreignsources() throws IOException {
+        /**
+         * the item list
+         */
+        final List<Map<String, Object>> itemList = new ArrayList<>();
+
+        /**
+         * retrieve the node ids for nodes with outages
+         */
+        Set<Integer> nodeIds = getOutagesNodeIds();
+
+        /**
+         * Helper field for sizes
+         */
+        HashMap<String, Integer> foreignSourceSizes = new HashMap<>();
+
+        /**
+         * counter for total of nodes
+         */
+        int nodesTotal = 0;
+
+        /**
+         * create data based on foreignSource names
+         */
+        Set<String> foreignSourceNames = getForeignSourceNames();
+
+        for (String foreignSourceName : foreignSourceNames) {
+            int nodesInForeignSource = m_nodeDao.getNodeCountForForeignSource(foreignSourceName);
+
+            int nodesWithOutages = 0;
+
+            if (nodeIds.size() > 0) {
+                CriteriaBuilder criteriaBuilder = new CriteriaBuilder(OnmsNode.class);
+
+                criteriaBuilder.eq("foreignSource", foreignSourceName);
+                criteriaBuilder.in("id", nodeIds);
+
+                nodesWithOutages = m_nodeDao.countMatching(criteriaBuilder.toCriteria());
+            }
+
+            System.out.println(foreignSourceName + " -> Nodes: " + nodesWithOutages + "/" + nodesInForeignSource);
+
+            if (nodesInForeignSource > 0) {
+
+                Double color = 0.0;
+
+                if (nodesWithOutages == 1 && nodesInForeignSource > nodesWithOutages) {
+                    color = 0.5;
+                } else {
+                    if (nodesWithOutages > 1 || nodesInForeignSource == nodesWithOutages) {
+                        color = 1.0;
+                    }
+                }
+
+                foreignSourceSizes.put(foreignSourceName, nodesInForeignSource);
+
+                Map<String, Object> item = new HashMap<>();
+                item.put("id", foreignSourceName);
+                item.put("color", Lists.newArrayList(color));
+
+                itemList.add(item);
+
+                nodesTotal += nodesInForeignSource;
+            }
+        }
+
+        for (Map<String, Object> map : itemList) {
+            int nodesInForeignSource = foreignSourceSizes.get(map.get("id"));
+            double size = (double) nodesInForeignSource / (double) nodesTotal;
+            map.put("size", Lists.newArrayList(Double.valueOf(size)));
+        }
+
+        Map<String, List<Map<String, Object>>> map = new HashMap<>();
+        map.put("children", itemList);
+        final JSONObject jo = new JSONObject(map);
+        return Response.ok(jo.toString(), MediaType.APPLICATION_JSON).build();
+    }
+
