@@ -1,0 +1,36 @@
+    @Override
+    public List<HeatMapElement> getHeatMapItemsByCategories() {
+        return getHibernateTemplate().execute(new HibernateCallback<List<HeatMapElement>>() {
+            @Override
+            public List<HeatMapElement> doInHibernate(Session session) throws HibernateException, SQLException {
+                return (List<HeatMapElement>) session.createSQLQuery(
+                        "select c.categoryname, c.categoryid, " +
+                                "count(distinct case when outages.outageid is not null and monSvc.status = 'A' then monSvc.id else null end) as servicesDown, " +
+                                "count(distinct case when monSvc.status = 'A' then monSvc.id else null end) as servicesTotal, " +
+                                "count(distinct case when outages.outageid is null and monSvc.status = 'A' then node.nodeid else null end) as nodesUp, " +
+                                "count(distinct node.nodeid) as nodeTotalCount " +
+                                "from node join category_node cn using (nodeid) " +
+                                "join categories c using (categoryid) " +
+                                "left outer join ipinterface ip using (nodeid) " +
+                                "left outer join ifservices monsvc on (monsvc.ipinterfaceid = ip.id) " +
+                                "left outer join outages on (outages.ifserviceid = monsvc.id and outages.ifregainedservice is null) " +
+                                "where nodeType <> 'D' " +
+                                "group by c.categoryname,c.categoryid")
+                        .setResultTransformer(new ResultTransformer() {
+                            private static final long serialVersionUID = 5152094813503430377L;
+
+                            @Override
+                            public Object transformTuple(Object[] tuple, String[] aliases) {
+                                return new HeatMapElement((String) tuple[0], (Number) tuple[1], (Number) tuple[2], (Number) tuple[3], (Number) tuple[4], (Number) tuple[5]);
+                            }
+
+                            @SuppressWarnings("rawtypes")
+                            @Override
+                            public List transformList(List collection) {
+                                return collection;
+                            }
+                        }).list();
+            }
+        });
+    }
+
