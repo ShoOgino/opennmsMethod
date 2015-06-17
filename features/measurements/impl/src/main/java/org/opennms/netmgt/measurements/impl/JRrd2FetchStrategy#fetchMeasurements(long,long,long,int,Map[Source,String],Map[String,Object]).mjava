@@ -1,0 +1,56 @@
+    @Override
+    protected FetchResults fetchMeasurements(long start, long end, long step,
+            int maxrows, Map<Source, String> rrdsBySource,
+            Map<String, Object> constants) throws RrdException {
+
+        final long startInSeconds = (long) Math.floor(start / 1000);
+        final long endInSeconds = (long) Math.floor(end / 1000);
+
+        long stepInSeconds = (long) Math.floor(step / 1000);
+        // The step must be strictly positive
+        if (stepInSeconds <= 0) {
+            stepInSeconds = 1;
+        }
+
+        // Use labels without spaces when executing the xport command
+        // These are mapped back to the requested labels in the response
+        final Map<String, String> labelMap = Maps.newHashMap();
+
+        int k = 0;
+        List<String> argv = Lists.newLinkedList();
+        for (final Map.Entry<Source, String> entry : rrdsBySource.entrySet()) {
+            final Source source = entry.getKey();
+            final String rrdFile = entry.getValue();
+            final String tempLabel = Integer.toString(++k);
+            labelMap.put(tempLabel, source.getLabel());
+
+            argv.add(String.format("DEF:%s=%s:%s:%s",
+            		tempLabel, rrdFile, source.getAttribute(),
+                    source.getAggregation()));
+            argv.add(String.format("XPORT:%s:%s", tempLabel,
+            		tempLabel));
+        }
+
+        org.opennms.netmgt.rrd.jrrd2.api.FetchResults xportResults;
+        try {
+            xportResults = jrrd2.xport(startInSeconds, endInSeconds, stepInSeconds, maxrows, argv.toArray(new String[argv.size()]));
+        } catch (JRrd2Exception e) {
+            throw new RrdException("Xport failed.", e);
+        }
+
+        // Convert to ms
+        final long[] timestamps = xportResults.getTimestamps();
+        for (int i = 0; i < timestamps.length; i++) {
+            timestamps[i] *= 1000;
+        }
+
+        // Map the column labels from their temporary values to their requested values
+        Map<String, double[]> valuesByTempLabel = xportResults.getColumnsWithValues();
+        Map<String, double[]> valuesByLabel = Maps.newLinkedHashMap();
+        for (Entry<String, double[]> entry : valuesByTempLabel.entrySet()) {
+        	valuesByLabel.put(labelMap.get(entry.getKey()), entry.getValue());
+        }
+
+        return new FetchResults(timestamps, valuesByLabel, xportResults.getStep() * 1000, constants);
+    }
+
