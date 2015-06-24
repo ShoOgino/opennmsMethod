@@ -1,0 +1,82 @@
+    /* (non-Javadoc)
+     * @see org.opennms.upgrade.api.OnmsUpgrade#execute()
+     */
+    @Override
+    public void execute() throws OnmsUpgradeException {
+        String jettySSL = getMainProperties().getProperty("org.opennms.netmgt.jetty.https-port", null);
+        String jettyAJP = getMainProperties().getProperty("org.opennms.netmgt.jetty.ajp-port", null);
+        boolean sslWasFixed = false;
+        boolean ajpWasFixed = false;
+        try {
+            log("SSL Enabled ? %s\n", jettySSL != null);
+            log("AJP Enabled ? %s\n", jettyAJP != null);
+            if (jettySSL != null || jettyAJP != null) {
+                File jettyXmlExample = new File(getHomeDirectory(), "etc" + File.separator + "examples" + File.separator + "jetty.xml");
+                File jettyXml = new File(getHomeDirectory(), "etc" + File.separator + "jetty.xml");
+                
+                if (!jettyXml.exists() && !jettyXmlExample.exists()) {
+                    throw new FileNotFoundException("The required file doesn't exist: " + jettyXmlExample);
+                }
+                
+                if (!jettyXml.exists()) {
+                    log("Copying %s into %s\n", jettyXmlExample, jettyXml);
+                    FileUtils.copyFile(jettyXmlExample, jettyXml);
+                }
+                    
+                log("Creating %s\n", jettyXml);
+                File tempFile = new File(jettyXml.getAbsoluteFile() + ".tmp");
+                FileWriter w = new FileWriter(tempFile);
+                LineIterator it = FileUtils.lineIterator(jettyXmlExample);
+
+                boolean startSsl = false;
+                boolean startAjp = false;
+                while (it.hasNext()) {
+                    String line = it.next();
+                    if (startAjp) {
+                        if (line.matches("^\\s+[<][!]--\\s*$")) {
+                            continue;
+                        }
+                        if (line.matches("^\\s+--[>]\\s*$")) {
+                            startAjp = false;
+                            ajpWasFixed = true;
+                            continue;
+                        }
+                    }
+                    if (startSsl) {
+                        if (line.matches("^\\s+[<][!]--\\s*$")) {
+                            continue;
+                        }
+                        if (line.matches("^\\s+--[>]\\s*$")) {
+                            startSsl = false;
+                            sslWasFixed = true;
+                            continue;
+                        }
+                    }
+                    w.write(line + "\n");
+                    if (startAjp == false && line.contains("<!-- Add AJP support -->") && jettyAJP != null) {
+                        startAjp = true;
+                        log("Enabling AjpConnector\n");
+                    }
+                    if (startSsl == false && line.contains("<!-- Add HTTPS support -->") && jettySSL != null) {
+                        startSsl = true;
+                        log("Enabling SslSelectChannelConnector\n");
+                    }
+                }
+                LineIterator.closeQuietly(it);
+                w.close();
+                FileUtils.copyFile(tempFile, jettyXml);
+                FileUtils.deleteQuietly(tempFile);
+            } else {
+                log("Neither SSL nor AJP are enabled.\n");
+            }
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix Jetty configuration because " + e.getMessage(), e);
+        }
+        if (jettyAJP != null && !ajpWasFixed) {
+            throw new OnmsUpgradeException("Can't enable APJ, please manually edit jetty.xml and uncomment the section where org.eclipse.jetty.ajp.Ajp13SocketConnector is defined.");
+        }
+        if (jettySSL != null && !sslWasFixed) {
+            throw new OnmsUpgradeException("Can't enable SSL, please manually edit jetty.xml and uncomment the section where org.eclipse.jetty.server.ssl.SslSelectChannelConnector is defined.");
+        }
+    }
+

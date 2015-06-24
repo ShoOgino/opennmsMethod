@@ -1,0 +1,56 @@
+    /**
+     * Synchronize inventory.
+     * <p>Obtain the ENTITY-MIB and vendor attributes from the target node through SNMP.</p>
+     * <p>If the node has a hardware inventory data on the database, this is going to be overridden only,
+     * if the gathered data differs from the data at the database, otherwise the gathered data will be
+     * discarded.</p>
+     *
+     * @param nodeId the node id
+     */
+    private void synchronizeInventory(int nodeId) {
+        final OnmsNode node = m_nodeDao.get(nodeId);
+        if (node == null) {
+            throw new ProvisioningAdapterException("Failed to return node for given nodeId: " + nodeId);
+        }
+
+        final OnmsIpInterface intf = node.getPrimaryInterface();
+        if (intf == null) {
+            throw new ProvisioningAdapterException("Can't find the SNMP Primary IP address for nodeId: " + nodeId);            
+        }
+        final InetAddress ipAddress = intf.getIpAddress();
+
+        EventBuilder ebldr = null;
+        try {
+            if (node.getSysObjectId() == null) {
+                LOG.warn("Skiping hardware discover because the node {} doesn't support SNMP", nodeId);
+                return;
+            }
+            SnmpAgentConfig agentConfig = m_snmpConfigDao.getAgentConfig(ipAddress);
+            final OnmsHwEntity newRoot = getRootEntity(agentConfig, node);
+            newRoot.setNode(node);
+            final OnmsHwEntity currentRoot = m_hwEntityDao.findRootByNodeId(node.getId());
+            if (newRoot.equals(currentRoot)) {
+                LOG.info("No changes detected on the hardware inventory for nodeId {}", nodeId);
+                return;
+            }
+            if (currentRoot == null) {
+                LOG.info("Saving hardware inventory for nodeId {}", nodeId);
+            } else {
+                LOG.info("Updating hardware inventory for nodeId {}", nodeId);
+                m_hwEntityDao.delete(currentRoot);
+                m_hwEntityDao.flush();
+            }
+            m_hwEntityDao.saveOrUpdate(newRoot);
+            ebldr = new EventBuilder(EventConstants.HARDWARE_INVENTORY_SUCCESSFUL_UEI, PREFIX + NAME);
+        } catch (Throwable e) {
+            ebldr = new EventBuilder(EventConstants.HARDWARE_INVENTORY_FAILED_UEI, PREFIX + NAME);
+            ebldr.addParam(EventConstants.PARM_REASON, e.getMessage());
+        }
+
+        if (ebldr != null) {
+            ebldr.setNodeid(nodeId);
+            ebldr.setInterface(ipAddress);
+            getEventForwarder().sendNow(ebldr.getEvent());
+        }
+    }
+

@@ -1,0 +1,118 @@
+    /**
+     * This method is responsible for determining the
+     * data related to the critical path:
+     * node label, nodeId, the number of nodes
+     * dependent on this path, and the managed state
+     * of the path
+     *
+     * @param criticalPathIp a {@link java.lang.String} object.
+     * @param criticalPathServiceName a {@link java.lang.String} object.
+     * @return an array of {@link java.lang.String} objects.
+     * @throws java.sql.SQLException if any.
+     */
+    @Override
+    public String[] getCriticalPathData(String criticalPathIp, String criticalPathServiceName) throws SQLException {
+        final Connection conn = DataSourceFactory.getInstance().getConnection();
+        final DBUtils d = new DBUtils(PathOutageManagerJdbcImpl.class, conn);
+
+        String[] result = new String[4];
+        int nodeCount=0;
+        int count = 0;
+
+        try {
+            final PreparedStatement stmt0 = conn.prepareStatement(GET_NODELABEL_BY_IP);
+            d.watch(stmt0);
+            stmt0.setString(1, criticalPathIp);
+
+            final ResultSet rs0 = stmt0.executeQuery();
+            d.watch(rs0);
+
+            while (rs0.next()) {
+                count++;
+                result[0] = rs0.getString(1);
+            }
+            if (count > 1) {
+                result[0] = "(" + count + " nodes have this IP)";
+            }
+
+            rs0.close();
+            stmt0.close();
+
+            count = 0;
+            final PreparedStatement stmt1 = conn.prepareStatement(GET_NODEID_BY_IP);
+            d.watch(stmt1);
+            stmt1.setString(1, criticalPathIp);
+
+            final ResultSet rs1 = stmt1.executeQuery();
+            d.watch(rs1);
+
+            while (rs1.next()) {
+                result[1] = rs1.getString(1);
+            }
+
+            rs1.close();
+            stmt1.close();
+
+            final PreparedStatement stmt2 = conn.prepareStatement(COUNT_NODES_IN_PATH);
+            d.watch(stmt2);
+            stmt2.setString(1, criticalPathIp);
+            stmt2.setString(2, criticalPathServiceName);
+
+            final ResultSet rs2 = stmt2.executeQuery();
+            d.watch(rs2);
+
+            while (rs2.next()) {
+                nodeCount = rs2.getInt(1);
+            }
+            result[2] = Integer.toString(nodeCount);
+
+            rs2.close();
+            stmt2.close();
+
+            final PreparedStatement stmt = conn.prepareStatement(IS_CRITICAL_PATH_MANAGED);
+            d.watch(stmt);
+            stmt.setString(1, criticalPathIp);
+            stmt.setString(2, criticalPathServiceName);
+
+            final ResultSet rs = stmt.executeQuery();
+            d.watch(rs);
+
+            while (rs.next()) {
+                count = rs.getInt(1);
+            }
+
+            rs.close();
+            stmt.close();
+
+            if(count > 0) {
+                final PreparedStatement stmt3 = conn.prepareStatement(GET_CRITICAL_PATH_STATUS);
+                d.watch(stmt3);
+                stmt3.setString(1, criticalPathIp);
+                stmt3.setString(2, criticalPathServiceName);
+
+                final ResultSet rs3 = stmt3.executeQuery();
+                d.watch(rs3);
+
+                while (rs3.next()) {
+                    count = rs3.getInt(1);
+                }
+                if(count > 0) {
+                    result[3] = "Critical";
+                } else {
+                    result[3] = "Normal";
+                }
+                while (rs3.next()) {
+                    result[3] = rs3.getString(1);
+                }
+
+                rs3.close();
+                stmt3.close();
+            } else {
+                result[3] = "Cleared";
+            }
+        } finally {
+            d.cleanUp();
+        }
+        return result;
+    }
+

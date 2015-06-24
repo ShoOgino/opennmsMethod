@@ -1,0 +1,100 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void refreshDetails(final Set<OnmsCategory> rowCategories, final Set<OnmsCategory> colCategories) {
+        if (m_future != null && !m_future.isDone()) {
+            return;
+        }
+
+        m_nodeSelect.setEnabled(false);
+        m_resourceSelect.setEnabled(false);
+        m_graphSelect.setEnabled(false);
+
+        m_future = getSurveillanceViewService().getExecutorService().submit(new Callable<List<OnmsNode>>() {
+            @Override
+            public List<OnmsNode> call() throws Exception {
+                /**
+                 * retrieve the matching nodes
+                 */
+                return getSurveillanceViewService().getNodesForCategories(rowCategories, colCategories);
+            }
+        });
+
+        m_future.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<OnmsNode> nodes = m_future.get();
+                    getUI().access(new Runnable() {
+                        @Override
+                        public void run() {
+                            /**
+                             * save the current selection
+                             */
+                            Integer selectedNodeId = (Integer) m_nodeSelect.getValue();
+                            String selectedResourceId = (String) m_resourceSelect.getValue();
+                            String selectedGraph = (String) m_graphSelect.getValue();
+
+                            LOG.debug("Saved selection={} / {} / {}", selectedNodeId == null ? "null" : selectedNodeId, selectedResourceId == null ? "null" : selectedResourceId, selectedGraph);
+
+                            /**
+                             * remove all entries in the node selection box
+                             */
+                            m_nodeSelect.removeAllItems();
+
+                            /**
+                             * add the new items
+                             */
+                            if (nodes != null && !nodes.isEmpty()) {
+                                for (OnmsNode node : nodes) {
+                                    m_nodeSelect.addItem(node.getId());
+                                    m_nodeSelect.setItemCaption(node.getId(), "Node: " + node.getLabel());
+                                }
+                            }
+
+                            m_nodeSelect.setEnabled(true);
+                            m_resourceSelect.setEnabled(true);
+                            m_graphSelect.setEnabled(true);
+
+                            /**
+                             * try to select the same node/resource/graph combination as before
+                             */
+                            if (selectedNodeId != null) {
+                                for (Integer onmsNodeId : (Collection<Integer>) m_nodeSelect.getItemIds()) {
+                                    if (onmsNodeId.equals(selectedNodeId)) {
+                                        m_nodeSelect.select(onmsNodeId);
+                                        if (selectedResourceId != null) {
+                                            for (String onmsResourceId : (Collection<String>) m_resourceSelect.getItemIds()) {
+                                                if (onmsResourceId.equals(selectedResourceId)) {
+                                                    m_resourceSelect.select(onmsResourceId);
+                                                    if (selectedGraph != null) {
+                                                        m_graphSelect.select(selectedGraph);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+
+                            /**
+                             * if nothing was selected before, just select the first entry if possible
+                             */
+                            Iterator<?> i = m_nodeSelect.getItemIds().iterator();
+
+                            if (i.hasNext()) {
+                                m_nodeSelect.select(i.next());
+                            }
+                        }
+                    });
+                } catch (InterruptedException e) {
+                    LOG.error("Interrupted", e);
+                } catch (ExecutionException e) {
+                    LOG.error("Exception in task", e.getCause());
+                }
+            }
+        }, MoreExecutors.sameThreadExecutor());
+    }
+

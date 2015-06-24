@@ -1,0 +1,60 @@
+    /*
+     * Test the behaviour when the configuration is modified and the daemon is
+     * reloaded. Verify: That the proper events are sent by the daemon. The AP
+     * state in the database after the poll.
+     */
+    @Test
+    @JUnitSnmpAgent(host = "10.1.0.2", resource = SNMP_DATA_PATH + "10.1.0.2-walk.txt")
+    public void testReloadDaemon() throws Exception {
+        // Add AP1 and AP2 to the default package
+        addNewAccessPoint("ap1", AP1_MAC, "default");
+        addNewAccessPoint("ap2", AP2_MAC, "default");
+
+        // Add AP3 to a separate package
+        addNewAccessPoint("ap3", AP3_MAC, "not-default");
+
+        // Add a controller to the default package
+        addNewController("amc1", "10.1.0.2", "default");
+
+        // Set AP1 as UP
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 1);
+
+        // Initialize and start the daemon
+        initApmdWithConfig(getEmptyConfig());
+        m_apm.start();
+
+        // Sleep for a polling cycle
+        sleep(POLLING_INTERVAL_DELTA);
+
+        // Verify the state of the APs in the database
+        OnmsAccessPoint ap1 = m_accessPointDao.get(AP1_MAC);
+        LOG.debug(ap1.getStatus().getLabel());
+        assertTrue(ap1.getStatus() == AccessPointStatus.UNKNOWN);
+
+        OnmsAccessPoint ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.UNKNOWN);
+
+        OnmsAccessPoint ap3 = m_accessPointDao.get(AP3_MAC);
+        assertTrue(ap3.getStatus() == AccessPointStatus.UNKNOWN);
+
+        // Anticipate the events
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "DOWN");
+
+        // Update the configuration and send a reload event to the daemon
+        updateConfigAndReloadDaemon(getStandardConfig(), true);
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        // Verify the state of the APs in the database
+        ap1 = m_accessPointDao.get(AP1_MAC);
+        assertTrue(ap1.getStatus() == AccessPointStatus.ONLINE);
+
+        ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.OFFLINE);
+
+        ap3 = m_accessPointDao.get(AP3_MAC);
+        assertTrue(ap3.getStatus() == AccessPointStatus.UNKNOWN);
+    }
+

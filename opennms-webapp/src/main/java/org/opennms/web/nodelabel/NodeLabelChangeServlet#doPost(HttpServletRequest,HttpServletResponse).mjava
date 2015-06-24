@@ -18,13 +18,14 @@
         try {
             final int nodeId = WebSecurityUtils.safeParseInt(nodeIdString);
             final OnmsNode node = NetworkElementFactory.getInstance(getServletContext()).getNode(nodeId);
-            NodeLabel oldLabel = new NodeLabel(node.getLabel(), node.getLabelSource());
+            NodeLabel nodeLabel = BeanUtils.getBean("daoContext", "nodeLabel", NodeLabel.class);
+            NodeLabel oldLabel = new NodeLabelDaoImpl(node.getLabel(), node.getLabelSource());
             NodeLabel newLabel = null;
 
             if (labelType.equals("auto")) {
-                newLabel = NodeLabel.computeLabel(nodeId);
+                newLabel = nodeLabel.computeLabel(nodeId);
             } else if (labelType.equals("user")) {
-                newLabel = new NodeLabel(userLabel, NodeLabelSource.USER);
+                newLabel = new NodeLabelDaoImpl(userLabel, NodeLabelSource.USER);
             } else {
                 throw new ServletException("Unexpected labeltype value: " + labelType);
             }
@@ -51,7 +52,20 @@
             if (managedByProvisiond) {
                 response.sendRedirect(Util.calculateUrlBase(request, "admin/nodelabelProvisioned.jsp?node=" + nodeIdString + "&foreignSource=" + node.getForeignSource()));
             } else {
-                NodeLabel.assignLabel(nodeId, newLabel);
+                final WebApplicationContext context = WebApplicationContextUtils.getWebApplicationContext(getServletContext());
+                final TransactionTemplate transactionTemplate = context.getBean(TransactionTemplate.class);
+                final NodeLabel newLabelFinal = newLabel;
+                transactionTemplate.execute(new TransactionCallbackWithoutResult() {
+                    @Override
+                    protected void doInTransactionWithoutResult(TransactionStatus status) {
+                        try {
+                            nodeLabel.assignLabel(nodeId, newLabelFinal);
+                        } catch (SQLException e) {
+                            LOG.error("Failed to change label on node with id: {} to: {}", nodeId, newLabelFinal, e);
+                            throw Throwables.propagate(e);
+                        }
+                    }
+                });
                 response.sendRedirect(Util.calculateUrlBase(request, "element/node.jsp?node=" + nodeIdString));
             }
         } catch (SQLException e) {

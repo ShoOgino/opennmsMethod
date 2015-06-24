@@ -25,13 +25,34 @@
             final Runnable r = new Runnable() {
                 @Override
                 public void run() {
-					final int matchCount = scheduleMatchingServices("ifServices.nodeId = "+nodeId+" AND ifServices.ipAddr = '"+normalizedAddress+"' AND service.serviceName = '"+svcName+"'");
-                    if (matchCount > 0) {
-                        svcNode.recalculateStatus();
-                        svcNode.processStatusChange(new Date());
-                    } else {
-                        LOG.warn("Attempt to schedule service {}/{}/{} found no active service", nodeId, normalizedAddress, svcName);
-                    }
+                    m_transactionTemplate.execute(new TransactionCallbackWithoutResult() {
+
+                        @Override
+                        protected void doInTransactionWithoutResult(TransactionStatus arg0) {
+                            final OnmsMonitoredService service = m_monitoredServiceDao.get(nodeId, InetAddressUtils.addr(ipAddr), svcName);
+                            final OnmsIpInterface iface = service.getIpInterface();
+                            final Set<OnmsOutage> outages = service.getCurrentOutages();
+                            final OnmsOutage outage = (outages == null || outages.size() < 1 ? null : outages.iterator().next());
+                            final OnmsEvent event = (outage == null ? null : outage.getServiceLostEvent());
+                            closeOutageIfSvcLostEventIsMissing(outage);
+
+                            if (scheduleService(
+                                                service.getNodeId(), 
+                                                iface.getNode().getLabel(), 
+                                                InetAddressUtils.str(iface.getIpAddress()), 
+                                                service.getServiceName(), 
+                                                "A".equals(service.getStatus()), 
+                                                event == null ? null : event.getId(), 
+                                                    outage == null ? null : outage.getIfLostService(), 
+                                                        event == null ? null : event.getEventUei()
+                                    )) {
+                                svcNode.recalculateStatus();
+                                svcNode.processStatusChange(new Date());
+                            } else {
+                                LOG.warn("Attempt to schedule service {}/{}/{} found no active service", nodeId, normalizedAddress, svcName);
+                            }
+                        }
+                    });
                 }
             };
             node.withTreeLock(r);

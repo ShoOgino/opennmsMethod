@@ -1,0 +1,31 @@
+    private void applyThresholds(String rrdPath, MonitoredService service, String dsName, Map<String, Number> entries) {
+        try {
+            if (m_thresholdingSet == null) {
+                RrdRepository repository = new RrdRepository();
+                repository.setRrdBaseDir(new File(rrdPath));
+                m_thresholdingSet = new LatencyThresholdingSet(service.getNodeId(), service.getIpAddr(), service.getSvcName(), repository);
+            }
+            LinkedHashMap<String, Double> attributes = new LinkedHashMap<String, Double>();
+            for (String ds : entries.keySet()) {
+                Number sampleValue = entries.get(ds);
+                if (sampleValue == null) {
+                    attributes.put(ds, Double.NaN);
+                } else {
+                    attributes.put(ds, sampleValue.doubleValue());
+                }
+            }
+            if (m_thresholdingSet.isNodeInOutage()) {
+                LOG.info("applyThresholds: the threshold processing will be skipped because the service {} is on a scheduled outage.", service);
+            } else if (m_thresholdingSet.hasThresholds(attributes)) {
+                List<Event> events = m_thresholdingSet.applyThresholds(dsName, attributes);
+                if (events.size() > 0) {
+                    ThresholdingEventProxy proxy = new ThresholdingEventProxy();
+                    proxy.add(events);
+                    proxy.sendAllEvents();
+                }
+            }
+	} catch(Throwable e) {
+	    LOG.error("Failed to threshold on {} for {} because of an exception", service, dsName, e);
+	}
+    }
+

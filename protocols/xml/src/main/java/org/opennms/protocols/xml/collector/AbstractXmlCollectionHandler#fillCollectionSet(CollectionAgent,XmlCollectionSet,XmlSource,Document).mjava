@@ -9,7 +9,10 @@
      * @throws ParseException the parse exception
      */
     protected void fillCollectionSet(CollectionAgent agent, XmlCollectionSet collectionSet, XmlSource source, Document doc) throws XPathExpressionException, ParseException {
+        XmlCollectionResource nodeResource = new XmlSingleInstanceCollectionResource(agent);
+        NamespaceContext nc = new DocumentNamespaceResolver(doc);
         XPath xpath = XPathFactory.newInstance().newXPath();
+        xpath.setNamespaceContext(nc);
         for (XmlGroup group : source.getXmlGroups()) {
             LOG.debug("fillCollectionSet: getting resources for XML group {} using XPATH {}", group.getName(), group.getResourceXpath());
             Date timestamp = getTimeStamp(doc, xpath, group);
@@ -17,8 +20,13 @@
             for (int j = 0; j < resourceList.getLength(); j++) {
                 Node resource = resourceList.item(j);
                 String resourceName = getResourceName(xpath, group, resource);
-                LOG.debug("fillCollectionSet: processing XML resource {}", resourceName);
-                XmlCollectionResource collectionResource = getCollectionResource(agent, resourceName, group.getResourceType(), timestamp);
+                XmlCollectionResource collectionResource;
+                if (group.getResourceType().equalsIgnoreCase(CollectionResource.RESOURCE_TYPE_NODE)) {
+                    collectionResource = nodeResource;
+                } else {
+                    collectionResource = getCollectionResource(agent, resourceName, group.getResourceType(), timestamp);
+                }
+                LOG.debug("fillCollectionSet: processing resource {}", collectionResource);
                 AttributeGroupType attribGroupType = new AttributeGroupType(group.getName(), group.getIfType());
                 for (XmlObject object : group.getXmlObjects()) {
                     String value = (String) xpath.evaluate(object.getXpath(), resource, XPathConstants.STRING);
@@ -26,8 +34,12 @@
                     collectionResource.setAttributeValue(attribType, value);
                 }
                 processXmlResource(collectionResource, attribGroupType);
+                LOG.debug("fillCollectionSet: adding collection resource {}", collectionResource);
                 collectionSet.getCollectionResources().add(collectionResource);
             }
         }
+        XmlAttributeCounter counter = new XmlAttributeCounter();
+        collectionSet.visit(counter);
+        LOG.debug("fillCollectionSet: finishing collection set with {} resources and {} attributes on {}", collectionSet.getCollectionResources().size(), counter.getCount(), agent);
     }
 

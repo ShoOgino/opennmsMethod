@@ -1,0 +1,103 @@
+    private BridgeTopologyLinkCandidate parseBFTEntry(BridgeTopologyLinkCandidate topologyLinkCandidate) {
+        /*
+         * This class is designed to get the topology on one bridge forwarding
+         * table at a time so this means that the rules are written considering
+         * port1 belonging always to the same bridge.
+         * 
+         * 
+         * We assume the following:
+         * 
+         * 1) there where no loops into the network (so there is a hierarchy)
+         * 
+         * Corollary 1
+         * 
+         * If exists there is only one backbone port from sw1 and sw2 If exists
+         * there is only one backbone port from sw2 and sw1
+         * 
+         * Corollary 2 There is only one "pseudo device" containing the bridge
+         * 
+         * Corollary 3 on a backbone port two different mac address must belong
+         * to the same pseudo device
+         */
+        for (BridgeTopologyLinkCandidate linkcandidate : bridgeTopologyPortCandidates) {
+            LOG.info("parseBFTEntry: cycle top: checking node {} port {} macs {} targets {} role {}",
+                     linkcandidate.getBridgeTopologyPort()
+                     .getNodeid(), linkcandidate.getBridgeTopologyPort()
+                     .getBridgePort(), linkcandidate.getMacs(),
+                     linkcandidate.getTargets(), linkcandidate.getRole());
+            // regola same node non faccio niente
+            if (linkcandidate.getBridgeTopologyPort().getNodeid().intValue() == topologyLinkCandidate.getBridgeTopologyPort().getNodeid().intValue()) {
+                LOG.info("parseBFTEntry: rule 0: same node do nothing");
+                continue;
+            }
+            // regola intersezione nulla non faccio niente
+            if (linkcandidate.intersectionNull(topologyLinkCandidate)) {
+                LOG.info("parseBFTEntry: rule 00: mac intesection null do nothing");
+                continue;
+            } 
+
+            if (linkcandidate.getRole() == BridgePortRole.BACKBONE && topologyLinkCandidate.strictContainedPort(linkcandidate)) {
+                LOG.info("parseBFTEntry: rule 1-d: BACKBONE checking: setting candidate to DIRECT");
+                linkcandidate.removeMacs(topologyLinkCandidate.getMacs());
+                topologyLinkCandidate.setRole(BridgePortRole.DIRECT);
+                linkcandidate.addTarget(topologyLinkCandidate.getBridgeTopologyPort().getNodeid());
+            } else if (topologyLinkCandidate.getRole() == BridgePortRole.BACKBONE && linkcandidate.strictContainedPort(topologyLinkCandidate)) {
+                LOG.info("parseBFTEntry: rule 1-r: BACKBONE candidate: setting checking to DIRECT");
+                topologyLinkCandidate.removeMacs(linkcandidate.getMacs());
+                topologyLinkCandidate.addTarget(linkcandidate.getBridgeTopologyPort().getNodeid());
+                linkcandidate.setRole(BridgePortRole.DIRECT);
+            } else if (topologyLinkCandidate.strictContainedPort(linkcandidate)) {
+                LOG.info("parseBFTEntry: rule 2-d: candidate strict contained: setting: candidate to DIRECT: checking to BACKBONE");
+                linkcandidate.setRole(BridgePortRole.BACKBONE);
+                linkcandidate.removeMacs(topologyLinkCandidate.getMacs());
+                linkcandidate.addTarget(topologyLinkCandidate.getBridgeTopologyPort().getNodeid());
+                topologyLinkCandidate.setRole(BridgePortRole.DIRECT);
+            } else if (linkcandidate.strictContainedPort(topologyLinkCandidate)) {
+                LOG.info("parseBFTEntry: rule 2-r: candidate strict contains: setting: candidate to BACKBONE: checking to DIRECT");
+                topologyLinkCandidate.setRole(BridgePortRole.BACKBONE);
+                topologyLinkCandidate.removeMacs(linkcandidate.getMacs());
+                topologyLinkCandidate.addTarget(linkcandidate.getBridgeTopologyPort().getNodeid());
+                linkcandidate.setRole(BridgePortRole.DIRECT);
+            } else if (linkcandidate.getLinkPortCandidate() == null
+                    && topologyLinkCandidate.getLinkPortCandidate() == null) {
+                LOG.info("parseBFTEntry: rule 3: port candidate each other");
+                linkcandidate.setLinkPortCandidate(topologyLinkCandidate.getBridgeTopologyPort());
+                topologyLinkCandidate.setLinkPortCandidate(linkcandidate.getBridgeTopologyPort());
+            } else if (linkcandidate.getLinkPortCandidate() != null
+                    && topologyLinkCandidate.getBridgeTopologyPort().getNodeid().intValue() == linkcandidate.getLinkPortCandidate().getNodeid().intValue()
+                    && topologyLinkCandidate.getBridgeTopologyPort().getBridgePort().intValue() != linkcandidate.getLinkPortCandidate().getBridgePort().intValue()) {
+                LOG.info("parseBFTEntry: rule 4-d: checking forwards on two different ports on candidate: setting: candidate  to DIRECT: checking to BACKBONE");
+                linkcandidate.setRole(BridgePortRole.BACKBONE);
+                linkcandidate.removeMacs(topologyLinkCandidate.getMacs());
+                linkcandidate.addTarget(topologyLinkCandidate.getBridgeTopologyPort().getNodeid());
+
+                topologyLinkCandidate.setRole(BridgePortRole.DIRECT);
+                topologyLinkCandidate.setLinkPortCandidate(null);
+            } else if (topologyLinkCandidate.getLinkPortCandidate() != null
+                    && linkcandidate.getBridgeTopologyPort().getNodeid().intValue() == topologyLinkCandidate.getLinkPortCandidate().getNodeid().intValue()
+                    && linkcandidate.getBridgeTopologyPort().getBridgePort().intValue() != topologyLinkCandidate.getLinkPortCandidate().getBridgePort().intValue()) {
+                LOG.info("parseBFTEntry: rule 4-r: candidate forwards on two different ports on checking: setting: candidate to BACKBONE: checking to DIRECT");
+                topologyLinkCandidate.setRole(BridgePortRole.BACKBONE);
+                topologyLinkCandidate.removeMacs(linkcandidate.getMacs());
+                topologyLinkCandidate.addTarget(linkcandidate.getBridgeTopologyPort().getNodeid());
+
+                linkcandidate.setRole(BridgePortRole.DIRECT);
+                linkcandidate.setLinkPortCandidate(null);
+            }
+            LOG.info("parseBFTEntry: cycle end: node {} port {} macs {} targets {} role {}",
+                     topologyLinkCandidate.getBridgeTopologyPort().getNodeid(),
+                     topologyLinkCandidate.getBridgeTopologyPort().getBridgePort(),
+                     topologyLinkCandidate.getMacs(),
+                     topologyLinkCandidate.getTargets(),
+                     topologyLinkCandidate.getRole());
+            LOG.info("parseBFTEntry: cycle end: node {} port {} macs {} targets {} role {}",
+                     linkcandidate.getBridgeTopologyPort().getNodeid(),
+                     linkcandidate.getBridgeTopologyPort().getBridgePort(),
+                     linkcandidate.getMacs(),
+                     linkcandidate.getTargets(),
+                     linkcandidate.getRole());
+
+        }
+        return topologyLinkCandidate;
+    }
+

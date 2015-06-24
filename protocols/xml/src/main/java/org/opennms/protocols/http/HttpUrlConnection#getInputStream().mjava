@@ -4,9 +4,10 @@
     @Override
     public InputStream getInputStream() throws IOException {
         try {
-            if (m_client == null) {
+            if (m_clientWrapper == null) {
                 connect();
             }
+
             // Build URL
             int port = m_url.getPort() > 0 ? m_url.getPort() : m_url.getDefaultPort();
             URIBuilder ub = new URIBuilder();
@@ -14,14 +15,20 @@
             ub.setScheme(m_url.getProtocol());
             ub.setHost(m_url.getHost());
             ub.setPath(m_url.getPath());
-            ub.setQuery(m_url.getQuery());
+            if (m_url.getQuery() != null && !m_url.getQuery().trim().isEmpty()) {
+                final List<NameValuePair> params = URLEncodedUtils.parse(m_url.getQuery(), Charset.forName("UTF-8"));
+                if (!params.isEmpty()) {
+                    ub.addParameters(params);
+                }
+            }
+
             // Build Request
             HttpRequestBase request = null;
             if (m_request != null && m_request.getMethod().equalsIgnoreCase("post")) {
                 final Content cnt = m_request.getContent();
                 HttpPost post = new HttpPost(ub.build());
                 ContentType contentType = ContentType.create(cnt.getType());
-                LOG.info("Processing POST request for %s", contentType);
+                LOG.info("Processing POST request for {}", contentType);
                 if (contentType.getMimeType().equals(ContentType.APPLICATION_FORM_URLENCODED.getMimeType())) {
                     FormFields fields = JaxbUtils.unmarshal(FormFields.class, cnt.getData());
                     post.setEntity(fields.getEntity());
@@ -33,20 +40,16 @@
             } else {
                 request = new HttpGet(ub.build());
             }
+
             if (m_request != null) {
                 // Add Custom Headers
-                for (Header header : m_request.getHeaders()) {
+                for (final Header header : m_request.getHeaders()) {
                     request.addHeader(header.getName(), header.getValue());
                 }
             }
-            // Add User Authentication
-            String[] userInfo = m_url.getUserInfo() == null ? null :  m_url.getUserInfo().split(":");
-            if (userInfo != null) {
-                UsernamePasswordCredentials credentials = new UsernamePasswordCredentials(userInfo[0], userInfo[1]);
-                request.addHeader(BasicScheme.authenticate(credentials, "UTF-8", false));
-            }
+
             // Get Response
-            HttpResponse response = m_client.execute(request);
+            CloseableHttpResponse response = m_clientWrapper.execute(request);
             return response.getEntity().getContent();
         } catch (Exception e) {
             throw new IOException("Can't retrieve " + m_url.getPath() + " from " + m_url.getHost() + " because " + e.getMessage(), e);

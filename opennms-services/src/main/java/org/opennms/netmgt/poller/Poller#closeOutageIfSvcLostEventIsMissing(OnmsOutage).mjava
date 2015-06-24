@@ -1,0 +1,28 @@
+    /**
+     * This method should be called before scheduling services with outstanding
+     * outages for the first time.
+     *
+     * If an outage is open, but has no lost service event, we will mark it as closed
+     * with the current timestamp. This can happen if the poller daemon is stopped after
+     * creating the outage record, but before the event was received back from the event bus.
+     *
+     * We close the outage immediately, as opposed to marking the service's initial state
+     * as down since we do not know the cause, and determining the cause from the current
+     * state of the database is error prone.
+     *
+     * Closing the outage immediately also prevents the daemon from creating
+     * duplicate outstanding outage records.
+     */
+    private void closeOutageIfSvcLostEventIsMissing(final OnmsOutage outage) {
+        if (outage == null || outage.getServiceLostEvent() != null || outage.getIfRegainedService() != null) {
+            // Nothing to do
+            return;
+        }
+
+        LOG.warn("Outage {} was left open without a lost service event. "
+                + "The outage will be closed.", outage);
+        final Date now = new Date();
+        outage.setIfRegainedService(now);
+        m_outageDao.update(outage);
+    }
+

@@ -13,10 +13,78 @@
                 return getDbNode(node);
             }
 
+            private boolean handleCategoryChanges(final OnmsNode dbNode) {
+                final String foreignSource = dbNode.getForeignSource();
+                final List<String> categories = new ArrayList<>();
+                boolean changed = false;
+
+                if (foreignSource == null) {
+                    // this is a newSuspect-scanned node, so there are no requisitioned categories
+                } else {
+                    final OnmsNodeRequisition req = m_foreignSourceRepository.getNodeRequisition(foreignSource, dbNode.getForeignId());
+                    for (final RequisitionCategory cat : req.getNode().getCategories()) {
+                        categories.add(cat.getName());
+                    }
+                }
+
+                // this will add any newly-requisitioned categories, as well as ones added by policies
+                for (final String cat : node.getRequisitionedCategories()) {
+                    categories.add(cat);
+                }
+
+                LOG.debug("Node {}/{}/{} has the following requisitioned categories: {}", dbNode.getId(), foreignSource, dbNode.getForeignId(), categories);
+                final List<RequisitionedCategoryAssociation> reqCats = new ArrayList<>(m_categoryAssociationDao.findByNodeId(dbNode.getId()));
+                for (final Iterator<RequisitionedCategoryAssociation> reqIter = reqCats.iterator(); reqIter.hasNext(); ) {
+                    final RequisitionedCategoryAssociation reqCat = reqIter.next();
+                    final String categoryName = reqCat.getCategory().getName();
+                    if (categories.contains(categoryName)) {
+                        // we've already stored this category before, remove it from the list of "new" categories
+                        categories.remove(categoryName);
+                    } else {
+                        // we previously stored this category, but now it shouldn't be there anymore
+                        // remove it from the category association
+                        LOG.debug("Node {}/{}/{} no longer has the category: {}", dbNode.getId(), foreignSource, dbNode.getForeignId(), categoryName);
+                        dbNode.removeCategory(reqCat.getCategory());
+                        node.removeCategory(reqCat.getCategory());
+                        reqIter.remove();
+                        m_categoryAssociationDao.delete(reqCat);
+                        changed = true;
+                    }
+                }
+
+                // the remainder of requisitioned categories get added
+                for (final String cat : categories) {
+                    final OnmsCategory onmsCat = createCategoryIfNecessary(cat);
+                    final RequisitionedCategoryAssociation r = new RequisitionedCategoryAssociation(dbNode, onmsCat);
+                    node.addCategory(onmsCat);
+                    dbNode.addCategory(onmsCat);
+                    m_categoryAssociationDao.saveOrUpdate(r);
+                    changed = true;
+                }
+
+                m_categoryAssociationDao.flush();
+                return changed;
+            }
+
             @Override
-            protected OnmsNode doUpdate(OnmsNode dbNode) {
-                dbNode.mergeNodeAttributes(node, m_eventForwarder);
-                return saveOrUpdate(dbNode);
+            protected OnmsNode doUpdate(final OnmsNode dbNode) {
+                final EventAccumulator accumulator = new EventAccumulator(m_eventForwarder);
+
+                final boolean changed = handleCategoryChanges(dbNode);
+
+                dbNode.mergeNodeAttributes(node, accumulator);
+                updateNodeHostname(dbNode);
+                final OnmsNode ret = saveOrUpdate(dbNode);
+
+                if (changed) {
+                    accumulator.sendNow(EventUtils.createNodeCategoryMembershipChangedEvent("Provisiond", ret.getId(), ret.getLabel()));
+                    LOG.debug("Node {}/{}/{} categories changed: {}", dbNode.getId(), dbNode.getForeignSource(), dbNode.getForeignId(), getCategoriesForNode(dbNode));
+                } else {
+                    LOG.debug("Node {}/{}/{} categories unchanged: {}", dbNode.getId(), dbNode.getForeignSource(), dbNode.getForeignId(), getCategoriesForNode(dbNode));
+                }
+
+                accumulator.flush();
+                return ret;
             }
 
             @Override
@@ -25,6 +93,6 @@
                 return saveOrUpdate(node);
             }
         }.execute();
-        
+
     }
 

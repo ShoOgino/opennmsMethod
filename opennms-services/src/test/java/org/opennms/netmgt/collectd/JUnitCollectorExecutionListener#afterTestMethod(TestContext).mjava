@@ -7,16 +7,19 @@
 
         boolean shouldIgnoreNonExistent = testContext.getTestException() != null;
 
-        if (config.anticipateFiles().length > 0 ||
-                config.anticipateRrds().length > 0) {
+        /*
+        if (config.anticipateFiles().length > 0 || config.anticipateRrds().length > 0) {
             // make sure any RRDs have time to get written
-            Thread.sleep(1000);
+            Thread.sleep(config.timeout());
         }
+        */
 
         if (config.anticipateRrds().length > 0) {
             for (String rrdFile : config.anticipateRrds()) {
-                m_fileAnticipator.expecting(m_snmpRrdDirectory, rrdFile + RrdUtils.getExtension());
-                
+                // Expect the RRD files, for which we don't know the suffix
+                // Make sure they don't match the .meta files though
+                m_fileAnticipator.expectingFileWithPrefix(m_snmpRrdDirectory, rrdFile, ".meta");
+
                 //the nrtg feature requires .meta files in parallel to the rrd/jrb files.
                 //this .meta files are expected
                 m_fileAnticipator.expecting(m_snmpRrdDirectory, rrdFile + ".meta");
@@ -31,18 +34,31 @@
 
         Exception e = null;
         if (m_fileAnticipator.isInitialized()) {
-        	try {
-        		m_fileAnticipator.deleteExpected(shouldIgnoreNonExistent);
-        	} catch (Throwable t) {
-        		e = new RuntimeException(t);
-        	}
+            final long finished = System.currentTimeMillis() + config.timeout();
+            while (System.currentTimeMillis() <= finished) {
+                if (m_fileAnticipator.foundExpected()) {
+                    break;
+                }
+                try {
+                    Thread.sleep(200);
+                } catch (final InterruptedException ie) {
+                    break;
+                }
+            }
+
+            try {
+                m_fileAnticipator.deleteExpected(shouldIgnoreNonExistent);
+            } catch (Throwable t) {
+                e = new RuntimeException(t);
+            }
         }
 
-        deleteResursively(m_snmpRrdDirectory);
+        FileUtils.deleteDirectory(m_snmpRrdDirectory);
+
         m_fileAnticipator.tearDown();
-        
+
         if (e != null) {
-        	throw e;
+            throw e;
         }
     }
 

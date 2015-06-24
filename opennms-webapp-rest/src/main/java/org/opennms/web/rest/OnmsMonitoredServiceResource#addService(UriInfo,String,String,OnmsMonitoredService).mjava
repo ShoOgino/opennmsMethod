@@ -1,0 +1,55 @@
+    /**
+     * <p>addService</p>
+     *
+     * @param nodeCriteria a {@link java.lang.String} object.
+     * @param ipAddress a {@link java.lang.String} object.
+     * @param service a {@link org.opennms.netmgt.model.OnmsMonitoredService} object.
+     * @return a {@link javax.ws.rs.core.Response} object.
+     */
+    @POST
+    @Consumes(MediaType.APPLICATION_XML)
+    public Response addService(@Context UriInfo uriInfo, @PathParam("nodeCriteria") final String nodeCriteria, @PathParam("ipAddress") final String ipAddress, final OnmsMonitoredService service) {
+        writeLock();
+        
+        try {
+            OnmsNode node = m_nodeDao.get(nodeCriteria);
+            if (node == null) throw getException(Status.BAD_REQUEST, "addService: can't find node " + nodeCriteria);
+            final OnmsIpInterface intf = node.getIpInterfaceByIpAddress(ipAddress);
+            if (intf == null) throw getException(Status.BAD_REQUEST, "addService: can't find interface with ip address " + ipAddress + " for node " + nodeCriteria);
+            if (service == null) throw getException(Status.BAD_REQUEST, "addService: service object cannot be null");
+            if (service.getServiceName() == null) throw getException(Status.BAD_REQUEST, "addService: service must have a name");
+
+            final OnmsServiceType serviceType = new CreateIfNecessaryTemplate<OnmsServiceType, ServiceTypeDao>(m_transactionManager, m_serviceTypeDao) {
+                @Override
+                protected OnmsServiceType query() {
+                    return m_dao.findByName(service.getServiceName());
+                }
+
+                @Override
+                protected OnmsServiceType doInsert() {
+                    LOG.info("addService: creating service type {}", service.getServiceName());
+                    final OnmsServiceType s = new OnmsServiceType(service.getServiceName());
+                    m_dao.saveOrUpdate(s);
+                    return s;
+                }
+            }.execute();
+
+            service.setServiceType(serviceType);
+            service.setIpInterface(intf);
+            LOG.debug("addService: adding service {}", service);
+            m_serviceDao.save(service);
+            
+            Event e = EventUtils.createNodeGainedServiceEvent(getClass().getName(), node.getId(), intf.getIpAddress(), 
+                    service.getServiceName(), node.getLabel(), node.getLabelSource(), node.getSysName(), node.getSysDescription());
+            
+            try {
+                m_eventProxy.send(e);
+            } catch (EventProxyException ex) {
+                throw getException(Status.BAD_REQUEST, ex.getMessage());
+            }
+            return Response.seeOther(getRedirectUri(uriInfo, service.getServiceName())).build();
+        } finally {
+            writeUnlock();
+        }
+    }
+

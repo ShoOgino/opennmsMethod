@@ -1,0 +1,116 @@
+        void execute(final HttpClientWrapper parentClientWrapper, final MonitoredService svc, final Properties sequenceProperties) {
+            final HttpClientWrapper clientWrapper = parentClientWrapper.duplicate();
+            CloseableHttpResponse response = null;
+            try {
+                URI uri = getURI(svc);
+                PageSequenceHttpUriRequest method = getMethod(uri);
+
+                if (getVirtualHost(svc) == null) {
+                    LOG.debug("Adding request interceptor to remove the host header");
+                    clientWrapper.addRequestInterceptor(new HttpRequestInterceptor() {
+                        @Override
+                        public void process(HttpRequest request, HttpContext ctx) throws HttpException, IOException {
+                            Header host = request.getFirstHeader(HTTP.TARGET_HOST);
+                            if (host != null) {
+                                request.removeHeader(host);
+                                LOG.debug("httpRequestInterceptor: virtual-host is not set, removing host header");
+                            }
+                        }
+                    });
+                } else {
+                    HttpHost host = new HttpHost(getVirtualHost(svc), uri.getPort());
+                    clientWrapper.setVirtualHost(host.toHostString());
+                }
+
+                switch(m_page.getHttpVersion()) {
+                    case "0.9":
+                        clientWrapper.setVersion(HttpVersion.HTTP_0_9); break;
+                    case "1.0":
+                        clientWrapper.setVersion(HttpVersion.HTTP_1_0); break;
+                    default:
+                        clientWrapper.setVersion(HttpVersion.HTTP_1_1); break;
+                }
+
+                if (getUserAgent() != null && !getUserAgent().trim().isEmpty()) {
+                    clientWrapper.setUserAgent(getUserAgent());
+                } else {
+                    clientWrapper.setUserAgent("OpenNMS PageSequenceMonitor (Service name: " + svc.getSvcName() + ")");
+                }
+
+                if ("https".equals(uri.getScheme())) {
+                    if (Boolean.parseBoolean(m_page.getDisableSslVerification())) {
+                        try {
+                            clientWrapper.useRelaxedSSL("https");
+                        } catch (final GeneralSecurityException e) {
+                            LOG.warn("Failed configure relaxed SSL for PageSequence {}", svc.getSvcName(), e);
+                        }
+                    }
+                }
+
+                if (m_parms.size() > 0) {
+                    method.setQueryParameters(expandParms(svc));
+                }
+
+                if (getUserInfo() != null) {
+                    String userInfo = getUserInfo();
+                    String[] streetCred = userInfo.split(":", 2);
+                    if (streetCred.length == 2) {
+                        clientWrapper.addBasicCredentials(streetCred[0], streetCred[1]);
+                    } else { 
+                        LOG.warn("Illegal value found for username/password HTTP credentials: {}", userInfo);
+                    }
+                }
+
+                long startTime = System.nanoTime();
+                response = clientWrapper.execute(method);
+                long endTime = System.nanoTime();
+                m_responseTime = (endTime - startTime)/1000000.0;
+
+                int code = response.getStatusLine().getStatusCode();
+                if (!getRange().contains(code)) {
+                    throw new PageSequenceMonitorException("response code out of range for uri:" + uri + ".  Expected " + getRange() + " but received " + code);
+                }
+
+                String responseString = EntityUtils.toString(response.getEntity());
+
+                if (getLocationPattern() != null) {
+                    Header locationHeader = response.getFirstHeader("location");
+                    if (locationHeader == null) {
+                        LOG.debug("locationMatch was set, but no Location: header was returned at {}", uri, new Exception());
+                        throw new PageSequenceMonitorException("locationMatch was set, but no Location: header was returned at " + uri);
+                    }
+                    Matcher matcher = getLocationPattern().matcher(locationHeader.getValue());
+                    if (!matcher.find()) {
+                        LOG.debug("failed to find '{}' in Location: header at {}:\n{}", getLocationPattern(), uri, locationHeader.getValue(), new Exception());
+                        throw new PageSequenceMonitorException("failed to find '" + getLocationPattern() + "' in Location: header at " + uri);
+                    }
+                }
+
+                if (getFailurePattern() != null) {
+                    Matcher matcher = getFailurePattern().matcher(responseString);
+                    if (matcher.find()) {
+                        throw new PageSequenceMonitorException(getResolvedFailureMessage(matcher));
+                    }
+                }
+
+                if (getSuccessPattern() != null) {
+                    Matcher matcher = getSuccessPattern().matcher(responseString);
+                    if (!matcher.find()) {
+                        LOG.debug("failed to find '{}' in page content at {}:\n{}", getSuccessPattern(), uri, responseString.trim(), new Exception());
+                        throw new PageSequenceMonitorException("failed to find '" + getSuccessPattern() + "' in page content at " + uri);
+                    }
+                    updateSequenceProperties(sequenceProperties, matcher);
+                }
+
+            } catch (URISyntaxException e) {
+                throw new IllegalArgumentException("unable to construct URL for page", e);
+            } catch (IOException e) {
+                LOG.debug("I/O Error", e);
+                throw new PageSequenceMonitorException("I/O Error", e);
+            } finally {
+                if (clientWrapper != null) {
+                    clientWrapper.close(response);
+                }
+            }
+        }
+

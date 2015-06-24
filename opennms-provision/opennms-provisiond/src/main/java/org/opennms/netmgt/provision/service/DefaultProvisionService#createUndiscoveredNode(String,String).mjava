@@ -2,7 +2,7 @@
     @Transactional
     @Override
     public OnmsNode createUndiscoveredNode(final String ipAddress, final String foreignSource) {
-        
+
         OnmsNode node = new UpsertTemplate<OnmsNode, NodeDao>(m_transactionManager, m_nodeDao) {
 
             @Override
@@ -20,11 +20,10 @@
             @Override
             protected OnmsNode doInsert() {
                 final Date now = new Date();
-                
-                final String hostname = getHostnameForIp(ipAddress);
-                
-                // @ipv6
+
                 final OnmsNode node = new OnmsNode(createDistPollerIfNecessary("localhost", "127.0.0.1"));
+
+                final String hostname = m_hostnameResolver.getHostname(addr(ipAddress));
                 if (hostname == null || ipAddress.equals(hostname)) {
                     node.setLabel(ipAddress);
                     node.setLabelSource(NodeLabelSource.ADDRESS);
@@ -32,35 +31,35 @@
                     node.setLabel(hostname);
                     node.setLabelSource(NodeLabelSource.HOSTNAME);
                 }
+
                 node.setForeignSource(foreignSource == null ? FOREIGN_SOURCE_FOR_DISCOVERED_NODES : foreignSource);
                 node.setType(NodeType.ACTIVE);
                 node.setLastCapsdPoll(now);
-                
+
                 final OnmsIpInterface iface = new OnmsIpInterface(InetAddressUtils.addr(ipAddress), node);
                 iface.setIsManaged("M");
                 iface.setIpHostName(hostname);
                 iface.setIsSnmpPrimary(PrimaryType.NOT_ELIGIBLE);
                 iface.setIpLastCapsdPoll(now);
-                
+
                 m_nodeDao.save(node);
                 m_nodeDao.flush();
                 return node;
             }
         }.execute();
-        
+
         if (node != null) {
-        	
-        	if (foreignSource != null) {
-            	node.setForeignId(node.getNodeId());
-            	createUpdateRequistion(ipAddress, node, foreignSource);
-        	}
-        	
+            if (foreignSource != null) {
+                node.setForeignId(node.getNodeId());
+                createUpdateRequistion(ipAddress, node, foreignSource);
+            }
+
             // we do this here rather than in the doInsert method because
             // the doInsert may abort
             node.visit(new AddEventVisitor(m_eventForwarder));
         }
-        
+
         return node;
-        
+
     }
 

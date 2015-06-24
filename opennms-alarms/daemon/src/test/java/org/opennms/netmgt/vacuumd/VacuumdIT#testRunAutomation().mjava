@@ -3,28 +3,40 @@
      * @throws SQLException
      * @throws InterruptedException 
      */
-    @Test
+    @Test(timeout=30000)
     @JUnitTemporaryDatabase(tempDbClass=MockDatabase.class) // Relies on records created in @Before so we need a fresh database
     public final void testRunAutomation() throws SQLException, InterruptedException {
         final int major = OnmsSeverity.MAJOR.getId();
-        
-        bringNodeDownCreatingEvent(1);
-        Thread.sleep(1000);
-        
-        assertEquals(1, countAlarms());
-        assertEquals(major, getSingleResultSeverity());
-        assertEquals("counter in the alarm", 1, m_jdbcTemplate.queryForInt("select counter from alarms"));
+
+        assertEquals(0, countAlarms());
 
         bringNodeDownCreatingEvent(1);
-        Thread.sleep(1000);
+
+        while(countAlarms() != 1) {
+            Thread.sleep(100);
+        }
 
         assertEquals(1, countAlarms());
         assertEquals(major, getSingleResultSeverity());
-        assertEquals("counter in the alarm", 2, m_jdbcTemplate.queryForInt("select counter from alarms"));
+        assertEquals("counter in the alarm", 1, (int)m_jdbcTemplate.queryForObject("select counter from alarms", Integer.class));
+
+        bringNodeDownCreatingEvent(1);
+
+        while(m_jdbcTemplate.queryForObject("select counter from alarms", Integer.class) < 2) {
+            Thread.sleep(100);
+        }
+
+        assertEquals(1, countAlarms());
+        assertEquals(major, getSingleResultSeverity());
+        assertEquals("counter in the alarm", 2, (int)m_jdbcTemplate.queryForObject("select counter from alarms", Integer.class));
 
         AutomationProcessor ap = new AutomationProcessor(VacuumdConfigFactory.getInstance().getAutomation("autoEscalate"));
         assertTrue(ap.runAutomation());
-        Thread.sleep(1000);
+
+        while(getSingleResultSeverity() != (major + 1)) {
+            Thread.sleep(100);
+        }
+
         assertEquals(major+1, getSingleResultSeverity());
     }
 

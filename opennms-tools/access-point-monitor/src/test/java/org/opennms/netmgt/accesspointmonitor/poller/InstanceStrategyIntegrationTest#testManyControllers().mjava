@@ -1,0 +1,78 @@
+    /*
+     * Test the behaviour when multiple controllers are configured in a single
+     * package. Verify: That the proper events are sent by the daemon. The AP
+     * state and the controller's address in the database after the poll.
+     */
+    @Test
+    @JUnitSnmpAgents(value = {
+        @JUnitSnmpAgent(host = "10.1.0.2", port = 161, resource = SNMP_DATA_PATH + "10.1.0.2-walk.txt"),
+        @JUnitSnmpAgent(host = "10.1.1.2", port = 161, resource = SNMP_DATA_PATH + "10.1.1.2-walk.txt"),
+        @JUnitSnmpAgent(host = "10.1.2.2", port = 161, resource = SNMP_DATA_PATH + "10.1.2.2-walk.txt")
+    })
+    public void testManyControllers() throws Exception {
+        // Add AP1 and AP2 to the default package
+        addNewAccessPoint("ap1", AP1_MAC, "default");
+        addNewAccessPoint("ap2", AP2_MAC, "default");
+
+        // Add AP3 to a separate package
+        addNewAccessPoint("ap3", AP3_MAC, "not-default");
+
+        // Add 3 controllers to the default package
+        addNewController("amc0", "10.1.0.2", "default");
+        addNewController("amc1", "10.1.1.2", "default");
+        addNewController("amc2", "10.1.2.2", "default");
+
+        // Set the access point state on all 3 controllers
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 0);
+        setOidValueForAccessPoint("10.1.0.2", AP2_MAC, 0);
+
+        setOidValueForAccessPoint("10.1.1.2", AP1_MAC, 1);
+        setOidValueForAccessPoint("10.1.1.2", AP2_MAC, 0);
+
+        setOidValueForAccessPoint("10.1.2.2", AP1_MAC, 0);
+        setOidValueForAccessPoint("10.1.2.2", AP2_MAC, 1);
+
+        // Anticipate the events
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "UP");
+
+        // Initialize and start the daemon
+        initApmdWithConfig(getMultiControllerConfig());
+        m_apm.start();
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        OnmsAccessPoint ap1 = m_accessPointDao.get(AP1_MAC);
+        assertTrue(ap1.getStatus() == AccessPointStatus.ONLINE);
+        assertEquals(InetAddressUtils.getInetAddress("10.1.1.2"), ap1.getControllerIpAddress());
+
+        OnmsAccessPoint ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.ONLINE);
+        assertEquals(InetAddressUtils.getInetAddress("10.1.2.2"), ap2.getControllerIpAddress());
+
+        // Anticipate the events
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "UP");
+
+        // Move AP1 to amc2
+        setOidValueForAccessPoint("10.1.1.2", AP1_MAC, 0);
+        setOidValueForAccessPoint("10.1.2.2", AP1_MAC, 1);
+
+        // Move AP2 to amc1
+        setOidValueForAccessPoint("10.1.1.2", AP2_MAC, 1);
+        setOidValueForAccessPoint("10.1.2.2", AP2_MAC, 0);
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        // Verify the controller address in the database
+        ap1 = m_accessPointDao.get(AP1_MAC);
+        assertTrue(ap1.getStatus() == AccessPointStatus.ONLINE);
+        assertEquals(InetAddressUtils.getInetAddress("10.1.2.2"), ap1.getControllerIpAddress());
+
+        ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.ONLINE);
+        assertEquals(InetAddressUtils.getInetAddress("10.1.1.2"), ap2.getControllerIpAddress());
+    }
+

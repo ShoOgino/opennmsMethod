@@ -1,0 +1,87 @@
+    /*
+     * Run a series of tests with a single controller and 3 access points.
+     * Verify: That the proper events are sent by the daemon. The AP state in
+     * the database after the poll.
+     */
+    @Test
+    @JUnitSnmpAgent(host = "10.1.0.2", resource = SNMP_DATA_PATH + "10.1.0.2-walk.txt")
+    public void testApUpDown() throws Exception {
+        // Add AP1 and AP2 to the default package
+        addNewAccessPoint("ap1", AP1_MAC, "default");
+        addNewAccessPoint("ap2", AP2_MAC, "default");
+
+        // Add AP3 to a separate package
+        addNewAccessPoint("ap3", AP3_MAC, "not-default");
+
+        // Add a controller to the default package
+        addNewController("amc1", "10.1.0.2", "default");
+
+        // Set AP1 as UP and AP2 as DOWN
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 1);
+        setOidValueForAccessPoint("10.1.0.2", AP2_MAC, 0);
+
+        // Anticipate the events
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "DOWN");
+
+        // Initialize and start the daemon
+        initApmdWithConfig(getStandardConfig());
+        m_apm.start();
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        // Verify the state of the APs in the database
+        OnmsAccessPoint ap1 = m_accessPointDao.get(AP1_MAC);
+        assertTrue(ap1.getStatus() == AccessPointStatus.ONLINE);
+
+        OnmsAccessPoint ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.OFFLINE);
+
+        OnmsAccessPoint ap3 = m_accessPointDao.get(AP3_MAC);
+        assertTrue(ap3.getStatus() == AccessPointStatus.UNKNOWN);
+
+        // Change AP3's package, the next poll should send an additional DOWN
+        // event
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "DOWN");
+        anticipateApStatusEvent(AP3_MAC, "DOWN");
+
+        ap3.setPollingPackage("default");
+        m_accessPointDao.update(ap3);
+        m_accessPointDao.flush();
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        // Update the data in the SNMP agent to show AP1 as DOWN
+        anticipateApStatusEvent(AP1_MAC, "DOWN");
+        anticipateApStatusEvent(AP2_MAC, "DOWN");
+        anticipateApStatusEvent(AP3_MAC, "DOWN");
+
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 2);
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+
+        // Verify the DB again, all APs should be DOWN now
+        ap1 = m_accessPointDao.get(AP1_MAC);
+        assertTrue(ap1.getStatus() == AccessPointStatus.OFFLINE);
+
+        ap2 = m_accessPointDao.get(AP2_MAC);
+        assertTrue(ap2.getStatus() == AccessPointStatus.OFFLINE);
+
+        ap3 = m_accessPointDao.get(AP3_MAC);
+        assertTrue(ap3.getStatus() == AccessPointStatus.OFFLINE);
+
+        // Bring AP1 back UP
+        anticipateApStatusEvent(AP1_MAC, "UP");
+        anticipateApStatusEvent(AP2_MAC, "DOWN");
+        anticipateApStatusEvent(AP3_MAC, "DOWN");
+
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 1);
+
+        // Verify the events
+        verifyAnticipated(POLLING_INTERVAL_DELTA);
+    }
+

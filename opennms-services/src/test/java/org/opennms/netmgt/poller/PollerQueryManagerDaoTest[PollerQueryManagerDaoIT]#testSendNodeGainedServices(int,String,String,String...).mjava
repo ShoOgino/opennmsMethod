@@ -1,0 +1,52 @@
+    private void testSendNodeGainedServices(int nodeid, String nodeLabel, String ipAddr, String... svcNames) {
+        assertNotNull(svcNames);
+	    assertTrue(svcNames.length > 0);
+
+        MockNode node = m_network.addNode(nodeid, nodeLabel);
+		m_db.writeNode(node);
+        MockInterface iface = m_network.addInterface(nodeid, ipAddr);
+		m_db.writeInterface(iface);
+		
+		List<MockService> services = new ArrayList<MockService>();
+		for(String svcName : svcNames) {
+		    MockService svc = m_network.addService(nodeid, ipAddr, svcName);
+		    m_db.writeService(svc);
+		    m_pollerConfig.addService(svc);
+		    services.add(svc);
+		}
+		
+		MockVisitor gainSvcSender = new MockVisitorAdapter() {
+                        @Override
+			public void visitService(MockService svc) {
+				Event event = MockEventUtil
+						.createNodeGainedServiceEvent("Test", svc);
+				m_eventMgr.sendEventToListeners(event);
+			}
+		};
+		node.visit(gainSvcSender);
+		
+		MockService svc1 = services.get(0);
+
+		PollAnticipator anticipator = new PollAnticipator();
+		svc1.addAnticipator(anticipator);
+
+		anticipator.anticipateAllServices(svc1);
+
+        StringBuffer didNotOccur = new StringBuffer();
+		for (MockService service : anticipator.waitForAnticipated(10000)) {
+		    didNotOccur.append(service.toString());
+		}
+        StringBuffer unanticipatedStuff = new StringBuffer();
+        for (MockService service : anticipator.unanticipatedPolls()) {
+            unanticipatedStuff.append(service.toString());
+        }
+		
+		assertEquals(unanticipatedStuff.toString(), "", didNotOccur.toString());
+
+		anticipateDown(svc1);
+
+		svc1.bringDown();
+
+		verifyAnticipated(10000);
+	}
+

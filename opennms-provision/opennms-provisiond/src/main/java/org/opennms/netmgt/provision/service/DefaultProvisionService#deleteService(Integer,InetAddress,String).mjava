@@ -2,11 +2,78 @@
     @Transactional
     @Override
     public void deleteService(final Integer nodeId, final InetAddress addr, final String service) {
-    	final OnmsMonitoredService monSvc = m_monitoredServiceDao.get(nodeId, addr, service);
-        if (monSvc != null && shouldDelete(monSvc)) {
-            m_monitoredServiceDao.delete(monSvc);
-            monSvc.visit(new DeleteEventVisitor(m_eventForwarder));
+        LOG.debug("deleteService: nodeId={}, addr={}, service={}", nodeId, addr, service);
+        final OnmsMonitoredService monSvc = m_monitoredServiceDao.get(nodeId, addr, service);
+        if (monSvc == null) return;
+
+        final DeleteEventVisitor visitor = new DeleteEventVisitor(m_eventForwarder);
+        final String addrAsString = str(addr);
+
+        if (isDiscoveryEnabled()) {
+            LOG.debug("deleteService: discovery is enabled");
+            final String foreignSource = monSvc.getForeignSource();
+            final String foreignId = monSvc.getForeignId();
+            OnmsNode requisitionedNode = null;
+            if (foreignSource != null && foreignId != null) {
+                requisitionedNode = getRequisitionedNode(foreignSource, foreignId);
+            }
+
+            if (isRequisitionedEntityDeletionEnabled() || requisitionedNode == null) {
+                LOG.debug("deleteService: requisitioned entity deletion is enabled, or the node does not exist in the requisition");
+                // we're allowing deletion, or there is no requisition for the node, so go for it
+                final OnmsIpInterface iface = monSvc.getIpInterface();
+                final OnmsNode node = iface.getNode();
+
+                final boolean lastService = (iface.getMonitoredServices().size() == 1);
+                final boolean lastInterface = (node.getIpInterfaces().size() == 1);
+
+                if (requisitionedNode != null && requisitionedNode.containsService(addr, service)) {
+                    LOG.warn("Deleting requisitioned service {} from node {}/{}/{} on address {} (it will come back on next import)", service, nodeId, foreignSource, foreignId, addrAsString);
+                } else {
+                    LOG.debug("Deleting discovered service {} from node {}/{}/{} on address {}", service, nodeId, foreignSource, foreignId, addrAsString);
+                }
+
+                // remove the service from the interface
+                iface.removeMonitoredService(monSvc);
+                m_nodeDao.saveOrUpdate(iface.getNode());
+                m_nodeDao.flush();
+                monSvc.visit(visitor);
+
+                if (lastService) {
+                    // the interface should be deleted too
+                    if (requisitionedNode != null && requisitionedNode.containsInterface(addr)) {
+                        LOG.warn("Deleting requisitioned interface {} from node {}/{}/{} (it will come back on next import)", addrAsString, nodeId, foreignSource, foreignId);
+                    } else {
+                        LOG.debug("Deleting discovered interface {} from node {}/{}/{}", addrAsString, nodeId, foreignSource, foreignId);
+                    }
+                    node.removeIpInterface(iface);
+                    m_nodeDao.saveOrUpdate(node);
+                    m_nodeDao.flush();
+                    iface.visit(visitor);
+
+                    if (lastInterface) {
+                        // the node should be deleted too
+                        if (requisitionedNode != null) {
+                            LOG.warn("Deleting requisitioned node {}/{}/{} (it will come back on next import)", nodeId, foreignSource, foreignId);
+                        } else {
+                            LOG.debug("Deleting discovered node {}/{}/{}", nodeId, foreignSource, foreignId);
+                        }
+                        m_nodeDao.delete(node);
+                        m_nodeDao.flush();
+                        node.visit(visitor);
+                    }
+                }
+            } else {
+                LOG.debug("NOT deleting requisitioned service {} from node {}/{}/{} on address {} (enableDeletionOfRequisitionedEntities=false)", service, nodeId, foreignSource, foreignId, addrAsString);
+            }
+        } else {
+            if (shouldDelete(monSvc)) {
+                final OnmsIpInterface iface = monSvc.getIpInterface();
+                iface.removeMonitoredService(monSvc);
+                m_nodeDao.saveOrUpdate(iface.getNode());
+                m_nodeDao.flush();
+                monSvc.visit(visitor);
+            }
         }
-        
     }
 

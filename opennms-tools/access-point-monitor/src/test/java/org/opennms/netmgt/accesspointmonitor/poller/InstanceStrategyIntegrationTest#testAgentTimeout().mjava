@@ -1,0 +1,41 @@
+    /*
+     * Test the poller's behaviour when the SNMP agent times outs. Verify:
+     * That the proper events are sent by the daemon. The AP state in the
+     * database after the poll.
+     */
+    @Test
+    @JUnitSnmpAgent(host = "10.1.0.2", resource = SNMP_DATA_PATH + "10.1.0.2-walk.txt")
+    public void testAgentTimeout() throws Exception {
+        // Add AP1 to the default package
+        addNewAccessPoint("ap1", AP1_MAC, "default");
+
+        // Add a controller to the default package
+        addNewController("amc1", "10.1.0.2", "default");
+
+        // Set AP1 as UP
+        setOidValueForAccessPoint("10.1.0.2", AP1_MAC, 1);
+
+        // Make the SNMP agent timeout
+        SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddressUtils.getInetAddress("10.1.0.2"));
+        Sleeper.getInstance().setSleepTime(agentConfig.getTimeout() + 1000);
+
+        try {
+            // Anticipate the event
+            anticipateApStatusEvent(AP1_MAC, "DOWN");
+
+            // Initialize and start the daemon
+            initApmdWithConfig(getStandardConfig());
+            m_apm.start();
+
+            // Verify the events
+            verifyAnticipated(POLLING_INTERVAL_DELTA + 2000);
+
+            // Verify the state of the AP in the database
+            OnmsAccessPoint ap1 = m_accessPointDao.get(AP1_MAC);
+            assertTrue(ap1.getStatus() == AccessPointStatus.OFFLINE);
+        } finally {
+            // Clear the timeout
+            Sleeper.getInstance().setSleepTime(0);
+        }
+    }
+

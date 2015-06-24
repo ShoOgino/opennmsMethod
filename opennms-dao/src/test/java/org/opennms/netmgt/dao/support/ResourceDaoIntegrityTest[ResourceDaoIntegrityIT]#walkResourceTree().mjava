@@ -1,0 +1,62 @@
+    @Test
+    @Transactional
+    public void walkResourceTree() throws IOException {
+        // Setup the file tree and the necessary objects in the DAOs
+        createResourceTree();
+        createNodes();
+        Map<String, ResourceType> types = createResourceTypes();
+
+        expect(m_dataCollectionConfigDao.getLastUpdate()).andReturn(new Date(System.currentTimeMillis())).anyTimes();
+        expect(m_dataCollectionConfigDao.getConfiguredResourceTypes()).andReturn(types).anyTimes();
+
+        m_easyMockUtils.replayAll();
+        m_resourceDao.afterPropertiesSet();
+
+        // Walk the tree and collect the results
+        ResourceCollector visitor = new ResourceCollector();
+        ResourceTreeWalker walker = new ResourceTreeWalker();
+        walker.setResourceDao(m_resourceDao);
+        walker.setVisitor(visitor);
+        walker.walk();
+
+        // We must have at least one resource for every known type
+        for (OnmsResourceType type : m_resourceDao.getResourceTypes()) {
+            // Ignore this type for now #needstoomanydbojects
+            if (type.getName() == DistributedStatusResourceType.TYPE_NAME) {
+                continue;
+            }
+            assertTrue("No resources of type: " + type.getLabel(), visitor.resourceTypes.contains(type));
+        }
+
+        // We must be able to retrieve the same resource by id
+        for (Entry<String, OnmsResource> entry : visitor.resourcesById.entrySet()) {
+            OnmsResource resourceRetrievedById = m_resourceDao.getResourceById(entry.getKey());
+            assertNotNull(String.format("Failed to retrieve resource with id '%s'.", entry.getKey()), resourceRetrievedById);
+            assertEquals(String.format("Result mismatch for resource with id '%s'. Retrieved id is '%s'.", entry.getKey(), resourceRetrievedById.getId()),
+                    entry.getValue().getName(), resourceRetrievedById.getName());
+        }
+
+        // Build a line that represent the resource for every unique id
+        // and compare it to the known results
+        int k = 0;
+        String[] expectedResults = loadExpectedResults();
+        for (Entry<String, OnmsResource> entry : visitor.resourcesById.entrySet()) {
+            // Convert the attributes to strings and order them lexicographically
+            Set<String> attributeNames = new TreeSet<String>();
+            for (OnmsAttribute attribute : entry.getValue().getAttributes()) {
+                attributeNames.add(attribute.toString());
+            }
+
+            // Compare
+            String actualResult = entry.getKey() + ": " + attributeNames;
+            assertEquals(String.format("Result mismatch at line %d.", k+1),
+                    expectedResults[k], actualResult);
+            k++;
+        }
+
+        // We should have as many unique resource ids as we have results
+        assertEquals(expectedResults.length, visitor.resourcesById.size());
+
+        m_easyMockUtils.verifyAll();
+    }
+
