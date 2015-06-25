@@ -1,0 +1,101 @@
+    /**
+     * Optimized method for calculating the category statistics.
+     *
+     * We start off by retrieving outages affecting the nodes and services
+     * in the given category, and group these by node id.
+     *
+     * Using the outages, we calculate node-level statistics
+     * and tally the values to calculate the category statistics.
+     */
+    @Override
+    @Transactional(readOnly=true)
+    public synchronized EuiLevel getEuiLevel(RTCCategory category) {
+        final Header header = new Header();
+        header.setVer("1.9a");
+        header.setMstation("");
+
+        // current time
+        final Date curDate = new Date();
+        final long curTime = curDate.getTime();
+
+        // get the rolling window
+        final long rWindow = 24L * 60L * 60L * 1000L;
+
+        LOG.debug("Retrieving availability statistics for {} with current date: {} and rolling window: {}",
+                    category.getLabel(), curDate, rWindow);
+
+        // create the data
+        final EuiLevel level = new EuiLevel();
+
+        // set created in m_header and add to level
+        header.setCreated(EventConstants.formatToString(curDate));
+        level.setHeader(header);
+
+        final Category levelCat = new Category();
+
+        // category label
+        levelCat.setCatlabel(category.getLabel());
+
+        double outageTimeInCategory = 0.0;
+        int numServicesInCategory = 0;
+
+        // window bounds
+        final Date windowStart = new Date(curTime - rWindow);
+        final Date windowEnd = new Date(curTime);
+
+        // category specifics
+        final List<Integer> nodeIds = getNodes(category);
+        final List<String> serviceNames = category.getServiceCollection();
+
+        // retrieve the outages associated with the given nodes, only retrieving those that affect our window
+        final Map<Integer, List<OnmsOutage>> outagesByNode = getOutages(nodeIds, serviceNames, windowStart, windowEnd);
+
+        // calculate the node level statistics
+        for (final int nodeId : nodeIds) {
+            List<OnmsOutage> outages = outagesByNode.get(nodeId);
+            if (outages == null) {
+                outages = Lists.newArrayList();
+            }
+
+            // sum the outage time
+            final double outageTime = getOutageTimeInWindow(outages, windowStart, windowEnd);
+
+            // determine the number of services
+            final int numServices = getNumServices(nodeId, serviceNames);
+
+            // count the number of outstanding outages
+            final long numServicesDown = outages.stream()
+                    .filter(outage -> outage.getIfRegainedService() == null)
+                    .count();
+
+            final Node levelNode = new Node();
+            levelNode.setNodeid(nodeId);
+
+            // value for this node for this category
+            levelNode.setNodevalue(RTCUtils.getOutagePercentage(outageTime, rWindow, numServices));
+
+            // node service count
+            levelNode.setNodesvccount(numServices);
+
+            // node service down count
+            levelNode.setNodesvcdowncount(numServicesDown);
+
+            // add the node
+            levelCat.addNode(levelNode);
+
+            // update the category statistics
+            numServicesInCategory += numServices;
+            outageTimeInCategory += outageTime;
+        }
+
+        // calculate the outage percentage using tallied values
+        levelCat.setCatvalue(RTCUtils.getOutagePercentage(outageTimeInCategory, rWindow, numServicesInCategory));
+
+        // add category
+        level.addCategory(levelCat);
+
+        LOG.debug("Done retrieving availability statistics for {} with {} services.", category.getLabel(), numServicesInCategory);
+
+        return level;
+    }
+

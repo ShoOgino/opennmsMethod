@@ -1,0 +1,35 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public List<NodeRtc> getNodeRtcsForCategories(final Set<OnmsCategory> rowCategories, final Set<OnmsCategory> colCategories) {
+        return m_transactionOperations.execute(new TransactionCallback<List<NodeRtc>>() {
+            @Override
+            public List<NodeRtc> doInTransaction(TransactionStatus transactionStatus) {
+                CriteriaBuilder outageCriteriaBuilder = new CriteriaBuilder(OnmsOutage.class);
+
+                outageCriteriaBuilder.alias("monitoredService", "monitoredService", Alias.JoinType.INNER_JOIN);
+                outageCriteriaBuilder.alias("monitoredService.ipInterface", "ipInterface", Alias.JoinType.INNER_JOIN);
+                outageCriteriaBuilder.alias("monitoredService.ipInterface.node", "node", Alias.JoinType.INNER_JOIN);
+                outageCriteriaBuilder.eq("monitoredService.status", "A");
+                outageCriteriaBuilder.ne("ipInterface.isManaged", "D");
+                outageCriteriaBuilder.ne("node.type", "D");
+
+                CriteriaBuilder serviceCriteriaBuilder = new CriteriaBuilder(OnmsMonitoredService.class);
+
+                serviceCriteriaBuilder.alias("ipInterface", "ipInterface", Alias.JoinType.INNER_JOIN);
+                serviceCriteriaBuilder.alias("ipInterface.node", "node", Alias.JoinType.INNER_JOIN);
+                serviceCriteriaBuilder.alias("serviceType", "serviceType", Alias.JoinType.INNER_JOIN);
+                serviceCriteriaBuilder.alias("currentOutages", "currentOutages", Alias.JoinType.LEFT_JOIN);
+                serviceCriteriaBuilder.eq("status", "A");
+                serviceCriteriaBuilder.ne("ipInterface.isManaged", "D");
+                serviceCriteriaBuilder.ne("node.type", "D");
+
+                // HACK: Hibernate aliases 'node' as 'node2_' so we need to use this for the statement.
+                serviceCriteriaBuilder.sql(createQuery("node2_.nodeId", rowCategories, colCategories));
+
+                return getNodeListForCriteria(serviceCriteriaBuilder.toCriteria(), outageCriteriaBuilder.toCriteria());
+            }
+        });
+    }
+

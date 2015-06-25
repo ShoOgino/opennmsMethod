@@ -1,0 +1,34 @@
+    private void rebuildScheduler() {
+        // Register new collectors if necessary
+        Set<String> configuredCollectors = new HashSet<String>();
+        for (Collector collector : m_collectdConfigFactory.getCollectdConfig().getCollectors()) {
+            String svcName = collector.getService();
+            configuredCollectors.add(svcName);
+            if (getServiceCollector(svcName) == null) {
+                try {
+                    LOG.debug("rebuildScheduler: Loading collector {}, classname {}", svcName, collector.getClassName());
+                    Class<?> cc = Class.forName(collector.getClassName());
+                    ServiceCollector sc = (ServiceCollector) cc.newInstance();
+                    sc.initialize(Collections.<String, String>emptyMap());
+                    setServiceCollector(svcName, sc);
+                } catch (Throwable t) {
+                    LOG.warn("rebuildScheduler: Failed to load collector {} for service {}", collector.getClassName(), svcName, t);
+                }
+            }
+        }
+        // Removing unused collectors if necessary
+        for (String collectorName : getCollectorNames()) {
+            if (!configuredCollectors.contains(collectorName)) {
+                LOG.info("rebuildScheduler: removing collector for {}, it is no longer required", collectorName);
+                m_collectors.remove(collectorName);
+            }
+        }
+        // Recreating all Collectable Services (using the nodeID list populated at the beginning)
+        Collection<Integer> nodeIds = m_nodeDao.getNodeIds();
+        m_filterDao.flushActiveIpAddressListCache();
+        for (Integer nodeId : nodeIds) {
+            unscheduleNodeAndMarkForDeletion(new Long(nodeId));
+            scheduleNode(nodeId, true);
+        }
+    }
+

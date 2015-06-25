@@ -1,0 +1,38 @@
+    /** {@inheritDoc} */
+    @Override
+    public Double fetchLastValueInRange(String rrdFile, String ds, int interval, int range) throws NumberFormatException, RrdException {
+        try {
+            final long now = System.currentTimeMillis();
+            final long latestUpdateTime = (now - (now % interval)) / 1000L;
+            final long earliestUpdateTime = ((now - (now % interval)) - range) / 1000L;
+            FetchResults results = jrrd2.fetch(rrdFile, "AVERAGE", earliestUpdateTime, latestUpdateTime, 1);
+
+            // Determine the index of the requested data-source
+            final String[] dsNames = results.getColumns();
+            int dsIndex = 0;
+            for (int i = 0; i < dsNames.length; i++) {
+                if (dsNames[i].equals(ds)) {
+                    dsIndex = i;
+                }
+            }
+
+            final double[][] dsValues = results.getValues();
+            final int numRows = dsValues[dsIndex].length;
+
+            for (int i = numRows - 1; i >= 0; i--) {
+                final double value = dsValues[dsIndex][i];
+                if (!Double.isNaN(value)) {
+                    LOG.debug("fetchInRange: fetch successful: {}= {}", ds, value);
+                    return value;
+                } else {
+                    LOG.debug("fetchInRange: Got a NaN value - continuing back in time");
+                }
+            }
+            return dsValues[dsIndex][numRows-1];
+        } catch (JRrd2Exception e) {
+            LOG.error("Fetch failed", e);
+        }
+
+        return null;
+    }
+

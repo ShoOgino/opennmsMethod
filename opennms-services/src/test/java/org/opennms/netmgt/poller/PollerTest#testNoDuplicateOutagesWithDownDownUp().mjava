@@ -1,0 +1,73 @@
+    /**
+     * Verifies that outages are properly opened and resolved
+     * when events arrive out of order.
+     *
+     * See NMS-7394 for details.
+     */
+    @Test
+    public void testNoDuplicateOutagesWithDownDownUp() {
+        MockInterface nodeIf = m_network.getInterface(1, "192.168.1.1");
+        MockService icmpService = m_network.getService(1, "192.168.1.1", "ICMP");
+        MockService smtpService = m_network.getService(1, "192.168.1.1", "SMTP");
+
+        // Start the poller
+        startDaemons();
+
+        // Kill the critical service on the interface and expect an interfaceDown:
+        // The node in question has multiple interfaces, so we don't expect a nodeDown.
+        resetAnticipated();
+        anticipateDown(nodeIf);
+
+        icmpService.bringDown();
+
+        verifyAnticipated(10000);
+
+        // There should now be a single outage for the SMTP service:
+        // The critical service on the interface is down, so all
+        // of the services on that interface are also marked as down.
+        List<OnmsOutage> smtpOutages = getOutages(smtpService);
+        assertEquals(1, smtpOutages.size());
+        assertEquals(null, smtpOutages.get(0).getIfRegainedService());
+
+        // Next, we will take the SMTP service offline and bring
+        // the ICMP service online in order to make
+        // the poller daemon generate a interfaceDown event
+        // followed by a nodeLostService event.
+        //
+        // The poller daemon will then  wait to receive these event back
+        // from eventd, so that they are populated with the database ids.
+        //
+        // When the interfaceDown event is received, it will close
+        // the previous outages, and when the nodeLostService event is
+        // received it will create a new outage.
+        //
+        // If these events are received in a different order then which
+        // they were sent, we will end up with two outages in the table.
+        // This can happen, as observed in NMS-7394, if both events
+        // are sent shortly one after another.
+        //
+        // In order to test the behavior of pollerd, we manually
+        // manipulate the order of these events.
+
+        // Stops all other events until the nodeLostService has been processed
+        EventOrderAlteringHook hook = new EventOrderAlteringHook(
+                EventConstants.NODE_LOST_SERVICE_EVENT_UEI);
+        m_eventMgr.setSendNowHook(hook);
+
+        anticipateUp(nodeIf);
+        anticipateDown(smtpService);
+
+        smtpService.bringDown();
+        icmpService.bringUp();
+
+        verifyAnticipated(10000);
+
+        // There should be two outages in the database:
+        // one closed with the event id populated and another one pending
+        smtpOutages = getOutages(smtpService);
+        assertEquals(2, smtpOutages.size());
+        assertNotNull(smtpOutages.get(0).getIfRegainedService());
+        assertNotNull(smtpOutages.get(0).getServiceRegainedEvent());
+        assertNull(smtpOutages.get(1).getIfRegainedService());
+    }
+

@@ -5,82 +5,9 @@
             LOG.warn("Invalid node ID for event, skipping service reschedule: {}", event);
             return;
         }
-
         String nodeLabel = EventUtils.getParm(event, EventConstants.PARM_NODE_LABEL);
 
-        Date closeDate;
-        try {
-            closeDate = EventConstants.parseToDate(event.getTime());
-        } catch (final ParseException e) {
-            closeDate = new Date();
-        }
-
-        final Set<Service> databaseServices = new HashSet<>();
-
-        for (final String[] s : getPoller().getQueryManager().getNodeServices(nodeId.intValue())) {
-            databaseServices.add(new Service(s));
-        }
-        LOG.debug("# of Services in Database: {}", databaseServices.size());
-        LOG.trace("Database Services: {}", databaseServices);
-
-        final Set<Service> polledServices = new HashSet<>();
-
-        final PollableNode pnode = getNetwork().getNode(nodeId.intValue());
-        if (pnode == null) {
-            LOG.debug("Node {} is not already being polled.", nodeId);
-        } else {
-            if (pnode.getNodeLabel() != null) {
-                nodeLabel = pnode.getNodeLabel();
-            }
-
-            for (final PollableInterface iface : pnode.getInterfaces()) {
-                for (final PollableService s : iface.getServices()) {
-                    polledServices.add(new Service(s.getIpAddr(), s.getSvcName()));
-                }
-            }
-            LOG.debug("# of Polled Services: {}", polledServices.size());
-            LOG.trace("Polled Services: {}", polledServices);
-        }
-
-        // first, look for polled services that are no longer in the database
-        for (final Iterator<Service> iter = polledServices.iterator(); iter.hasNext(); ) {
-            final Service polledService = iter.next();
-
-            if (pnode != null) {
-                final PollableService service = pnode.getService(polledService.getInetAddress(), polledService.getServiceName());
-                // delete the service (we will re-add it if it should still be active)
-                service.delete();
-
-                while (!service.isDeleted()) {
-                    try {
-                        Thread.sleep(20);
-                    } catch (final InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-
-            if (!databaseServices.contains(polledService)) {
-                // We are polling the service, but it no longer exists.  Stop polling and close outages.
-                LOG.debug("{} should no longer be polled.  Resolving outages.", polledService);
-                closeOutagesForService(event, nodeId, closeDate, polledService);
-                iter.remove();
-            }
-        }
-
-        // anything that's left in the "databaseServices" list is a new service,
-        // add it to the list of to-be-polled services
-        polledServices.addAll(databaseServices);
-
         getPollerConfig().rebuildPackageIpListMap();
-
-        for (final Service polledService : polledServices) {
-            LOG.debug("{} is being scheduled (or rescheduled) for polling.", polledService);
-            getPoller().scheduleService(nodeId.intValue(),nodeLabel,polledService.getAddress(),polledService.getServiceName());
-            if (!getPollerConfig().isPolled(polledService.getAddress(), polledService.getServiceName())) {
-                LOG.debug("{} is no longer polled.  Closing any pending outages.", polledService);
-                closeOutagesForService(event, nodeId, closeDate, polledService);
-            }
-        }
+        serviceReschedule(nodeId, nodeLabel, event);
     }
 
