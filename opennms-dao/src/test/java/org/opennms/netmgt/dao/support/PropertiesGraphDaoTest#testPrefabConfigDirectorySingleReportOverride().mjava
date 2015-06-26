@@ -1,0 +1,74 @@
+    /**
+     * Test that an included single report per file properties config can override
+     * a report in the main properties file. 
+     * @throws IOException
+     */
+    @Test
+    public void testPrefabConfigDirectorySingleReportOverride() throws Exception {
+        File rootFile = m_fileAnticipator.tempFile("snmp-graph.properties");
+        File graphDirectory = m_fileAnticipator.tempDir("snmp-graph.properties.d");
+        
+        File graphBits = m_fileAnticipator.tempFile(graphDirectory, "mib2.bits.properties");
+        File graphHCbits = m_fileAnticipator.tempFile(graphDirectory, "mib2.HCbits.properties");
+                    
+        m_outputStream = new FileOutputStream(rootFile);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_mib2bitsBasePrefab);
+        m_writer.close();
+        m_outputStream.close();
+                    
+        graphDirectory.mkdir();
+        m_outputStream = new FileOutputStream(graphBits);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_separateBitsGraph);
+        m_writer.close();
+        m_outputStream.close();
+        
+        m_outputStream = new FileOutputStream(graphHCbits);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_separateHCBitsGraph);
+        m_writer.close();
+        m_outputStream.close();
+       
+        HashMap<String, Resource> prefabConfigs = new HashMap<String, Resource>();
+        prefabConfigs.put("performance", new FileSystemResource(rootFile));
+
+        PropertiesGraphDao dao = createPropertiesGraphDao(prefabConfigs, s_emptyMap);
+        
+        PrefabGraph mib2Bits = dao.getPrefabGraph("mib2.bits");
+        assertNotNull(mib2Bits);
+        //The base properties file (s_mib2bitsBasePrefab) has the name=Wrong Name, and columns=wrongColumn1,wrongColumn2.
+        // We check that the overridden graph has the correct details in it
+        assertEquals("mib2.bits", mib2Bits.getName());
+        assertEquals("Bits In/Out", mib2Bits.getTitle());
+        String columns1[] = {"ifInOctets","ifOutOctets"};
+        Assert.assertArrayEquals(columns1, mib2Bits.getColumns());
+
+        PrefabGraph mib2HCBits = dao.getPrefabGraph("mib2.HCbits");
+        assertNotNull(mib2HCBits);
+        assertEquals("mib2.HCbits", mib2HCBits.getName());
+        assertEquals("Bits In/Out", mib2HCBits.getTitle());
+        String columns2[] = {"ifHCInOctets","ifHCOutOctets"};
+        Assert.assertArrayEquals(columns2, mib2HCBits.getColumns());
+        
+        //Now, having proven that the override works, rewrite the base file with the same data, thus updating the timestamp
+        // and forcing a reload.  The mib2.bits graph should still be the correct overridden one.  
+
+        m_outputStream = new FileOutputStream(rootFile);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_mib2bitsBasePrefab);
+        m_writer.close();
+        m_outputStream.close();
+                    
+        //Wait long enough to make the FileReloadContainers do their thing reliably
+        Thread.sleep(1100);
+
+        //Ensure that the override still applies and hasn't been "underridden" by the rewrite of the base file.
+        mib2Bits = dao.getPrefabGraph("mib2.bits");
+        assertNotNull(mib2Bits);
+        assertEquals("mib2.bits", mib2Bits.getName());
+        assertEquals("Bits In/Out", mib2Bits.getTitle());
+        String columns3[] = {"ifInOctets","ifOutOctets"};
+        Assert.assertArrayEquals(columns3, mib2Bits.getColumns());
+    }
+

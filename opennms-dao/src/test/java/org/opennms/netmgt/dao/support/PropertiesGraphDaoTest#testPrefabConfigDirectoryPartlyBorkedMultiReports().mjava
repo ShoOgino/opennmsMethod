@@ -1,0 +1,102 @@
+    /**
+     * Test that when loading graphs from files in the include directory, that if one of
+     * the graphs defined in one of the multi-graph files is borked, the rest load correctly
+     * 
+     * Then also check that on setting the reload interval high, that the borked graph is 
+     * noticed immediately when we fix it
+     * @throws IOException
+     */
+    @Test
+    public void testPrefabConfigDirectoryPartlyBorkedMultiReports()
+            throws Exception {
+        //Don't do the normal checking of logging for worse than warning; we expect an error or two to be logged, and that's fine
+        testSpecificLoggingTest = true;
+
+        File rootFile = m_fileAnticipator.tempFile("snmp-graph.properties");
+        File graphDirectory = m_fileAnticipator.tempDir("snmp-graph.properties.d");
+
+        File multiFile1 = m_fileAnticipator.tempFile(graphDirectory, "mib2.bits1.properties");
+        File multiFile2 = m_fileAnticipator.tempFile(graphDirectory, "mib2.bits2.properties");
+
+        m_outputStream = new FileOutputStream(rootFile);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_baseIncludePrefab);
+        m_writer.close();
+        m_outputStream.close();
+
+        graphDirectory.mkdir();
+        m_outputStream = new FileOutputStream(multiFile1);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        //Make mib2.errors incorrectly specified
+        m_writer.write(s_includedMultiGraph1.replace("report.mib2.errors.name", "report.mib2.errors.nmae"));
+        m_writer.close();
+        m_outputStream.close();
+        
+        m_outputStream = new FileOutputStream(multiFile2);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        m_writer.write(s_includedMultiGraph2);
+        m_writer.close();
+        m_outputStream.close();
+        
+        HashMap<String, Resource> prefabConfigs = new HashMap<String, Resource>();
+        prefabConfigs.put("performance", new FileSystemResource(rootFile));
+
+        PropertiesGraphDao dao = createPropertiesGraphDao(prefabConfigs, s_emptyMap);
+
+        //Check the graphs, basically ensuring that a handful of unique but easily checkable 
+        // bits are uniquely what they should be.
+
+        //We check all 4 graphs
+        PrefabGraph mib2Bits = dao.getPrefabGraph("mib2.bits");
+        assertNotNull(mib2Bits);
+        assertEquals("mib2.bits", mib2Bits.getName());
+        assertEquals("Bits In/Out", mib2Bits.getTitle());
+        String columns1[] = { "ifInOctets", "ifOutOctets" };
+        Assert.assertArrayEquals(columns1, mib2Bits.getColumns());
+
+        PrefabGraph mib2HCBits = dao.getPrefabGraph("mib2.HCbits");
+        assertNotNull(mib2HCBits);
+        assertEquals("mib2.HCbits", mib2HCBits.getName());
+        assertEquals("Bits In/Out", mib2HCBits.getTitle());
+        String columns2[] = { "ifHCInOctets", "ifHCOutOctets" };
+        Assert.assertArrayEquals(columns2, mib2HCBits.getColumns());
+
+        PrefabGraph mib2Discards = dao.getPrefabGraph("mib2.discards");
+        assertNotNull(mib2Discards);
+        assertEquals("mib2.discards", mib2Discards.getName());
+        assertEquals("Discards In/Out", mib2Discards.getTitle());
+        String columns3[] = { "ifInDiscards", "ifOutDiscards" };
+        Assert.assertArrayEquals(columns3, mib2Discards.getColumns());
+
+        try {
+            PrefabGraph mib2Errors = dao.getPrefabGraph("mib2.errors");
+            fail("Should have thrown an ObjectRetrievalFailureException retrieving graph "
+                    + mib2Errors);
+        } catch (ObjectRetrievalFailureException e) {
+            //This is ok, and what should have happened
+        }
+
+        //Now set the include rescan interval to a large number, rewrite the multigraph file correctly, and check
+        // that the file is loaded (and we don't have to wait for the rescan interval)
+        dao.findPrefabGraphTypeByName("performance").setIncludeDirectoryRescanInterval(300000); //5 minutes
+
+        //Just make sure any timestamps will be at least 1 second old, just to be sure that the file timestamp
+        // will be 1 second in the past
+        Thread.sleep(1100);
+
+        m_outputStream = new FileOutputStream(multiFile1);
+        m_writer = new OutputStreamWriter(m_outputStream, "UTF-8");
+        //Correctly specified graph file now (error corrected)
+        m_writer.write(s_includedMultiGraph1);
+        m_writer.close();
+        m_outputStream.close();
+
+        //And now the graph should have loaded correctly
+        try {
+            assertNotNull(dao.getPrefabGraph("mib2.errors")); 
+        } catch (Exception e) {
+            //Catch exceptions and fail explicitly, because that's a failure, not an "error"
+            fail("Should not have gotten an exception fetching the graph");
+        }
+    }
+
