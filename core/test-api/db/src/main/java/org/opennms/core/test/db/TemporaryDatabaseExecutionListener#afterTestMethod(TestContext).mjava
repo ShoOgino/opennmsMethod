@@ -1,25 +1,24 @@
     @Override
     public void afterTestMethod(final TestContext testContext) throws Exception {
-        Throwable closeThrowable = null;
-
         System.err.println(String.format("TemporaryDatabaseExecutionListener.afterTestMethod(%s)", testContext));
 
         final JUnitTemporaryDatabase jtd = findAnnotation(testContext);
-        if (jtd == null) {
-            return;
-        }
+        if (jtd == null) return;
 
         // Close down the data sources that are referenced by the static DataSourceFactory helper classes
-        try {
-            DataSourceFactory.close();
-            XADataSourceFactory.close();
-        } catch (Throwable t) {
-            closeThrowable = t;
-        }
+        DataSourceFactory.close();
+        XADataSourceFactory.close();
 
         try {
-            if (m_createNewDatabases && m_database != null) {
-                m_database.drop();
+            // DON'T REMOVE THE DATABASE, just rely on the ShutdownHook to remove them instead
+            // otherwise you might remove the class-level database that is reused between tests.
+            // {@link TemporaryDatabase#createTestDatabase()}
+            if (m_createNewDatabases) {
+                final DataSource dataSource = DataSourceFactory.getInstance();
+                final TemporaryDatabase tempDb = findTemporaryDatabase(dataSource);
+                if (tempDb != null) {
+                    tempDb.drop();
+                }
             }
         } finally {
             // We must mark the application context as dirty so that the DataSourceFactoryBean is
@@ -34,15 +33,13 @@
                 testContext.markApplicationContextDirty(HierarchyMode.CURRENT_LEVEL);
                 testContext.setAttribute(DependencyInjectionTestExecutionListener.REINJECT_DEPENDENCIES_ATTRIBUTE, Boolean.TRUE);
             } else {
-                if (m_database != m_databases.peek()) {
+                final DataSource dataSource = DataSourceFactory.getInstance();
+                final TemporaryDatabase tempDb = findTemporaryDatabase(dataSource);
+                if (tempDb != m_databases.peek()) {
                     testContext.markApplicationContextDirty(HierarchyMode.CURRENT_LEVEL);
                     testContext.setAttribute(DependencyInjectionTestExecutionListener.REINJECT_DEPENDENCIES_ATTRIBUTE, Boolean.TRUE);
                 }
             }
-        }
-
-        if (closeThrowable != null) {
-            throw new Exception("Caught a Throwable while closing database connections after test. Pickup after yourself! " + closeThrowable, closeThrowable);
         }
     }
 
