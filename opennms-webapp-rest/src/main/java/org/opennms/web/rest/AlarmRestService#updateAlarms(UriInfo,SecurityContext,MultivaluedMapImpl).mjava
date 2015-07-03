@@ -1,0 +1,65 @@
+    /**
+     * <p>
+     * updateAlarms
+     * </p>
+     * 
+     * @param formProperties
+     *            a {@link org.opennms.web.rest.MultivaluedMapImpl} object.
+     */
+    @PUT
+    @Transactional
+    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    public Response updateAlarms(@Context final UriInfo uriInfo, @Context final SecurityContext securityContext, final MultivaluedMapImpl formProperties) {
+        writeLock();
+
+        try {
+            final String ackValue = formProperties.getFirst("ack");
+            formProperties.remove("ack");
+            final String escalateValue = formProperties.getFirst("escalate");
+            formProperties.remove("escalate");
+            final String clearValue = formProperties.getFirst("clear");
+            formProperties.remove("clear");
+
+            final CriteriaBuilder builder = getCriteriaBuilder(formProperties, false);
+            builder.distinct();
+            builder.limit(0);
+            builder.offset(0);
+
+            final String ackUser = formProperties.containsKey("ackUser") ? formProperties.getFirst("ackUser") : securityContext.getUserPrincipal().getName();
+            formProperties.remove("ackUser");
+            assertUserEditCredentials(securityContext, ackUser);
+
+            final List<OnmsAlarm> alarms = m_alarmDao.findMatching(builder.toCriteria());
+            for (final OnmsAlarm alarm : alarms) {
+                final OnmsAcknowledgment acknowledgement = new OnmsAcknowledgment(alarm, ackUser);
+                acknowledgement.setAckAction(AckAction.UNSPECIFIED);
+                if (ackValue != null) {
+                    if (Boolean.parseBoolean(ackValue)) {
+                        acknowledgement.setAckAction(AckAction.ACKNOWLEDGE);
+                    } else {
+                        acknowledgement.setAckAction(AckAction.UNACKNOWLEDGE);
+                    }
+                } else if (escalateValue != null) {
+                    if (Boolean.parseBoolean(escalateValue)) {
+                        acknowledgement.setAckAction(AckAction.ESCALATE);
+                    }
+                } else if (clearValue != null) {
+                    if (Boolean.parseBoolean(clearValue)) {
+                        acknowledgement.setAckAction(AckAction.CLEAR);
+                    }
+                } else {
+                    throw new IllegalArgumentException("Must supply one of the 'ack', 'escalate', or 'clear' parameters, set to either 'true' or 'false'.");
+                }
+                m_ackDao.processAck(acknowledgement);
+            }
+
+            if (alarms.size() == 1) {
+                return Response.seeOther(getRedirectUri(uriInfo, alarms.get(0).getId())).build();
+            } else {
+                return Response.seeOther(getRedirectUri(uriInfo)).build();
+            }
+        } finally {
+            writeUnlock();
+        }
+    }
+
