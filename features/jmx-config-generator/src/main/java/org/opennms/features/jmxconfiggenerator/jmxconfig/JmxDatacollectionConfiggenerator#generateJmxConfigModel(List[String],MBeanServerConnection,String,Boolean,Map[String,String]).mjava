@@ -1,0 +1,41 @@
+    public JmxDatacollectionConfig generateJmxConfigModel(List<String> ids, MBeanServerConnection mBeanServerConnection, String serviceName, Boolean runStandardVmBeans, Map<String, String> dictionary) throws MBeanServerQueryException, IOException, JMException {
+        logger.debug("Startup values: \n serviceName: " + serviceName + "\n runStandardVmBeans: " + runStandardVmBeans + "\n dictionary" + dictionary);
+        nameCutter.setDictionary(dictionary);
+
+        final QueryResult queryResult = queryMbeanServer(ids, mBeanServerConnection, runStandardVmBeans);
+        final JmxDatacollectionConfig xmlJmxDatacollectionConfig = createJmxDataCollectionConfig(serviceName, rrd);
+        final JmxCollection xmlJmxCollection = xmlJmxDatacollectionConfig.getJmxCollection().get(0);
+
+        for (QueryResult.MBeanResult eachMBeanResult : queryResult.getMBeanResults()) {
+            final ObjectName objectName = eachMBeanResult.objectName;
+            final Mbean xmlMbean = createMbean(objectName);
+            final QueryResult.AttributeResult attributeResult = eachMBeanResult.attributeResult;
+
+            for (MBeanAttributeInfo jmxBeanAttributeInfo : attributeResult.attributes) {
+                // check for CompositeData
+                if ("javax.management.openmbean.CompositeData".equals(jmxBeanAttributeInfo.getType())) {
+                    CompAttrib compAttrib = createCompAttrib(mBeanServerConnection, objectName, jmxBeanAttributeInfo);
+                    if (compAttrib != null) {
+                        xmlMbean.getCompAttrib().add(compAttrib);
+                    }
+                }
+                if (numbers.contains(jmxBeanAttributeInfo.getType())) {
+                    Attrib xmlJmxAttribute = createAttr(jmxBeanAttributeInfo);
+                    xmlMbean.getAttrib().add(xmlJmxAttribute);
+                } else {
+                    logger.warn("The type of attribute '{}' is '{}', but only numbers are supported right now. Ignoring.", jmxBeanAttributeInfo.getName(), jmxBeanAttributeInfo.getType());
+                }
+            }
+
+            if (!xmlMbean.getAttrib().isEmpty()  || !xmlMbean.getCompAttrib().isEmpty()) {
+                xmlJmxCollection.getMbeans().getMbean().add(xmlMbean);
+            }
+        }
+
+        if (xmlJmxCollection.getMbeans().getMbean().size() != queryResult.getMBeanResults().size()) {
+            logger.warn("Queried {} MBeans, but only got {} in the result set.", queryResult.getMBeanResults().size(), xmlJmxCollection.getMbeans().getMbean().size());
+        }
+
+        return xmlJmxDatacollectionConfig;
+    }
+
