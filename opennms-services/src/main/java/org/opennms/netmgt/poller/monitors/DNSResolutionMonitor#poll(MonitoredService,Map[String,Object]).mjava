@@ -1,52 +1,63 @@
     @Override
     public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+        final String nodeLabel = svc.getNodeLabel();
 
-        String nodeLabel = svc.getNodeLabel();
-        
-        String resolutionType = ParameterMap.getKeyedString(parameters, RESOLUTION_TYPE_PARM, RESOLUTION_TYPE_DEFAULT);
-        boolean requireV4 = RT_V4.equalsIgnoreCase(resolutionType) || RT_BOTH.equals(resolutionType);
-        boolean requireV6 = RT_V6.equalsIgnoreCase(resolutionType) || RT_BOTH.equals(resolutionType);
-        
+        // Determine if records for IPv4 and/or IPv6 re required
+        final String resolutionType = ParameterMap.getKeyedString(parameters,
+                                                                  PARM_RESOLUTION_TYPE,
+                                                                  PARM_RESOLUTION_TYPE_DEFAULT);
+        final boolean ipv4Required = PARM_RESOLUTION_TYPE_V4.equalsIgnoreCase(resolutionType) ||
+                                     PARM_RESOLUTION_TYPE_BOTH.equals(resolutionType);
+        final boolean ipv6Required = PARM_RESOLUTION_TYPE_V6.equalsIgnoreCase(resolutionType) ||
+                                     PARM_RESOLUTION_TYPE_BOTH.equals(resolutionType);
 
+        // Build a resolver object used for lookups
+        final String nameserver = ParameterMap.getKeyedString(parameters,
+                                                              PARM_NAMESERVER,
+                                                              null);
+
+        final Resolver resolver;
         try {
-            long start = System.currentTimeMillis();
-            InetAddress[] addrs = resolve(nodeLabel);
-            long end = System.currentTimeMillis();
-
-            boolean v4found = false;
-            boolean v6found = false;
-            for(InetAddress addr : addrs) {
-                LOG.debug("Resolved {} to {}", nodeLabel, addr);
-                if (addr instanceof Inet4Address) {
-                    v4found = true;
-                } else if(addr instanceof Inet6Address) {
-                    v6found = true;
-                }
+            if (nameserver == null) {
+                // Use system-defined resolvers
+                resolver = new ExtendedResolver();
+            } else {
+                resolver = new SimpleResolver(nameserver);
             }
 
-            if (!v4found && !v6found) {
-                String reason = "Unable to resolve " + nodeLabel;
-                LOG.debug(reason);
-                return PollStatus.unavailable(reason);
-            } 
-            if (requireV4 && !v4found) {
-                String reason = nodeLabel + " could only be resolved to an IPv6 address";
-                LOG.debug(reason);
-                return PollStatus.unavailable(reason);
-            }
-            if (requireV6 && !v6found) {
-                String reason = nodeLabel + " could only be resolved to an IPv4 address";
-                LOG.debug(reason);
-                return PollStatus.unavailable(reason);
-            }
-            LOG.debug("Resolved {} correctly!", nodeLabel);
-            return PollStatus.available((double)(end - start));
-
-        } catch (TextParseException e) {
-            String reason = "Unable to resolve "+nodeLabel+": "+e.getMessage();
-            LOG.debug(reason);
-            return PollStatus.unavailable(reason);
+        } catch (final UnknownHostException e) {
+            return PollStatus.unavailable("Unable to resolve " + nameserver + ": " + e.getMessage());
         }
 
+        // Start resolving the records
+        final long start = System.currentTimeMillis();
+
+        final boolean ipv4Found;
+        final boolean ipv6Found;
+        try {
+            ipv4Found = resolve(nodeLabel, resolver, Type.A);
+            ipv6Found = resolve(nodeLabel, resolver, Type.AAAA);
+
+        } catch (final TextParseException e) {
+            return PollStatus.unavailable("Unable to resolve " + nodeLabel + ": " + e.getMessage());
+        }
+
+        // Resolving succeeded - checking results
+        final long end = System.currentTimeMillis();
+
+        if (!ipv4Found && !ipv6Found) {
+            return PollStatus.unavailable("No result returned for query '" + nodeLabel + "'");
+        }
+
+        if (ipv4Required && !ipv4Found) {
+            return PollStatus.unavailable("No IPv4 Address result (A record) returned for query '" + nodeLabel + "'");
+        }
+
+        if (ipv6Required && !ipv6Found) {
+            return PollStatus.unavailable(
+                    "No IPv6 Address result (AAAA record) returned for query '" + nodeLabel + "'");
+        }
+
+        return PollStatus.available((double) (end - start));
     }
 
