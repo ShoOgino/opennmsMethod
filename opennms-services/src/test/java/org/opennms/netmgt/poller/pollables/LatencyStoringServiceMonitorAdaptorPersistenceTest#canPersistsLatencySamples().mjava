@@ -1,0 +1,58 @@
+    @Test
+    public void canPersistsLatencySamples() throws Exception {
+        PollStatus pollStatus = PollStatus.get(PollStatus.SERVICE_AVAILABLE, 42.1);
+        // For the purposes of this test, it's important the attributes are not added in lexicographical order
+        Map<String, Number> props = pollStatus.getProperties();
+        props.put("ping1", Integer.valueOf(1));
+        props.put("loss", Integer.valueOf(2));
+        props.put("median", Integer.valueOf(3));
+        ServiceMonitor serviceMonitor = new FixedServiceMonitor(pollStatus);
+
+        Package pkg = new Package();
+
+        MockNetwork mockNetwork = new MockNetwork();
+        mockNetwork.createStandardNetwork();
+        MockPollerConfig pollerConfig = new MockPollerConfig(mockNetwork);
+        pollerConfig.setRRAList(pkg, Lists.newArrayList("RRA:AVERAGE:0.5:1:2016"));
+
+        LatencyStoringServiceMonitorAdaptor lssma = new LatencyStoringServiceMonitorAdaptor(
+                serviceMonitor, pollerConfig, pkg, m_persisterFactory, m_resourceStorageDao);
+
+        MonitoredService monitoredService = new MockMonitoredService(3, "Firewall",
+                InetAddress.getByName("192.168.1.5"), "SMTP");
+
+        Map<String, Object> params = Maps.newHashMap();
+        params.put("rrd-repository", getResponseTimeRoot().getAbsolutePath());
+        params.put("rrd-base-name", "smtp-base");
+
+        EasyMock.expect(m_rrdStrategy.getDefaultFileExtension()).andReturn(".jrb").atLeastOnce();
+
+        m_rrdStrategy.createDefinition(EasyMock.eq("192.168.1.5"),
+                EasyMock.eq(getResponseTimeRoot().toPath()
+                .resolve(Paths.get("192.168.1.5")).toString()),
+                EasyMock.eq("smtp-base"),
+                EasyMock.anyInt(),
+                EasyMock.anyObject(),
+                EasyMock.anyObject());
+        EasyMock.expectLastCall().andReturn(null).once();
+
+        m_rrdStrategy.createFile(EasyMock.anyObject(), EasyMock.anyObject());
+        EasyMock.expectLastCall().once();
+
+        m_rrdStrategy.openFile(EasyMock.eq(getResponseTimeRoot().toPath()
+                .resolve(Paths.get("192.168.1.5", "smtp-base.jrb")).toString()));
+        EasyMock.expectLastCall().andReturn(null).once();
+
+        // This is the important bit, the order of the values should match the order there were inserted above
+        m_rrdStrategy.updateFile(EasyMock.isNull(), EasyMock.eq("192.168.1.5"), EasyMock.endsWith(":42.1:1:2:3"));
+        EasyMock.expectLastCall().once();
+
+        EasyMock.replay(m_rrdStrategy);
+
+        // Trigger the poll
+        lssma.poll(monitoredService, params);
+
+        // Verify
+        EasyMock.verify(m_rrdStrategy);
+    }
+
