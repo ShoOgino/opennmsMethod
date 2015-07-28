@@ -1,0 +1,45 @@
+    /**
+     * <p>updateAssetRecord</p>
+     *
+     * @param nodeCriteria a {@link java.lang.String} object.
+     * @param params a {@link org.opennms.web.rest.support.MultivaluedMapImpl} object.
+     * @return a {@link javax.ws.rs.core.Response} object.
+     */
+    @PUT
+    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
+    public Response updateAssetRecord(@Context final UriInfo uriInfo, @PathParam("nodeCriteria") final String nodeCriteria, final MultivaluedMapImpl params) {
+        OnmsNode node = m_nodeDao.get(nodeCriteria);
+        if (node == null) {
+            throw getException(Status.BAD_REQUEST, "updateAssetRecord: Can't find node " + nodeCriteria);
+        }
+
+        OnmsAssetRecord assetRecord = getAssetRecord(node);
+        if (assetRecord == null) {
+            throw getException(Status.BAD_REQUEST, "updateAssetRecord: Node " + node  + " could not update ");
+        }
+        if (assetRecord.getGeolocation() == null) {
+            assetRecord.setGeolocation(new OnmsGeolocation());
+        }
+        LOG.debug("updateAssetRecord: updating category {}", assetRecord);
+        BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(assetRecord);
+        wrapper.registerCustomEditor(Date.class, new ISO8601DateEditor());
+        for(String key : params.keySet()) {
+            if (wrapper.isWritableProperty(key)) {
+                String stringValue = params.getFirst(key);
+                Object value = wrapper.convertIfNecessary(stringValue, (Class<?>)wrapper.getPropertyType(key));
+                wrapper.setPropertyValue(key, value);
+            }
+        }
+
+        LOG.debug("updateAssetRecord: assetRecord {} updated", assetRecord);
+        m_nodeDao.saveOrUpdate(node);
+
+        try {
+            sendEvent(EventConstants.ASSET_INFO_CHANGED_EVENT_UEI, node.getId());
+        } catch (EventProxyException e) {
+            throw getException(Status.BAD_REQUEST, e.getMessage());
+        }
+
+        return Response.seeOther(getRedirectUri(uriInfo)).build();
+    }
+
