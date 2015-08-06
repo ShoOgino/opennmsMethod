@@ -1,0 +1,30 @@
+    private void persistLatencySamples(MonitoredService service, Map<String, Number> entries, File rrdRepositoryRoot, String rrdBaseName) {
+        RrdRepository repository = new RrdRepository();
+        repository.setStep(m_pollerConfig.getStep(m_pkg));
+        repository.setRraList(m_pollerConfig.getRRAList(m_pkg));
+        repository.setHeartBeat(repository.getStep() * HEARTBEAT_STEP_MULTIPLIER);
+        repository.setRrdBaseDir(rrdRepositoryRoot);
+
+        // When making calls directly to RrdUtils#createRrd() and RrdUtils#updateRrd(),
+        // the behavior was as follows:
+        // 1) All samples get written to response/${ipAddr}/${rrdBaseName}.rrd
+        //     This happens whether or not storeByGroup is enabled.
+        // 2) If multiple entries are present, the DSs are created in the same order that they
+        //    appear in the map
+
+        LatencyCollectionResource latencyResource = new LatencyCollectionResource(service.getSvcName(), service.getIpAddr());
+        for (final Entry<String, Number> entry : entries.entrySet()) {
+            final String ds = entry.getKey();
+            final Number value = entry.getValue();
+            LatencyCollectionAttributeType latencyType = new LatencyCollectionAttributeType(rrdBaseName, ds);
+            latencyResource.addAttribute(new LatencyCollectionAttribute(latencyResource, latencyType, ds, value.doubleValue()));
+        }
+
+        ServiceParameters params = new ServiceParameters(Collections.emptyMap());
+        CollectionSetVisitor persister = m_persisterFactory.createPersister(params, repository, false, true, true);
+
+        SingleResourceCollectionSet collectionSet = new SingleResourceCollectionSet(latencyResource, new Date());
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+        collectionSet.visit(persister);
+    }
+

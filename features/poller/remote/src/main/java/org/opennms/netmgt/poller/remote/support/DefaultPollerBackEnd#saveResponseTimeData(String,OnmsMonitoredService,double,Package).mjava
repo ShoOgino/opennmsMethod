@@ -1,36 +1,42 @@
     /**
      * <p>saveResponseTimeData</p>
      *
-     * @param locationMonitor a {@link java.lang.String} object.
+     * @param locationMonitorId a {@link java.lang.String} object.
      * @param monSvc a {@link org.opennms.netmgt.model.OnmsMonitoredService} object.
      * @param responseTime a double.
      * @param pkg a {@link org.opennms.netmgt.config.poller.Package} object.
      */
     @Override
-    public void saveResponseTimeData(final String locationMonitor, final OnmsMonitoredService monSvc, final double responseTime, final Package pkg) {
+    public void saveResponseTimeData(final String locationMonitorId, final OnmsMonitoredService monSvc, final double responseTime, final Package pkg) {
         final String svcName = monSvc.getServiceName();
         final Service svc = m_pollerConfig.getServiceInPackage(svcName, pkg);
-        
+
         final String dsName = getServiceParameter(svc, "ds-name");
         if (dsName == null) {
             return;
         }
-        
+
         final String rrdRepository = getServiceParameter(svc, "rrd-repository");
         if (rrdRepository == null) {
             return;
         }
-        
-        final String rrdDir = rrdRepository+File.separatorChar+"distributed"+File.separatorChar+locationMonitor+File.separator+str(monSvc.getIpAddress());
 
-        try {
-            final File rrdFile = new File(rrdDir, dsName);
-            if (!rrdFile.exists()) {
-                RrdUtils.createRRD(m_rrdStrategy, locationMonitor, rrdDir, dsName, m_pollerConfig.getStep(pkg), "GAUGE", 600, "U", "U", m_pollerConfig.getRRAList(pkg));
-            }
-            RrdUtils.updateRRD(m_rrdStrategy, locationMonitor, rrdDir, dsName, System.currentTimeMillis(), String.valueOf(responseTime));
-        } catch (final RrdException e) {
-            throw new PermissionDeniedDataAccessException("Unable to store rrdData from "+locationMonitor+" for service "+monSvc, e);
-        }
+        RrdRepository repository = new RrdRepository();
+        repository.setStep(m_pollerConfig.getStep(pkg));
+        repository.setHeartBeat(repository.getStep() * HEARTBEAT_STEP_MULTIPLIER);
+        repository.setRraList(m_pollerConfig.getRRAList(pkg));
+        repository.setRrdBaseDir(new File(rrdRepository));
+
+        DistributedLatencyCollectionResource distributedLatencyResource = new DistributedLatencyCollectionResource(locationMonitorId, InetAddressUtils.toIpAddrString(monSvc.getIpAddress()));
+        DistributedLatencyCollectionAttributeType distributedLatencyType = new DistributedLatencyCollectionAttributeType(dsName, dsName);
+        distributedLatencyResource.addAttribute(new DistributedLatencyCollectionAttribute(distributedLatencyResource,
+                distributedLatencyType, responseTime));
+
+        ServiceParameters params = new ServiceParameters(Collections.emptyMap());
+        CollectionSetVisitor persister = m_persisterFactory.createPersister(params, repository, false, true, true);
+
+        SingleResourceCollectionSet collectionSet = new SingleResourceCollectionSet(distributedLatencyResource, new Date());
+        collectionSet.setStatus(ServiceCollector.COLLECTION_SUCCEEDED);
+        collectionSet.visit(persister);
     }
 

@@ -1,3 +1,4 @@
+    @Ignore
     @SuppressWarnings("unchecked")
     private void testPersisting(String matchValue, SnmpValue snmpValue) throws Exception {
         OnmsNode node = new OnmsNode();
@@ -36,27 +37,25 @@
         NumericAttributeType attributeType = new NumericAttributeType(resourceType, snmpCollection.getName(), mibObject, new AttributeGroupType("foo", AttributeGroupType.IF_TYPE_IGNORE));
 
         attributeType.storeResult(new SnmpCollectionSet(agent, snmpCollection), null, new SnmpResult(mibObject.getSnmpObjId(), new SnmpInstId(mibObject.getInstance()), snmpValue));
-        
 
-        RrdRepository repository = new RrdRepository();
+        RrdRepository repository = createRrdRepository();
         repository.setRraList(Collections.singletonList("RRA:AVERAGE:0.5:1:2016"));
 
-        final BasePersister persister = new BasePersister(new ServiceParameters(new HashMap<String, Object>()), repository, m_rrdStrategy);
-        persister.createBuilder(nodeInfo, "baz", attributeType);
-        
+        RrdPersisterFactory persisterFactory = new RrdPersisterFactory();
+        persisterFactory.setRrdStrategy(m_rrdStrategy);
+        persisterFactory.setResourceStorageDao(m_resourceStorageDao);
+        CollectionSetVisitor persister = persisterFactory.createPersister(new ServiceParameters(Collections.emptyMap()), repository);
+
         final AtomicInteger count = new AtomicInteger(0);
         
-        nodeInfo.visit(new AbstractCollectionSetVisitor() {
-			
-			@Override
-			public void visitAttribute(CollectionAttribute attr) {
-		        attr.storeAttribute(persister);
-		        count.incrementAndGet();
-			}
-			
-		});
+        nodeInfo.visit(new CollectionSetVisitorWrapper(persister) {
+            @Override
+            public void visitAttribute(CollectionAttribute attribute) {
+                super.visitAttribute(attribute);
+                count.incrementAndGet();
+            }
+        });
 
         assertEquals(1, count.get());
-        persister.commitBuilder();
     }
 

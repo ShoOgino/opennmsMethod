@@ -1,0 +1,46 @@
+    private void executeThresholdTest(EventAnticipator anticipator, Double[] rtValues) throws Exception {
+
+        Map<String,Object> parameters = new HashMap<String,Object>();
+        parameters.put("rrd-repository", "/tmp");
+        parameters.put("ds-name", "icmp");
+        parameters.put("rrd-base-name", "icmp");
+        parameters.put("thresholding-enabled", "true");
+
+        FilterDao filterDao = m_mocks.createMock(FilterDao.class);
+        expect(filterDao.getActiveIPAddressList((String)EasyMock.anyObject())).andReturn(Collections.singletonList(addr("127.0.0.1"))).anyTimes();
+        filterDao.flushActiveIpAddressListCache();
+        EasyMock.expectLastCall().anyTimes();
+        FilterDaoFactory.setInstance(filterDao);
+
+        MonitoredService svc = m_mocks.createMock(MonitoredService.class);
+        expect(svc.getNodeId()).andReturn(1);
+        expect(svc.getIpAddr()).andReturn("127.0.0.1").atLeastOnce();
+        expect(svc.getSvcName()).andReturn("ICMP").atLeastOnce();
+
+        ServiceMonitor service = new MockServiceMonitor(rtValues);
+
+        int step = 1;
+        List<String> rras = Collections.singletonList("RRA:AVERAGE:0.5:1:2016");
+        Package pkg = new Package();
+        Rrd rrd = new Rrd();
+        rrd.setStep(step);
+        rrd.setRras(rras);
+        pkg.setRrd(rrd);
+
+        expect(m_pollerConfig.getRRAList(pkg)).andReturn(rras).anyTimes();
+        expect(m_pollerConfig.getStep(pkg)).andReturn(step).anyTimes();
+
+        m_eventIpcManager.setEventAnticipator(anticipator);
+
+        m_mocks.replayAll();
+        LatencyStoringServiceMonitorAdaptor adaptor = new LatencyStoringServiceMonitorAdaptor(service, m_pollerConfig, pkg, m_persisterFactory, m_resourceStorageDao);
+        // Make sure that the ThresholdingSet initializes with test settings
+        String previousOpennmsHome = System.setProperty("opennms.home", "src/test/resources");
+        for (int i=0; i<rtValues.length; i++) {
+            adaptor.poll(svc, parameters);
+            Thread.sleep(1000 * step); // Emulate the appropriate wait time prior inserting another value into the RRD files.
+        }
+        System.setProperty("opennms.home", previousOpennmsHome);
+        m_mocks.verifyAll();
+    }
+

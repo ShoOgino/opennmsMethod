@@ -1,0 +1,54 @@
+    /*
+     * Testing custom ThresholdingSet implementation for in-line Latency thresholds processing for Pollerd.
+     * 
+     * This test validate that Bug 1582 has been fixed.
+     * ifLabel and ifIndex are set correctly based on Bug 2711
+     */
+    @Test
+    @JUnitTemporaryDatabase(tempDbClass=MockDatabase.class)
+    public void testLatencyThresholdingSet() throws Exception {
+        Integer ifIndex = 1;
+        String ifName = "lo0";
+        setupSnmpInterfaceDatabase(m_db, "127.0.0.1", ifName);
+
+        LatencyThresholdingSet thresholdingSet = new LatencyThresholdingSet(1, "127.0.0.1", "HTTP", getRepository(), m_resourceStorageDao);
+        assertTrue(thresholdingSet.hasThresholds()); // Global Test
+        Map<String, Double> attributes = new HashMap<String, Double>();
+        attributes.put("http", 90.0);
+        assertTrue(thresholdingSet.hasThresholds(attributes)); // Datasource Test
+        List<Event> triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+        assertTrue(triggerEvents.size() == 0);
+
+        // Test Trigger
+        attributes.put("http", 200.0);
+        for (int i = 1; i < 5; i++) {
+            LOG.debug("testLatencyThresholdingSet: run number {}", i);
+            if (thresholdingSet.hasThresholds(attributes)) {
+                triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+                assertTrue(triggerEvents.size() == 0);
+            }
+        }
+        if (thresholdingSet.hasThresholds(attributes)) {
+            LOG.debug("testLatencyThresholdingSet: run number 5");
+            triggerEvents = thresholdingSet.applyThresholds("http", attributes);
+            assertTrue(triggerEvents.size() == 1);
+        }
+        
+        // Test Rearm
+        List<Event> rearmEvents = null;
+        if (thresholdingSet.hasThresholds(attributes)) {
+            attributes.put("http", 40.0);
+            rearmEvents = thresholdingSet.applyThresholds("http", attributes);
+            assertTrue(rearmEvents.size() == 1);
+        }
+
+        // Validate Events
+        addEvent(EventConstants.HIGH_THRESHOLD_EVENT_UEI, "127.0.0.1", "HTTP", 5, 100.0, 50.0, 200.0, ifName, "127.0.0.1[http]", "http", ifName, ifIndex.toString(), m_anticipator, m_anticipatedEvents);
+        addEvent(EventConstants.HIGH_THRESHOLD_REARM_EVENT_UEI, "127.0.0.1", "HTTP", 5, 100.0, 50.0, 40.0, ifName, "127.0.0.1[http]", "http", ifName, ifIndex.toString(), m_anticipator, m_anticipatedEvents);
+        ThresholdingEventProxy proxy = new ThresholdingEventProxy();
+        proxy.add(triggerEvents);
+        proxy.add(rearmEvents);
+        proxy.sendAllEvents();
+        verifyEvents(0);
+    }
+

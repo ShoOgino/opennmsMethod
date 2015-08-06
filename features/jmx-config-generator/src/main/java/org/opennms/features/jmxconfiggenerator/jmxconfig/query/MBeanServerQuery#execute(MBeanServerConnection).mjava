@@ -1,0 +1,51 @@
+    public QueryResult execute(MBeanServerConnection mbeanServerConnection) throws MBeanServerQueryException {
+        try {
+            if (filterCriteriaList.isEmpty()) {
+                filterCriteriaList.add(new FilterCriteria());
+            }
+
+            // retrieve all Mbeans
+            QueryResult queryResult = executeQuery(filterCriteriaList, mbeanServerConnection);
+            queryResult.setTotalMBeanCount(mbeanServerConnection.getMBeanCount());
+
+            // retrieve all ignoring Mbeans
+            QueryResult ignoreResult = executeQuery(ignoreFilterList, mbeanServerConnection);
+
+            // filter out all ignored attributes
+            for (QueryResult.MBeanResult eachResult : ignoreResult.getMBeanResults()) {
+                for (MBeanAttributeInfo eachAttribute : eachResult.attributeResult.attributes) {
+                    queryResult.remove(eachResult.objectName, eachAttribute);
+                }
+            }
+
+            // now build the result
+            if (!showEmptyMbeans) {
+                queryResult.removeEmptyMBeanResults();
+            }
+            if (sort) {
+                queryResult.sort();
+            }
+
+            if (fetchValues) {
+                for (QueryResult.MBeanResult eachMbeanResult : queryResult.getMBeanResults()) {
+                    QueryResult.AttributeResult attributeResult = eachMbeanResult.attributeResult;
+                    for (MBeanAttributeInfo eachAttribute : attributeResult.attributes) {
+                        if (eachAttribute.isReadable()) {
+                            try {
+                                Object value = mbeanServerConnection.getAttribute(eachMbeanResult.objectName, eachAttribute.getName());
+                                attributeResult.setValue(eachAttribute, value);
+                            } catch (Exception uoe) {
+                                // while receiving the value an exception could occur, we mark
+                                // the values as such.
+                                attributeResult.setValue(eachAttribute, "ERROR: " + uoe.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+            return queryResult;
+        } catch (IOException  | JMException e) {
+            throw new MBeanServerQueryException(e);
+        }
+    }
+
