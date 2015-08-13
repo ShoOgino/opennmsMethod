@@ -1,0 +1,43 @@
+    public JmxDatacollectionConfig generateJmxConfigModel(List<String> ids, MBeanServerConnection mBeanServerConnection, String serviceName, Boolean runStandardVmBeans, Boolean skipNonNumber, Map<String, String> dictionary) throws MBeanServerQueryException, IOException, JMException {
+        logger.debug("Startup values: \n serviceName: " + serviceName + "\n runStandardVmBeans: " + runStandardVmBeans + "\n dictionary" + dictionary);
+        aliasList.clear();
+        aliasMap.clear();
+        nameCutter.setDictionary(dictionary);
+
+        final QueryResult queryResult = queryMbeanServer(ids, mBeanServerConnection, runStandardVmBeans);
+        final JmxDatacollectionConfig xmlJmxDatacollectionConfig = createJmxDataCollectionConfig(serviceName, rrd);
+        final JmxCollection xmlJmxCollection = xmlJmxDatacollectionConfig.getJmxCollection().get(0);
+
+        for (QueryResult.MBeanResult eachMBeanResult : queryResult.getMBeanResults()) {
+            final ObjectName objectName = eachMBeanResult.objectName;
+            final Mbean xmlMbean = createMbean(objectName);
+            final QueryResult.AttributeResult attributeResult = eachMBeanResult.attributeResult;
+
+            for (MBeanAttributeInfo jmxBeanAttributeInfo : attributeResult.attributes) {
+                // check for CompositeData
+                if ("javax.management.openmbean.CompositeData".equals(jmxBeanAttributeInfo.getType())) {
+                    CompAttrib compAttrib = createCompAttrib(mBeanServerConnection, objectName, jmxBeanAttributeInfo, skipNonNumber);
+                    if (compAttrib != null) {
+                        xmlMbean.getCompAttrib().add(compAttrib);
+                    }
+                }
+                if (skipNonNumber && !numbers.contains(jmxBeanAttributeInfo.getType())) {
+                    logger.warn("The type of attribute '{}' is '{}' and '--skipNonNumber' is set. Ignoring.", jmxBeanAttributeInfo.getName(), jmxBeanAttributeInfo.getType());
+                } else {
+                    Attrib xmlJmxAttribute = createAttr(jmxBeanAttributeInfo);
+                    xmlMbean.getAttrib().add(xmlJmxAttribute);
+                }
+            }
+
+            if (!xmlMbean.getAttrib().isEmpty()  || !xmlMbean.getCompAttrib().isEmpty()) {
+                xmlJmxCollection.getMbeans().getMbean().add(xmlMbean);
+            }
+        }
+
+        if (xmlJmxCollection.getMbeans().getMbean().size() != queryResult.getMBeanResults().size()) {
+            logger.warn("Queried {} MBeans, but only got {} in the result set.", queryResult.getMBeanResults().size(), xmlJmxCollection.getMbeans().getMbean().size());
+        }
+
+        return xmlJmxDatacollectionConfig;
+    }
+

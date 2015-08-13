@@ -1,0 +1,37 @@
+    /**
+     * Checks if is configuration valid.
+     *
+     * @return true, if is configuration valid
+     * @throws OnmsUpgradeException the OpenNMS upgrade exception
+     */
+    private boolean isConfigValid() throws OnmsUpgradeException {
+        File configDirectory = new File(sourceFile.getParentFile().getAbsolutePath(), "datacollection");
+        try {
+            DefaultDataCollectionConfigDao dao = new DefaultDataCollectionConfigDao();
+            dao.setConfigDirectory(configDirectory.getAbsolutePath());
+            dao.setConfigResource(new FileSystemResource(sourceFile));
+            dao.setReloadCheckInterval(new Long(0));
+            dao.afterPropertiesSet();
+        } catch (IllegalArgumentException e) {
+            log("Found a problem: %s\n", e.getMessage());
+            Matcher m = pattern.matcher(e.getMessage());
+            if (m.find()) {
+                try {
+                    Iterator<Path> paths = Files.list(configDirectory.toPath()).filter(f -> f.getFileName().toString().toLowerCase().endsWith(".xml")).iterator();
+                    for (; paths.hasNext(); ) {
+                        String group = getGroupForResourceType(paths.next().toFile(), m.group(1));
+                        if (group != null) {
+                            updateDataCollectionConfig(m.group(2), group);
+                            return false;
+                        }
+                    }
+                } catch (Exception ex) {
+                    throw new OnmsUpgradeException("Can't get datacollection-group files", ex);
+                }
+            }
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't process " + sourceFile, e);
+        }
+        return true;
+    }
+
