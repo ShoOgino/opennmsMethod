@@ -1,0 +1,53 @@
+	public void modelChanged(Item parentItem, Object parentData, SelectableBeanItemContainer<T> container) {
+		try {
+			blockValidation = true;
+			if (getParentItem() == parentItem) return;
+			setParentItem(parentItem);
+			setParentData(parentData);
+
+			// we initialize the tableFieldFactory because by default pagination is enabled, which
+			// causes the table not to know all fields. But the validation is bound to a field, therefore
+			// we need to create all fields in advance.
+			aliasFieldsMap.clear();
+			fields.clear();
+			for (Object eachItemId : container.getItemIds()) {
+				for (Object eachPropertyId : container.getContainerPropertyIds()) {
+					Field<?> eachField = tableFieldFactory.createField(container, eachItemId, eachPropertyId, this);
+					if (eachField != null) {
+						fields.put(computeKey(eachItemId, eachPropertyId), eachField);
+						if (MetaAttribItem.ALIAS.equals(eachPropertyId)) {
+							aliasFieldsMap.put(eachItemId, (Field<String>) eachField);
+
+							// we have to set this manually, otherwise validation does not work
+							Item item = container.getItem(eachItemId);
+							Property property = item.getItemProperty(eachPropertyId);
+							((Field<String>) eachField).setValue((String) property.getValue());
+						}
+					}
+				}
+			}
+
+			setContainerDataSource(container);
+
+			setVisibleColumns(
+					MetaAttribItem.SELECTED,
+					MetaAttribItem.NAME,
+					MetaAttribItem.ALIAS,
+					MetaAttribItem.TYPE);
+
+			// enable/disable fields according to parent selection
+			Property itemProperty = parentItem.getItemProperty(MBeansTree.MetaMBeansTreeItem.SELECTED);
+			enableFields(fields.values(), (Boolean) itemProperty.getValue());
+			if ((Boolean) itemProperty.getValue()) {
+				updateCheckBoxes();
+			}
+
+			// we initially validate to ensure the ui is ok ant not in a broken state.
+			// Only to allow this validation we have to do the initialization of the fields (See above) manually.
+			// This is not ideal, but it seems to be the only way.
+			validateFields(true);
+		} finally {
+			blockValidation = false;
+		}
+	}
+
