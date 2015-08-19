@@ -1,0 +1,122 @@
+    /**
+     * This tests forwarding of 7 alarms, one for each OpenNMS severity to
+     * verify the LOG_LEVEL agrees with the Severity based on our algorithm.
+     * 
+     * @throws Exception
+     */
+    @Test
+    public void testForwardAlarms() throws Exception {
+
+        String xml = generateConfigXml();
+
+        Resource resource = new ByteArrayResource(xml.getBytes());
+
+        JmsNorthbounderConfigDao dao = new JmsNorthbounderConfigDao();
+        dao.setConfigResource(resource);
+        dao.afterPropertiesSet();
+
+        JmsNorthbounderConfig config = dao.getConfig();
+
+        List<JmsDestination> destinations = config.getDestinations();
+
+        List<JmsNorthbounder> nbis = new LinkedList<JmsNorthbounder>();
+
+        for (JmsDestination jmsDestination : destinations) {
+            JmsNorthbounder nbi = new JmsNorthbounder(
+                                                      config,
+                                                      m_jmsNorthbounderConnectionFactory,
+                                                      jmsDestination);
+            nbi.setNodeDao(m_nodeDao);
+            nbi.afterPropertiesSet();
+            nbis.add(nbi);
+        }
+
+        int j = 7;
+        List<NorthboundAlarm> alarms = new LinkedList<NorthboundAlarm>();
+
+        OnmsNode node = new OnmsNode(NODE_LABEL);
+        node.setForeignSource("TestGroup");
+        node.setForeignId("1");
+        node.setId(m_nodeDao.getNextNodeId());
+
+        OnmsSnmpInterface snmpInterface = new OnmsSnmpInterface(node, 1);
+        snmpInterface.setId(1);
+        snmpInterface.setIfAlias("Connection to OpenNMS Wifi");
+        snmpInterface.setIfDescr("en1");
+        snmpInterface.setIfName("en1/0");
+        snmpInterface.setPhysAddr("00:00:00:00:00:01");
+
+        Set<OnmsIpInterface> ipInterfaces = new LinkedHashSet<OnmsIpInterface>(
+                                                                               j);
+        InetAddress address = InetAddress.getByName("10.0.1.1");
+        OnmsIpInterface onmsIf = new OnmsIpInterface(address, node);
+        onmsIf.setSnmpInterface(snmpInterface);
+        onmsIf.setId(1);
+        onmsIf.setIfIndex(1);
+        onmsIf.setIpHostName(NODE_LABEL);
+        onmsIf.setIsSnmpPrimary(PrimaryType.PRIMARY);
+
+        ipInterfaces.add(onmsIf);
+
+        node.setIpInterfaces(ipInterfaces);
+        m_nodeDao.save(node);
+        m_nodeDao.flush();
+        // TX via NBIs
+        for (JmsNorthbounder nbi : nbis) {
+
+            for (int i = 1; i <= j; ++i) {
+                OnmsAlarm onmsAlarm = new OnmsAlarm();
+                onmsAlarm.setId(i);
+                onmsAlarm.setUei("uei.opennms.org/test/jmsNorthBounder");
+                onmsAlarm.setNode(node);
+                onmsAlarm.setSeverityId(i);
+                onmsAlarm.setIpAddr(InetAddress.getByName("127.0.0.1"));
+                onmsAlarm.setCounter(i);
+                onmsAlarm.setLogMsg("Node Down");
+                onmsAlarm.setX733AlarmType(NorthboundAlarm.x733AlarmType.get(i).name());
+                onmsAlarm.setX733ProbableCause(NorthboundAlarm.x733ProbableCause.get(i).getId());
+                if (i < j) { // Do not add parameters to the last alarm for
+                             // testing NMS-6383
+                    String eventparms = "foreignSource=fabric(string,text);foreignId=space-0256012012000038(string,text);reason=Aborting node scan : Agent timed out while scanning the system table(string,text);"
+                            + ".1.3.6.1.4.1.2636.3.18.1.7.1.2.732=207795895(TimeTicks,text)";
+                    onmsAlarm.setEventParms(eventparms);
+                }
+                NorthboundAlarm a = new NorthboundAlarm(onmsAlarm);
+
+                Assert.assertFalse(nbi.accepts(a));
+                onmsAlarm.setUei("uei.opennms.org/nodes/nodeDown");
+                a = new NorthboundAlarm(onmsAlarm);
+                Assert.assertTrue(nbi.accepts(a));
+
+                alarms.add(a);
+            }
+            nbi.forwardAlarms(alarms);
+        }
+
+        Thread.sleep(100);
+
+        // Let's become a consumer and receive the messages!
+        List<String> messages = new LinkedList<String>();
+        Message m = m_template.receive("OpenNMSAlarmQueue");
+        while (m != null) {
+            Assert.assertTrue(m instanceof TextMessage);
+            messages.add(((TextMessage) m).getText());
+            m = m_template.receive("OpenNMSAlarmQueue");
+        }
+
+        Assert.assertTrue("Log messages sent: 7, Log messages received: "
+                + messages.size(), 7 == messages.size());
+
+        for (String message : messages) {
+            System.out.println(message);
+        }
+
+        int i = 0;
+        for (String message : messages) {
+            Assert.assertTrue("ALARM ID:" +(i+1), message.contains("ALARM ID:" + (i+1) + " "));
+            Assert.assertTrue(message.contains("NODE:"
+                    + NODE_LABEL));
+            i++;
+        }
+    }
+
