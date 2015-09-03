@@ -1,0 +1,31 @@
+    public DiscoveryResults discover(DiscoveryJob job) {
+        // Track the results of this particular job
+        final PingResponseTracker tracker = new PingResponseTracker();
+
+        // Filter out any entries where getAddress() == null
+        List<IPPollAddress> addresses = StreamSupport.stream(job.getAddresses().spliterator(), false)
+            .filter(j -> j.getAddress() != null)
+            .collect(Collectors.toList());
+
+        // Expect callbacks for all of the addresses before issuing any pings
+        addresses.stream()
+            .map(a -> a.getAddress())
+            .forEach(a -> tracker.expectCallbackFor(a));
+
+        // Issue all of the pings
+        addresses.stream().forEach(a -> ping(a, tracker));
+
+        // Don't bother waiting if there aren't any addresses
+        if (!addresses.isEmpty()) {
+            // Wait for the pings to complete
+            try {
+                tracker.getLatch().await();
+            } catch (InterruptedException e) {
+                throw Throwables.propagate(e);
+            }
+        }
+
+        // We're done
+        return new DiscoveryResults(tracker.getResponses(), job.getForeignSource(), job.getLocation());
+    }
+
