@@ -1,0 +1,31 @@
+    @Test
+    public void canPersist() throws InterruptedException {
+        ServiceParameters params = new ServiceParameters(Collections.emptyMap());
+        RrdRepository repo = new RrdRepository();
+        // Only the last element of the path matters here
+        repo.setRrdBaseDir(Paths.get("a","path","that","ends","with","snmp").toFile());
+        Persister persister = m_persisterFactory.createPersister(params, repo);
+
+        // Build a collection set with a single sample
+        Timestamp now = Timestamp.now();
+        CollectionSet collectionSet = new CollectionSetBuilder()
+            .withSample(Paths.get("1"), "metrics", "metric", "GAUGE", 900)
+            .withTimestamp(now.asDate())
+            .build();
+
+        // Persist
+        collectionSet.visit(persister);
+
+        // Wait for the sample(s) to be flushed
+        Thread.sleep(5 * 1000);
+
+        // Fetch the (persisted) sample
+        Resource resource = new Resource("snmp:1:metrics");
+        Timestamp end = Timestamp.now();
+        Results<Sample> samples = m_sampleRepository.select(Context.DEFAULT_CONTEXT, resource, Optional.of(now), Optional.of(end));
+
+        assertEquals(1, samples.getRows().size());
+        Row<Sample> row = samples.getRows().iterator().next();
+        assertEquals(900, row.getElement("metric").getValue().doubleValue(), 0.00001);
+    }
+
