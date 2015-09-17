@@ -1,0 +1,24 @@
+    @Override
+    public Authentication authenticate(Authentication authentication) throws AuthenticationException {
+        KerberosServiceRequestToken auth = (KerberosServiceRequestToken) authentication;
+        byte[] token = auth.getToken();
+        LOG.debug("Try to validate Kerberos Token");
+        KerberosTicketValidation ticketValidation = m_kerberosTicketValidator.validateTicket(token);
+        LOG.debug("Succesfully validated " + ticketValidation.username());
+        
+        /*
+         * The incoming username will be in the form of a Kerberos user principal name,
+         * e.g. user@EXAMPLE.ORG. We typically need to strip off the realm name before
+         * doing any LDAP operations with the username.
+         */
+        String validatedUsername = trimRealmFromUsername(ticketValidation.username());
+        DirContextOperations ldapUserEntry = m_ldapUserSearch.searchForUser(validatedUsername);
+        Collection<? extends GrantedAuthority> grantedAuthorities = m_ldapAuthoritiesPopulator.getGrantedAuthorities(ldapUserEntry, validatedUsername);
+        
+        UserDetails userDetails = new User(validatedUsername, "notUsed", true, true, true, true, grantedAuthorities);
+        m_userDetailsChecker.check(userDetails);
+        additionalAuthenticationChecks(userDetails, auth);
+        KerberosServiceRequestToken responseAuth = new KerberosServiceRequestToken(userDetails, ticketValidation, userDetails.getAuthorities(), token);
+        return responseAuth;
+    }
+

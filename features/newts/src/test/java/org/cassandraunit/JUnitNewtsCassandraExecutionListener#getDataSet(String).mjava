@@ -1,0 +1,49 @@
+    public static CQLDataSet getDataSet(String keyspace) {
+        try {
+            final Schema searchSchema = new org.opennms.newts.cassandra.search.Schema();
+            final Schema samplesSchema = new org.opennms.newts.persistence.cassandra.Schema();
+            final List<Schema> schemas = Lists.newArrayList(searchSchema, samplesSchema);
+
+            //  Concatenate the schema strings
+            String schemasString = "";
+            for (Schema schema : schemas) {
+                schemasString += IOUtils.toString(schema.getInputStream());
+            }
+
+            // Replace the placeholders
+            schemasString = schemasString.replace(KEYSPACE_PLACEHOLDER, keyspace);
+
+            // Split the resulting script back into lines
+            String lines[] = schemasString.split("\\r?\\n");
+
+            // Remove duplicate CREATE KEYSPACE statements;
+            StringBuffer sb = new StringBuffer();            
+            boolean foundCreateKeyspace = false;
+            boolean skipNextLine = false;
+            for (String line : lines) {
+                if (line.startsWith("CREATE KEYSPACE")) {
+                    if (!foundCreateKeyspace) {
+                        foundCreateKeyspace = true;
+                        sb.append(line);
+                        sb.append("\n");
+                    } else {
+                        skipNextLine = true;
+                    }
+                } else if (skipNextLine) {
+                    skipNextLine = false;
+                } else {
+                    sb.append(line);
+                    sb.append("\n");
+                }
+            }
+
+            // Write the results to disk
+            File schemaFile = File.createTempFile("schema-", ".cql", new File("target"));
+            schemaFile.deleteOnExit();
+            Files.write(sb.toString(), schemaFile, Charsets.UTF_8);
+            return new FileCQLDataSet(schemaFile.getAbsolutePath(), false, true, keyspace);
+        } catch (IOException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
