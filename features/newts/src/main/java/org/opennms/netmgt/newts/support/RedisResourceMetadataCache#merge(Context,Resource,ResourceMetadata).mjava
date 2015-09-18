@@ -1,0 +1,26 @@
+    @Override
+    public void merge(Context context, Resource resource, ResourceMetadata metadata) {
+        final Optional<ResourceMetadata> o = get(context, resource);
+
+        if (!o.isPresent()) {
+            final ResourceMetadata newMetadata = new ResourceMetadata(m_metricReqs, m_attributeReqs, m_metricMisses, m_attributeMisses);
+            newMetadata.merge(metadata);
+            final Transaction t = m_jedis.multi();
+            final byte[] key = key(METADATA_PREFIX, context.getId(), resource.getId());
+            t.set(key, conf.asByteArray(newMetadata));
+
+            // Index the key, element by element, in order to support calls to getResourceIdsWithPrefix()
+            final List<String> elements = Lists.newArrayList(SEARCH_PREFIX, context.getId());
+            for (String el : m_resourceIdSplitter.splitIdIntoElements(resource.getId())) {
+                elements.add(el);
+                t.lpush(m_resourceIdSplitter.joinElementsToId(elements).getBytes(), key);
+            }
+
+            // Update the keys in transaction
+            t.exec();
+        } else if (o.get().merge(metadata)) {
+            // Update the value stored in the cache if it was changed as a result of the merge
+            m_jedis.set(key(METADATA_PREFIX, context.getId(), resource.getId()), conf.asByteArray(metadata));
+        }
+    }
+
