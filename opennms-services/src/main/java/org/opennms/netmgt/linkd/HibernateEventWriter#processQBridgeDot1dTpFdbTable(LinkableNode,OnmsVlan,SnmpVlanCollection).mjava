@@ -1,0 +1,64 @@
+    protected void processQBridgeDot1dTpFdbTable(final LinkableNode node,
+            final OnmsVlan vlan, final SnmpVlanCollection snmpVlanColl) {
+        if (LOG.isDebugEnabled()) {
+            if (snmpVlanColl.getQBridgeDot1dFdbTable().size() > 0) {
+                LOG.debug("processQBridgeDot1dTpFdbTable: Starting Q-BRIDGE-MIB dot1dTpFdb table processing for {}/{}",
+                          node.getNodeId(), str(node.getSnmpPrimaryIpAddr()));
+            } else {
+                LOG.debug("processQBridgeDot1dTpFdbTable: Zero Q-BRIDGE-MIB dot1dTpFdb table entries for {}/{}",
+                          node.getNodeId(), str(node.getSnmpPrimaryIpAddr()));
+            }
+        }
+
+        for (final QBridgeDot1dTpFdbTableEntry dot1dfdbentry : snmpVlanColl.getQBridgeDot1dFdbTable()) {
+            final String curMacAddress = dot1dfdbentry.getQBridgeDot1dTpFdbAddress();
+
+            if (curMacAddress == null || curMacAddress.equals("000000000000")) {
+                LOG.info("processQBridgeDot1DTpFdbTable: Invalid MAC addres {} on node {}. Skipping.",
+                         curMacAddress, node.getNodeId());
+                continue;
+            }
+
+            LOG.debug("processQBridgeDot1DTpFdbTable: Found MAC address {} on node {}",
+                      curMacAddress, node.getNodeId());
+
+            final int fdbport = dot1dfdbentry.getQBridgeDot1dTpFdbPort();
+
+            if (fdbport == -1) {
+                LOG.debug("processQBridgeDot1DTpFdbTable: Invalid FDB port ({}) for MAC address {} on node {}. Skipping.",
+                          fdbport, curMacAddress, node.getNodeId());
+                continue;
+            } else if (fdbport == 0) {
+                LOG.debug("processQBridgeDot1DTpFdbTable: FDB port ({}) for MAC address {} on node {}. Saving generic port.",
+                          fdbport, curMacAddress, node.getNodeId());
+            }
+
+            LOG.debug("processQBridgeDot1DTpFdbTable: Found bridge port {} on node {}.",
+                      fdbport, node.getNodeId());
+
+            final int curfdbstatus = dot1dfdbentry.getQBridgeDot1dTpFdbStatus();
+
+            if (curfdbstatus == SNMP_DOT1D_FDB_STATUS_LEARNED) {
+                node.addBridgeForwardingTableEntry(fdbport, curMacAddress);
+                LOG.debug("processQBridgeDot1DTpFdbTable: Found learned status on bridge port.");
+            } else if (curfdbstatus == SNMP_DOT1D_FDB_STATUS_SELF) {
+                Integer ifIndex = node.getIfindexFromBridgePort(fdbport);
+                if (ifIndex == null)
+                    ifIndex = -1;
+                node.getMacIdentifiers().put(ifIndex, curMacAddress);
+                LOG.debug("processQBridgeDot1DTpFdbTable: MAC address ({}) is used as port identifier.",
+                          curMacAddress);
+            } else if (curfdbstatus == SNMP_DOT1D_FDB_STATUS_INVALID) {
+                LOG.debug("processQBridgeDot1DTpFdbTable: Found 'INVALID' status. Skipping.");
+            } else if (curfdbstatus == SNMP_DOT1D_FDB_STATUS_MGMT) {
+                node.addBridgeForwardingTableEntry(fdbport, curMacAddress);
+                LOG.debug("processQBridgeDot1DTpFdbTable: Found 'MGMT' status. Saving.");
+            } else if (curfdbstatus == SNMP_DOT1D_FDB_STATUS_OTHER) {
+                node.addBridgeForwardingTableEntry(fdbport, curMacAddress);
+                LOG.debug("processQBridgeDot1DTpFdbTable: Found 'OTHER' status. Saving.");
+            } else if (curfdbstatus == -1) {
+                LOG.warn("processQBridgeDot1DTpFdbTable: Unable to determine status. Skipping.");
+            }
+        }
+    }
+

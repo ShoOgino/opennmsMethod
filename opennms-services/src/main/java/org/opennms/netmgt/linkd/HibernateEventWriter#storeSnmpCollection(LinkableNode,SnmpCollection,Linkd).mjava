@@ -1,0 +1,85 @@
+    @Override
+    public LinkableNode storeSnmpCollection(final LinkableNode node,
+            final SnmpCollection snmpColl, final Linkd linkd) {
+        final Date scanTime = new Date();
+
+        final OnmsNode onmsNode = m_nodeDao.get(node.getNodeId());
+        if (onmsNode == null) {
+            LOG.debug("no node found!");
+            return null;
+        }
+
+        LOG.debug("storeSnmpCollection: wifi hasMtxrWlRtabTable: {}",
+                  snmpColl.hasMtxrWlRtabTable());
+        if (snmpColl.hasMtxrWlRtabTable()) {
+            processWifi(node, snmpColl, scanTime);
+        }
+
+        LOG.debug("storeSnmpCollection: ospf hasOspfGeneralGroup/hasOspfNbrTable: {}/{}",
+                  snmpColl.hasOspfGeneralGroup(), snmpColl.hasOspfNbrTable());
+        if (snmpColl.hasOspfGeneralGroup() && snmpColl.hasOspfNbrTable()) {
+            processOspf(node, snmpColl, scanTime);
+        }
+
+        LOG.debug("storeSnmpCollection: isis hasIsIsSystemObjectGroup/hasIsisCircTable/hasIsisISAdjTable: {}/{}/{}",
+                  snmpColl.hasIsIsSysObjectGroup(),
+                  snmpColl.hasIsisCircTable(), snmpColl.hasIsisISAdjTable());
+        if (snmpColl.hasIsIsSysObjectGroup() && snmpColl.hasIsisCircTable()
+                && snmpColl.hasIsisISAdjTable()) {
+            processIsis(node, snmpColl, scanTime);
+        }
+
+        LOG.debug("storeSnmpCollection: lldp hasLldpLocalGroup/hasLldpLocTable/haLldpRemTable: {}/{}/{}",
+                  snmpColl.hasLldpLocalGroup(), snmpColl.hasLldpLocTable(),
+                  snmpColl.hasLldpRemTable());
+        if (snmpColl.hasLldpLocalGroup()) {
+            processLldp(node, snmpColl, scanTime);
+        }
+
+        LOG.debug("storeSnmpCollection: hasIpNetToMediaTable: {}",
+                  snmpColl.hasIpNetToMediaTable());
+        if (snmpColl.hasIpNetToMediaTable()) {
+            processIpNetToMediaTable(node, snmpColl, scanTime, linkd);
+        }
+
+        LOG.debug("storeSnmpCollection: hasCdpGlobalGroup: {}",
+                  snmpColl.hasCdpGlobalGroup());
+        LOG.debug("storeSnmpCollection: hasCdpCacheTable: {}",
+                  snmpColl.hasCdpCacheTable());
+        if (snmpColl.hasCdpGlobalGroup() && snmpColl.hasCdpCacheTable()) {
+            processCdp(node, snmpColl, scanTime, linkd);
+        }
+
+        LOG.debug("storeSnmpCollection: hasRouteTable: {}",
+                  snmpColl.hasRouteTable());
+        if (snmpColl.hasRouteTable()) {
+            processRouteTable(onmsNode, node, snmpColl, scanTime,linkd);
+        }
+
+        LOG.debug("storeSnmpCollection: hasVlanTable: {}",
+                  snmpColl.hasVlanTable());
+        if (snmpColl.hasVlanTable()) {
+            processVlanTable(onmsNode, node, snmpColl, scanTime);
+        }
+
+        if (!snmpColl.getSnmpVlanCollections().isEmpty()) {
+            node.setMacIdentifiers(getPhysAddrs(node.getNodeId()));
+            for (final OnmsVlan vlan : snmpColl.getSnmpVlanCollections().keySet()) {
+                LOG.debug("storeSnmpCollection: parsing bridge data on VLAN {}/{}",
+                          vlan.getVlanId(), vlan.getVlanName());
+                storeSnmpVlanCollection(onmsNode,
+                                        node,
+                                        vlan,
+                                        snmpColl.getSnmpVlanCollections().get(vlan),
+                                        scanTime,linkd);
+            }
+        }
+
+        markOldDataInactive(scanTime, node.getNodeId());
+        deleteOlderData(new Date(scanTime.getTime()
+                                - snmpColl.getPollInterval() * 3),
+                        node.getNodeId());
+
+        return node;
+    }
+
