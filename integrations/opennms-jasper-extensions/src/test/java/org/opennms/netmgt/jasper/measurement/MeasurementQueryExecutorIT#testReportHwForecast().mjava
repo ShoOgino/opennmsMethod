@@ -1,0 +1,48 @@
+    @Test
+    public void testReportHwForecast() throws IOException, JRException {
+        createReport("Forecast", new ReportFiller() {
+            @Override
+            public void fill(Map<String, Object> params) throws Exception {
+                params.put(JRParameter.IS_IGNORE_PAGINATION, true);
+                params.put("MEASUREMENT_URL", "http://localhost:9999/opennms/rest/measurements");
+                params.put("dsName", "ifInOctets");
+                params.put("startDate", "1414602000000");
+                params.put("endDate", "1417046400000");
+            }
+        });
+
+        // Verify the results of the generated report
+        Table<Integer, String, Double> forecasts = TreeBasedTable.create();
+
+        FileReader reader = new FileReader(createFileName("Forecast", "csv"));
+        CSVParser parser = new CSVParser(reader, CSVFormat.RFC4180.withHeader());
+        int k = 0;
+        for (CSVRecord record : parser) {
+            try {
+                Double fit = Double.parseDouble(record.get("HWFit"));
+                Double lwr = Double.parseDouble(record.get("HWLwr"));
+                Double upr = Double.parseDouble(record.get("HWUpr"));
+
+                if(Double.isNaN(fit)) {
+                    continue;
+                }
+
+                forecasts.put(k, "fit", fit);
+                forecasts.put(k, "lwr", lwr);
+                forecasts.put(k, "upr", upr);
+
+                k++;
+            } catch (NumberFormatException e) {
+                // pass
+            }
+        }
+
+        Assert.assertEquals(340, forecasts.rowKeySet().size());
+        // First fitted value
+        Assert.assertEquals(432.526086422424, forecasts.get(0, "fit"), 0.00001);
+        // Last fitted value for which there is a known data point
+        Assert.assertEquals(24079.4692522087, forecasts.get(327, "fit"), 0.00001);
+        // First forecasted value
+        Assert.assertEquals(22245.5417010936, forecasts.get(328, "fit"), 0.00001);
+    }
+
