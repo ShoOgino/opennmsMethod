@@ -1,0 +1,47 @@
+    public QueryResponse query(QueryRequest request) throws MeasurementException {
+        validate(request);
+
+        // Fetch the measurements
+        FetchResults results;
+        try {
+            results = fetchStrategy.fetch(
+                    request.getStart(),
+                    request.getEnd(),
+                    request.getStep(),
+                    request.getMaxRows(),
+                    request.getSources());
+        } catch (Exception e) {
+            throw new FetchException(e, "Fetch failed");
+        }
+        if (results == null) {
+            throw new ResourceNotFoundException(request);
+        }
+
+        // Apply the expression to the fetch results
+        expressionEngine.applyExpressions(request, results);
+
+        // Apply the filters
+        if (!request.getFilters().isEmpty()) {
+            RowSortedTable<Long, String, Double> table = results.asRowSortedTable();
+            filterEngine.filter(request.getFilters(), table);
+            results = new FetchResults(table, results.getStep(), results.getConstants());
+        }
+
+        // Remove any transient values belonging to sources
+        final Map<String, double[]> columns = results.getColumns();
+        for (final Source source : request.getSources()) {
+            if (source.getTransient()) {
+                columns.remove(source.getLabel());
+            }
+        }
+
+        // Build the response
+        final QueryResponse response = new QueryResponse();
+        response.setStart(request.getStart());
+        response.setEnd(request.getEnd());
+        response.setStep(results.getStep());
+        response.setTimestamps(results.getTimestamps());
+        response.setColumns(results.getColumns());
+        return response;
+    }
+
