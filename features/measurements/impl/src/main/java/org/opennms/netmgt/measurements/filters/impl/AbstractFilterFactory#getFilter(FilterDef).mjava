@@ -1,0 +1,62 @@
+    @Override
+    public Filter getFilter(FilterDef filterDef) {
+        if (!info.name().equalsIgnoreCase(filterDef.getName()) &&
+                !type.getCanonicalName().equals(filterDef.getName())) {
+            return null;
+        }
+
+        // Map the parameters by name, last one wins
+        Map<String, String> parameterMap = Maps.newHashMap();
+        for (FilterParamDef param : filterDef.getParameters()) {
+            parameterMap.put(param.getName(), param.getValue());
+        }
+
+        T filter;
+        try {
+            filter = type.newInstance();
+        } catch (InstantiationException | IllegalAccessException e) {
+            throw Throwables.propagate(e);
+        }
+
+        for(Field field : type.getDeclaredFields()) {
+            FilterParam filterParam = field.getAnnotation(FilterParam.class);
+
+            // Skip fields that are not annotated
+            if (filterParam == null) {
+                continue;
+            }
+
+            // Determine whether we use the default or user supplied value
+            String effectiveValueAsStr = null;
+            if (parameterMap.containsKey(filterParam.name())) {
+                effectiveValueAsStr = parameterMap.get(filterParam.name());
+            } else if (!filterParam.required()) {
+                effectiveValueAsStr = filterParam.value();
+            } else {
+                throw new IllegalArgumentException("Parameter with name '" + filterParam.name() + "' is required, but no value was given.");
+            }
+
+            // Convert the value to the appropriate type
+            Object effectiveValue = effectiveValueAsStr;
+            if (field.getType() == Boolean.class || field.getType() == boolean.class) {
+                effectiveValue = Boolean.valueOf(effectiveValueAsStr);
+            } else if (field.getType() == Double.class || field.getType() == double.class) {
+                effectiveValue = Double.valueOf(effectiveValueAsStr);
+            } else if (field.getType() == Integer.class || field.getType() == int.class) {
+                effectiveValue = Integer.valueOf(effectiveValueAsStr);
+            } else if (field.getType() == Long.class || field.getType() == long.class) {
+                effectiveValue = Long.valueOf(effectiveValueAsStr);
+            }
+
+            // Set the field's value
+            try {
+                field.setAccessible(true);
+                field.set(filter, effectiveValue);
+            } catch (IllegalArgumentException | IllegalAccessException e) {
+                throw Throwables.propagate(e);
+            }
+        }
+
+        return filter;
+    }
+
