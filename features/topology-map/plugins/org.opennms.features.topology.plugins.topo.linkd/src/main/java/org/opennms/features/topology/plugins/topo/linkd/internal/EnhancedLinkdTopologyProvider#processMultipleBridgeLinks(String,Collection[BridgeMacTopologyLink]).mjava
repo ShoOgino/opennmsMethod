@@ -1,28 +1,46 @@
     private void processMultipleBridgeLinks(String bridgeLinkKey, Collection<BridgeMacTopologyLink> topoLinks) {
-        //TODO: When making the links for bridge links make sure that check against bridgebridge link table
         String[] keyParts = bridgeLinkKey.split("\\|");
 
         int parentNodeId = Integer.parseInt(keyParts[0]);
         String bridgePort = keyParts[1];
 
-        AbstractVertex parentVertex = getVertex(m_nodeDao.get(parentNodeId));
+
+        Vertex parentVertex = getVertex(getVertexNamespace(), Integer.toString(parentNodeId));
+        if (parentVertex == null) {
+            for (BridgeMacTopologyLink topoLink : topoLinks) {
+                parentVertex = getDefaultVertex(topoLink.getSrcNodeId(),
+                               topoLink.getSrcSysoid(),
+                               topoLink.getSrcLabel(),
+                             topoLink.getSrcLocation(),
+                             topoLink.getSrcNodeType());
+                addVertices(parentVertex);
+                break;
+            }
+        }
 
         AbstractVertex cloudVertex = addVertex(bridgeLinkKey, 0, 0);
         cloudVertex.setLabel("");
         cloudVertex.setIconKey("cloud");
         cloudVertex.setTooltipText(parentVertex.getLabel() + " bridge port: " + bridgePort);
 
-        for (BridgeMacTopologyLink topoLink : topoLinks) {
-            if(topoLink.getTargetNodeId() != null) {
-
+        for (BridgeMacTopologyLink link : topoLinks) {
+            if(link.getTargetNodeId() != null) {
                 //Check to see if there are any edges with the cloudVertex, if not add it
                 if (getEdgeIdsForVertex(cloudVertex).length == 0) {
                     Edge edge = connectVertices(bridgeLinkKey, cloudVertex, parentVertex, BRIDGE_EDGE_NAMESPACE);
                     edge.setTooltipText(getBridgeCloudTooltip(parentVertex, bridgePort));
                 }
 
-                String edgeId = Math.min(topoLink.getNodeId(), topoLink.getTargetNodeId()) + "|" + Math.max(topoLink.getNodeId(), topoLink.getTargetNodeId());
-                AbstractVertex target = getVertex(m_nodeDao.get(topoLink.getTargetNodeId()));
+                String edgeId = Math.min(link.getSrcNodeId(), link.getTargetNodeId()) + "|" + Math.max(link.getSrcNodeId(), link.getTargetNodeId());
+                Vertex target = getVertex(getVertexNamespace(), link.getTargetNodeId().toString());
+                if (target == null) {
+                    target = getDefaultVertex(link.getTargetNodeId(),
+                                       link.getTargetSysoid(),
+                                       link.getTargetLabel(),
+                                     link.getTargetLocation(),
+                                     link.getTargetNodeType());
+                    addVertices(target);
+                }
                 AbstractEdge edge = connectVertices(edgeId, cloudVertex, target, BRIDGE_EDGE_NAMESPACE);
 
 
@@ -32,7 +50,7 @@
                 tooltipCloudVertex.setIpAddress("");
 
                 BridgeLinkDetail detail = new BridgeLinkDetail(edgeId, EnhancedLinkdTopologyProvider.TOPOLOGY_NAMESPACE_LINKD,
-                        tooltipCloudVertex, topoLink.getId(), target, topoLink.getId());
+                        tooltipCloudVertex, link.getId(), target, link.getId());
 
                 edge.setTooltipText(getEdgeTooltipText(detail));
             }
