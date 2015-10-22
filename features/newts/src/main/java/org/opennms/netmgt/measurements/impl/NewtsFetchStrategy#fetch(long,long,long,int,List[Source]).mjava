@@ -1,10 +1,17 @@
     @Override
     public FetchResults fetch(long start, long end, long step, int maxrows, List<Source> sources) {
         // Limit the step with a lower bound in order to prevent extremely large queries
-        final long fetchStep = Math.max(STEP_LOWER_BOUND_IN_MS, step);
-        if (fetchStep != step) {
-            LOG.warn("Requested step size {} is too small. Using {}.", step, fetchStep);
+        long boundedStep = Math.max(STEP_LOWER_BOUND_IN_MS, step);
+        if (boundedStep != step) {
+            LOG.warn("Requested step size {} is too small. Using {}.", step, boundedStep);
         }
+
+        // Make sure the fetchStep is evenly divisible by the INTERVAL_DIVIDER
+        if (boundedStep % INTERVAL_DIVIDER != 0) {
+            boundedStep += boundedStep % INTERVAL_DIVIDER;
+        }
+        final long stepInMs = boundedStep;
+        long intervalInMs = stepInMs / INTERVAL_DIVIDER;
 
         final Optional<Timestamp> startTs = Optional.of(Timestamp.fromEpochMillis(start));
         final Optional<Timestamp> endTs = Optional.of(Timestamp.fromEpochMillis(end));
@@ -82,19 +89,19 @@
             final String newtsResourceId = entry.getKey();
             final List<Source> listOfSources = entry.getValue();
 
-            ResultDescriptor resultDescriptor = new ResultDescriptor(fetchStep);
+            ResultDescriptor resultDescriptor = new ResultDescriptor(intervalInMs);
             for (Source source : listOfSources) {
                 final String metricName = source.getAttribute();
                 final String name = source.getLabel();
                 final AggregationFunction fn = toAggregationFunction(source.getAggregation());
 
-                resultDescriptor.datasource(name, metricName, HEARTBEAT_MULTIPLIER*fetchStep, fn);
+                resultDescriptor.datasource(name, metricName, HEARTBEAT_MULTIPLIER*intervalInMs, fn);
                 resultDescriptor.export(name);
             }
 
             LOG.debug("Querying Newts for resource id {} with result descriptor: {}", newtsResourceId, resultDescriptor);
             Results<Measurement> results = m_sampleRepository.select(m_context, new Resource(newtsResourceId), startTs, endTs,
-                    resultDescriptor, Optional.of(Duration.millis(RESOLUTION_MULTIPLIER*fetchStep)));
+                    resultDescriptor, Optional.of(Duration.millis(stepInMs)));
             Collection<Row<Measurement>> rows = results.getRows();
             LOG.debug("Found {} rows.", rows.size());
 
@@ -132,8 +139,8 @@
             columns.putAll(myColumns);
         });
 
-        FetchResults fetchResults = new FetchResults(timestamps.get(), columns, fetchStep, constants);
-        LOG.debug("Fetch results: {}", fetchResults);
+        FetchResults fetchResults = new FetchResults(timestamps.get(), columns, stepInMs, constants);
+        LOG.trace("Fetch results: {}", fetchResults);
         return fetchResults;
     }
 
