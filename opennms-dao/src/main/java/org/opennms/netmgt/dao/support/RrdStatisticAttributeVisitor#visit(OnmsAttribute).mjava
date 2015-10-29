@@ -5,8 +5,48 @@
             // Nothing to do if we can't cast to an RrdGraphAttribute
             return;
         }
-        
-        double statistic = m_rrdDao.getPrintValue(attribute, m_consolidationFunction, m_startTime, m_endTime);
+
+        final Source source = new Source();
+        source.setLabel("result");
+        source.setResourceId(attribute.getResource().getId());
+        source.setAttribute(attribute.getName());
+        source.setAggregation(m_consolidationFunction.toUpperCase());
+
+        final FetchResults results;
+        try {
+            results = m_fetchStrategy.fetch(m_startTime,
+                                            m_endTime,
+                                            1,
+                                            0,
+                                            null,
+                                            null,
+                                            Collections.singletonList(source));
+        } catch (final Exception e) {
+            LOG.warn("Failed to fetch statistic: {}", source, e);
+            return;
+        }
+
+        if (results == null) {
+            LOG.warn("No statistic found: {}", source);
+            return;
+        }
+
+        final double[] statistics = results.getColumns().get(source.getLabel());
+        if (statistics == null || statistics.length == 0) {
+            LOG.warn("Statistic is empty: {}", source);
+            return;
+        }
+
+        final Aggregator aggregator = Aggregators.valueOf(m_consolidationFunction.toUpperCase());
+
+        Arrays.stream(statistics)
+                .filter(v -> (! Double.isNaN(v)))
+                .forEach(v -> {
+                    LOG.debug("Aggregating: {}", v);
+                    aggregator.aggregate(v);
+                });
+
+        double statistic = aggregator.getValue();
         
         LOG.debug("The value of {} is {}", attribute, statistic);
         
