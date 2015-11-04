@@ -1,0 +1,49 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public FetchResults fetch(long start, long end, long step, int maxrows,
+            Long interval, Long heartbeat, List<Source> sources) throws Exception {
+
+        final Map<String, Object> constants = Maps.newHashMap();
+
+        final Map<Source, String> rrdsBySource = Maps.newHashMap();
+        
+        for (final Source source : sources) {
+            // Grab the resource
+            final OnmsResource resource = m_resourceDao.getResourceById(source
+                    .getResourceId());
+            if (resource == null) {
+                LOG.error("No resource with id: {}", source.getResourceId());
+                return null;
+            }
+
+            // Grab the attribute
+            RrdGraphAttribute rrdGraphAttribute = resource.getRrdGraphAttributes().get(source.getAttribute());
+
+            if (rrdGraphAttribute == null && !Strings.isNullOrEmpty(source.getFallbackAttribute())) {
+                LOG.error("No attribute with name '{}', using fallback-attribute with name '{}'", source.getAttribute(), source.getFallbackAttribute());
+                source.setAttribute(source.getFallbackAttribute());
+                source.setFallbackAttribute(null);
+                rrdGraphAttribute = resource.getRrdGraphAttributes().get(source.getAttribute());
+            }
+
+            if (rrdGraphAttribute == null) {
+                LOG.error("No attribute with name: {}", source.getAttribute());
+                return null;
+            }
+
+            // Gather the values from strings.properties
+            Utils.convertStringAttributesToConstants(source.getLabel(), resource.getStringPropertyAttributes(), constants);
+
+            // Build the path to the archive
+            final String rrdFile = System.getProperty("rrd.base.dir")
+                    + File.separator + rrdGraphAttribute.getRrdRelativePath();
+
+            rrdsBySource.put(source, rrdFile);
+        }
+
+        // Fetch
+        return fetchMeasurements(start, end, step, maxrows, rrdsBySource, constants);
+    }
+

@@ -1,0 +1,24 @@
+    private Callable<Collection<Row<Measurement>>> getMeasurementsForResourceCallable(final String newtsResourceId, final List<Source> listOfSources, final Optional<Timestamp> start, final Optional<Timestamp> end, final LateAggregationParams lag) {
+        return new Callable<Collection<Row<Measurement>>>() {
+            @Override
+            public Collection<Row<Measurement>> call() throws Exception {
+                ResultDescriptor resultDescriptor = new ResultDescriptor(lag.getInterval());
+                for (Source source : listOfSources) {
+                    final String metricName = source.getAttribute();
+                    final String name = source.getLabel();
+                    final AggregationFunction fn = toAggregationFunction(source.getAggregation());
+
+                    resultDescriptor.datasource(name, metricName, lag.getHeartbeat(), fn);
+                    resultDescriptor.export(name);
+                }
+
+                LOG.debug("Querying Newts for resource id {} with result descriptor: {}", newtsResourceId, resultDescriptor);
+                Results<Measurement> results = m_sampleRepository.select(m_context, new Resource(newtsResourceId), start, end,
+                        resultDescriptor, Optional.of(Duration.millis(lag.getStep())), limitConcurrentAggregationsCallback);
+                Collection<Row<Measurement>> rows = results.getRows();
+                LOG.debug("Found {} rows.", rows.size());
+                return rows;
+            }
+        };
+    }
+
