@@ -1,23 +1,25 @@
     @Override
-    public void filter(RowSortedTable<Long, String, Double> dsAsTable) throws RScriptException {
-        String columnToFilter = m_inputColumn;
+    public void filter(RowSortedTable<Long, String, Double> qrAsTable) {
+        // Extract the values of the input column as a primitive array
+        final Map<Long, Double> column = qrAsTable.column(m_inputColumn);
+        final double values[] = new double[column.size()];
+        int k = 0;
+        for (Double value : column.values()) {
+            values[k++] = value;
+        }
 
-        Map<String, Object> arguments = Maps.newHashMap();
-        arguments.put("columnToFilter", columnToFilter);
-        arguments.put("probability", m_probability);
+        // Calculate the percentile
+        org.apache.commons.math3.stat.descriptive.rank.Percentile percentileCalculator = new org.apache.commons.math3.stat.descriptive.rank.Percentile();
+        Double nthPercentile = percentileCalculator.evaluate(values, 100 * m_quantile);
 
-        RScriptExecutor executor = new RScriptExecutor();
-        RScriptOutput output = executor.exec(PATH_TO_R_SCRIPT, new RScriptInput(dsAsTable, arguments));
-        ImmutableTable<Long, String, Double> outputTable = output.getTable();
-
-        // Replace all of the values in the given column with those returned
-        // by the script
-        int numRowsInTable = dsAsTable.rowKeySet().size();
-        for (long i = 0; i < numRowsInTable; i++) {
-            dsAsTable.put(i, columnToFilter, outputTable.get(i, columnToFilter));
+        // Replace values greater than the percentile with NaNs
+        for (Entry<Long, Double> entry : column.entrySet()) {
+            if (!entry.getValue().isNaN() && entry.getValue() > nthPercentile) {
+                entry.setValue(Double.NaN);
+            }
         }
 
         // Perform linear interpolation on missing values
-        linearInterpolation(dsAsTable);
+        linearInterpolation(qrAsTable);
     }
 
