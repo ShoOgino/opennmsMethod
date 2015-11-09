@@ -1,0 +1,64 @@
+    @Override
+    public boolean login() throws LoginException {
+        LOG.debug("OpenNMSLoginModule: login()");
+        final Callback[] callbacks = new Callback[2];
+
+        callbacks[0] = new NameCallback("Username: ");
+        callbacks[1] = new PasswordCallback("Password: ", false);
+        try {
+            m_callbackHandler.handle(callbacks);
+        } catch (final IOException ioe) {
+            throw new LoginException(ioe.getMessage());
+        } catch (final UnsupportedCallbackException uce) {
+            throw new LoginException(uce.getMessage() + " not available to obtain information from user.");
+        }
+
+        m_user = ((NameCallback) callbacks[0]).getName();
+        if (m_user == null) {
+            throw new LoginException("Username can not be null.");
+        }
+
+        // password callback get value
+        if (((PasswordCallback) callbacks[1]).getPassword() == null) {
+            throw new LoginException("Password can not be null.");
+        }
+        final String password = new String(((PasswordCallback) callbacks[1]).getPassword());
+
+        final User configUser;
+        final SpringSecurityUser onmsUser;
+        try {
+            configUser = getUserConfig().getUser(m_user);
+            onmsUser = getSpringSecurityUserDao().getByUsername(m_user);
+        } catch (final Exception e) {
+            final String message = "Failed to retrieve user " + m_user + " from OpenNMS UserConfig.";
+            LOG.debug(message, e);
+            throw new LoginException(message);
+        }
+
+        if (configUser == null) {
+            throw new FailedLoginException("User  " + m_user + " does not exist");
+        }
+
+        if (!getUserConfig().comparePasswords(m_user, password)) {
+            throw new FailedLoginException("Login failed: passwords did not match.");
+        };
+
+        boolean allowed = false;
+        m_principals = new HashSet<Principal>();
+        for (final GrantedAuthority auth : onmsUser.getAuthorities()) {
+            final AuthorityPrincipal principal = new AuthorityPrincipal(auth);
+            if ("admin".equals(principal.getName())) {
+                allowed = true;
+            }
+            m_principals.add(principal);
+        }
+
+        if (!allowed) {
+            throw new LoginException("User " + m_user + " is not an administrator!  OSGi console access is forbidden.");
+        }
+        if (m_debug) {
+            LOG.debug("Successfully logged in {}.", m_user);
+        }
+        return true;
+    }
+
