@@ -41,10 +41,6 @@
                     // set to avoid numerous tracing message
                     boolean ioInterrupted = false;
 
-                    // Allocate a buffer that's big enough to handle any sane syslog message
-                    ByteBuffer buffer = ByteBuffer.allocate(MAX_PACKET_SIZE);
-                    buffer.clear();
-
                     // now start processing incoming requests
                     while (!m_stop) {
                         if (m_context.isInterrupted()) {
@@ -57,16 +53,33 @@
                                 LOG.debug("Waiting on a datagram to arrive");
                             }
 
+                            // Check out a ByteBufferMessage
+                            final long sequence = m_ringBuffer.next();
+
+                            // Fetch the ByteBufferMessage
+                            final ByteBufferMessage message = m_ringBuffer.get(sequence);
+
                             // Write the datagram into the ByteBuffer
-                            InetSocketAddress source = (InetSocketAddress)m_channel.receive(buffer);
+                            final InetSocketAddress source = (InetSocketAddress)m_channel.receive(message.buffer);
 
                             // Flip the buffer from write to read mode
-                            buffer.flip();
+                            message.buffer.flip();
 
-                            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(SyslogConnection.copyPacket(source.getAddress(), source.getPort(), buffer), m_config));
+                            // TODO: Change this into a disruptor call
+                            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(source.getAddress(), source.getPort(), message.buffer, m_config, new Runnable() {
+                                @Override
+                                public void run() {
+                                    // Clear the buffer so that it's ready for writing again
+                                    message.buffer.clear();
 
-                            // Clear the buffer so that it's ready for writing again
-                            buffer.clear();
+                                    if (sequence % 50 == 0) {
+                                        LOG.debug("Released 50 more datagrams");
+                                    }
+
+                                    // Release the buffer back to the disruptor
+                                    m_ringBuffer.publish(sequence);
+                                }
+                            }));
 
                             // reset the flag
                             ioInterrupted = false; 
