@@ -5,63 +5,17 @@
      */
     public void queryStatus() throws Exception {
 
-        URLConnection connection = m_invokeURL.openConnection();
-        BufferedReader reader;
-        try {
-            connection.connect();
-            reader = new BufferedReader(
-                                        new InputStreamReader(
-                                                              connection.getInputStream(), "UTF-8"));
-        } catch (ConnectException e) {
-            if (isVerbose()) {
-                System.out.println("Could not connect to "
-                        + getInvokeURL().getHost() + " on port "
-                        + getInvokeURL().getPort()
-                        + " (OpenNMS might not be running or "
-                        + "could be starting up or shutting down): "
-                        + e.getMessage());
-            }
-            m_status = Status.CONNECTION_REFUSED;
-            return;
-        }
-
-        StringBuffer statusResultsBuf = new StringBuffer();
-        String line;
-
-        while ((line = reader.readLine()) != null) {
-            statusResultsBuf.append(line);
-            statusResultsBuf.append("\n");
-        }
-
-        String statusResults = statusResultsBuf.toString();
-
-        int i;
-        if ((i = statusResults.indexOf("return=\"[")) == -1) {
-            throw new Exception("could not find start of status results");
-        }
-        statusResults = statusResults.substring(i + "return=\"[".length());
-        if ((i = statusResults.indexOf("]\"")) == -1) {
-            throw new Exception("could not find end of status results");
-        }
-        statusResults = statusResults.substring(0, i);
-
-        LinkedHashMap<String, String> results = new LinkedHashMap<String, String>();
         Pattern p = Pattern.compile("Status: OpenNMS:Name=(\\S+) = (\\S+)");
 
+        LinkedHashMap<String, String> results = new LinkedHashMap<String, String>();
+
+        List<String> statusResults = (List<String>)Controller.doInvokeOperation(getJmxUrl(), "status");
+
         /*
-         * Once we split a status entry, it will look like this: Status:
-         * OpenNMS:Name=Eventd = RUNNING
+         * Once we split a status entry, it will look like this:
+         * Status: OpenNMS:Name=Eventd = RUNNING
          */
-        while (statusResults.length() > 0) {
-            String result;
-
-            i = statusResults.indexOf(", ");
-
-            if (i == -1) {
-                result = statusResults;
-            } else {
-                result = statusResults.substring(0, i);
-            }
+        for (String result : statusResults) {
 
             Matcher m = p.matcher(result);
             if (!m.matches()) {
@@ -69,12 +23,6 @@
                         + "\" does not match our regular expression");
             }
             results.put(m.group(1), m.group(2));
-
-            if (i == -1) {
-                break;
-            } else {
-                statusResults = statusResults.substring(i + ", ".length());
-            }
         }
 
         /*
