@@ -3,7 +3,49 @@
      *
      * @return a {@link java.lang.String} object.
      */
-    public String getJmxUrl() {
-        return m_jmxUrl;
+    public static String getJmxUrl() {
+        for (VirtualMachineDescriptor vmDescr : VirtualMachine.list()) {
+            if (vmDescr.displayName().contains(OPENNMS_JVM_DISPLAY_NAME_SUBSTRING)) {
+                // Attach to the OpenNMS application
+                VirtualMachine vm = null;
+                try {
+                    vm = VirtualMachine.attach(vmDescr);
+                } catch (AttachNotSupportedException e) {
+                    throw new IllegalStateException("Cannot attach to OpenNMS JVM", e);
+                } catch (IOException e) {
+                    throw new IllegalStateException("IOException when attaching to OpenNMS JVM", e);
+                }
+
+                String connectorAddress = null;
+                try {
+                    // Get the local JMX connector URI
+                    vm.getAgentProperties().getProperty(CONNECTOR_ADDRESS);
+                } catch (IOException e) {
+                    throw new IllegalStateException("IOException when fetching JMX URI", e);
+                }
+
+                // If there is no local JMX connector URI, we need to launch the
+                // JMX agent via this VirtualMachine attachment.
+                if (connectorAddress == null) {
+                    LOG.info("Starting local management agent in JVM with ID: " + vm.id());
+
+                    try {
+                        vm.startLocalManagementAgent();
+                    } catch (IOException e) {
+                        throw new IllegalStateException("IOException when starting local JMX management agent", e);
+                    }
+
+                    // agent is started, get the connector address
+                    try {
+                        connectorAddress = vm.getAgentProperties().getProperty(CONNECTOR_ADDRESS);
+                    } catch (IOException e) {
+                        throw new IllegalStateException("IOException when fetching JMX URI", e);
+                    }
+                }
+
+                return connectorAddress;
+            }
+        }
+        throw new IllegalStateException("Could not find OpenNMS JVM (" + OPENNMS_JVM_DISPLAY_NAME_SUBSTRING + ")");
     }
 
