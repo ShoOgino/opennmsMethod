@@ -1,25 +1,68 @@
     @Override
-	public JmxDatacollectionConfig execute() throws JobManager.TaskRunException {
+    public JmxDatacollectionConfig execute() throws JobManager.TaskRunException {
         try {
-            final JMXServiceURL jmxServiceURL = JmxHelper.createJmxServiceUrl(null, config.getHost(), config.getPort(), config.isJmxmp());
+            InetAddress address = InetAddress.getByName(config.getHost());
 
-            try (JMXConnector connector = JmxHelper.createJmxConnector(config.getUser(), config.getPassword(), jmxServiceURL)) {
-                final JmxDatacollectionConfiggenerator jmxConfigGenerator = new JmxDatacollectionConfiggenerator(new Slf4jLogAdapter(JmxDatacollectionConfiggenerator.class));
-                final JmxDatacollectionConfig generatedJmxConfigModel = jmxConfigGenerator.generateJmxConfigModel(
-                        connector.getMBeanServerConnection(),
-                        "anyservice",
-                        !config.isSkipDefaultVM(),
-                        config.isSkipNonNumber(),
-                        JmxHelper.loadInternalDictionary());
-                applyFilters(generatedJmxConfigModel);
-                return generatedJmxConfigModel;
-            } catch (IOException | MBeanServerQueryException | JMException e) {
-                throw new JobManager.TaskRunException("Error while retrieving MBeans from server.", e);
+            // TODO: Refactor this to use the same code as 
+            // {@link org.opennms.netmgt.jmx.impl.connection.connectors.DefaultJmxConnector}
+
+            // If remote JMX access is enabled, this will return a non-null value
+            String jmxPort = System.getProperty(JmxServerConnector.JMX_PORT_SYSTEM_PROPERTY);
+
+            if (
+                address != null && 
+                // If we're trying to create a connection to a localhost address...
+                address.isLoopbackAddress() &&
+                // port should never be null but let's check anyway 
+                config.getPort() != null && 
+                (
+                    // If the port matches the port of the current JVM...
+                    config.getPort().equals(jmxPort) ||
+                    // Or if remote JMX RMI is disabled and we're attempting to connect
+                    // to the default OpenNMS JMX port...
+                    (jmxPort == null && JmxServerConnector.DEFAULT_OPENNMS_JMX_PORT.equals(config.getPort()))
+                )
+            ) {
+                // ...then use the {@link PlatformMBeanServerConnector} to connect to 
+                // this JVM's MBeanServer directly.
+                try (JmxServerConnectionWrapper connector = new PlatformMBeanServerConnector().createConnection(address, Collections.emptyMap())) {
+                    final JmxDatacollectionConfiggenerator jmxConfigGenerator = new JmxDatacollectionConfiggenerator(new Slf4jLogAdapter(JmxDatacollectionConfiggenerator.class));
+                    final JmxDatacollectionConfig generatedJmxConfigModel = jmxConfigGenerator.generateJmxConfigModel(
+                            connector.getMBeanServerConnection(),
+                            "anyservice",
+                            !config.isSkipDefaultVM(),
+                            config.isSkipNonNumber(),
+                            JmxHelper.loadInternalDictionary());
+                    applyFilters(generatedJmxConfigModel);
+                    return generatedJmxConfigModel;
+                } catch (IOException | MBeanServerQueryException | JMException | JmxServerConnectionException e) {
+                    throw new JobManager.TaskRunException("Error while retrieving MBeans from server.", e);
+                }
+            } else {
+                final JMXServiceURL jmxServiceURL = JmxHelper.createJmxServiceUrl(null, config.getHost(), config.getPort(), config.isJmxmp());
+
+                try (JMXConnector connector = JmxHelper.createJmxConnector(config.getUser(), config.getPassword(), jmxServiceURL)) {
+                    final JmxDatacollectionConfiggenerator jmxConfigGenerator = new JmxDatacollectionConfiggenerator(new Slf4jLogAdapter(JmxDatacollectionConfiggenerator.class));
+                    final JmxDatacollectionConfig generatedJmxConfigModel = jmxConfigGenerator.generateJmxConfigModel(
+                            connector.getMBeanServerConnection(),
+                            "anyservice",
+                            !config.isSkipDefaultVM(),
+                            config.isSkipNonNumber(),
+                            JmxHelper.loadInternalDictionary());
+                    applyFilters(generatedJmxConfigModel);
+                    return generatedJmxConfigModel;
+                } catch (IOException | MBeanServerQueryException | JMException e) {
+                    throw new JobManager.TaskRunException("Error while retrieving MBeans from server.", e);
+                }
             }
         } catch (MalformedURLException e) {
             throw new JobManager.TaskRunException(
                     String.format("Cannot create valid JMX Connection URL. Host = '%s', Port = '%s', use jmxmp = %s", config.getHost(), config.getPort(), config.isJmxmp()),
                     e);
+        } catch (UnknownHostException e) {
+            throw new JobManager.TaskRunException(
+                    String.format("Unknown host: %s", config.getHost()),
+                    e);
         }
-	}
+    }
 
