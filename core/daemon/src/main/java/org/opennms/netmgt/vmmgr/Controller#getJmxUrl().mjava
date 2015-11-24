@@ -1,0 +1,71 @@
+    /**
+     * This method uses the Java Attach API to connect to a running OpenNMS JVM
+     * and fetch the dynamically assigned local JMX agent URL.
+     * 
+     * @see https://docs.oracle.com/javase/8/docs/jdk/api/attach/spec/index.html
+     * @see https://docs.oracle.com/javase/8/docs/technotes/guides/management/agent.html
+     *
+     * @return a {@link java.lang.String} object.
+     */
+    public String getJmxUrl() {
+        VirtualMachine vm = null;
+
+        StringBuffer vmNames = new StringBuffer();
+        boolean first = true;
+
+        // Use the Attach API to enumerate all of the JVMs that are running as the same
+        // user on this machine
+        VirtualMachineDescriptor foundVm = null;
+        for (VirtualMachineDescriptor vmDescr : VirtualMachine.list()) {
+            if (!first) {
+                vmNames.append(", ");
+            }
+            vmNames.append("\"" + vmDescr.displayName() + "\"");
+            first = false;
+
+            if (vmDescr.displayName().contains(OPENNMS_JVM_DISPLAY_NAME_SUBSTRING)) {
+                foundVm = vmDescr;
+            }
+        }
+
+        if (foundVm == null) {
+            LOG.debug("Could not find OpenNMS JVM (\"" + OPENNMS_JVM_DISPLAY_NAME_SUBSTRING + "\") among JVMs (" + vmNames + ")");
+        } else {
+            try {
+                vm = VirtualMachine.attach(foundVm);
+                LOG.debug("Attached to OpenNMS JVM: " + foundVm.id() + " (" + foundVm.displayName() + ")");
+            } catch (AttachNotSupportedException e) {
+                // This exception is unexpected so log a warning
+                LOG.warn("Cannot attach to OpenNMS JVM", e);
+            } catch (IOException e) {
+                // This exception is unexpected so log a warning
+                LOG.warn("IOException when attaching to OpenNMS JVM", e);
+            }
+        }
+
+        if (vm == null) {
+            if (m_pid == null) {
+                LOG.debug("No PID specified for OpenNMS JVM");
+            } else {
+                try {
+                    vm = VirtualMachine.attach(m_pid);
+                    LOG.debug("Attached to OpenNMS JVM with PID: " + m_pid);
+                } catch (AttachNotSupportedException e) {
+                    // This exception is unexpected so log a warning
+                    LOG.warn("Cannot attach to OpenNMS JVM at PID: " + m_pid, e);
+                } catch (IOException e) {
+                    // This exception will occur if the PID cannot be found
+                    // because the process has been terminated
+                    LOG.debug("IOException when attaching to OpenNMS JVM at PID: " + m_pid + ": " + e.getMessage());
+                }
+            }
+        }
+
+        if (vm == null) {
+            LOG.debug("Could not attach to JVM, falling back to JMX over RMI");
+            return m_jmxUrl;
+        } else {
+            return getJmxUriFromVirtualMachine(vm);
+        }
+    }
+
