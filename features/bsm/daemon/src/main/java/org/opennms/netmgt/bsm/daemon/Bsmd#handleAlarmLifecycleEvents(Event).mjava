@@ -1,0 +1,45 @@
+    @EventHandler(ueis = {
+        EventConstants.ALARM_CREATED_UEI,
+        EventConstants.ALARM_ESCALATED_UEI,
+        EventConstants.ALARM_CLEARED_UEI,
+        EventConstants.ALARM_UNCLEARED_UEI,
+        EventConstants.ALARM_UPDATED_WITH_REDUCED_EVENT_UEI
+    })
+    public void handleAlarmLifecycleEvents(Event e) {
+        if (e == null) {
+            return;
+        }
+
+        final Parm alarmIdParm = e.getParm(EventConstants.PARM_ALARM_ID);
+        if (alarmIdParm == null || alarmIdParm.getValue() == null) {
+            LOG.warn("The alarmId parameter has no value on event with uei: {}. Ignoring.", e.getUei());
+            return;
+        }
+
+        int alarmId;
+        try {
+            alarmId = Integer.parseInt(alarmIdParm.getValue().getContent());
+        } catch (NumberFormatException ee) {
+            LOG.warn("Failed to retrieve the alarmId for event with uei: {}. Ignoring.", e.getUei(), ee);
+            return;
+        }
+
+        m_template.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus status) {
+                // Flush the DAO before in order to avoid retrieving stale alarm data
+                m_alarmDao.flush();
+
+                final OnmsAlarm alarm = m_alarmDao.get(alarmId);
+                if (alarm == null) {
+                    LOG.error("Could not find alarm with id: {} for event with uei: {}. Ignoring.", alarmId, e.getUei());
+                    return;
+                }
+
+                LOG.debug("Handling alarm with id: {}, reduction key: {} and severity: {}",
+                        alarm.getId(), alarm.getReductionKey(), alarm.getSeverity());
+                handleNewOrUpdatedAlarm(alarm);
+            }
+        });
+    }
+

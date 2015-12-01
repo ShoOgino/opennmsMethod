@@ -11,7 +11,8 @@
         String reductionKey = event.getAlarmData().getReductionKey();
         LOG.debug("addOrReduceEventAsAlarm: looking for existing reduction key: {}", reductionKey);
         OnmsAlarm alarm = m_alarmDao.findByReductionKey(reductionKey);
-    
+
+        EventBuilder ebldr = null;
         if (alarm == null) {
             LOG.debug("addOrReduceEventAsAlarm: reductionKey:{} not found, instantiating new alarm", reductionKey);
             alarm = createNewAlarm(e, event);
@@ -19,17 +20,28 @@
             //FIXME: this should be a cascaded save
             m_alarmDao.save(alarm);
             m_eventDao.saveOrUpdate(e);
+
+            ebldr = new EventBuilder(EventConstants.ALARM_CREATED_UEI, Alarmd.NAME);
+
         } else {
             LOG.debug("addOrReduceEventAsAlarm: reductionKey:{} found, reducing event to existing alarm: {}", reductionKey, alarm.getIpAddr());
             reduceEvent(e, alarm, event);
             m_alarmDao.update(alarm);
             m_eventDao.update(e);
-    
+
             if (event.getAlarmData().isAutoClean()) {
                 m_eventDao.deletePreviousEventsForAlarm(alarm.getId(), e);
             }
+
+            ebldr = new EventBuilder(EventConstants.ALARM_UPDATED_WITH_REDUCED_EVENT_UEI, Alarmd.NAME);
         }
-        
+
+        if (ebldr != null) {
+            ebldr.addParam(EventConstants.PARM_ALARM_UEI, alarm.getUei());
+            ebldr.addParam(EventConstants.PARM_ALARM_ID, alarm.getId());
+            m_eventForwarder.sendNow(ebldr.getEvent());
+        }
+
         return alarm;
     }
 

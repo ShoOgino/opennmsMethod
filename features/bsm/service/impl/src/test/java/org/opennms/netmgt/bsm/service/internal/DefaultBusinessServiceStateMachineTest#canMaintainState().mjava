@@ -1,0 +1,39 @@
+    @Test
+    public void canMaintainState() {
+        // Create a simple hierarchy
+        OnmsMonitoredService svc1 = createService(1, "192.168.1.1", "ICMP");
+        BusinessService bs1 = new BusinessService();
+        bs1.addIpService(svc1);
+        bs1.setName("BS1");
+ 
+        BusinessService bs2 = new BusinessService();
+        bs2.setName("BS2");
+        List<BusinessService> bss = Lists.newArrayList(bs1, bs2);
+
+        // Setup the state machine
+        LoggingStateChangeHandler handler = new LoggingStateChangeHandler();
+        DefaultBusinessServiceStateMachine stateMachine = new DefaultBusinessServiceStateMachine();
+        stateMachine.setBusinessServices(bss);
+        stateMachine.addHandler(handler, null);
+
+        // Verify the initial state
+        assertEquals(0, handler.getStateChanges().size());
+        assertEquals(DefaultBusinessServiceStateMachine.DEFAULT_SEVERITY, stateMachine.getOperationalStatus(bs1));
+        assertEquals(DefaultBusinessServiceStateMachine.DEFAULT_SEVERITY, stateMachine.getOperationalStatus(bs2));
+
+        // Now create an alarm
+        OnmsAlarm alarm = new OnmsAlarm();
+        alarm.setUei(EventConstants.NODE_LOST_SERVICE_EVENT_UEI);
+        alarm.setSeverity(OnmsSeverity.MINOR);
+        alarm.setReductionKey(String.format("%s::1:192.168.1.1:ICMP", EventConstants.NODE_LOST_SERVICE_EVENT_UEI));
+
+        // Pass the alarm to the state machine
+        stateMachine.handleNewOrUpdatedAlarm(alarm);
+
+        // Verify the updated state
+        assertEquals(1, handler.getStateChanges().size());
+        assertEquals(OnmsSeverity.MINOR, stateMachine.getOperationalStatus(svc1));
+        assertEquals(OnmsSeverity.MINOR, stateMachine.getOperationalStatus(bs1));
+        assertEquals(DefaultBusinessServiceStateMachine.DEFAULT_SEVERITY, stateMachine.getOperationalStatus(bs2));
+    }
+

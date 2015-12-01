@@ -1,0 +1,38 @@
+    /**
+     * Verifies that the daemon generates events when the operational status
+     * of a Business Service is changed.
+     *
+     * @throws Exception
+     */
+    @Test
+    public void canSendEventsOnOperationalStatusChanged() throws Exception {
+        // Create a business service
+        BusinessService simpleBs = createSimpleBusinessService();
+
+        // Start the daemon
+        m_bsmd.start();
+
+        // Setup expectations
+        EventBuilder ebldr = new EventBuilder(EventConstants.BUSINESS_SERVICE_OPERATIONAL_STATUS_CHANGED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_BUSINESS_SERVICE_ID, simpleBs.getId());
+        m_anticipator.anticipateEvent(ebldr.getEvent());
+
+        // Create the alarm
+        OnmsAlarm alarm = new OnmsAlarm();
+        alarm.setUei(EventConstants.NODE_LOST_SERVICE_EVENT_UEI);
+        alarm.setAlarmType(1);
+        alarm.setCounter(1);
+        alarm.setDistPoller(m_distPollerDao.whoami());
+        alarm.setReductionKey(String.format("%s::1:192.168.1.1:ICMP", EventConstants.NODE_LOST_SERVICE_EVENT_UEI));
+        m_alarmDao.save(alarm);
+
+        // Send alarm created event
+        ebldr = new EventBuilder(EventConstants.ALARM_CREATED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_ALARM_ID, alarm.getId());
+        m_bsmd.handleAlarmLifecycleEvents(ebldr.getEvent());
+
+        // Verify expectations
+        Collection<Event> stillWaitingFor = m_anticipator.waitForAnticipated(5000);
+        assertTrue("Expected events not forthcoming " + stillWaitingFor, stillWaitingFor.isEmpty());
+    }
+
