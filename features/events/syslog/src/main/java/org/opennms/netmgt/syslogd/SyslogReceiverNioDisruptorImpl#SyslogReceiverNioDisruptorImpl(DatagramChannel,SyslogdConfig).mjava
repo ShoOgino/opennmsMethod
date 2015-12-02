@@ -20,23 +20,13 @@
         // Turn Cassandra client mode on so that we can use the {@link SharedExecutorPool} classes.
         Config.setClientMode(true);
 
-        m_executor = JMXEnabledSharedExecutorPool.SHARED.newExecutor(Runtime.getRuntime().availableProcessors() * 2, Integer.MAX_VALUE, "syslogConnections", "OpenNMS.Syslogd");
-
-        /*
-        m_executor = new ThreadPoolExecutor(
-            Runtime.getRuntime().availableProcessors() * 2,
-            Runtime.getRuntime().availableProcessors() * 2,
-            1000L,
-            TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<Runnable>(),
-            new LogPreservingThreadFactory(getClass().getSimpleName(), Integer.MAX_VALUE)
-        );
-        */
-
-        // This thread pool is used to process {@link DatagramChannel#receive(ByteBuffer)} calls
-        // on the syslog port. By using multiple threads, we can optimize the receipt of
-        // packet data from the syslog port and avoid discarding UDP syslog packets.
-        m_socketReceivers = JMXEnabledSharedExecutorPool.SHARED.newExecutor(SOCKET_RECEIVER_COUNT, Integer.MAX_VALUE, "socketReceivers", "OpenNMS.Syslogd");
+        // These executors are all created using the Cassandra SharedExecutorPool
+        // TODO: Override the SocketFactory for the pool so that the threads are given
+        // more user-friendly names.
+        //
+        m_socketReceivers = JMXEnabledSharedExecutorPool.SHARED.newExecutor(SOCKET_RECEIVER_THREADS, Integer.MAX_VALUE, "socketReceivers", "OpenNMS.Syslogd");
+        m_syslogConnectionExecutor = JMXEnabledSharedExecutorPool.SHARED.newExecutor(EVENT_PARSER_THREADS, Integer.MAX_VALUE, "syslogConnections", "OpenNMS.Syslogd");
+        m_syslogProcessorExecutor = JMXEnabledSharedExecutorPool.SHARED.newExecutor(EVENT_SENDER_THREADS, Integer.MAX_VALUE, "syslogProcessors", "OpenNMS.Syslogd");
 
         /*
         m_socketReceivers = new ThreadPoolExecutor(
@@ -60,17 +50,9 @@
         m_disruptor.start();
         */
 
-        /*
-        // Use an LMAX Disruptor as a ring buffer for incoming packets
-        m_packetRingBuffer = new Disruptor<PacketMessage>(PacketMessage::new, SOCKET_BYTE_BUFFER_QUEUE_SIZE, Executors.newCachedThreadPool());
-        // Handle each message by enqueuing it on an executor
-        m_disruptor.handleEventsWith(
-            (event, sequence, endOfBatch) -> 
-            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(event))
-        );
-        */
-
-        m_byteBuffers = new Disruptor<ByteBufferMessage>(ByteBufferMessage::new, SOCKET_BYTE_BUFFER_QUEUE_SIZE, m_executor);
+        // We can use a null executor here because we're not queueing executable tasks.
+        // We're just using this ring buffer to access preallocated ByteBuffers.
+        m_byteBuffers = new Disruptor<ByteBufferMessage>(ByteBufferMessage::new, SOCKET_BYTE_BUFFER_QUEUE_SIZE, null);
         m_byteBuffers.start();
         m_ringBuffer = m_byteBuffers.getRingBuffer();
 

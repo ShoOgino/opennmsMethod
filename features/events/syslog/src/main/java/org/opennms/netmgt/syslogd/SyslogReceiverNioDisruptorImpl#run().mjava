@@ -9,6 +9,18 @@
         // Get a log instance
         Logging.putPrefix(Syslogd.LOG4J_CATEGORY);
 
+        ConsoleReporter reporter = ConsoleReporter.forRegistry(METRICS)
+            .convertRatesTo(TimeUnit.SECONDS)
+            .convertDurationsTo(TimeUnit.MILLISECONDS)
+            .build();
+        reporter.start(1, TimeUnit.SECONDS);
+
+        // Create some metrics
+        Meter packetMeter = METRICS.meter(MetricRegistry.name(getClass(), "packets"));
+        Meter processorMeter = METRICS.meter(MetricRegistry.name(getClass(), "processors"));
+        Meter connectionMeter = METRICS.meter(MetricRegistry.name(getClass(), "connections"));
+        Histogram packetSizeHistogram = METRICS.histogram(MetricRegistry.name(getClass(), "packetSize"));
+
         if (m_stop) {
             LOG.debug("Stop flag set before thread started, exiting");
             return;
@@ -34,7 +46,7 @@
             LOG.info("Failed to set the receive buffer to {}", Integer.MAX_VALUE, e);
         }
 
-        for (int i = 0; i < SOCKET_RECEIVER_COUNT; i++) {
+        for (int i = 0; i < SOCKET_RECEIVER_THREADS; i++) {
             m_socketReceivers.execute(new Runnable() {
                 public void run() {
 
@@ -49,9 +61,11 @@
                         }
 
                         try {
+                            /*
                             if (!ioInterrupted) {
                                 LOG.debug("Waiting on a datagram to arrive");
                             }
+                            */
 
                             // Check out a ByteBufferMessage
                             final long sequence = m_ringBuffer.next();
@@ -62,24 +76,47 @@
                             // Write the datagram into the ByteBuffer
                             final InetSocketAddress source = (InetSocketAddress)m_channel.receive(message.buffer);
 
+                            // Increment the packet counter
+                            packetMeter.mark();
+
                             // Flip the buffer from write to read mode
                             message.buffer.flip();
 
-                            // TODO: Change this into a disruptor call
-                            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(source.getAddress(), source.getPort(), message.buffer, m_config, new Runnable() {
-                                @Override
-                                public void run() {
-                                    // Clear the buffer so that it's ready for writing again
-                                    message.buffer.clear();
+                            // Create a metric for the syslog packet size
+                            packetSizeHistogram.update(message.buffer.remaining());
 
-                                    if (sequence % 50 == 0) {
-                                        LOG.debug("Released 50 more datagrams");
-                                    }
+                            /*
+                            CompletableFuture<Void> processPacket = CompletableFuture.supplyAsync(
+                                () -> new SyslogConnection(source.getAddress(), source.getPort(), message.buffer, m_config, null),
+                                m_syslogConnectionExecutor
+                            )
+                            .thenApplyAsync(c -> c.call(), m_syslogConnectionExecutor)
+                            .thenAcceptAsync(c -> c.call(), m_syslogProcessorExecutor);
+                            */
 
-                                    // Release the buffer back to the disruptor
-                                    m_ringBuffer.publish(sequence);
+                            SyslogConnection conn = new SyslogConnection(source.getAddress(), source.getPort(), message.buffer, m_config);
+
+                            // Convert the syslog packet into an OpenNMS event
+                            CompletableFuture<SyslogProcessor> proc = CompletableFuture.supplyAsync(conn::call, m_syslogConnectionExecutor);
+
+                            // After the bytes are converted into an event...
+                            proc.thenRun(() -> {
+                                // Clear the buffer so that it's ready for writing again
+                                message.buffer.clear();
+
+                                if (sequence % 50 == 0) {
+                                    LOG.debug("Released 50 more datagrams");
                                 }
-                            }));
+
+                                // Release the buffer back to the disruptor
+                                m_ringBuffer.publish(sequence);
+
+                                // Increment the counter
+                                processorMeter.mark();
+                            });
+
+                            // Broadcast the event on the event channel
+                            proc.thenAcceptAsync(c -> c.call(), m_syslogProcessorExecutor).thenRun(() -> connectionMeter.mark());
 
                             // reset the flag
                             ioInterrupted = false; 
@@ -89,12 +126,14 @@
                         } catch (InterruptedIOException e) {
                             ioInterrupted = true;
                             continue;
+                            /*
                         } catch (ExecutionException e) {
                             LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
                             break;
                         } catch (InterruptedException e) {
                             LOG.error("Task interrupted in {}", this.getClass().getSimpleName(), e);
                             break;
+                            */
                         } catch (IOException e) {
                             LOG.error("An I/O exception occured on the datagram receipt port, exiting", e);
                             break;
