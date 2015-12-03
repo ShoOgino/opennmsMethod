@@ -1,0 +1,39 @@
+    /**
+     * Creates a proxy for the given object. The object must already been instantiated and must implement at least one interface..
+     * The proxy created wraps only methods of all defined interfaces of the provided class.
+     * All wrapped methods are executed within a transaction scope.
+     * @param createProxyFor The object to create the proxy for. Must not be null.
+     * @param <T> The type of the proxy object.
+     * @return The proxy of the object to proxy where each (interface) method call is enforced to run within a transaction scope.
+     */
+    public <T> T createProxy(final T createProxyFor) {
+        Objects.requireNonNull(createProxyFor);
+
+        if (createProxyFor.getClass().getInterfaces().length == 0) {
+            throw new IllegalArgumentException("No interface defined for class " + createProxyFor.getClass());
+        }
+
+        final InvocationHandler transactionInvocationHandler = new InvocationHandler() {
+            @Override
+            public Object invoke(Object proxyObject, Method method, Object[] objects) throws Throwable {
+                Object result = transactionOperations.execute(new TransactionCallback<Object>() {
+                    @Override
+                    public Object doInTransaction(TransactionStatus status) {
+                        try {
+                            return method.invoke(createProxyFor, objects);
+                        } catch (IllegalAccessException | InvocationTargetException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                });
+                return result;
+            }
+        };
+
+        T transactionAwareProxy = (T) Proxy.newProxyInstance(
+                createProxyFor.getClass().getClassLoader(),
+                createProxyFor.getClass().getInterfaces(),
+                transactionInvocationHandler);
+        return transactionAwareProxy;
+    }
+
