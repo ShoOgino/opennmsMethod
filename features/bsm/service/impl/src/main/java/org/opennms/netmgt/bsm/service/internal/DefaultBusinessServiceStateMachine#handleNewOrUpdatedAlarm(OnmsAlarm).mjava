@@ -1,0 +1,49 @@
+    @Override
+    public void handleNewOrUpdatedAlarm(OnmsAlarm alarm) {
+        // The ReadWriteLock doesn't give us the ability to upgrade from a
+        // read lock to a write lock, so we acquire a write lock even
+        // if we may not need it
+        m_rwLock.writeLock().lock();
+        try {
+            // Are there any business services referencing this alarm?
+            Set<BusinessService> affectedBusinessServices = m_reductionKeys.get(alarm.getReductionKey());
+            if (affectedBusinessServices == null || affectedBusinessServices.isEmpty()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("No Business Service depends on alarm with reduction key: '{}'. "
+                            + "Monitored reduction keys include: {}.", alarm.getReductionKey(), m_reductionKeys.keySet());
+                }
+                return;
+            }
+
+            // Maintain the last known severity for the reduction key
+            LOG.debug("Alarm with id: {} and reduction key: {} has severity: {}", alarm.getId(), alarm.getReductionKey(), alarm.getSeverity());
+            m_reductionKeyToSeverity.put(alarm.getReductionKey(), alarm.getSeverity());
+
+            // Propagate to the affected business services
+            for (BusinessService businessService : affectedBusinessServices) {
+                // Calculate the new severity
+                OnmsSeverity newSeverity = calculateCurrentSeverity(businessService);
+
+                // Did the severity change?
+                OnmsSeverity prevSeverity = m_businessServiceSeverity.get(businessService);
+                if (newSeverity.equals(prevSeverity)) {
+                    // The severity hasn't changed, we're done
+                    continue;
+                }
+
+                // Update the severity
+                LOG.debug("Updating state on {} from {} to {}.", businessService, prevSeverity, newSeverity);
+                m_businessServiceSeverity.put(businessService, newSeverity);
+
+                // Notify
+                synchronized(m_handlers) {
+                    for (BusinessServiceStateChangeHandler handler : m_handlers) {
+                        handler.handleBusinessServiceStateChanged(businessService, newSeverity, prevSeverity);
+                    }
+                }
+            }
+        } finally {
+            m_rwLock.writeLock().unlock();
+        }
+    }
+
