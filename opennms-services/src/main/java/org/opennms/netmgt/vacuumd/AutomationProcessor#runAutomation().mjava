@@ -18,8 +18,8 @@
         LOG.debug("runAutomation: {} action statement is: {}", m_automation.getName(), m_action.getActionSQL());
 
         LOG.debug("runAutomation: Executing trigger: {}", m_automation.getTriggerName());
-        
-        
+
+        final List<Event> eventsToSend = new LinkedList<>();
         Transaction.begin();
         try {
             LOG.debug("runAutomation: Processing automation: {}", m_automation.getName());
@@ -28,7 +28,7 @@
             
             boolean success = false;
             if (results.isSuccessful()) {
-                success = processAction(results);
+                success = processAction(results, eventsToSend);
             }
             
 			return success;
@@ -38,10 +38,17 @@
             LOG.warn("runAutomation: Could not execute automation: {}", m_automation.getName(), e);
             return false;
         } finally {
+            LOG.debug("runAutomation: Closing transaction for automation: {}", m_automation.getName());
+            Transaction.end();
 
-            LOG.debug("runAutomation: Ending processing of automation: {}", m_automation.getName());
-            
-            Transaction.end();         
+            // Always send the events out after the transaction is closed in order to ensure
+            // that any event handlers can access the updated records
+            LOG.debug("runAutomation: Sending {} events for automation: {}", eventsToSend.size(), m_automation.getName());
+            for (Event event : eventsToSend) {
+                Vacuumd.getSingleton().getEventManager().sendNow(event);
+            }
+
+            LOG.debug("runAutomation: Done processing automation: {}", m_automation.getName());
         }
 
     }
