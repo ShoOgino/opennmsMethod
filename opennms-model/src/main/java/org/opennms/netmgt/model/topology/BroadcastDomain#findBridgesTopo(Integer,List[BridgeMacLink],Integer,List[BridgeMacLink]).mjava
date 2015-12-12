@@ -1,47 +1,50 @@
-    //FIXME
-    public void findBridgesTopo(Integer RBridgeId, List<BridgeMacLink> RBft, Integer XBridgeId, List<BridgeMacLink> XBFT) {
-        BridgeTopologyHelper RX = new BridgeTopologyHelper(RBridgeId, XBridgeId, RBft, XBFT);
-        Integer RXport = RX.getXYPort();
-        Integer XRport = RX.getYXPort();
-        SharedSegment topSegment = getSharedSegment(RBridgeId,RXport);
+    private void findBridgesTopo(Integer rBridgeId, List<BridgeMacLink> rBFT, Integer xBridgeId, List<BridgeMacLink> xBFT) {
+        BridgeTopologyHelper rx = new BridgeTopologyHelper(rBridgeId, xBridgeId, rBFT, xBFT);
+        Integer rxDesignatedPort = rx.getFirstBridgeDesignatedPort();
+        Integer xrDesignatedPort = rx.getSecondBridgePort();
+        //get the starting point shared segment of the top bridge
+        // where the bridge is learned should not be null
+        SharedSegment topSegment = getSharedSegment(rBridgeId,rxDesignatedPort);
         if (topSegment == null) {
-            topSegment = new SharedSegment(RBridgeId,RXport);
-            // FIXME 
-            //topSegment.assign the macaddress
+            topSegment = new SharedSegment(rBridgeId,rxDesignatedPort);
+            topSegment.assign(rx.getBFT());
             m_topology.add(topSegment);
-
-            //FIXME
-            //add the other segments for each port on each bridge;
-            return;
         }
-        
-        for (Bridge Y: getBridgeOnSharedSegment(topSegment)) {
-            BridgeTopologyHelper XY = new BridgeTopologyHelper(RBridgeId, XBridgeId, RBft, XBFT);
-            Integer XYport = XY.getXYPort();
-            Integer YXport = XY.getYXPort();
-            Integer YRport = Y.getRootPort();
+
+        for (Bridge yBridge: getBridgeOnSharedSegment(topSegment)) {
+            Integer yBridgeId = yBridge.getId();
+            BridgeTopologyHelper xy = new BridgeTopologyHelper(xBridgeId, yBridgeId, xBFT, getEffectiveBFT(yBridgeId));
+            Integer xyDesignatedPort = xy.getFirstBridgeDesignatedPort();
+            Integer yxDesignatedPort = xy.getSecondBridgePort();
+            Integer yrDesignatedPort = yBridge.getRootPort();
             // X is a leaf of Y
-            if (XYport == XRport && YXport != YRport) {
-                //FIXME
-                //Remove Y from topSegment
-                //FIXME we have to find a real BFT for Y bridgeId
-                findBridgesTopo(Y.getId(), getEffectiveBFT(Y.getId()), XBridgeId, XBFT);
+            if (xyDesignatedPort == xrDesignatedPort && yxDesignatedPort != yrDesignatedPort) {
+                findBridgesTopo(yBridge.getId(), getEffectiveBFT(yBridge.getId()), xBridgeId, xBFT);
                 return;
             }
             // Y is a leaf of X
-            if (XYport != XRport && YXport == YRport) {
-                //FIXME create a SharedSegment with root port
-                SharedSegment leafSegment = new SharedSegment(XBridgeId, XYport);
-                //leafSegment assign bridgemaclinks
-                //topSegment remove bridgemaclinks from Y
+            if (xyDesignatedPort != xrDesignatedPort && yxDesignatedPort == yrDesignatedPort) {
+                //create a SharedSegment with root port
+                SharedSegment leafSegment = new SharedSegment(xBridgeId, xyDesignatedPort);
+                leafSegment.assign(xy.getBFT());
                 m_topology.add(leafSegment);
+                topSegment.removeBridge(yBridge.getId());
+            }            
+            // this is a clear violation  of the root rule
+            if (xyDesignatedPort != xrDesignatedPort && yxDesignatedPort != yrDesignatedPort) {
+                m_topology.clear();
+                return;
             }            
         }
-        //FIXME
-        //Se sono qui e' perche' non sono una foglia, ho fogliato
-        // e mi devo aggiungere al top segment
-        //topSegment.assign()
-        
+        // if we are here is because X is NOT a leaf of any bridge found
+        // on topSegment so X is connected to top Segment by it's root 
+        // port
+        topSegment.assign(rx.getBFT());
+        for (Integer bridgePort: rx.getTroughSet().keySet()) {
+            SharedSegment xleafSegment = new SharedSegment(xBridgeId, bridgePort);
+            xleafSegment.assign(rx.getTroughSet().get(bridgePort));
+            m_topology.add(xleafSegment);
+        }
         
     }
 
