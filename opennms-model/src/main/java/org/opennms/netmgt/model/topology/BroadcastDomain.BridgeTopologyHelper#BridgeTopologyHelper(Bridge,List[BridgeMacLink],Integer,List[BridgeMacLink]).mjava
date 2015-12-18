@@ -1,14 +1,16 @@
         public BridgeTopologyHelper(Bridge xBridge, List<BridgeMacLink> xBFT, Integer yBridgeId, List<BridgeMacLink> yBFT) {
             super();
-
+            Set<String> xmacs = new HashSet<String>();
+            Set<String> ymacs = new HashSet<String>();
+     
             for (BridgeMacLink xlink: xBFT) {
                 if (xBridge.getId() == xlink.getNode().getId() && xlink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) 
                     xmactoport.put(xlink.getMacAddress(), xlink);
                 if (xBridge.getId() == xlink.getNode().getId() && xlink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) 
                     xmacs.add(xlink.getMacAddress());
-            }                
+            }
             for (BridgeMacLink ylink: yBFT) {
-                if (yBridgeId == ylink.getNode().getId()) {
+                if (yBridgeId.intValue() == ylink.getNode().getId().intValue() && ylink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) {
                     ymactoport.put(ylink.getMacAddress(), ylink);
                     if (!m_throughSet.containsKey(ylink.getBridgePort()))
                         m_throughSet.put(ylink.getBridgePort(), new ArrayList<BridgeMacLink>());
@@ -17,36 +19,46 @@
                 if (yBridgeId == ylink.getNode().getId() && ylink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) 
                     ymacs.add(ylink.getMacAddress());
             }
-            Set<String> commonlearnedmacs = new HashSet<String>(); 
-            commonlearnedmacs.addAll(xmactoport.keySet());
-            commonlearnedmacs.retainAll(ymactoport.entrySet());
-
-            boolean cond1X = condition1BridgeX();
-            boolean cond1Y = condition1BridgeY();
-            if (cond1X && !cond1Y)
-                condition2BridgeX(commonlearnedmacs);
-            if (!cond1X && cond1Y)
-                condition2BridgeY(commonlearnedmacs);
-            if (!cond1X && !cond1Y)
-                condition3(commonlearnedmacs);
             
-            if (m_xy == null || m_xy == null)
-                return;
+            boolean cond1X = condition1BridgeX(xmacs);
+            boolean cond1Y = condition1BridgeY(ymacs);
+            
+            if (!cond1X || !cond1Y) {
+                Set<String> commonlearnedmacs = new HashSet<String>(xmactoport.keySet()); 
+                commonlearnedmacs.retainAll(new HashSet<String>(ymactoport.keySet()));
+                if (cond1X && !cond1Y) 
+                    condition2BridgeX(commonlearnedmacs);
+                if (!cond1X && cond1Y)
+                    condition2BridgeY(commonlearnedmacs);
+                if (!cond1X && !cond1Y)
+                    condition3(commonlearnedmacs);
+                if (m_xy == null || m_xy == null)
+                    return;
+            }    
+            LOG.debug("m_xy: {}", m_xy);
+            LOG.debug("m_yx: {}", m_yx);
             
             BridgeMacLink xylink = null;
             BridgeMacLink yxlink = null;
-            for (String mac: commonlearnedmacs) {
-                if (xmactoport.get(mac).getBridgePort() == m_xy) {
-                    simpleconnection.add(xmactoport.get(mac));
+            List<BridgeMacLink> connectionsOnSegment=new ArrayList<BridgeMacLink>();
+            for (BridgeMacLink xlink: xBFT) {
+                if (xlink.getBridgePort() == m_xy) {
+                    if (m_yx == ymactoport.get(xlink.getMacAddress()).getBridgePort())
+                        connectionsOnSegment.add(xlink);
                     if (xylink == null)
-                        xylink = xmactoport.get(mac);
-                }
-                if (ymactoport.get(mac).getBridgePort() == m_yx) {
-                    simpleconnection.add(ymactoport.get(mac));
-                    if (yxlink == null)
-                        yxlink = ymactoport.get(mac);
+                        xylink = xlink;
                 }
             }
+            for (BridgeMacLink ylink: yBFT) {
+                if (ylink.getBridgePort() == m_yx) {
+                    if (m_xy == xmactoport.get(ylink.getMacAddress()).getBridgePort())
+                        connectionsOnSegment.add(ylink);
+                    if (yxlink == null)
+                        yxlink = ylink;
+                }
+            }
+    
+            BridgeBridgeLink blink = new BridgeBridgeLink();
             if (xylink != null && yxlink != null ) {
                 blink.setNode(xylink.getNode());
                 blink.setBridgePort(xylink.getBridgePort());
@@ -58,6 +70,7 @@
                 blink.setDesignatedPortIfIndex(yxlink.getBridgePortIfIndex());
                 blink.setDesignatedPortIfName(yxlink.getBridgePortIfName());
             }
+            m_simpleconnection = new SimpleConnection(connectionsOnSegment, blink);
             m_throughSet.remove(m_yx);            
         }
 
