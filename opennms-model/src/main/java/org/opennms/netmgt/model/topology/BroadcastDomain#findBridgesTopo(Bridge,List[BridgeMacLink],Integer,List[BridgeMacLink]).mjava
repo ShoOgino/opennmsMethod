@@ -1,8 +1,10 @@
+    // here we assume that rbridge exists in topology
+    // while xBridge is to be added
     private void findBridgesTopo(Bridge rBridge, List<BridgeMacLink> rBFT, Integer xBridgeId, List<BridgeMacLink> xBFT) {
         LOG.info("findBridgesTopo: calculate topology for nodeid {}, against {}", xBridgeId,rBridge.getId());
         Bridge xBridge = null;
         for (Bridge bridge: m_bridges) {
-            if (bridge.getId() == xBridgeId) {
+            if (bridge.getId().intValue() == xBridgeId.intValue()) {
                 xBridge=bridge;
                 break;
             }
@@ -10,7 +12,6 @@
         if (xBridge == null) {
             LOG.error("findBridgesTopo: not found bridge for nodeid {} exiting....", xBridgeId);
         }
-        //LOG.debug("findBridgesTopo: found bridge for nodeid {}, with address {}", xBridgeId,xBridge.getBridgeElements().iterator().next().getBaseBridgeAddress());
         
         BridgeTopologyHelper rx = new BridgeTopologyHelper(rBridge, rBFT, xBridgeId,xBFT);
         Integer rxDesignatedPort = rx.getFirstBridgeConnectionPort();
@@ -19,22 +20,21 @@
             return;
         }
         Integer xrDesignatedPort = rx.getSecondBridgeConnectionPort();
-         if (xrDesignatedPort == null) {
+        if (xrDesignatedPort == null) {
              LOG.info("findBridgesTopo: cannot found bottom simple connection:  nodeid {}",xBridgeId);
              return;
         }
         LOG.info("findBridgesTopo: found simple connection:  nodeid {}, port {} <--> nodeid {}, port {}",rBridge.getId(),rxDesignatedPort,xBridgeId,xrDesignatedPort);
         LOG.info("findBridgesTopo: set root port {} for nodeid {}",xrDesignatedPort,xBridgeId);
-//        xBridge.setRootPort(xrDesignatedPort);
-//        xBridge.setRootBridge(false);
+        xBridge.setRootPort(xrDesignatedPort);
+        xBridge.setRootBridge(false);
         //get the starting point shared segment of the top bridge
         // where the bridge is learned should not be null
         SharedSegment topSegment = getSharedSegment(rBridge.getId(),rxDesignatedPort);
         if (topSegment == null) {
-            LOG.info("findBridgesTopo: created top segment:  for nodeid {}, port {}",rBridge.getId(),rxDesignatedPort);
-            topSegment = new SharedSegment(rBridge.getId(),rxDesignatedPort);
-            topSegment.assign(rx.getSimpleConnection().getLinks(),rx.getSimpleConnection().getDlink());
-            m_topology.add(topSegment);
+            LOG.warn("findBridgesTopo: not found: top segment:  for nodeid {}, port {}",rBridge.getId(),rxDesignatedPort);
+            m_topology.clear();
+            return;
         }
 
         for (Bridge yBridge: getBridgeOnSharedSegment(topSegment)) {
@@ -77,9 +77,14 @@
         // on topSegment so X is connected to top Segment by it's root 
         // port or rx is a direct connection
         topSegment.assign(rx.getSimpleConnection().getLinks(),rx.getSimpleConnection().getDlink());
-        for (Integer xbridgePort: rx.getSecondBridgeTroughSet().keySet()) {
+        LOG.info("findBridgesTopo: updating top segment to topology: bridge {} port: {}, mac size: {}, bft size: {}",topSegment.getDesignatedBridge(),
+                 topSegment.getDesignatedPort(), topSegment.getMacsOnSegment().size(), topSegment.getBridgeMacLinks().size());
+       for (Integer xbridgePort: rx.getSecondBridgeTroughSet().keySet()) {
             SharedSegment xleafSegment = new SharedSegment(xBridgeId, xbridgePort);
             xleafSegment.setBridgeMacLinks(rx.getSecondBridgeTroughSet().get(xbridgePort));
+            LOG.info("findBridgesTopo: adding shared segment to topology: root bridge {} port: {}, mac size: {}, bft size: {}",xleafSegment.getDesignatedBridge(),
+                     xleafSegment.getDesignatedPort(), xleafSegment.getMacsOnSegment().size(), xleafSegment.getBridgeMacLinks().size());
+
             m_topology.add(xleafSegment);
         }
         LOG.info("findBridgesTopo: topology calculated for nodeid: {}", xBridgeId);

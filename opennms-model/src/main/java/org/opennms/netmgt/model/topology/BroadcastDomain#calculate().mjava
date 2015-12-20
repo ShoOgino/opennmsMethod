@@ -2,19 +2,47 @@
         LOG.info("calculate: start:  calculate topology");
         m_calculating = true;
         m_topologyChanged=false;
-        selectRootBridge();
+        
+        for (Bridge curbridge: m_bridges) {
+            if (m_notYetParsedBFTMap.keySet().contains(curbridge.getId()) ) {
+                LOG.info("calculate: clean topology for bridge:  {}", curbridge.getId());
+                cleanTopologyForBridge(curbridge);
+            }
+        }
+        
+        Bridge electedRoot = selectRootBridge();
+        List<BridgeMacLink> electedRootBFT = m_notYetParsedBFTMap.remove(electedRoot.getId()); 
+        if (electedRootBFT != null) {
+            LOG.info("calculate: elected root bridge: {}, has new bft", electedRoot.getId());
+            if (m_topology.isEmpty()) {
+                LOG.info("calculate: creating shared segment for root bridge in empty topology:  {}", electedRoot.getId());
+                Map<Integer, SharedSegment> rootleafs=new HashMap<Integer, SharedSegment>();
+                for (BridgeMacLink link: electedRootBFT) {
+                    if (link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED)
+                        continue;
+                    if (!rootleafs.containsKey(link.getBridgePort()))
+                        rootleafs.put(link.getBridgePort(), new SharedSegment(link.getNode().getId(),link.getBridgePort()));
+                    rootleafs.get(link.getBridgePort()).add(link);
+                }
+                for (SharedSegment rootleaf: rootleafs.values()) {
+                    LOG.info("calculate: adding shared segment to topology: root bridge {} port: {}, mac size: {}, bft size: {}",rootleaf.getDesignatedBridge(),
+                             rootleaf.getDesignatedPort(), rootleaf.getMacsOnSegment().size(), rootleaf.getBridgeMacLinks().size());
+                    m_topology.add(rootleaf);
+                }
+                LOG.info("calculate: created: shared segment for root bridge in topology:  {}", electedRoot.getId());
+            } else {
+                LOG.info("calculate: find topology for elected root bridge:  {}", electedRoot.getId());
+                findBridgesTopo(getRootBridge(), m_rootBridgeBFT, electedRoot.getId(),electedRootBFT);
+            }
+            m_rootBridgeBFT = electedRootBFT;
+            LOG.info("calculate: set root bridge {} bft size:  {}", electedRoot.getId(), m_rootBridgeBFT.size());
+        } 
+        m_rootBridgeId = electedRoot.getId();
+        electedRoot.setRootBridge(true);
+        electedRoot.setRootPort(null);
         hierarchySetUp();
 
-        // the root bridge is the only bridge in topology
-        if (m_topology.isEmpty() && m_notYetParsedBFTMap.isEmpty() && m_rootBridgeBFT != null) {
-            LOG.info("calculate: only root bridge in topology:  {}", m_rootBridgeId);
-            m_calculating = false;
-            LOG.info("calculate: stop:  calculate topology for nodeids {}", m_bridges);
-            return;
-        }
-        Set<Integer> nodeids = new HashSet<Integer>();
-        nodeids.addAll(m_notYetParsedBFTMap.keySet());
-        for (Integer nodeid: nodeids) 
+        for (Integer nodeid: m_notYetParsedBFTMap.keySet()) 
             findBridgesTopo(getRootBridge(), m_rootBridgeBFT, nodeid, m_notYetParsedBFTMap.remove(nodeid));
        
         m_calculating = false;
