@@ -1,0 +1,46 @@
+    @Test
+    public void testRegister() throws Exception {
+        // Check preconditions
+        assertFalse(m_frontEnd.isRegistered());
+        assertEquals(1, m_jdbcTemplate.queryForInt("select count(*) from monitoringsystems"));
+        assertEquals(0, m_jdbcTemplate.queryForInt("select count(*) from monitoringsystemsproperties"));
+        assertTrue("There were unexpected poll results", 0 == m_jdbcTemplate.queryForInt("select count(*) from location_specific_status_changes"));
+
+        // Start up the remote poller
+        m_frontEnd.register("RDU");
+        assertTrue(m_frontEnd.isStarted());
+        String monitorId = m_frontEnd.getMonitoringSystemId();
+
+        assertTrue(m_frontEnd.isRegistered());
+        for (Map.Entry entry : ((ScanReportPollerFrontEnd)m_frontEnd).getDetails().entrySet()) {
+            LOG.info("Front end detail: " + entry.getKey() + " -> " + entry.getValue());
+        }
+        // Make sure there is a total of one remote poller
+        assertEquals(2, m_jdbcTemplate.queryForInt("select count(*) from monitoringsystems"));
+        assertEquals(5, m_jdbcTemplate.queryForInt("select count(*) from monitoringsystemsproperties where monitoringsystemid = ?", monitorId));
+        // Make sure there is a total of one remote poller with the expected ID
+        assertEquals(1, getMonitorCount(monitorId));
+
+        assertEquals(System.getProperty("os.arch"), m_jdbcTemplate.queryForObject("select propertyValue from monitoringsystemsproperties where monitoringsystemid = ? and property = ?", String.class, monitorId, "os.arch"));
+        assertEquals(System.getProperty("os.name"), m_jdbcTemplate.queryForObject("select propertyValue from monitoringsystemsproperties where monitoringsystemid = ? and property = ?", String.class, monitorId, "os.name"));
+        assertEquals(System.getProperty("os.version"), m_jdbcTemplate.queryForObject("select propertyValue from monitoringsystemsproperties where monitoringsystemid = ? and property = ?", String.class, monitorId, "os.version"));
+
+        long wait = 60000L;
+        while (wait > 0) {
+            Thread.sleep(1000L);
+            wait -= 1000L;
+            LOG.debug("wait = {}", wait);
+
+            // If the monitor disconnects, break
+            if (
+              getMonitorCount(monitorId) == 1 &&
+              getDisconnectedCount(monitorId) == 1
+            ) break;
+        }
+
+        assertEquals(1, getMonitorCount(monitorId));
+        assertEquals(1, getDisconnectedCount(monitorId));
+
+        m_frontEnd.stop();
+    }
+
