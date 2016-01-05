@@ -1,0 +1,66 @@
+    private void setUpRoot(Bridge electedRoot) {
+        if (electedRoot.isRootBridge() && !m_notYetParsedBFTMap.containsKey(electedRoot.getId())) {
+            LOG.info("calculate: elected root bridge: {}, is old root bridge with old bft",
+                     electedRoot.getId());
+        } else if (electedRoot.isRootBridge() && m_notYetParsedBFTMap.containsKey(electedRoot.getId())) {
+            LOG.info("calculate: elected root bridge: {}, is old root bridge with new bft",
+                     electedRoot.getId());
+            m_rootBridgeBFT = new ArrayList<BridgeMacLink>(m_notYetParsedBFTMap.remove(electedRoot.getId()));
+            LOG.debug("calculate: updated new bft for root bridge {}  size:  {}",
+                          electedRoot.getId(), m_rootBridgeBFT.size());
+        } else if (!electedRoot.isRootBridge() && m_notYetParsedBFTMap.containsKey(electedRoot.getId())) {
+            LOG.info("calculate: elected root bridge: {}, is new root bridge and has new bft",
+                         electedRoot.getId());
+           List<BridgeMacLink>  electedRootBFT = new ArrayList<BridgeMacLink>(
+                   m_notYetParsedBFTMap.remove(electedRoot.getId()));
+           if (m_topology.isEmpty()) {
+               LOG.info("calculate: new elected root bridge:  {}, is the first bridge in topology. Adding level 0 shared segments",
+                        electedRoot.getId());
+                Map<Integer, SharedSegment> rootleafs = new HashMap<Integer, SharedSegment>();
+                for (BridgeMacLink link : electedRootBFT) {
+                    if (link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED)
+                        continue;
+                    if (rootleafs.containsKey(link.getBridgePort()))
+                        rootleafs.get(link.getBridgePort()).add(link);
+                    else
+                        rootleafs.put(link.getBridgePort(),
+                                      new SharedSegment(this,link));
+                }
+                for (SharedSegment rootleaf : rootleafs.values()) {
+                    LOG.info("calculate: adding shared segment to topology: root bridge {} port: {}, mac size: {}, bft size: {}",
+                             rootleaf.getDesignatedBridge(),
+                             rootleaf.getDesignatedPort(),
+                             rootleaf.getMacsOnSegment().size(),
+                             rootleaf.getBridgeMacLinks().size());
+                    m_topology.add(rootleaf);
+                }
+                m_rootBridgeId = electedRoot.getId();
+                electedRoot.setRootBridge(true);
+                electedRoot.setRootPort(null);
+           } else {
+                LOG.info("calculate: find topology of new elected root bridge:  {} with old root as root bridge: {}",
+                         electedRoot.getId(),m_rootBridgeId);
+                calculate(getRootBridge(), m_rootBridgeBFT,
+                                electedRoot, electedRootBFT);
+                m_rootBridgeId = electedRoot.getId();
+                electedRoot.setRootBridge(true);
+                electedRoot.setRootPort(null);
+                hierarchySetUp();
+           }
+           m_rootBridgeBFT = electedRootBFT;
+           LOG.debug("calculate: set bft for root bridge {}  size:  {}",
+                          electedRoot.getId(), m_rootBridgeBFT.size());
+        } else if (!electedRoot.isRootBridge() && !m_notYetParsedBFTMap.containsKey(electedRoot.getId())){
+            LOG.info("calculate: elected root bridge: {}, is new root bridge with old bft",
+                     electedRoot.getId());
+            m_rootBridgeId = electedRoot.getId();
+            electedRoot.setRootBridge(true);
+            electedRoot.setRootPort(null);
+            hierarchySetUp();
+            m_rootBridgeBFT = getEffectiveBFT(electedRoot);
+            LOG.debug("calculate: set bft for root bridge {}  size:  {}",
+                           electedRoot.getId(), m_rootBridgeBFT.size());
+        }
+        
+    }
+
