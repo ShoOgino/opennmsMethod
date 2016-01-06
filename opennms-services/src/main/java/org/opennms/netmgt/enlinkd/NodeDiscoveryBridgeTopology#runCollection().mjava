@@ -2,27 +2,30 @@
     protected void runCollection() {
         
         Date now = new Date();
-        BroadcastDomain domain = m_linkd.getQueryManager().getBridgeTopologyBroadcastDomain(getNodeId());
-        if (domain == null ) {
+        m_domain = m_linkd.getQueryManager().getBridgeTopologyBroadcastDomain(getNodeId());
+        if (m_domain == null ) {
             LOG.warn("run: no broadcast domain found for node: {}", getNodeId());
             return;
         }
-        if (domain.isCalculating()) {
-            LOG.info("run: broadcast domain is calculating either on node {}....", getNodeId());
+        if (m_domain.isCalculating()) {
+            LOG.info("run: broadcast domain is locked for calculation either on node {}....", getNodeId());
             return;
         }
-        if (!domain.isTopologyChanged()) {
+        if (!m_domain.hasTopologyUpdatedBft()) {
             LOG.info("run: broadcast domain with no topology change found for node: {}. exiting...", getNodeId());
             return;
         }
+        m_domain.getLock();
+        m_notYetParsedBFTMap = m_domain.removeUpdateMap();
         LOG.info("run: calculating broadcast domain with topology change found for node: {}.", getNodeId());
-        domain.calculate();
+        calculate();
         LOG.info("run: broadcast domain topology for node: {}. calculated.", getNodeId());
+        m_domain.releaseLock();
         LOG.info("run: saving broadcast domain topology for node: {}.", getNodeId());
-        m_linkd.getQueryManager().store(domain);
+        m_linkd.getQueryManager().store(m_domain);
         LOG.info("run: saved broadcast domain topology for node: {}.", getNodeId());
         
-        for (Integer nodeid: domain.getUpdatedNodes()) {
+        for (Integer nodeid: m_domain.getBridgeNodesOnDomain()) {
            LOG.info("run: reconcile topology for node: {} on Broadcast Domain",nodeid);
            m_linkd.getQueryManager().reconcileBridgeTopology(nodeid, now);
         }

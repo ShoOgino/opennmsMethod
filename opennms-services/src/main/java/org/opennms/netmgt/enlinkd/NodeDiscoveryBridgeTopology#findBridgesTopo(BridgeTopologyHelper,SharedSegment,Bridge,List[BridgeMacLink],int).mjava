@@ -1,0 +1,93 @@
+    // here we assume that rbridge exists in topology
+    // while xBridge is to be added
+    private void findBridgesTopo(BridgeTopologyHelper rx,SharedSegment topSegment, Bridge xBridge, List<BridgeMacLink> xBFT, int level) {
+        level++;
+        if (level == 30) {
+            LOG.warn("calculate: level {}: bridge: {}, too many iteration on topology exiting.....",level,xBridge.getId());
+            return;
+        }
+        LOG.info("calculate: level {}: bridge: {}, top segment: designated port {}, designated root {}",level,xBridge.getId(),topSegment.getDesignatedPort(),
+                 topSegment.getDesignatedBridge());
+
+        Set<Integer> portsAdded=new HashSet<Integer>();
+        List<Map<Integer,List<BridgeMacLink>>> throughSets=new ArrayList<Map<Integer,List<BridgeMacLink>>>();
+        for (Bridge yBridge: m_domain.getBridgeOnSharedSegment(topSegment)) {
+            Integer yBridgeId = yBridge.getId();
+            // X is a leaf of top segment: of course
+            if (yBridgeId.intValue() == topSegment.getDesignatedBridge().intValue()) {
+                continue;
+            } 
+            LOG.debug("calculate: level {}: bridge: {}, check simple connection with Bridge Y {} found on topSegment",
+                      level,xBridge.getId(), yBridge.getId());
+            Integer yrDesignatedPort = yBridge.getRootPort();
+            LOG.info("calculate: level {}: bridge: {}, found Y designated port:  Y bridge: {}, port: {}",
+                     level,xBridge.getId(),yBridgeId,yrDesignatedPort);
+            List<BridgeMacLink> yBft = m_domain.getEffectiveBFT(yBridge);
+            BridgeTopologyHelper   yx = new BridgeTopologyHelper(yBridge,yBft ,xBridge, xBFT);
+            Integer  xyDesignatedPort = yx.getSecondBridgeConnectionPort();
+            Integer  yxDesignatedPort = yx.getFirstBridgeConnectionPort();
+            LOG.info("calculate: level {}: found simple connection:  X bridge {}, port {} <--> Y bridge {}, port {}",
+                     level,xBridge.getId(),xyDesignatedPort,yBridgeId,yxDesignatedPort);
+            // X is a leaf of Y then iterate
+            if (xyDesignatedPort == rx.getSecondBridgeConnectionPort() && yxDesignatedPort != yrDesignatedPort) {
+                LOG.info("calculate: level {}: X Bridge: {} is a leaf of Y Bridge: {}, going one level down",
+                         level,xBridge.getId(),yBridge.getId());
+                findBridgesTopo(yx,m_domain.getSharedSegment(yBridgeId, yxDesignatedPort), xBridge, xBFT,level);
+                return;
+            }
+            // Y is a leaf of X then remove Y from topSegment
+            if (yxDesignatedPort == yrDesignatedPort && xyDesignatedPort != rx.getSecondBridgeConnectionPort()) {
+                //create a SharedSegment with root port
+                LOG.info("calculate: level {}: Y bridge: {} is a leaf of X Bridge: {}, creating shared segment for port {}", 
+                         level,yBridge.getId(),xBridge.getId(),xyDesignatedPort);
+                SharedSegment leafSegment = new SharedSegment(m_domain,xBridge.getId(), xyDesignatedPort);
+                leafSegment.add(yx.getSimpleConnection().getDlink());
+                leafSegment.setBridgeMacLinks(yx.getSimpleConnection().getLinks());
+                m_domain.add(leafSegment);
+                portsAdded.add(xyDesignatedPort);
+                
+                LOG.info("calculate: level {}: removing Y through set {} macs from top segment", 
+                         level, yx.getFirstBridgeTroughSet().size());
+                topSegment.removeMacs(yx.getFirstBridgeTroughSet());
+                LOG.info("findBridgesTopo: level {}: removing Y Bridge {} from top segment", 
+                         level,yBridge.getId());
+                topSegment.removeBridge(yBridgeId);
+            }            
+            // this is a clear violation  of the topology tree rule
+            if (xyDesignatedPort != rx.getSecondBridgeConnectionPort() && yxDesignatedPort != yrDesignatedPort) {
+                LOG.error("findBridgesTopo: level {}: topology mismatch. Clearing...topology",level);
+                m_domain.clearTopology();
+                return;
+            }            
+            throughSets.add(yx.getFirstBridgeTroughSet());
+        }
+        // if we are here is because X is NOT a leaf of any bridge found
+        // on topSegment so X is connected to top Segment by it's root 
+        // port or rx is a direct connection
+        LOG.info("calculate: level {}: bridge: {}, removing X through set {} macs from top segment", 
+                 level, xBridge.getId(), rx.getSecondBridgeTroughSet().size());
+        topSegment.removeMacs(rx.getSecondBridgeTroughSet());
+        topSegment.assign(rx.getSimpleConnection().getLinks(),rx.getSimpleConnection().getDlink());
+        LOG.info("calculate: level {}: bridge: {}, assigning links to top segment: bridge {} port: {}, mac size: {}, bft size: {}",
+                 level, xBridge.getId(),topSegment.getDesignatedBridge(),
+                 topSegment.getDesignatedPort(), topSegment.getMacsOnSegment().size(), topSegment.getBridgeMacLinks().size());
+        LOG.info("calculate: level {}: bridge: {}, removing {} Y through sets from top segment", 
+                 level,xBridge.getId(),throughSets.size());
+        for (Map<Integer, List<BridgeMacLink>> throughSet: throughSets)
+            topSegment.removeMacs(throughSet);
+        for (Integer xbridgePort : rx.getSecondBridgeTroughSet().keySet()) {
+            if (portsAdded.contains(xbridgePort))
+                continue;
+            SharedSegment xleafSegment = new SharedSegment(m_domain,xBridge.getId(),
+                                                           xbridgePort);
+            xleafSegment.setBridgeMacLinks(rx.getSecondBridgeTroughSet().get(xbridgePort));
+            LOG.info("calculate: level {}: adding shared segment to topology: root bridge {} port: {}, mac size: {}, bft size: {}",
+                     level,
+                     xleafSegment.getDesignatedBridge(),
+                     xleafSegment.getDesignatedPort(),
+                     xleafSegment.getMacsOnSegment().size(),
+                     xleafSegment.getBridgeMacLinks().size());
+            m_domain.add(xleafSegment);
+        }
+    }
+
