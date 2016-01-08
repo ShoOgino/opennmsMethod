@@ -1,0 +1,28 @@
+    @Override
+    public void onEvent(SampleBatchEvent event) throws Exception {
+        // We'd expect the logs from this thread to be in collectd.log
+        Logging.putPrefix("collectd");
+
+        List<Sample> samples = event.getSamples();
+        // Decrement our sample counter
+        m_numSamplesOnRingBuffer.addAndGet(-samples.size());
+
+        // Partition the samples into collections smaller then max_batch_size
+        for (List<Sample> batch : Lists.partition(samples, m_maxBatchSize)) {
+            try {
+                LOG.debug("Inserting {} samples", batch.size());
+                m_sampleRepository.insert(batch);
+
+                if (LOG.isDebugEnabled()) {
+                    String uniqueResourceIds = batch.stream()
+                        .map(s -> s.getResource().getId())
+                        .distinct()
+                        .collect(Collectors.joining(", "));
+                    LOG.debug("Successfully inserted samples for resources with ids {}", uniqueResourceIds);
+                }
+            } catch (Throwable t) {
+                LOG.error("An error occurred while inserting the samples. They will be lost.", t);
+            }
+        }
+    }
+
