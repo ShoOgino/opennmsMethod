@@ -1,0 +1,36 @@
+    /**
+     * Instantiates a new SNMP Trap northbounder.
+     *
+     * @param configDao the SNMP Trap configuration DAO
+     * @param javaMailDao the JavaMail configuration DAO
+     * @param destinationName the destination name
+     */
+    public EmailNorthbounder(EmailNorthbounderConfigDao configDao, JavaMailConfigurationDao javaMailDao, String destinationName) {
+        super(NBI_NAME + ":" + destinationName);
+        m_configDao = configDao;
+        m_destination = configDao.getConfig().getEmailDestination(destinationName);
+
+        // Creating a local copy of the SendmailConfig object, to avoid potential thread contention issues.
+        ByteArrayInputStream is = null;
+        try {
+            final SendmailConfig sendmail = javaMailDao.getSendMailConfig(destinationName);
+            if (sendmail != null) {
+                final String sendmailText = CastorUtils.marshal(sendmail);
+                is = new ByteArrayInputStream(sendmailText.getBytes());
+                m_sendmail = CastorUtils.unmarshal(SendmailConfig.class, is);
+            }
+        } catch (Exception e) {
+            LOG.error("Can't create a copy of the SendmailConfig object named {}.", destinationName, e);
+        } finally {
+            IOUtils.closeQuietly(is);
+        }
+
+        // Saving a local copy of the templates, as they will be overridden every time a new email has to be sent.
+        if (m_sendmail != null && m_sendmail.getSendmailMessage() != null) {
+            m_emailSubjectFormat = m_sendmail.getSendmailMessage().getSubject();
+            m_emailBodyFormat = m_sendmail.getSendmailMessage().getBody();
+            m_emailFrom = m_sendmail.getSendmailMessage().getFrom();
+            m_emailTo = m_sendmail.getSendmailMessage().getTo();
+        }
+    }
+
