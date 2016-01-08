@@ -3,7 +3,7 @@
     * @see org.opennms.api.integration.ticketing.Plugin#saveOrUpdate(org.opennms.api.integration.ticketing.Ticket)
     */
     @Override
-    public void saveOrUpdate(Ticket ticket) {
+    public void saveOrUpdate(Ticket ticket) throws PluginException {
 
         JiraRestClient jira = getConnection();
 
@@ -15,7 +15,12 @@
             builder.setDescription(ticket.getDetails());
             builder.setDueDate(new DateTime(Calendar.getInstance()));
 
-            BasicIssue createdIssue = jira.getIssueClient().createIssue(builder.build(), new NullProgressMonitor());
+            BasicIssue createdIssue;
+            try {
+                createdIssue = jira.getIssueClient().createIssue(builder.build()).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to create issue.", e);
+            }
             LOG.info("created ticket " + createdIssue);
 
             ticket.setId(createdIssue.getKey());
@@ -24,32 +29,50 @@
             // Otherwise update the existing ticket
             LOG.info("Received ticket: {}", ticket.getId());
 
-            Issue issue = jira.getIssueClient().getIssue(ticket.getId(), new NullProgressMonitor());
+            Issue issue;
+            try {
+                issue = jira.getIssueClient().getIssue(ticket.getId()).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to get issue with id:" + ticket.getId(), e);
+            }
 
-            Iterable<Transition> transitions = jira.getIssueClient().getTransitions(issue, new NullProgressMonitor());
+            Iterable<Transition> transitions;
+            try {
+                transitions = jira.getIssueClient().getTransitions(issue).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to get transitions for issue with id:" + issue.getId(), e);
+            }
+
             if (Ticket.State.CLOSED.equals(ticket.getState())) {
                 Comment comment = Comment.valueOf("Issue resolved by OpenNMS.");
                 for (Transition transition : transitions) {
-                    if ("Resolve Issue".equals(transition.getName())) {
+                    if (getProperties().getProperty("jira.resolve").equals(transition.getName())) {
                         LOG.info("Resolving ticket {}", ticket.getId());
                         // Resolve the issue
-                        jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment), new NullProgressMonitor());
+                        try {
+                            jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment)).get();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new PluginException("Failed to get resolve issue with id:" + issue.getId(), e);
+                        }
                         return;
                     }
                 }
-                LOG.warn("Could not resolve ticket {}, no \"Resolve Issue\" operation available.", ticket.getId());
+                LOG.warn("Could not resolve ticket {}, no '{}' operation available.", ticket.getId(), getProperties().getProperty("jira.resolve"));
             } else if (Ticket.State.OPEN.equals(ticket.getState())) {
-                // This case is most likely never used.
                 Comment comment = Comment.valueOf("Issue reopened by OpenNMS.");
                 for (Transition transition : transitions) {
-                    if ("Reopen Issue".equals(transition.getName())) {
+                    if (getProperties().getProperty("jira.reopen").equals(transition.getName())) {
                         LOG.info("Reopening ticket {}", ticket.getId());
                         // Resolve the issue
-                        jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment), new NullProgressMonitor());
+                        try {
+                            jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment)).get();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new PluginException("Failed to reopen issue with id:" + issue.getId(), e);
+                        }
                         return;
                     }
                 }
-                LOG.warn("Could not reopen ticket {}, no \"Reopen Issue\" operation available.", ticket.getId());
+                LOG.warn("Could not reopen ticket {}, no '{}' operation available.", ticket.getId(), getProperties().getProperty("jira.reopen"));
             }
         }
     }
