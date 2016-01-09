@@ -1,0 +1,42 @@
+    /**
+     * Forwards an event.
+     *
+     * @param event the event to be forwarded
+     * @param node the node associated with the event if apply
+     */
+    public void forward(Event event, OnmsNode node) {
+        if (initialized) {
+            LOG.info("Forwarding event {} to destination:{}", event.getUei(), destination.getName());
+            SyslogIF instance;
+            try {
+                instance = Syslog.getInstance(destination.getName());
+            } catch (SyslogRuntimeException e) {
+                LOG.error("Could not find Syslog instance for destination: '{}': {}", destination.getName(), e);
+                return;
+            }
+            try {
+                LOG.debug("Making substitutions for tokens in message format for event: {}.", event.getDbid());
+                String msgFormat = null;
+                for (SyslogFilter filter : destination.getFilters()) {
+                    if (passFilter(filter, event)) {
+                        msgFormat = filter.getMessageFormat();
+                    }
+                }
+                if (msgFormat != null) {
+                    String syslogMessage = getTranslatedMessage(event, node, msgFormat);
+                    LOG.debug("Determining LOG_LEVEL for event: {}", event.getDbid());
+                    int level = determineLogLevel(event.getSeverity());
+                    LOG.debug("Forwarding event: {} via syslog to destination: {}", event.getDbid(), destination.getName());
+                    instance.log(level, syslogMessage);
+                } else {
+                    LOG.warn("Can't find message format for the incoming. Check your destination's configuration.");
+                }
+            } catch (Exception ex) {
+                LOG.error("Caught exception sending to destination: '{}': {}", destination.getName(), ex);
+            }
+
+        } else {
+            LOG.error("Can't forward event {} because the facility as not been initialized.", event.getUei());
+        }
+    }
+
