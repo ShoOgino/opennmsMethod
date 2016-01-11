@@ -1,5 +1,33 @@
-        @Override
-        public void updateBridgeTopology(int nodeId) {
-            m_bridgeTopologyDao.update(nodeId);
+    @Override
+    public void updateBridgeTopology(int nodeId) {
+        List<BridgeMacLink> bft = m_notYetParsedBFTMap.remove(nodeId);
+        Map<BridgeMacLinkHash,BridgeMacLink> effectiveBFT=new HashMap<BridgeMacLinkHash,BridgeMacLink>();        Set<String> incomingSet = new HashSet<String>();
+        for (BridgeMacLink link : bft) {
+            effectiveBFT.put(new BridgeMacLinkHash(link), link);
+            incomingSet.add(link.getMacAddress());
         }
+        BroadcastDomain bftdomain = null;
+        
+        for (BroadcastDomain domain : m_bridgeTopologyDao.get()) {
+            Set<String>retainedSet = new HashSet<String>(
+                                                          domain.getMacsOnDomain());
+            retainedSet.retainAll(incomingSet);
+            // should contain at list 10 or 10% of the all size
+            if (retainedSet.size() > 10
+                    || retainedSet.size() >= incomingSet.size() * 0.1) {
+                bftdomain = domain;
+                continue;
+            }
+            if (domain.containBridgeId(nodeId))
+                domain.removeBridge(nodeId);
+        }
+            
+        if (bftdomain == null) {
+            bftdomain = new BroadcastDomain();
+        }
+        bftdomain.addBridge(new Bridge(nodeId));
+        m_bridgeTopologyDao.save(bftdomain);
+        m_nodetoBroadcastDomainMap.put(bftdomain.getBridge(nodeId), new ArrayList<BridgeMacLink>(effectiveBFT.values()));
+        m_bridgeTopologyDao.clear();
+    }
 

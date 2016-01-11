@@ -1,0 +1,60 @@
+    private Bridge electRootBridge() {
+        //if there is only one bridge....
+        if (m_domain.getBridges().size() == 1) {
+            LOG.debug("calculate: electRootBridge: only one bridge in topology, electing to root");
+            return m_domain.getBridges().iterator().next();
+        }
+        //if null try set the stp roots
+        Set<String> rootBridgeIds=new HashSet<String>();
+        for (BridgeElement bridge: m_bridgeelements ) {
+            if (InetAddressUtils.isValidStpBridgeId(bridge.getStpDesignatedRoot()) && !bridge.getBaseBridgeAddress().equals(InetAddressUtils.getBridgeAddressFromStpBridgeId(bridge.getStpDesignatedRoot()))) {
+                rootBridgeIds.add(InetAddressUtils.getBridgeAddressFromStpBridgeId(bridge.getStpDesignatedRoot()));
+                LOG.info("calculate: electRootBridge: found stp root {} on the BroadcastDomain: ", bridge.getStpDesignatedRoot());
+            }
+        }
+        //well only one root bridge should be defined....
+        //otherwise we need to skip calculation
+        //so here is the place were we can
+        //manage multi stp domains...
+        //ignoring for the moment....
+        for (String rootBridgeId: rootBridgeIds) {
+            for (BridgeElement bridge: m_bridgeelements) {
+                LOG.debug("calculate: electRootBridge: searching for stp root, stp root address: {}, "
+                        + "against bridge: {}", rootBridgeId,bridge.getBaseBridgeAddress());
+                if (bridge.getBaseBridgeAddress().equals((rootBridgeId))) {
+                    LOG.debug("calculate: electRootBridge: found stp root bridge: {}", bridge.getBaseBridgeAddress());
+                    return m_domain.getBridge(bridge.getNode().getId());
+                }
+            }
+        }
+
+        // no spanning tree root?
+        // why I'm here?
+        // not root bridge defined (this mean no calculation yet done...
+        // so checking the best into not parsed
+        int size=0;
+        if (m_rootBridgeBFT != null )
+            size = m_rootBridgeBFT.size();
+        
+        Bridge rootBridge = null;
+        for (Bridge bridge:  m_notYetParsedBFTMap.keySet()) {
+            if (size < m_notYetParsedBFTMap.get(bridge).size()) {
+                rootBridge = bridge;
+                size = m_notYetParsedBFTMap.get(bridge).size();
+            }
+        }
+        if (rootBridge != null ) {
+            LOG.debug("calculate: electRootBridge: elected bridge {} with max bft size \"{}\" in topology",rootBridge.getId(), size);
+            return rootBridge;
+        }
+
+        if (m_rootBridgeId != null) {
+            LOG.debug("calculate: electRootBridge: mantaining old root bridge: {}", m_rootBridgeId);
+            return m_domain.getBridge(m_rootBridgeId);
+        }
+
+        // still not found...get the first
+        return m_domain.getBridges().iterator().next();
+
+    }
+
