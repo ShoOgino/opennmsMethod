@@ -1,6 +1,6 @@
     @Override
     protected void runCollection() {
-        
+        m_notYetParsedBFTMap = new HashMap<Bridge, List<BridgeMacLink>>();
         Date now = new Date();
         m_domain = m_linkd.getQueryManager().getBridgeTopologyBroadcastDomain(getNodeId());
         if (m_domain == null ) {
@@ -8,32 +8,47 @@
             return;
         }
         if (m_domain.isLocked()) {
-            LOG.info("run: broadcast domain is locked for calculation either on node {}....", getNodeId());
+            LOG.info("run: broadcast domain: is locked for calculation either on node {}....", getNodeId());
             return;
         }
-        setBridgeElements(m_linkd.getQueryManager().getBridgeElements(m_domain));
-        m_rootBridgeId = m_linkd.getQueryManager().getBridgeTopologyRootId(m_domain);
-        if (m_rootBridgeId == null) {
+        
+        setBridgeElements(m_linkd.getQueryManager().getBridgeElements(m_domain.getBridgeNodesOnDomain()));
+        
+        if (!m_domain.hasRootBridge()) {
             LOG.info("run: node: {}, broadcast domain has no root bridge.", getNodeId());
         }  else {
-            LOG.info("run: node: {}, broadcast domain with root bridge: {}.", getNodeId(),m_rootBridgeId);
-            m_rootBridgeBFT = m_linkd.getQueryManager().getBridgeTopologyRootBFT(m_domain);
+            Integer rootBridgeId = m_domain.getRootBridgeId();
+            LOG.info("run: node: {}, broadcast domain with root bridge: {}.", getNodeId(),rootBridgeId);
+            m_rootBridgeBFT = m_linkd.getQueryManager().getBridgeTopologyRootBFT(rootBridgeId);
             LOG.info("run: node: {}, broadcast domain has root bridge with bft size: {}.", getNodeId(),m_rootBridgeBFT.size());
         }        
-        m_notYetParsedBFTMap = m_linkd.getQueryManager().getBridgeTopologyUpdateBFT(m_domain);
+        
+        for (Integer nodeid: m_domain.getBridgeNodesOnDomain()) {
+            LOG.debug("run: node: {}, getting update bft for node {} on domain", getNodeId(),nodeid);
+            List<BridgeMacLink> bft = m_linkd.getQueryManager().getBridgeTopologyUpdateBFT(nodeid);
+            if (bft == null || bft.isEmpty()) {
+                LOG.debug("run: node: {}, no update bft for node {} on domain", getNodeId(),nodeid);
+                continue;
+            }
+            m_notYetParsedBFTMap.put(m_domain.getBridge(nodeid), bft);
+        }
         if (m_notYetParsedBFTMap.isEmpty()) {
             LOG.info("run: node: {}, broadcast domain has no topology updates. No more action is needed.", getNodeId());
             return;
         }
+        
         LOG.info("run: node: {}, getLock broadcast domain with topology change found.", getNodeId());
         m_domain.getLock();
-        LOG.info("run: broadcast domain topology for node: {}. start: topology calculation.", getNodeId());
+        LOG.info("run: node: {}, start: broadcast domain topology calculation.", getNodeId());
         calculate();
-        LOG.info("run: broadcast domain topology for node: {}. stop: topology calculated.", getNodeId());
+        LOG.info("run: node: {}, stop: broadcast domain topology calculated.", getNodeId());
 
-        LOG.info("run: saving broadcast domain topology for node: {}.", getNodeId());
-        m_linkd.getQueryManager().store(m_domain,m_rootBridgeId,m_rootBridgeBFT);
-        LOG.info("run: saved broadcast domain topology for node: {}.", getNodeId());
+        LOG.info("run: node: {}, saving broadcast domain root bridge: {} bft.", getNodeId(),m_domain.getRootBridgeId());
+        m_linkd.getQueryManager().save(m_domain.getRootBridgeId(), m_rootBridgeBFT);
+
+        LOG.info("run: node: {}, saving broadcast domain topology.", getNodeId());
+        m_linkd.getQueryManager().store(m_domain);
+        LOG.info("run: node: {}, saved broadcast domain topology.", getNodeId());
         
         for (Integer nodeid: m_domain.getBridgeNodesOnDomain()) {
            LOG.info("run: reconcile topology for node: {} on Broadcast Domain",nodeid);
