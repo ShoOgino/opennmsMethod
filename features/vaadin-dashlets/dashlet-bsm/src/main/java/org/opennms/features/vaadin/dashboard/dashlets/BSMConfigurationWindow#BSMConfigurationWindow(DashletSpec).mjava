@@ -13,7 +13,7 @@
          * Setting up the base layouts
          */
 
-        setHeight(80, Unit.PERCENTAGE);
+        setHeight(85, Unit.PERCENTAGE);
         setWidth(60, Unit.PERCENTAGE);
 
         /**
@@ -31,8 +31,25 @@
 
         String severityValue = BSMConfigHelper.getStringForKey(getDashletSpec().getParameters(), "severityValue");
 
-        if (severityValue == null || "".equals(severityValue)) {
-            severityValue = OnmsSeverity.WARNING.getLabel();
+        if (Strings.isNullOrEmpty(severityValue)) {
+            severityValue = OnmsSeverity.WARNING.name();
+        }
+
+        String severityCompareOperator = BSMConfigHelper.getStringForKey(getDashletSpec().getParameters(), "severityCompareOperator");
+
+        if (Strings.isNullOrEmpty(severityCompareOperator)) {
+            severityCompareOperator = BusinessServiceSearchCriteriaBuilder.CompareOperator.GreaterOrEqual.name();
+        }
+
+        String orderBy = BSMConfigHelper.getStringForKey(getDashletSpec().getParameters(), "orderBy");
+        if (Strings.isNullOrEmpty(orderBy)) {
+            orderBy = BusinessServiceSearchCriteriaBuilder.Order.Name.name();
+        }
+
+        String orderSequence = BSMConfigHelper.getStringForKey(getDashletSpec().getParameters(), "orderSequence");
+
+        if (Strings.isNullOrEmpty(orderSequence)) {
+            orderSequence = BusinessServiceSearchCriteriaBuilder.Sequence.Ascending.name();
         }
 
         int resultsLimit = BSMConfigHelper.getIntForKey(getDashletSpec().getParameters(), "resultsLimit");
@@ -128,8 +145,21 @@
         for (String name : OnmsSeverity.names()) {
             m_severitySelect.addItem(name);
         }
+
+        m_compareOperatorSelect = new NativeSelect("Comparator");
+        m_compareOperatorSelect.setEnabled(false);
+        m_compareOperatorSelect.setNullSelectionAllowed(false);
+        m_compareOperatorSelect.setMultiSelect(false);
+
+        m_compareOperatorSelect.addItem(BusinessServiceSearchCriteriaBuilder.CompareOperator.Lower.name());
+        m_compareOperatorSelect.addItem(BusinessServiceSearchCriteriaBuilder.CompareOperator.LowerOrEqual.name());
+        m_compareOperatorSelect.addItem(BusinessServiceSearchCriteriaBuilder.CompareOperator.Equal.name());
+        m_compareOperatorSelect.addItem(BusinessServiceSearchCriteriaBuilder.CompareOperator.GreaterOrEqual.name());
+        m_compareOperatorSelect.addItem(BusinessServiceSearchCriteriaBuilder.CompareOperator.Greater.name());
+
         addToComponent(severityLayout, m_filterBySeverityCheckBox);
         addToComponent(severityLayout, m_severitySelect);
+        addToComponent(severityLayout, m_compareOperatorSelect);
 
         Panel severityPanel = new Panel();
         severityPanel.setCaption("Filter by Severity");
@@ -139,14 +169,16 @@
             @Override
             public void valueChange(Property.ValueChangeEvent event) {
                 m_severitySelect.setEnabled(m_filterBySeverityCheckBox.getValue());
+                m_compareOperatorSelect.setEnabled(m_filterBySeverityCheckBox.getValue());
             }
         });
 
         m_severitySelect.setValue(severityValue);
+        m_compareOperatorSelect.setValue(severityCompareOperator);
         m_filterBySeverityCheckBox.setValue(filterBySeverity);
 
         /**
-         * Adding the "Limit" panel
+         * Adding the "Results" panel
          */
 
         VerticalLayout limitLayout = new VerticalLayout();
@@ -155,20 +187,40 @@
         limitLayout.setSizeFull();
 
         m_limitTextField = new TextField("Limit");
+
+        m_orderBy = new NativeSelect("Order by");
+        m_orderBy.setNullSelectionAllowed(false);
+        m_orderBy.setMultiSelect(false);
+
+        m_orderBy.addItem(BusinessServiceSearchCriteriaBuilder.Order.Name.name());
+        m_orderBy.addItem(BusinessServiceSearchCriteriaBuilder.Order.Severity.name());
+
+        m_orderSequence = new NativeSelect("Asc/Desc ");
+        m_orderSequence.setNullSelectionAllowed(false);
+        m_orderSequence.setMultiSelect(false);
+
+        m_orderSequence.addItem("Ascending");
+        m_orderSequence.addItem("Descending");
+
         addToComponent(limitLayout, m_limitTextField);
+        addToComponent(limitLayout, m_orderBy);
+        addToComponent(limitLayout, m_orderSequence);
 
         Panel limitPanel = new Panel();
         limitPanel.setSizeFull();
-        limitPanel.setCaption("Limit Results");
+        limitPanel.setCaption("Results");
         limitPanel.setContent(limitLayout);
 
         m_limitTextField.setValue(String.valueOf(resultsLimit));
-        m_limitTextField.addValidator(new AbstractStringValidator("Number greater zero expected") {
+        m_orderBy.setValue(orderBy);
+        m_orderSequence.setValue(orderSequence);
+
+        m_limitTextField.addValidator(new AbstractStringValidator("Number greater or equal zero expected") {
             @Override
             protected boolean isValidValue(String value) {
                 try {
                     int i = Integer.parseInt(value);
-                    return i > 0;
+                    return i >= 0;
                 } catch (NumberFormatException e) {
                     return false;
                 }
@@ -191,6 +243,7 @@
         HorizontalLayout bottomLayout = new HorizontalLayout(severityPanel, limitPanel);
         bottomLayout.setSpacing(true);
         bottomLayout.setWidth(100, Unit.PERCENTAGE);
+
         verticalLayout.addComponent(bottomLayout);
 
         /**
@@ -201,6 +254,11 @@
         buttonLayout.setMargin(true);
         buttonLayout.setSpacing(true);
         buttonLayout.setWidth("100%");
+
+        Label label = new Label("Note: Multiple enabled filter constraints will be combined by a logical AND.");
+        buttonLayout.addComponent(label);
+        buttonLayout.setExpandRatio(label, 1.0f);
+
         /**
          * Adding the cancel button...
          */
@@ -215,7 +273,6 @@
 
         cancel.setClickShortcut(ShortcutAction.KeyCode.ESCAPE, null);
         buttonLayout.addComponent(cancel);
-        buttonLayout.setExpandRatio(cancel, 1.0f);
         buttonLayout.setComponentAlignment(cancel, Alignment.TOP_RIGHT);
 
         /**
@@ -254,6 +311,24 @@
                     m_dashletSpec.getParameters().put("severityValue", m_severitySelect.getValue().toString());
                 } else {
                     m_dashletSpec.getParameters().put("severityValue", OnmsSeverity.WARNING.getLabel());
+                }
+
+                if (m_filterBySeverityCheckBox.getValue() && m_compareOperatorSelect.getValue() != null) {
+                    m_dashletSpec.getParameters().put("severityCompareOperator", m_compareOperatorSelect.getValue().toString());
+                } else {
+                    m_dashletSpec.getParameters().put("severityCompareOperator", BusinessServiceSearchCriteriaBuilder.CompareOperator.GreaterOrEqual.name());
+                }
+
+                if (m_orderBy.getValue() != null) {
+                    m_dashletSpec.getParameters().put("orderBy", m_orderBy.getValue().toString());
+                } else {
+                    m_dashletSpec.getParameters().put("orderBy", BusinessServiceSearchCriteriaBuilder.Order.Name.name());
+                }
+
+                if (m_orderSequence.getValue() != null) {
+                    m_dashletSpec.getParameters().put("orderSequence", m_orderSequence.getValue().toString());
+                } else {
+                    m_dashletSpec.getParameters().put("orderSequence", "Ascending");
                 }
 
                 m_dashletSpec.getParameters().put("resultsLimit", m_limitTextField.getValue().toString());
