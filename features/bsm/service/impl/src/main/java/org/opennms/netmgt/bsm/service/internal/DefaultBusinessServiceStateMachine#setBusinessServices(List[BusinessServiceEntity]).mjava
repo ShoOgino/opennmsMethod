@@ -1,0 +1,43 @@
+    @Override
+    public void setBusinessServices(List<BusinessServiceEntity> businessServices) {
+        Objects.requireNonNull(businessServices, "businessServices cannot be null");
+
+        m_rwLock.writeLock().lock();
+        try {
+            // Clear previous state
+            m_reductionKeys.clear();
+            m_businessServiceSeverity.clear();
+            m_reductionKeyToSeverity.clear();
+            m_ipServiceIds.clear();
+            m_levelToBusinessServiceMapping.clear();
+            m_rootMap.clear();
+
+            // Rebuild the reduction Key set
+            for (BusinessServiceEntity businessService : businessServices) {
+                for (IPServiceEdge ipServiceEdge : businessService.getEdges(IPServiceEdge.class)) {
+                    m_ipServiceIds.add(ipServiceEdge.getIpService().getId());
+                }
+                m_businessServiceSeverity.put(businessService, DEFAULT_SEVERITY);
+                for (String reductionKey : businessService.getAllReductionKeys()) {
+                    addReductionKey(reductionKey, businessService);
+                }
+            }
+
+            // Rebuild root structure
+            businessServices.forEach(bs -> bs.getEdges(BusinessServiceChildEdge.class)
+                    .forEach(edge -> {
+                        if (m_rootMap.get(edge.getChild()) == null) {
+                            m_rootMap.put(edge.getChild(), Sets.newHashSet());
+                        }
+                        m_rootMap.get(edge.getChild()).add(edge.getBusinessService());
+                    })
+            );
+
+            // Rebuild the hierarchy
+            Set<BusinessServiceEntity> roots = getRoots(businessServices);
+            determineHierarchyLevel(0, roots);
+        } finally {
+            m_rwLock.writeLock().unlock();
+        }
+    }
+
