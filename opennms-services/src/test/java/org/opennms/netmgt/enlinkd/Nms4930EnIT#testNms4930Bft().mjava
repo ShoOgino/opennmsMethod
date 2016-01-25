@@ -1,0 +1,53 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=DLINK1_IP, port=161, resource=DLINK1_SNMP_RESOURCE)
+    })
+    public void testNms4930Bft() throws Exception {
+        final OnmsNode dlink1 = m_nodeDao.findByForeignId("linkd", DLINK1_NAME);
+        m_linkdConfig.getConfiguration().setUseBridgeDiscovery(true);
+        m_linkdConfig.getConfiguration().setUseCdpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseOspfDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseLldpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseIsisDiscovery(false);
+
+        assertTrue(!m_linkdConfig.useLldpDiscovery());
+        assertTrue(!m_linkdConfig.useCdpDiscovery());
+        assertTrue(!m_linkdConfig.useOspfDiscovery());
+        assertTrue(m_linkdConfig.useBridgeDiscovery());
+        assertTrue(!m_linkdConfig.useIsisDiscovery());
+
+        assertTrue(m_linkd.scheduleNodeCollection(dlink1.getId()));
+
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+        
+        assertTrue(m_linkd.runSingleSnmpCollection(dlink1.getId()));
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+
+        List<BridgeMacLink> links  = m_linkd.getQueryManager().getBridgeTopologyUpdateBFT(dlink1.getId());
+        
+        assertEquals(59,links.size());
+        for (BridgeMacLink link: links) {
+            printBridgeMacLink(link);
+            if (BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF ==  link.getBridgeDot1qTpFdbStatus())
+                continue;
+            assertEquals(BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED,link.getBridgeDot1qTpFdbStatus());
+            link.setBridgeMacLinkLastPollTime(link.getBridgeMacLinkCreateTime());
+            m_bridgeMacLinkDao.save(link);
+        }
+
+        assertEquals(58,m_bridgeMacLinkDao.countAll());
+
+        for (BridgeMacLink maclink: m_bridgeMacLinkDao.findAll()) {
+                assertEquals(null,maclink.getBridgeDot1qTpFdbStatus());
+                assertNotNull(maclink.getBridgePortIfIndex());
+                assertNotNull(maclink.getBridgePort());
+                assertNotNull(maclink.getNode());
+                assertNotNull(maclink.getMacAddress());
+                printStoredBridgeMacLink(maclink);
+        }
+
+        
+    }
+
