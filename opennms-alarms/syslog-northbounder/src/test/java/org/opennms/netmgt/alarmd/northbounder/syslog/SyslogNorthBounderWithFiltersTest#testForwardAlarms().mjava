@@ -1,0 +1,81 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.alarmd.northbounder.syslog.SyslogNorthBounderTest#testForwardAlarms()
+     */
+    @Test
+    @Override
+    public void testForwardAlarms() throws Exception {
+        // Initialize the configuration
+        File configFile = new File("target/syslog-northbounder-config.xml");
+        FileUtils.copyFile(new File("src/test/resources/syslog-northbounder-config1.xml"), configFile);
+
+        // Initialize the configuration DAO
+        SyslogNorthbounderConfigDao dao = new SyslogNorthbounderConfigDao();
+        dao.setConfigResource(new FileSystemResource(configFile));
+        dao.afterPropertiesSet();
+
+        // Initialize the Syslog northbound interfaces
+        List<SyslogNorthbounder> nbis = new LinkedList<SyslogNorthbounder>();
+        for (SyslogDestination syslogDestination : dao.getConfig().getDestinations()) {
+            SyslogNorthbounder nbi = new SyslogNorthbounder(dao, syslogDestination.getName());
+            nbi.afterPropertiesSet();
+            nbis.add(nbi);
+        }
+
+        // Add a sample node to the database
+        OnmsNode node = new OnmsNode("agalue");
+        node.setForeignSource("TestGroup");
+        node.setForeignId("1");
+        node.setId(m_nodeDao.getNextNodeId());
+        OnmsSnmpInterface snmpInterface = new OnmsSnmpInterface(node, 1);
+        snmpInterface.setId(1);
+        snmpInterface.setIfAlias("Connection to OpenNMS Wifi");
+        snmpInterface.setIfDescr("en1");
+        snmpInterface.setIfName("en1/0");
+        snmpInterface.setPhysAddr("00:00:00:00:00:01");
+        Set<OnmsIpInterface> ipInterfaces = new LinkedHashSet<OnmsIpInterface>();
+        InetAddress address = InetAddress.getByName("10.0.1.1");
+        OnmsIpInterface onmsIf = new OnmsIpInterface(address, node);
+        onmsIf.setSnmpInterface(snmpInterface);
+        onmsIf.setId(1);
+        onmsIf.setIfIndex(1);
+        onmsIf.setIpHostName("agalue");
+        onmsIf.setIsSnmpPrimary(PrimaryType.PRIMARY);
+        ipInterfaces.add(onmsIf);
+        node.setIpInterfaces(ipInterfaces);
+        m_nodeDao.save(node);
+        m_nodeDao.flush();
+
+        // Create a sample Alarm
+        OnmsAlarm onmsAlarm = new OnmsAlarm();
+        onmsAlarm.setId(10);
+        onmsAlarm.setUei("uei.opennms.org/nodes/interfaceDown");
+        onmsAlarm.setNode(node);
+        onmsAlarm.setSeverityId(6);
+        onmsAlarm.setIpAddr(address);
+        onmsAlarm.setCounter(1);
+        onmsAlarm.setLogMsg("Interface Down");
+        onmsAlarm.setEventParms("owner=agalue(String,text)");
+        NorthboundAlarm nbAlarm = new NorthboundAlarm(onmsAlarm);
+        List<NorthboundAlarm> alarms = new LinkedList<NorthboundAlarm>();
+        alarms.add(nbAlarm);
+
+        // Verify filters and send alarms to the northbound interfaces
+        for (SyslogNorthbounder nbi : nbis) {
+            Assert.assertTrue(nbi.accepts(nbAlarm));
+            nbi.forwardAlarms(alarms);
+        }
+
+        Thread.sleep(100); // Induce a delay (based on the parent code)
+
+        // Extract the log messages and verify the content
+        BufferedReader reader = new BufferedReader(new StringReader(m_logStream.readStream()));
+        List<String> messages = getMessagesFromBuffer(reader);
+        Assert.assertTrue("Log messages sent: 2, Log messages received: " + messages.size(), 2 == messages.size());
+        Assert.assertTrue(messages.get(0).contains("ALARM 10 FROM NODE agalue@TestGroup"));
+        Assert.assertTrue(messages.get(1).contains("ALARM 10 FROM INTERFACE 10.0.1.1"));
+        reader.close();
+
+        // Remove the temporary configuration file
+        configFile.delete();
+    }
+

@@ -2,16 +2,22 @@
      * Implementation of TicketerPlugin API call to retrieve a Jira trouble ticket.
      *
      * @return an OpenNMS
+     * @throws PluginException
      */
     @Override
-    public Ticket get(String ticketId) {
+    public Ticket get(String ticketId) throws PluginException {
         JiraRestClient jira = getConnection();
         if (jira == null) {
             return null;
         }
 
         // w00t
-        Issue issue = jira.getIssueClient().getIssue(ticketId, new NullProgressMonitor());
+        Issue issue;
+        try {
+            issue = jira.getIssueClient().getIssue(ticketId).get();
+        } catch (InterruptedException|ExecutionException e) {
+            throw new PluginException("Failed to get issue with id: " + ticketId, e);
+        }
 
         if (issue != null) {
             Ticket ticket = new Ticket();
@@ -19,13 +25,7 @@
             ticket.setId(issue.getKey());
             ticket.setModificationTimestamp(String.valueOf(issue.getUpdateDate().toDate().getTime()));
             ticket.setSummary(issue.getSummary());
-
-            String allComments = "";
-            for (Comment comment : issue.getComments()) {
-                allComments = allComments + "\n" + comment.getAuthor().getDisplayName() + "\n" + comment.getBody();
-            }
-
-            ticket.setDetails(allComments.trim());
+            ticket.setDetails(issue.getDescription());
             ticket.setState(getStateFromId(issue.getStatus().getName()));
 
             return ticket;

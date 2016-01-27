@@ -2,11 +2,12 @@
      * Each implementation of the AbstractNorthbounder has a nice queue
      * (Nagle's algorithmic) and the worker thread that processes the queue
      * calls this method to send alarms to the northern NMS.
+     *
+     * @param alarms the alarms
+     * @throws NorthbounderException the northbounder exception
      */
     @Override
-    public void forwardAlarms(List<NorthboundAlarm> alarms)
-            throws NorthbounderException {
-
+    public void forwardAlarms(List<NorthboundAlarm> alarms) throws NorthbounderException {
         if (alarms == null) {
             String errorMsg = "No alarms in alarms list for syslog forwarding.";
             IllegalStateException e = new IllegalStateException(errorMsg);
@@ -14,17 +15,12 @@
             throw e;
         }
 
-        LOG.info("Forwarding {} alarms to destination:{}", alarms.size(),
-                 m_destination.getName());
-
-        Map<Integer, Map<String, Object>> alarmMappings = new HashMap<Integer, Map<String, Object>>();
-
+        LOG.info("Forwarding {} alarms to destination:{}", alarms.size(), m_destination.getName());
         SyslogIF instance;
         try {
             instance = Syslog.getInstance(m_destination.getName());
         } catch (SyslogRuntimeException e) {
-            LOG.error("Could not find Syslog instance for destination: '{}': {}",
-                      m_destination.getName(), e);
+            LOG.error("Could not find Syslog instance for destination: '{}': {}", m_destination.getName(), e);
             throw e;
         }
 
@@ -32,46 +28,30 @@
          * Iterate over the list of alarms to be forwarded N.
          */
         for (NorthboundAlarm alarm : alarms) {
-
             Integer count = alarm.getCount();
             if (count > 1 && m_destination.isFirstOccurrenceOnly()) {
-                LOG.debug("Destination {} is configured for new alarm instances only.  Alarm has count of {}.",
-                          m_destination.getName(), count);
+                LOG.debug("Destination {} is configured for new alarm instances only.  Alarm has count of {}.", m_destination.getName(), count);
                 continue;
             }
-
-            LOG.debug("Creating formatted log message for alarm: {}.",
-                      alarm.getId());
-
-            Map<String, Object> mapping = null;
-
+            LOG.debug("Creating formatted log message for alarm: {}.", alarm.getId());
             String syslogMessage;
             int level;
             try {
-                if (alarmMappings != null) {
-                    mapping = alarmMappings.get(alarm.getId());
+                LOG.debug("Making substitutions for tokens in message format for alarm: {}.", alarm.getId());
+                String msgFormat = m_destination.getCustomMessageFormat(alarm);
+                if (msgFormat == null) {
+                    msgFormat = getConfig().getMessageFormat();
                 }
+                syslogMessage = PropertiesUtils.substitute(msgFormat, createMapping(alarm));
 
-                if (mapping == null) {
-                    mapping = createMapping(alarmMappings, alarm);
-                }
+                LOG.debug("Determining LOG_LEVEL for alarm: {}", alarm.getId());
+                level = SyslogUtils.determineLogLevel(alarm.getSeverity());
 
-                LOG.debug("Making substitutions for tokens in message format for alarm: {}.",
-                          alarm.getId());
-                syslogMessage = PropertiesUtils.substitute(m_config.getMessageFormat(),
-                                                           mapping);
-
-                LOG.debug("Determining LOG_LEVEL for alarm: {}",
-                          alarm.getId());
-                level = determineLogLevel(alarm.getSeverity());
-
-                LOG.debug("Forwarding alarm: {} via syslog to destination: {}",
-                          alarm.getId(), m_destination.getName());
+                LOG.debug("Forwarding alarm: {} via syslog to destination: {}", alarm.getId(), m_destination.getName());
                 instance.log(level, syslogMessage);
 
-            } catch (Exception e1) {
-                LOG.error("Caught exception sending to destination: '{}': {}",
-                          m_destination.getName(), e1);
+            } catch (Exception ex) {
+                LOG.error("Caught exception sending to destination: '{}': {}", m_destination.getName(), ex);
             }
         }
     }
