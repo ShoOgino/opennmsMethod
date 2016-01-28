@@ -1,0 +1,46 @@
+    @Test
+    public void canCreateBambooHierarchy() throws Exception {
+        final BambooTestHierarchy testData = new BambooTestHierarchy();
+
+        // save hierarchy for later use
+        final Map<BusinessServiceEntity, Set<BusinessServiceEdgeEntity>> edgeMap = Maps.newHashMap();
+        testData.getServices().forEach(eachEntity -> edgeMap.put(eachEntity, Sets.newHashSet(eachEntity.getEdges())));
+        testData.getServices().forEach(eachEntity -> eachEntity.setEdges(Sets.newHashSet())); // clear hierarchy
+
+        // save business services to database
+        for (BusinessServiceEntity eachEntity : testData.getServices()) {
+            sendData(POST, MediaType.APPLICATION_XML, "/business-services", toXml(toRequestDto(eachEntity)), 201);
+        }
+
+        // apply ids (we created objects via rest)
+        edgeMap.keySet().forEach(s -> s.setId(findEntityByName(s.getName()).getId()));
+
+        // set hierarchy
+        for (Map.Entry<BusinessServiceEntity, Set<BusinessServiceEdgeEntity>> eachEntry : edgeMap.entrySet()) {
+            eachEntry.getKey().setEdges(eachEntry.getValue());
+            sendData(PUT, MediaType.APPLICATION_XML, buildServiceUrl(eachEntry.getKey().getId()), toXml(toRequestDto(eachEntry.getKey())), 204);
+        }
+
+        // verify
+        Assert.assertEquals(3, m_businessServiceDao.countAll());
+        BusinessServiceEntity parentEntity = findEntityByName("Bamboo");
+        BusinessServiceEntity mastersBusinessServiceEntity = findEntityByName("Master");
+        BusinessServiceEntity agentsBusinessServiceEntity = findEntityByName("Agents");
+        Assert.assertEquals(0, m_businessServiceDao.findParents(parentEntity).size());
+        Assert.assertEquals(2, parentEntity.getChildEdges().size());
+        Assert.assertEquals(1, m_businessServiceDao.findParents(mastersBusinessServiceEntity).size());
+        Assert.assertEquals(2, mastersBusinessServiceEntity.getReductionKeyEdges().size());
+        Assert.assertEquals(1, m_businessServiceDao.findParents(agentsBusinessServiceEntity).size());
+        Assert.assertEquals(3, agentsBusinessServiceEntity.getReductionKeyEdges().size());
+
+        // Verify Weight
+        Assert.assertEquals(2, getReductionKeyEdge(agentsBusinessServiceEntity, BAMBOO_AGENT_DUKE_REDUCTION_KEY).getWeight());
+        Assert.assertEquals(2, getReductionKeyEdge(agentsBusinessServiceEntity, BAMBOO_AGENT_CAROLINA_REDUCTION_KEY).getWeight());
+        Assert.assertEquals(1, getReductionKeyEdge(agentsBusinessServiceEntity, BAMBOO_AGENT_NCSTATE_REDUCTION_KEY).getWeight());
+
+        // verify rest
+        verifyResponse(parentEntity);
+        verifyResponse(mastersBusinessServiceEntity);
+        verifyResponse(agentsBusinessServiceEntity);
+    }
+
