@@ -1,0 +1,54 @@
+    /**
+     * Used to build a {@link CollectionSet} from the enumeration results.
+     */
+    public static void processEnumerationResults(Group group, CollectionSetBuilder builder, Resource resource, List<Node> nodes) {
+        for (Node node : nodes) {
+            final ListMultimap<String, String> elementValues = ResponseHandlingUtils.toMultiMap(node);
+            LOG.debug("Element values: {}", elementValues);
+
+            // Associate the values with the configured attributes
+            for (Attrib attrib : group.getAttrib()) {
+                AttributeType type = AttributeType.getByName(attrib.getType());
+                if (type == null) {
+                    LOG.error("Unsupported attribute type: {} for attribute: {} in group: {}. Value will be skipped.",
+                            attrib.getType(), attrib.getName(), group.getName());
+                    continue;
+                }
+
+                String valueAsString = null;
+                final List<String> attributeValues = elementValues.get(attrib.getName());
+                if (attributeValues.size() > 1 && attrib.getIndexOf() != null) {
+                    try {
+                        int index = ResponseHandlingUtils.getMatchingIndex(attrib.getIndexOf(), elementValues);
+                        valueAsString = attributeValues.get(index);
+                    } catch (NoSuchElementException e) {
+                        LOG.warn("No index was matched by index-of rule '{}' for attribute {} with values: {}.",
+                                attrib.getIndexOf(), attrib.getName(), elementValues);
+                    }
+                } else {
+                    // Grab the first value, defaulting to null is there are no values
+                    valueAsString = Iterables.getFirst(elementValues.get(attrib.getName()), null);
+                }
+
+                if (valueAsString == null) {
+                    LOG.warn("No value found for attribute: {} in group: {}", attrib.getName(), group.getName());
+                    continue;
+                }
+
+                if (type.isNumeric()) {
+                    Double value;
+                    try {
+                        value = Double.parseDouble(valueAsString);
+                    } catch (NumberFormatException e) {
+                        LOG.warn("Value '{}' for attribute: {} in group: {} could not be parsed into a number. Value will be skipped.",
+                                valueAsString, attrib.getName(), group.getName());
+                        value = Double.NaN;
+                    }
+                    builder.withNumericAttribute(resource, group.getName(), attrib.getAlias(), value, type);
+                } else {
+                    builder.withStringAttribute(resource, group.getName(), attrib.getAlias(), valueAsString);
+                }
+            }
+        }
+    }
+
