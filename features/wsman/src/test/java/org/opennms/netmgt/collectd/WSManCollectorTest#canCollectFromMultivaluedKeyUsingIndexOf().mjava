@@ -1,0 +1,56 @@
+    @Test
+    public void canCollectFromMultivaluedKeyUsingIndexOf() {
+        /* The iDrac provides the following keys in the DCIM_ComputerSystem entry:
+         *  <n1:IdentifyingDescriptions>CIM:GUID</n1:IdentifyingDescriptions>
+         *  <n1:IdentifyingDescriptions>CIM:Tag</n1:IdentifyingDescriptions>
+         *  <n1:IdentifyingDescriptions>DCIM:ServiceTag</n1:IdentifyingDescriptions>
+         *  <n1:OtherIdentifyingInfo>44454C4C-3700-104A-8052-C3C04BB25031</n1:OtherIdentifyingInfo>
+         *  <n1:OtherIdentifyingInfo>mainsystemchassis</n1:OtherIdentifyingInfo>
+         *  <n1:OtherIdentifyingInfo>C7BBBP1</n1:OtherIdentifyingInfo>
+         *
+         * We want to be able to collect the value of 'OtherIdentifyingInfo' at the same
+         * index where 'IdentifyingDescriptions' has the value of 'DCIM:ServiceTag'.
+         */
+        Group group = new Group();
+        group.setName("DCIM_ComputerSystem");
+
+        Attrib attr = new Attrib();
+        attr.setName("OtherIdentifyingInfo");
+        attr.setAlias("ServiceTag");
+        attr.setIndexOf("#IdentifyingDescriptions matches '.*ServiceTag'");
+        attr.setType("String");
+        group.addAttrib(attr);
+
+        CollectionAgent agent = mock(CollectionAgent.class);
+        when(agent.getStorageDir()).thenReturn(new java.io.File(""));
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+        Resource resource = mock(NodeLevelResource.class);
+
+        XMLTag xmlTag = XMLDoc.newDocument(true).addRoot("body")
+                .addTag("DCIM_ComputerSystem")
+                    .addTag("IdentifyingDescriptions")
+                    .setText("CIM:GUID")
+                    .addTag("IdentifyingDescriptions")
+                    // Place the ServiceTag in the middle, so we can be sure that it's not just
+                    // picking up the first, or last
+                    .setText("DCIM:ServiceTag")
+                    .addTag("IdentifyingDescriptions")
+                    .setText("CIM:Tag")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("44454C4C-3700-104A-8052-C3C04BB25031")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("C7BBBP1")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("mainsystemchassis");
+
+        List<Node> nodes = xmlTag.gotoRoot().getChildElement().stream()
+            .map(el -> (Node)el)
+            .collect(Collectors.toList());
+
+        WsManCollector.processEnumerationResults(group, builder, resource, nodes);
+
+        // Verify
+        Map<String, CollectionAttribute> attributesByName = getAttributes(builder.build());
+        assertEquals("C7BBBP1", attributesByName.get("ServiceTag").getStringValue());
+    }
+
