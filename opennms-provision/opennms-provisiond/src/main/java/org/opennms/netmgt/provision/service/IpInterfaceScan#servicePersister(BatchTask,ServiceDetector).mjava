@@ -1,0 +1,49 @@
+    /**
+     * <p>servicePersister</p>
+     *
+     * @param currentPhase a {@link org.opennms.core.tasks.BatchTask} object.
+     * @param serviceName a {@link java.lang.String} object.
+     * @return a {@link org.opennms.core.tasks.Callback} object.
+     */
+    public Callback<Boolean> servicePersister(final BatchTask currentPhase, final ServiceDetector detector) {
+        return new Callback<Boolean>() {
+            @Override
+            public void complete(final Boolean serviceDetected) {
+                final String hostAddress = str(getAddress());
+				LOG.info("Attempted to detect service {} on address {}: {}", detector.getServiceName(), hostAddress, serviceDetected);
+                if (serviceDetected) {
+
+                    currentPhase.getBuilder().addSequence(
+                            new RunInBatch() {
+                                @Override
+                                public void run(final BatchTask batch) {
+                                    if ("SNMP".equals(detector.getServiceName())) {
+                                        setupAgentInfo(currentPhase);
+                                    }
+                                }
+                            },
+                            new RunInBatch() {
+                                @Override
+                                public void run(BatchTask batch) {
+                                    if (detector instanceof PersistsAgentInfo) {
+                                        ((PersistsAgentInfo)detector).persistAgentInfo(getNodeId(), getAddress());
+                                    }
+                                }
+                            },
+                            new RunInBatch() {
+                                @Override
+                                public void run(final BatchTask batch) {
+                                    getProvisionService().addMonitoredService(getNodeId(), hostAddress, detector.getServiceName());
+                                }
+                            });
+                }
+                getProvisionService().updateMonitoredServiceState(getNodeId(), hostAddress, detector.getServiceName()); // NMS-3906
+            }
+
+            @Override
+            public void handleException(final Throwable t) {
+                LOG.info("Exception occurred while trying to detect service {} on address {}", detector.getServiceName(), str(getAddress()), t);
+            }
+        };
+    }
+
