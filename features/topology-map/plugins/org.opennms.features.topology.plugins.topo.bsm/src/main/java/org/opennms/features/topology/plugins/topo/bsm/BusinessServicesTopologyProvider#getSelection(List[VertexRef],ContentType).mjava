@@ -1,0 +1,53 @@
+    @Override
+    public SelectionChangedListener.Selection getSelection(List<VertexRef> selectedVertices, ContentType contentType) {
+        // only consider vertices of our namespace and of the correct type
+        final Set<AbstractBusinessServiceVertex> filteredSet = selectedVertices.stream()
+                .filter(e -> TOPOLOGY_NAMESPACE.equals(e.getNamespace()))
+                .filter(e -> e instanceof AbstractBusinessServiceVertex)
+                .map(e -> (AbstractBusinessServiceVertex) e)
+                .collect(Collectors.toSet());
+        if (filteredSet.isEmpty()) {
+            return SelectionChangedListener.Selection.NONE;
+        }
+        switch (contentType) {
+            case Alarm:
+                // show alarms with reduction keys associated with the current selection.
+                final Set<String> reductionKeys = filteredSet.stream()
+                        .map(vertex -> vertex.getReductionKeys())
+                        .flatMap(rkSet -> rkSet.stream())
+                        .collect(Collectors.toSet());
+                return () -> {
+                    if (reductionKeys != null && !reductionKeys.isEmpty()) {
+                        return Lists.newArrayList(Restrictions.in("reductionKey", reductionKeys));
+                    }
+                    return Lists.newArrayList(Restrictions.isNull("id")); // is always false, so nothing is shown
+                };
+            case BusinessService:
+                final Set<Long> businessServiceIds = Sets.newHashSet();
+
+                // Business Service
+                filteredSet.stream()
+                        .filter(v -> v.getType() == Type.BusinessService)
+                        .forEach(v -> businessServiceIds.add(((BusinessServiceVertex) v).getServiceId()));
+
+                // Ip Service or Reduction Key
+                filteredSet.stream()
+                        .filter(v -> v.getType() == Type.IpService
+                                || v.getType() == Type.ReductionKey)
+                        .forEach(v -> businessServiceIds.add(((BusinessServiceVertex) v.getParent()).getServiceId()));
+                return new SelectionChangedListener.IdSelection<>(businessServiceIds);
+            case Node:
+                final Set<Integer> nodeIds = filteredSet.stream()
+                        .filter(v -> v.getType() == Type.IpService)
+                        .map(v -> businessServiceManager.getIpServiceById(((IpServiceVertex) v).getIpServiceId()).getNodeId())
+                        .collect(Collectors.toSet());
+                return () -> {
+                    if (nodeIds != null && !nodeIds.isEmpty()) {
+                        return Lists.newArrayList(Restrictions.in("id", nodeIds));
+                    }
+                    return Lists.newArrayList(Restrictions.isNull("id")); // is always false, so nothing is shown
+                };
+        }
+        throw new IllegalArgumentException(getClass().getSimpleName() + " does not support filtering vertices for contentType " + contentType);
+    }
+
