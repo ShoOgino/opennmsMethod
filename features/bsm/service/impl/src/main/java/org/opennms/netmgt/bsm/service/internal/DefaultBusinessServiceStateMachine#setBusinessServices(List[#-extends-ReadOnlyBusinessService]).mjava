@@ -1,0 +1,38 @@
+    @Override
+    public void setBusinessServices(List<? extends ReadOnlyBusinessService> businessServices) {
+        m_rwLock.writeLock().lock();
+        try {
+            // Create a new graph
+            BusinessServiceGraph g = new BusinessServiceGraphImpl(businessServices);
+
+            // Prime the graph with the state from the previous graph and
+            // keep track of the new reductions keys
+            Set<String> reductionsKeysToLookup = Sets.newHashSet();
+            for (String reductionKey : g.getReductionKeys()) {
+                GraphVertex reductionKeyVertex = m_g.getVertexByReductionKey(reductionKey);
+                if (reductionKeyVertex != null) {
+                    updateAndPropagateVertex(g, g.getVertexByReductionKey(reductionKey), reductionKeyVertex.getStatus());
+                } else {
+                    reductionsKeysToLookup.add(reductionKey);
+                }
+            }
+
+            if (m_alarmProvider == null && reductionsKeysToLookup.size() > 0) {
+                LOG.warn("There are one or more reduction keys to lookup, but no alarm provider is set.");
+            } else {
+                // Query the status of the reductions keys that were added
+                // We do this so that we can immediately reflect the state of the new
+                // graph without having to wait for calls to handleNewOrUpdatedAlarm()
+                for (String reductionKey : reductionsKeysToLookup) {
+                    AlarmWrapper alarm = m_alarmProvider.lookup(reductionKey);
+                    if (alarm != null) {
+                        updateAndPropagateVertex(g, g.getVertexByReductionKey(reductionKey), alarm.getStatus());
+                    }
+                }
+            }
+            m_g = g;
+        } finally {
+            m_rwLock.writeLock().unlock();
+        }
+    }
+

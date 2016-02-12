@@ -1,29 +1,9 @@
     @Override
-    public void handleNewOrUpdatedAlarm(AlarmWrapper alarmWrapper) {
-        // The ReadWriteLock doesn't give us the ability to upgrade from a
-        // read lock to a write lock, so we acquire a write lock even
-        // if we may not need it
+    public void handleNewOrUpdatedAlarm(AlarmWrapper alarm) {
         m_rwLock.writeLock().lock();
         try {
-            // Are there any business services referencing this alarm?
-            Set<BusinessService> affectedBusinessServices = m_reductionKeys.get(alarmWrapper.getReductionKey());
-            if (affectedBusinessServices == null || affectedBusinessServices.isEmpty()) {
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("No Business Service depends on alarm with reduction key: '{}'. "
-                            + "Monitored reduction keys include: {}.", alarmWrapper.getReductionKey(), m_reductionKeys.keySet());
-                }
-                return;
-            }
-
-            // Maintain the last known status for the reduction key
-            m_reductionKeyStatus.put(alarmWrapper.getReductionKey(), alarmWrapper.getStatus());
-
-            // Get the maximum level
-            Integer maxLevel = affectedBusinessServices.stream().mapToInt(s -> s.getLevel()).max().getAsInt();
-            // Propagate to the affected business services
-            for (int eachLevel = maxLevel; eachLevel>=0; eachLevel--) {
-                calculateStatus(eachLevel);
-            }
+            // Recursively propagate the status
+            updateAndPropagateVertex(m_g, m_g.getVertexByReductionKey(alarm.getReductionKey()), alarm.getStatus());
         } finally {
             m_rwLock.writeLock().unlock();
         }
