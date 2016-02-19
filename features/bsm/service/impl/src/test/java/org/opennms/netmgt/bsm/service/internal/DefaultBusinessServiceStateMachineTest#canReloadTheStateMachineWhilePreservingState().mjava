@@ -1,0 +1,34 @@
+    @Test
+    public void canReloadTheStateMachineWhilePreservingState() {
+        // Create a simple hierarchy
+        MockBusinessServiceHierarchy h = MockBusinessServiceHierarchy.builder()
+                .withBusinessService(1)
+                    .withReductionKey(1, "a1")
+                    .commit()
+                .build();
+        ReadOnlyBusinessService b1 = h.getBusinessServiceById(1);
+
+        // Setup the state machine
+        BusinessServiceStateMachine stateMachine = new DefaultBusinessServiceStateMachine();
+        LoggingStateChangeHandler stateChangeHandler = new LoggingStateChangeHandler();
+        stateMachine.addHandler(stateChangeHandler, Maps.newHashMap());
+        stateMachine.setBusinessServices(h.getBusinessServices());
+
+        // Verify the initial state
+        assertEquals(Status.NORMAL, stateMachine.getOperationalStatus(b1));
+        assertEquals(0, stateChangeHandler.getStateChanges().size());
+
+        // Send an alarm and verify the updated state
+        stateMachine.handleNewOrUpdatedAlarm(new MockAlarmWrapper("a1", Status.CRITICAL));
+        assertEquals(Status.CRITICAL, stateMachine.getOperationalStatus(b1));
+        assertEquals(1, stateChangeHandler.getStateChanges().size());
+
+        // Now reload the state machine without making any changes to the hierarchies
+        stateMachine.setBusinessServices(h.getBusinessServices());
+
+        // The original status should remain
+        assertEquals(Status.CRITICAL, stateMachine.getOperationalStatus(b1));
+        // No additional state changes events should have been generated
+        assertEquals(1, stateChangeHandler.getStateChanges().size());
+    }
+
