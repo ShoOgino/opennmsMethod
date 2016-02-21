@@ -3,7 +3,7 @@
         FontAwesomeIcons.load(new ThemeResource("font-awesome/css/font-awesome.min.css"));
 
         try {
-            URL pageUrl = Page.getCurrent().getLocation().toURL();
+            URL pageUrl = getPage().getLocation().toURL();
             m_headerHtml = getHeader(new HttpServletRequestVaadinImpl(request, pageUrl));
         } catch (final Exception e) {
             LOG.error("failed to get header HTML for request " + request.getPathInfo(), e.getCause());
@@ -21,44 +21,39 @@
             }
         });
         m_verticesUpdateManager = new OsgiVerticesUpdateManager(m_serviceManager, m_applicationContext);
-
-        // Add a request handler that parses incoming focusNode and szl query parameters
-        getSession().addRequestHandler(new RequestHandler() {
-            @Override
-            public boolean handleRequest(VaadinSession session, VaadinRequest request, VaadinResponse response) throws IOException {
-                loadGraphProvider(request);
-                loadVertexHopCriteria(request, m_graphContainer);
-                loadSemanticZoomLevel(request, m_graphContainer);
-                m_graphContainer.redoLayout();
-                return false; // No response was written
-            }
-        });
+        m_serviceManager.getEventRegistry().addPossibleEventConsumer(this, m_applicationContext);
 
         // Set the algorithm last so that the criteria and SZLs are
         // in place before we run the layout algorithm.
+        m_graphContainer.setSessionId(m_applicationContext.getSessionId());
         m_graphContainer.setLayoutAlgorithm(new TopoFRLayoutAlgorithm());
 
-        loadUserSettings(m_applicationContext);
-
-        setupListeners();
         createLayouts();
-        // Set up an error handler for UI-level exceptions
-        setupErrorHandler();
-        // Add an auto refresh handler to the GraphContainer
-        setupAutoRefresher();
+        setupErrorHandler(); // Set up an error handler for UI-level exceptions
+        setupAutoRefresher(); // Add an auto refresh handler to the GraphContainer
 
+        loadUserSettings();
         // the layout must be created BEFORE loading the hop criteria and the semantic zoom level
-        loadGraphProvider(request);
-        loadVertexHopCriteria(request, m_graphContainer);
-        loadSemanticZoomLevel(request, m_graphContainer);
+        TopologyUIRequestHandler handler = new TopologyUIRequestHandler();
+        getSession().addRequestHandler(handler); // Add a request handler that parses incoming focusNode and szl query parameters
+        handler.handleRequestParameter(request); // deal with those in init case
+
+        // Add the default criteria if we do not have already a criteria set
+        if (getWrappedVertexHopCriteria(m_graphContainer).isEmpty() && noAdditionalFocusCriteria()) {
+            m_graphContainer.addCriteria(m_graphContainer.getBaseTopology().getDefaultCriteria()); // set default
+        }
+
+        // We set the listeners at the end, to not fire them all the time when initializing the UI
+        setupListeners();
+
+        // We force a reload of the topology provider as it may not have been initialized
+        m_graphContainer.getBaseTopology().refresh();
+
+        // We force a reload to trigger a fireGraphChanged()
+        m_graphContainer.setDirty(true);
         m_graphContainer.redoLayout();
 
-        // notify OSGi listeners, otherwise initialization would not work
-        m_graphContainer.addChangeListener(m_verticesUpdateManager);
-        m_selectionManager.addSelectionListener(m_verticesUpdateManager);
-        m_verticesUpdateManager.selectionChanged(m_selectionManager);
-        m_verticesUpdateManager.graphChanged(m_graphContainer);
-
-        m_serviceManager.getEventRegistry().addPossibleEventConsumer(this, m_applicationContext);
+        // Trigger a selectionChanged
+        m_selectionManager.selectionChanged(m_selectionManager);
     }
 
