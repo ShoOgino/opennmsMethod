@@ -1,0 +1,202 @@
+    private NewtsConverter(final String... args) {
+        final Options options = new Options();
+
+        final Option helpOption = new Option("h", "help", false, "Print this help");
+        options.addOption(helpOption);
+
+        final Option opennmsHomeOption = new Option("o", "onms-home", true, "OpenNMS Home Directory (defaults to /opt/opennms)");
+        options.addOption(opennmsHomeOption);
+
+        final Option rrdPathOption = new Option("r", "rrd-dir", true, "The path to the RRD data (defaults to ONMS-HOME/share/rrd)");
+        options.addOption(rrdPathOption);
+
+        final Option rrdToolOption = new Option("t", "rrd-tool", true, "Whether to use rrdtool or JRobin (defaults to use rrdtool)");
+        options.addOption(rrdToolOption);
+
+        final Option rrdBinaryOption = new Option("T", "rrd-binary", true, "The binary path to the rrdtool command (defaults to /usr/bin/rrdtool, only used if rrd-tool is set)");
+        options.addOption(rrdBinaryOption);
+
+        final Option storeByGroupOption = new Option("s", "storage-strategy", true, "Whether store by group was enabled or not");
+        storeByGroupOption.setRequired(true);
+        options.addOption(storeByGroupOption);
+
+        final Option threadsOption = new Option("n", "threads", true, "Number of conversion threads (defaults to number of CPUs)");
+        options.addOption(threadsOption);
+
+        final CommandLineParser parser = new PosixParser();
+
+        final CommandLine cmd;
+        try {
+            cmd = parser.parse(options, args);
+
+        } catch (ParseException e) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: %s%n", e.getMessage()), options, null);
+            System.exit(1);
+            throw null;
+        }
+
+        // Processing Options
+        if (cmd.hasOption('h')) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, null, options, null);
+            System.exit(0);
+        }
+
+        this.onmsHome = cmd.hasOption('o')
+                        ? Paths.get(cmd.getOptionValue('o'))
+                        : Paths.get("/opt/opennms");
+        if (!Files.exists(this.onmsHome) || !Files.isDirectory(this.onmsHome)) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Directory %s doesn't exist%n", this.onmsHome.toAbsolutePath()), options, null);
+            System.exit(1);
+            throw null;
+        }
+        System.setProperty("opennms.home", onmsHome.toAbsolutePath().toString());
+
+        this.rrdDir = cmd.hasOption('r')
+                      ? Paths.get(cmd.getOptionValue('r'))
+                      : this.onmsHome.resolve("share").resolve("rrd");
+        if (!Files.exists(this.rrdDir) || !Files.isDirectory(this.rrdDir)) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Directory %s doesn't exist%n", this.rrdDir.toAbsolutePath()), options, null);
+            System.exit(1);
+            throw null;
+        }
+
+        if (!cmd.hasOption('s')) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Option for storage-strategy must be spcified%n"), options, null);
+            System.exit(1);
+            throw null;
+        }
+
+        switch (cmd.getOptionValue('s').toLowerCase()) {
+            case "storeByMetric":
+            case "sbm":
+            case "false":
+                storageStrategy = StorageStrategy.STORE_BY_METRIC;
+                break;
+
+            case "storeByGroup":
+            case "sbg":
+            case "true":
+                storageStrategy = StorageStrategy.STORE_BY_GROUP;
+                break;
+
+            default:
+                new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Invalid value for storage-strategy%n"), options, null);
+                System.exit(1);
+                throw null;
+        }
+
+        if (!cmd.hasOption('t')) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Option rrd-tool must be specified%n"), options, null);
+            System.exit(1);
+            throw null;
+        }
+
+        switch (cmd.getOptionValue('t').toLowerCase()) {
+            case "rrdtool":
+            case "rrd":
+            case "true":
+                storageTool = StorageTool.RRDTOOL;
+                break;
+
+            case "jrobin":
+            case "jrb":
+            case "false":
+                storageTool = StorageTool.JROBIN;
+                break;
+
+            default:
+                new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Invalid value for rrd-tool%n"), options, null);
+                System.exit(1);
+                throw null;
+        }
+
+        this.rrdBinary = cmd.hasOption('T')
+                         ? Paths.get(cmd.getOptionValue('T'))
+                         : Paths.get("/usr/bin/rrdtool");
+        if (!Files.exists(this.rrdBinary) || !Files.isExecutable(this.rrdBinary)) {
+            new HelpFormatter().printHelp(80,
+                                          CMD_SYNTAX,
+                                          String.format("ERROR: RRDtool command %s doesn't exist%n", this.rrdBinary.toAbsolutePath()),
+                                          options,
+                                          null);
+            System.exit(1);
+            throw null;
+        }
+        System.setProperty("rrd.binary", this.rrdBinary.toString());
+
+        final int threads;
+        try {
+            threads = cmd.hasOption('n')
+                      ? Integer.parseInt(cmd.getOptionValue('n'))
+                      : Runtime.getRuntime().availableProcessors();
+            this.executor = new ForkJoinPool(threads,
+                                             ForkJoinPool.defaultForkJoinWorkerThreadFactory,
+                                             null,
+                                             true);
+
+        } catch (Exception e) {
+            new HelpFormatter().printHelp(80, CMD_SYNTAX, String.format("ERROR: Invalid number of threads: %s%n", e.getMessage()), options, null);
+            System.exit(1);
+            throw null;
+        }
+
+        // Initialize OpenNMS
+        OnmsProperties.initialize();
+
+        final String host = System.getProperty("org.opennms.newts.config.hostname", "localhost");
+        final String keyspace = System.getProperty("org.opennms.newts.config.keyspace", "newts");
+        int ttl = Integer.parseInt(System.getProperty("org.opennms.newts.config.ttl", "31540000"));
+        int port = Integer.parseInt(System.getProperty("org.opennms.newts.config.port", "9042"));
+
+        batchSize = Integer.parseInt(System.getProperty("org.opennms.newts.config.max_batch_size", "16"));
+
+        LOG.info("OpenNMS Home: {}", this.onmsHome);
+        LOG.info("RRD Directory: {}", this.rrdDir);
+        LOG.info("Use RRDtool Tool: {}", this.storageTool);
+        LOG.info("RRDtool CLI: {}", this.rrdBinary);
+        LOG.info("StoreByGroup: {}", this.storageStrategy);
+        LOG.info("Conversion Threads: {}", threads);
+        LOG.info("Cassandra Host: {}", host);
+        LOG.info("Cassandra Port: {}", port);
+        LOG.info("Cassandra Keyspace: {}", keyspace);
+        LOG.info("Newts Max Batch Size: {}", this.batchSize);
+        LOG.info("Newts TTL: {}", ttl);
+
+        if (!"newts".equals(System.getProperty("org.opennms.timeseries.strategy", "rrd"))) {
+            throw NewtsConverterError.create("The configured timeseries strategy must be 'newts' on opennms.properties (org.opennms.timeseries.strategy)");
+        }
+
+        if (!"true".equals(System.getProperty("org.opennms.rrd.storeByForeignSource", "false"))) {
+            throw NewtsConverterError.create("The option storeByForeignSource must be enabled in opennms.properties (org.opennms.rrd.storeByForeignSource)");
+        }
+
+        try {
+            this.context = new ClassPathXmlApplicationContext(new String[]{
+                    "classpath:/META-INF/opennms/applicationContext-soa.xml",
+                    "classpath:/META-INF/opennms/applicationContext-newts.xml"
+            });
+
+            this.repository = context.getBean(SampleRepository.class);
+            this.indexer = context.getBean(Indexer.class);
+
+        } catch (final Exception e) {
+            throw NewtsConverterError.create(e, "Cannot connect to the Cassandra/Newts backend: {}", e.getMessage());
+        }
+
+        // Initialize node ID to foreign ID mapping
+        try (final Connection conn = DataSourceFactory.getInstance().getConnection();
+             final Statement st = conn.createStatement();
+             final ResultSet rs = st.executeQuery("SELECT nodeid, foreignsource, foreignid from node n")) {
+            while (rs.next()) {
+                foreignIds.put(rs.getInt("nodeid"),
+                               new ForeignId(rs.getString("foreignsource"),
+                                             rs.getString("foreignid")));
+            }
+
+        } catch (final Exception e) {
+            throw NewtsConverterError.create(e, "Failed to connect to database: {}", e.getMessage());
+        }
+
+        LOG.trace("Found {} nodes on the database", foreignIds.size());
+    }
+
