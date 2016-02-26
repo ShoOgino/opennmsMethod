@@ -1,0 +1,41 @@
+    /**
+     * Verifies that two Business Services can share the same Ip Service and both Business Services will change their
+     * status when the IP Service changes its status.
+     */
+    @Test
+    public void canShareIpService() {
+        BusinessServicesShareIpServiceHierarchy testHierarchy = new BusinessServicesShareIpServiceHierarchy(populator);
+        testHierarchy.getServices().forEach(entity -> businessServiceDao.save(entity));
+        businessServiceDao.flush();
+
+        BusinessServiceImpl bsChild1 = wrap(testHierarchy.getChild1());
+        BusinessServiceImpl bsChild2 = wrap(testHierarchy.getChild2());
+        BusinessServiceImpl bsParent = wrap(testHierarchy.getRoot());
+        IpServiceEdge svc1 = wrap(testHierarchy.getServiceChild1());
+        IpServiceEdge svc2 = wrap(testHierarchy.getServiceChild2());
+
+        // Setup the state machine
+        List<ReadOnlyBusinessService> bss = Lists.newArrayList(bsChild1, bsChild2, bsParent);
+        LoggingStateChangeHandler handler = new LoggingStateChangeHandler();
+        DefaultBusinessServiceStateMachine stateMachine = new DefaultBusinessServiceStateMachine();
+        stateMachine.setBusinessServices(bss);
+        stateMachine.addHandler(handler, null);
+
+        // Verify the initial state
+        assertEquals(0, handler.getStateChanges().size());
+        for (ReadOnlyBusinessService eachBs : bss) {
+            assertEquals(DefaultBusinessServiceStateMachine.DEFAULT_SEVERITY, stateMachine.getOperationalStatus(eachBs));
+        }
+
+        // Pass alarm to the state machine
+        stateMachine.handleNewOrUpdatedAlarm(createAlarmWrapper(testHierarchy.getServiceChild1().getIpService(), OnmsSeverity.MINOR));
+
+        // Verify the updated state
+        assertEquals(3, handler.getStateChanges().size());
+        assertEquals(Status.MINOR, stateMachine.getOperationalStatus(svc1));
+        assertEquals(Status.MINOR, stateMachine.getOperationalStatus(bsChild1));
+        assertEquals(Status.MINOR, stateMachine.getOperationalStatus(svc2));
+        assertEquals(Status.MINOR, stateMachine.getOperationalStatus(bsChild2));
+        assertEquals(Status.MINOR, stateMachine.getOperationalStatus(bsParent));
+    }
+
