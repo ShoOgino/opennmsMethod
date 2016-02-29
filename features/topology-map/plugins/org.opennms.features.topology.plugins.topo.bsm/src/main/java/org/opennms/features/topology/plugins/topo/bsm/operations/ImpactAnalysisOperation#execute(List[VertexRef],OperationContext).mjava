@@ -1,0 +1,35 @@
+    @Override
+    public void execute(List<VertexRef> targets, OperationContext operationContext) {
+        List<AbstractBusinessServiceVertex> vertices = getVertices(targets);
+
+        Set<GraphVertex> graphVerticesToFocus = Sets.newHashSet();
+        for (AbstractBusinessServiceVertex vertex : vertices) {
+            if (vertex instanceof BusinessServiceVertex) {
+                ReadOnlyBusinessService businessService = businessServiceManager.getBusinessServiceById(((BusinessServiceVertex) vertex).getServiceId());
+                graphVerticesToFocus.addAll(businessServiceStateMachine.calculateImpact(businessService));
+            }
+            if (vertex instanceof IpServiceVertex) {
+                IpService ipService = businessServiceManager.getIpServiceById(((IpServiceVertex) vertex).getIpServiceId());
+                graphVerticesToFocus.addAll(businessServiceStateMachine.calculateImpact(ipService));
+            }
+            if (vertex instanceof ReductionKeyVertex) {
+                graphVerticesToFocus.addAll(businessServiceStateMachine.calculateImpact(((ReductionKeyVertex) vertex).getReductionKey()));
+            }
+        }
+        LOG.info("Found {} business services impacted.", graphVerticesToFocus.size());
+
+        if (graphVerticesToFocus.isEmpty()) {
+            new InfoDialog("No result", "No vertices are impacted by the selected vertices.").open();
+        } else {
+            // add to focus
+            GraphContainer container = operationContext.getGraphContainer();
+            container.clearCriteria();
+            graphVerticesToFocus.forEach(graphVertex -> container.addCriteria(
+                    new VertexHopGraphProvider.DefaultVertexHopCriteria(createTopologyVertex(graphVertex))));
+            // add the context vertex because it is missing in the root cause result
+            container.addCriteria(new VertexHopGraphProvider.DefaultVertexHopCriteria(targets.get(0)));
+            container.setSemanticZoomLevel(0);
+            container.redoLayout();
+        }
+    }
+
