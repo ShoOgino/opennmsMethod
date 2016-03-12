@@ -1,0 +1,71 @@
+    public void init() {
+        Objects.requireNonNull(m_configurationAdmin, "configurationAdmin");
+        Objects.requireNonNull(m_featuresService, "featuresService");
+
+        List<Repository> repositories;
+        try {
+            repositories = getRepositories();
+        } catch (IOException e) {
+            LOG.error("Failed to retrieve the list of repositories. Aborting.", e);
+            return;
+        }
+
+        List<Feature> featuresBoot;
+        try {
+            featuresBoot = getFeaturesBoot();
+        } catch (IOException e) {
+            LOG.error("Failed to retrieve the list of features to boot. Aborting.", e);
+            return;
+        }
+
+        // Build a comma separated list of our Maven repositories
+        StringBuilder mavenReposSb = new StringBuilder();
+        for (Repository repository : repositories) {
+            if (mavenReposSb.length() != 0) {
+                mavenReposSb.append(",");
+            }
+            mavenReposSb.append(repository.toMavenUri());
+        }
+
+        LOG.info("Updating Maven repositories to include: {}", mavenReposSb);
+        try {
+            final Configuration config = m_configurationAdmin.getConfiguration(PAX_MVN_PID);
+            if (config == null) {
+                throw new IOException("The OSGi configuration (admin) registry was found for pid " + PAX_MVN_PID +
+                        ", but a configuration could not be located/generated.  This shouldn't happen.");
+            }
+            final Dictionary<String, Object> props = config.getProperties();
+            props.put(PAX_MVN_REPOSITORIES, mavenReposSb.toString());
+            config.update(props);
+        } catch (IOException e) {
+            LOG.error("Failed to update the list of Maven repositories to '{}'. Aborting.",
+                    mavenReposSb, e);
+            return;
+        }
+
+        for (Repository repository : repositories) {
+            for (URI featureUri : repository.getFeatureUris()) {
+                try {
+                    LOG.info("Adding feature repository: {}", featureUri);
+                    m_featuresService.addRepository(featureUri);
+                    m_featuresService.refreshRepository(featureUri);
+                } catch (Exception e) {
+                    LOG.error("Failed to add feature repository '{}'. Skipping.", featureUri, e);
+                }
+            }
+        }
+
+        for (Feature feature : featuresBoot) {
+            LOG.info("Installing feature: {}", feature);
+            try {
+                if (feature.getVersion() == null) {
+                    m_featuresService.installFeature(feature.getName());
+                } else {
+                    m_featuresService.installFeature(feature.getName(), feature.getVersion());
+                }
+            } catch (Exception e) {
+                LOG.error("Failed to install feature '{}'. Skipping.", feature, e);
+            }
+        }
+    }
+
