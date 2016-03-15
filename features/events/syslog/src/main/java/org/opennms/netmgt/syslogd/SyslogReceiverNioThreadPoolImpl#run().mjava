@@ -65,12 +65,20 @@
                             }
 
                             // Write the datagram into the ByteBuffer
-                            InetSocketAddress source = (InetSocketAddress)m_channel.receive(buffer);
+                            InetSocketAddress source =  (InetSocketAddress)m_channel.receive(buffer);
 
                             // Flip the buffer from write to read mode
                             buffer.flip();
 
-                            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(SyslogConnection.copyPacket(source.getAddress(), source.getPort(), buffer), m_config));
+                            SyslogConnection connection = new SyslogConnection(SyslogConnection.copyPacket(source.getAddress(), source.getPort(), buffer), m_config);
+
+                            try {
+                                for (SyslogConnectionHandler handler : m_syslogConnectionHandlers) {
+                                    handler.handleSyslogConnection(connection);
+                                }
+                            } catch (Throwable e) {
+                                LOG.error("Handler execution failed in {}", this.getClass().getSimpleName(), e);
+                            }
 
                             // Clear the buffer so that it's ready for writing again
                             buffer.clear();
@@ -83,14 +91,11 @@
                         } catch (InterruptedIOException e) {
                             ioInterrupted = true;
                             continue;
-                        } catch (ExecutionException e) {
-                            LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
-                            break;
-                        } catch (InterruptedException e) {
-                            LOG.error("Task interrupted in {}", this.getClass().getSimpleName(), e);
-                            break;
                         } catch (IOException e) {
-                            LOG.error("An I/O exception occured on the datagram receipt port, exiting", e);
+                            ioInterrupted = true;
+                            continue;
+                        } catch (Throwable e) {
+                            LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
                             break;
                         }
 
