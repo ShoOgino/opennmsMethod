@@ -9,6 +9,11 @@
         // Get a log instance
         Logging.putPrefix(Syslogd.LOG4J_CATEGORY);
 
+        // Create some metrics
+        Meter packetMeter = METRICS.meter(MetricRegistry.name(getClass(), "packets"));
+        Meter connectionMeter = METRICS.meter(MetricRegistry.name(getClass(), "connections"));
+        Histogram packetSizeHistogram = METRICS.histogram(MetricRegistry.name(getClass(), "packetSize"));
+
         if (m_stop) {
             LOG.debug("Stop flag set before thread started, exiting");
             return;
@@ -85,11 +90,18 @@
                 }
 
                 m_dgSock.receive(pkt);
+                
+                // Increment the packet counter
+                packetMeter.mark();
+                
+                // Create a metric for the syslog packet size
+                packetSizeHistogram.update(length);
 
                 SyslogConnection connection = new SyslogConnection(pkt, m_config);
 
                 try {
                     for (SyslogConnectionHandler handler : m_syslogConnectionHandlers) {
+                        connectionMeter.mark();
                         handler.handleSyslogConnection(connection);
                     }
                 } catch (Throwable e) {
