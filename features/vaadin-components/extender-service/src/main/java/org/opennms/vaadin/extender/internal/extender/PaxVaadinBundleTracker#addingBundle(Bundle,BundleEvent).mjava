@@ -1,0 +1,69 @@
+	@Override
+	public Object addingBundle(Bundle bundle, BundleEvent event) {
+
+		if (isApplicationBundle(bundle)) {
+			logger.debug("found a vaadin-app bundle: {}", bundle);
+			String applicationClass = (String) bundle.getHeaders().get(
+					org.opennms.vaadin.extender.Constants.VAADIN_APPLICATION);
+			String alias = (String) bundle.getHeaders().get("Vaadin-Alias");
+			UI application = null;
+			try {
+				Class<?> appClazz = bundle.loadClass(applicationClass);
+
+				Constructor<?>[] ctors = appClazz.getDeclaredConstructors();
+				Constructor<?> ctor = null;
+				for (int i = 0; i < ctors.length; i++) {
+					ctor = ctors[i];
+					if (ctor.getGenericParameterTypes().length == 0)
+						break;
+				}
+				ctor.setAccessible(true);
+				application = (UI) ctor.newInstance();
+
+			} catch (ClassNotFoundException e) {
+				LOG.error("Could not add bundle: ", e);
+			} catch (SecurityException e) {
+                LOG.error("Could not add bundle: ", e);
+			} catch (IllegalArgumentException e) {
+                LOG.error("Could not add bundle: ", e);
+			} catch (InstantiationException e) {
+                LOG.error("Could not add bundle: ", e);
+			} catch (IllegalAccessException e) {
+                LOG.error("Could not add bundle: ", e);
+			} catch (InvocationTargetException e) {
+                LOG.error("Could not add bundle: ", e);
+			}
+
+			final String widgetset = findWidgetset(bundle);
+			if (application != null) {
+			    VaadinOSGiServlet servlet = new VaadinOSGiServlet(new ApplicationFactoryWrapper(application), bundle.getBundleContext());
+
+				Map<String, Object> props = new Hashtable<String, Object>();
+				props.put(org.opennms.vaadin.extender.Constants.ALIAS, alias);
+
+				if (widgetset != null) {
+					props.put("widgetset", widgetset);
+				}
+
+				@SuppressWarnings({"unchecked"})
+				ServiceRegistration<?> registeredServlet = bundle
+						.getBundleContext().registerService(
+								HttpServlet.class.getName(), servlet,
+								(Dictionary<String,?>) props);
+
+				registeredServlets.put(bundle, registeredServlet);
+			}
+
+		}
+
+		if (isThemeBundle(bundle)) {
+			logger.debug("found a vaadin-resource bundle: {}", bundle);
+			// TODO do VAADIN Themes handling
+			ServiceReference<?> serviceReference = bundle.getBundleContext().getServiceReference(VaadinResourceService.class.getName());
+			VaadinResourceService service = (VaadinResourceService) bundle.getBundleContext().getService(serviceReference);
+			service.addResources(bundle);
+		}
+
+		return super.addingBundle(bundle, event);
+	}
+
