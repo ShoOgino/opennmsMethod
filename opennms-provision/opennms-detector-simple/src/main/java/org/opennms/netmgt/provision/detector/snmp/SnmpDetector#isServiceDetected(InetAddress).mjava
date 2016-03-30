@@ -2,49 +2,25 @@
     @Override
     public boolean isServiceDetected(InetAddress address) {
         try {
-
             SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(address);
-            String expectedValue = null;
-            
             configureAgentPTR(agentConfig);
-            
             configureAgentVersion(agentConfig);
-            
-            if (getVbvalue() != null) {
-                expectedValue = getVbvalue();
-            }
 
+            final String expectedValue = getVbvalue();
             if (this.m_isTable) {
-                LOG.debug(getServiceName() + ": Table detect enabled");
-                SnmpObjId snmpObjId = SnmpObjId.get(getOid());
-
-                Map<SnmpInstId, SnmpValue> table = SnmpUtils.getOidValues(agentConfig, DEFAULT_SERVICE_NAME, snmpObjId);
-                for (Map.Entry<SnmpInstId, SnmpValue> e : table.entrySet()) {
-                    String retrievedValue;
-                    if (m_hex) {
-                        retrievedValue = e.getValue().toHexString();
-                    } else {
-                        retrievedValue = e.getValue().toString();
-                    }
-                    LOG.debug(getServiceName() + ": retrieved value [" + retrievedValue + "]");
-
-                    if (retrievedValue != null && expectedValue != null &&
-                            Pattern.compile(expectedValue).matcher(retrievedValue).matches()) {
-                        LOG.debug(getServiceName() + ": expected value matched");
-                        return true;
-                    } else if (retrievedValue != null) {
-                        return true;
-                    }
-                }
-                return false;
+                LOG.debug(getServiceName() + ": table detect enabled");
+                final SnmpObjId snmpObjId = SnmpObjId.get(getOid());
+                final Map<SnmpInstId, SnmpValue> table = SnmpUtils.getOidValues(agentConfig, DEFAULT_SERVICE_NAME, snmpObjId);
+                final List<String> retrievedValues = table.values().stream().map(snmpValue -> m_hex ? snmpValue.toHexString() : snmpValue.toString()).collect(Collectors.toList());
+                return isServiceDetected(this.matchType, retrievedValues, expectedValue);
             } else {
-                String retrievedValue = getValue(agentConfig, getOid());
-
-                if (retrievedValue != null && expectedValue != null) {
-                    return (Pattern.compile(expectedValue).matcher(retrievedValue).matches());
-                } else {
-                    return (retrievedValue != null);
+                final String retrievedValue = getValue(agentConfig, getOid(), m_hex);
+                // we have to ensure that if expectedValue is defined, we use ANY, this is due to backwards compatibility
+                MatchType matchType = MatchType.Exist;
+                if (expectedValue != null) {
+                    matchType = MatchType.Any;
                 }
+                return isServiceDetected(matchType, Lists.newArrayList(retrievedValue), expectedValue);
             }
         } catch (Throwable t) {
             throw new UndeclaredThrowableException(t);
