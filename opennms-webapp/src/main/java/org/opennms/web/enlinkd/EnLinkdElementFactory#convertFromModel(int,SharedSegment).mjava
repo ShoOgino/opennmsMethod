@@ -1,0 +1,108 @@
+    @Transactional
+    private BridgeLinkNode convertFromModel(int nodeid, SharedSegment segment) {
+        final BridgeLinkNode linknode = new BridgeLinkNode();
+        for (BridgePort link : segment.getBridgePortsOnSegment()) {
+            final Integer rempnodeId = link.getNode().getId();
+            final Integer rembridgePortIfIndex = link.getBridgePortIfIndex();
+            final OnmsSnmpInterface remiface = rembridgePortIfIndex == null
+                    ? null
+                    : m_snmpInterfaceDao.findByNodeIdAndIfIndex(rempnodeId,
+                                                                rembridgePortIfIndex);
+            if (link.getNode().getId().intValue() == nodeid) {
+                if (remiface != null) {
+                    linknode.setNodeLocalPort(getPortString(rembridgePortIfIndex,
+                                                            remiface.getIfName(),
+                                                            remiface.getIfAlias()));
+                } else {
+                    linknode.setNodeLocalPort(getPortString(rembridgePortIfIndex,
+                                                                  null, null));
+                }
+                linknode.setBridgeLocalVlan(link.getVlan());
+                continue;
+            }
+            final BridgeLinkRemoteNode remlinknode = new BridgeLinkRemoteNode();
+            remlinknode.setBridgeRemoteNode(link.getNode().getLabel());
+            remlinknode.setBridgeRemoteUrl(getNodeUrl(rempnodeId));
+
+            if (remiface != null) {
+                remlinknode.setBridgeRemotePort(getPortString(rembridgePortIfIndex,
+                                                              remiface.getIfName(),
+                                                              remiface.getIfAlias()));
+            } else {
+                remlinknode.setBridgeRemotePort(getPortString(rembridgePortIfIndex,
+                                                              null, null));
+            }
+            remlinknode.setBridgeRemotePortUrl(getSnmpInterfaceUrl(rempnodeId,
+                                                                   rembridgePortIfIndex));
+            remlinknode.setBridgeRemoteVlan(link.getVlan());
+            linknode.getBridgeLinkRemoteNodes().add(remlinknode);
+        }
+        if (segment.getBridgeBridgeLinks().isEmpty()) {
+            for (BridgeMacLink link: segment.getBridgeMacLinks()) {
+                if (link.getNode().getId().intValue() == nodeid) {
+                    linknode.setBridgeLinkCreateTime(Util.formatDateToUIString(link.getBridgeMacLinkCreateTime()));
+                    linknode.setBridgeLinkLastPollTime(Util.formatDateToUIString(link.getBridgeMacLinkLastPollTime()));
+                    break;
+                }
+            }
+        } else {
+            for (BridgeBridgeLink link: segment.getBridgeBridgeLinks()) {
+                if (link.getNode().getId().intValue() == nodeid || link.getDesignatedNode().getId().intValue() == nodeid) {
+                    linknode.setBridgeLinkCreateTime(Util.formatDateToUIString(link.getBridgeBridgeLinkCreateTime()));
+                    linknode.setBridgeLinkLastPollTime(Util.formatDateToUIString(link.getBridgeBridgeLinkLastPollTime()));
+                    break;
+                }
+            }
+        }
+        for (String shredmac: segment.getMacsOnSegment()) {
+            List<IpNetToMedia> ipnettomedias = m_ipNetToMediaDao.findByPhysAddress(shredmac);
+
+            
+            if (ipnettomedias.isEmpty()) {
+                BridgeLinkSharedHost remlinknode = new BridgeLinkSharedHost();
+                OnmsSnmpInterface snmp = getFromPhysAddress(shredmac);
+                if (snmp == null) {
+                    remlinknode.setSharedHost(shredmac
+                            + " No node associated in db");
+                } else {
+                    remlinknode.setSharedHost(snmp.getNode().getLabel());
+                    remlinknode.setSharedHostUrl(getNodeUrl(snmp.getNode().getId()));
+
+                    remlinknode.setSharedHostPort(getPortString(snmp.getIfIndex(),snmp.getIfName(),snmp.getIfAlias()));
+                    remlinknode.setSharedHostPortUrl(getSnmpInterfaceUrl(snmp.getNode().getId(),
+                                                                           snmp.getIfIndex()));
+                }
+                linknode.getBridgeLinkSharedHost().add(remlinknode);
+                continue;
+            }
+            for (IpNetToMedia ipnettomedia : ipnettomedias) {
+                BridgeLinkSharedHost remlinknode = new BridgeLinkSharedHost();
+                List<OnmsIpInterface> ips = m_ipInterfaceDao.findByIpAddress(ipnettomedia.getNetAddress().getHostAddress());
+                if (ips.isEmpty()) {
+                    remlinknode.setSharedHost(str(ipnettomedia.getNetAddress())
+                            + "/"
+                            + shredmac
+                            + " No node associated in db");
+                } else if (ips.size() > 1) {
+                    remlinknode.setSharedHost(str(ipnettomedia.getNetAddress())
+                            + "/"
+                            + shredmac
+                            + " duplicated ip multiple node associated in db");
+                } else {
+                    for (OnmsIpInterface ip : ips) {
+                        remlinknode.setSharedHost(ip.getNode().getLabel());
+                        remlinknode.setSharedHostUrl(getNodeUrl(ip.getNode().getId()));
+
+                        remlinknode.setSharedHostPort(str(ipnettomedia.getNetAddress())
+                            + "/" + shredmac);
+                        remlinknode.setSharedHostPortUrl(getIpInterfaceUrl(ip));
+                    }
+                }
+                linknode.getBridgeLinkSharedHost().add(remlinknode);
+            }
+
+        }
+        return linknode;
+
+    }
+
