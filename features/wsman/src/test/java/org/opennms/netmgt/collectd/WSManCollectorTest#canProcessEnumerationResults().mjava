@@ -1,0 +1,41 @@
+    @Test
+    public void canProcessEnumerationResults() {
+        Group group = new Group();
+        group.setName("ComputerSystem");
+        addAttribute(group, "PrimaryStatus", "GaugeWithValue", "Gauge");
+        addAttribute(group, "!PrimaryStatus!", "GaugeWithoutValue", "Gauge");
+        addAttribute(group, "ElementName", "StringWithValue", "String");
+        addAttribute(group, "!ElementName!", "StringWithoutValue", "String");
+
+        CollectionAgent agent = mock(CollectionAgent.class);
+        when(agent.getStorageDir()).thenReturn(new java.io.File(""));
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+        Resource resource = mock(NodeLevelResource.class);
+
+        XMLTag xmlTag = XMLDoc.newDocument(true).addRoot("body")
+                .addTag("DCIM_ComputerSystem")
+                    .addTag("ElementName")
+                    .setText("Computer System")
+                    .addTag("PrimaryStatus")
+                    .setText("42.1")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("ANONYMIZED01")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("mainsystemchassis")
+                    .addTag("OtherIdentifyingInfo")
+                    .setText("ANONYMIZED02");
+
+        List<Node> nodes = xmlTag.gotoRoot().getChildElement().stream()
+            .map(el -> (Node)el)
+            .collect(Collectors.toList());
+
+        WsManCollector.processEnumerationResults(group, builder, resource, nodes);
+
+        // Verify
+        Map<String, CollectionAttribute> attributesByName = getAttributes(builder.build());
+        assertFalse("The CollectionSet should not contain attributes for missing values.", attributesByName.containsKey("GaugeWithoutValue"));
+        assertFalse("The CollectionSet should not contain attributes for missing values.", attributesByName.containsKey("StringWithoutValue"));
+        assertEquals(42.1, attributesByName.get("GaugeWithValue").getNumericValue().doubleValue(), 2);
+        assertEquals("Computer System", attributesByName.get("StringWithValue").getStringValue());
+    }
+

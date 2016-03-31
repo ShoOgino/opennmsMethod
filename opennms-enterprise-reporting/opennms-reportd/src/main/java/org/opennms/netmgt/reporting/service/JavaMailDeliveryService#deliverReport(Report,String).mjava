@@ -1,27 +1,31 @@
-    /** {@inheritDoc} 
-     * @throws ReportDeliveryException */
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.reporting.service.ReportDeliveryService#deliverReport(org.opennms.netmgt.config.reportd.Report, java.lang.String)
+     */
     @Override
     public void deliverReport(Report report, String fileName) throws ReportDeliveryException {
         try {
 
-            JavaSendMailer sm = null;
             String mailer = report.getMailer();
             LOG.debug("deliverReport with mailer={}", mailer);
+            SendmailConfig config = null;
             if (mailer != null && mailer.length() > 0) {
-                sm = new JavaSendMailer(m_JavamailConfigDao.getSendMailConfig(mailer));
+                config = m_JavamailConfigDao.getSendMailConfig(mailer);
             } else {
-                sm = new JavaSendMailer(m_JavamailConfigDao.getDefaultSendmailConfig());
+                config = m_JavamailConfigDao.getDefaultSendmailConfig();
             }
-            MimeMessageHelper helper = new MimeMessageHelper(sm.getMessage().getMimeMessage(),true);
-                
+            JavaSendMailer sm = new JavaSendMailer(config);
+            MimeMessage msg = new MimeMessage(sm.getSession());
+            MimeMessageHelper helper = new MimeMessageHelper(msg, true, config.getSendmailProtocol().getCharSet());
+            helper.setFrom(config.getSendmailMessage().getFrom());
             helper.setTo(report.getRecipient());
             helper.setSubject("OpenNMS Report: " + report.getReportName());
-            helper.setText("OpenNMS Report: "); // FIXME: sm.send() will override this.
-                
+            if ("text/html".equals(config.getSendmailProtocol().getMessageContentType().toLowerCase())) {
+                helper.setText(config.getSendmailMessage().getBody().replaceAll("\\<[^>]*>",""), config.getSendmailMessage().getBody());
+            } else {
+                helper.setText(config.getSendmailMessage().getBody());
+            }
             helper.addAttachment(fileName, new File(fileName));
-                
-            sm.setMessage(new MimeMailMessage(helper));
-            sm.send();
+            sm.send(msg);
 
         } catch (JavaMailerException e) {
             LOG.error("Problem with JavaMailer {}", e.getMessage(), e);
@@ -33,6 +37,6 @@
             LOG.error("Unexpected exception: {}",e.getMessage(), e);
             throw new ReportDeliveryException("Caught unexpected " + e.getClass().getName() + ": " + e.getMessage());
         }
-        
+
     }
 

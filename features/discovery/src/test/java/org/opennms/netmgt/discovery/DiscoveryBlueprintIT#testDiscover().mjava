@@ -1,0 +1,72 @@
+    @Test
+    public void testDiscover() throws Exception {
+
+        /*
+         * Create a Camel listener for the location queue that will respond with
+         * {@link DiscoveryResult} objects.
+         */
+        SimpleRegistry registry = new SimpleRegistry();
+        CamelContext mockDiscoverer = new DefaultCamelContext(registry);
+        mockDiscoverer.addComponent("activemq", ActiveMQComponent.activeMQComponent("tcp://127.0.0.1:61616"));
+        mockDiscoverer.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() throws Exception {
+                String from = String.format("activemq:Location-%s", LOCATION);
+
+                from(from)
+                .process(new Processor() {
+                    @Override
+                    public void process(Exchange exchange) throws Exception {
+                        DiscoveryJob job = exchange.getIn().getBody(DiscoveryJob.class);
+                        String foreignSource = job.getForeignSource();
+                        String location = job.getLocation();
+
+                        Message out = exchange.getOut();
+                        DiscoveryResults results = new DiscoveryResults(
+                            Collections.singletonMap(InetAddressUtils.addr("4.2.2.2"), 1000L),
+                            foreignSource,
+                            location
+                        );
+                        out.setBody(results);
+                    }
+                });
+            }
+        });
+
+        mockDiscoverer.start();
+
+        final String ipAddress = "4.2.2.2";
+        final String foreignSource = "Bogus FS";
+        final String location = LOCATION;
+
+        EventAnticipator anticipator = IPC_MANAGER_INSTANCE.getEventAnticipator();
+
+        EventBuilder eb = new EventBuilder( EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI, "OpenNMS.Discovery" );
+        eb.setInterface( InetAddress.getByName( ipAddress ) );
+        eb.setHost( InetAddressUtils.getLocalHostName() );
+
+        eb.addParam( "RTT", 0 );
+        eb.addParam( "foreignSource", foreignSource );
+
+        anticipator.anticipateEvent( eb.getEvent() );
+
+        // Create the config aka job
+        Specific specific = new Specific();
+        specific.setContent( ipAddress );
+
+        DiscoveryConfiguration config = new DiscoveryConfiguration();
+        config.addSpecific( specific );
+        config.setForeignSource( foreignSource );
+        config.setTimeout( 3000 );
+        config.setRetries( 2 );
+        config.setLocation( location );
+
+        // Execute the job
+        template.requestBody( "direct:submitDiscoveryTask", config );
+
+        Thread.sleep( 1000 );
+        anticipator.verifyAnticipated();
+
+        mockDiscoverer.stop();
+    }
+

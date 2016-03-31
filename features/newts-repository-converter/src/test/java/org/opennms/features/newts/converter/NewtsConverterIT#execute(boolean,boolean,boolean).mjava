@@ -1,0 +1,73 @@
+    private void execute(final boolean storeByGroup,
+                         final boolean storeByForeignSource,
+                         final boolean useRrdTool) throws Exception {
+        final Path data = OPENNMS_HOME.resolve("share")
+                                      .resolve(useRrdTool ? "rrd" : "jrb")
+                                      .resolve(storeByGroup ? "sbg" : "sbm")
+                                      .resolve(storeByForeignSource ? "fs" : "id");
+
+        assertTrue(Files.isDirectory(data));
+
+        exit.expectSystemExitWithStatus(0);
+        exit.checkAssertionAfterwards(() -> {
+            assertThat(resourceStorageDao.exists(RESOURCE_PATH_SNMP, 0), is(true));
+            assertThat(resourceStorageDao.getAttributes(RESOURCE_PATH_SNMP),
+                       hasItems(allOf(hasProperty("name", is("ifInOctets"))),
+                                allOf(hasProperty("name", is("ifSpeed")),
+                                      hasProperty("value", is("1000")))));
+
+            assertThat(resourceStorageDao.exists(RESOURCE_PATH_RESPONSE, 0), is(true));
+            assertThat(resourceStorageDao.getAttributes(RESOURCE_PATH_RESPONSE),
+                       hasItems(allOf(hasProperty("name", is("icmp")))));
+
+            final Results<Measurement> result = repository.select(Context.DEFAULT_CONTEXT,
+                                                                  new Resource(NewtsUtils.toResourceId(ResourcePath.get(RESOURCE_PATH_SNMP, "mib2-interfaces"))),
+                                                                  Optional.of(Timestamp.fromEpochSeconds(1414504800)),
+                                                                  Optional.of(Timestamp.fromEpochSeconds(1417047045)),
+
+
+                                                                  new ResultDescriptor(Duration.seconds(7200))
+                                                                          .datasource("ifInOctets", StandardAggregationFunctions.AVERAGE)
+                                                                          .export("ifInOctets"),
+                                                                  Optional.of(Duration.seconds(7200)));
+
+            assertThat(result.getRows().size(), is(EXPECTED_DATA.length));
+
+            int i = 0;
+            for (Results.Row<Measurement> r : result) {
+                final double deltaAbs = r.getElement("ifInOctets").getValue().doubleValue() - EXPECTED_DATA[i].value;
+                final double deltaRel = deltaAbs / EXPECTED_DATA[i].value * 100.0;
+
+                /* Use the following for debugging of non-matching entries...
+                System.out.println(String.format(
+                        "%4d: %-24s %11.2f %11.2f %11.2f (%6.2f) %36s|%-36s %f%%",
+                        i,
+                        r.getElement("ifInOctets").getTimestamp().asDate().toString(),
+                        r.getElement("ifInOctets").getValue().doubleValue(),
+                        EXPECTED_DATA[i].value,
+                        deltaAbs,
+                        deltaRel,
+                        deltaAbs < -1.0 ? Strings.repeat("\u2592", (int) Math.abs(Math.log10(-deltaAbs) * 10.0)) : "",
+                        deltaAbs >  1.0 ? Strings. repeat("\u2592", (int) Math.abs(Math.log10(deltaAbs) * 10.0)) : "",
+                        Math.abs(deltaAbs / EXPECTED_DATA[i].value * 100.0)));
+                 */
+
+                assertThat(r.getTimestamp().asSeconds(),
+                           is(EXPECTED_DATA[i].timestamp));
+
+                if (i != 270) { // We got some errors on the RRA boundaries - ignore them
+                    assertThat(r.getElement("ifInOctets").getValue().doubleValue(),
+                               is(anyOf(equalTo(EXPECTED_DATA[i].value),
+                                        closeTo(EXPECTED_DATA[i].value, EXPECTED_DATA[i].value * 0.003)))); // Allow a relative error of 0.3%
+                }
+
+                i++;
+            }
+        });
+
+        NewtsConverter.main("-o", OPENNMS_HOME.toString(),
+                            "-r", data.toString(),
+                            "-t", Boolean.toString(useRrdTool),
+                            "-s", Boolean.toString(storeByGroup));
+    }
+

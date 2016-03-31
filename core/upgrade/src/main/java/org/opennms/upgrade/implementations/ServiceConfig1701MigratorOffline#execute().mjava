@@ -1,0 +1,39 @@
+    /* (non-Javadoc)
+     * @see org.opennms.upgrade.api.OnmsUpgrade#execute()
+     */
+    @Override
+    public void execute() throws OnmsUpgradeException {
+        try {
+            ServiceConfiguration currentCfg = JaxbUtils.unmarshal(ServiceConfiguration.class, configFile);
+
+            log("Current configuration: " + currentCfg.getServiceCount() + " services.\n");
+
+            for (int i=currentCfg.getServiceCount() - 1; i >= 0; i--) {
+                final Service localSvc = currentCfg.getService(i);
+                final String name = localSvc.getName();
+                if (oldServices.contains(name)) {
+                    log("Removing old service %s\n", name);
+                    currentCfg.getServiceCollection().remove(i);
+                }
+            }
+
+            log("New configuration: " + currentCfg.getServiceCount() + " services.\n");
+
+            // now remove 
+            final StringWriter sw = new StringWriter();
+            sw.write("<?xml version=\"1.0\"?>\n");
+            sw.write("<!-- NOTE!!!!!!!!!!!!!!!!!!!\n");
+            sw.write("The order in which these services are specified is important - for example, Eventd\n");
+            sw.write("will need to come up last so that none of the event topic subcribers loose any event.\n");
+            sw.write("\nWhen splitting services to run on mutiple VMs, the order of the services should be\n");
+            sw.write("maintained\n");
+            sw.write("-->\n");
+            JaxbUtils.marshal(currentCfg, sw);
+            final FileWriter fw = new FileWriter(configFile);
+            fw.write(sw.toString());
+            fw.close();
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix services configuration because " + e.getMessage(), e);
+        }
+    }
+

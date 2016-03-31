@@ -1,0 +1,60 @@
+    private void injectSamplesToNewts(final ResourcePath resourcePath,
+                                      final String group,
+                                      final List<? extends AbstractDS> dataSources,
+                                      final SortedMap<Long, List<Double>> samples) {
+        final ResourcePath groupPath = ResourcePath.get(resourcePath, group);
+
+        // Create a resource ID from the resource path
+        final String groupId = NewtsUtils.toResourceId(groupPath);
+
+        // Build indexing attributes
+        final Map<String, String> attributes = Maps.newHashMap();
+        NewtsUtils.addIndicesToAttributes(groupPath, attributes);
+
+        // Create the NewTS resource to insert
+        final Resource resource = new Resource(groupId,
+                                               Optional.of(attributes));
+
+        // Transform the RRD samples into NewTS samples
+        List<Sample> batch = new ArrayList<>(this.batchSize);
+        for (final Map.Entry<Long, List<Double>> s : samples.entrySet()) {
+            for (int i = 0; i < dataSources.size(); i++) {
+                final double value = s.getValue().get(i);
+                if (Double.isNaN(value)) {
+                    continue;
+                }
+
+                final AbstractDS ds = dataSources.get(i);
+
+                final Timestamp timestamp = Timestamp.fromEpochSeconds(s.getKey());
+
+                final String metric = ds.getName();
+
+                final MetricType type = ds.isCounter()
+                                        ? MetricType.COUNTER
+                                        : MetricType.GAUGE;
+                final ValueType<?> valueType = ds.isCounter()
+                                               ? new Counter(UnsignedLong.valueOf(BigDecimal.valueOf(value).toBigInteger()))
+                                               : new Gauge(value);
+
+                batch.add(new Sample(timestamp, resource, metric, type, valueType));
+
+                if (batch.size() >= this.batchSize) {
+                    this.repository.insert(batch, true);
+                    this.processedSamples.getAndAdd(batch.size());
+
+                    batch = new ArrayList<>(this.batchSize);
+                }
+            }
+        }
+
+        if (!batch.isEmpty()) {
+            this.repository.insert(batch, true);
+            this.processedSamples.getAndAdd(batch.size());
+        }
+
+        this.processedMetrics.getAndAdd(dataSources.size());
+
+        LOG.trace("Stats: {} / {}", this.processedMetrics, this.processedSamples);
+    }
+

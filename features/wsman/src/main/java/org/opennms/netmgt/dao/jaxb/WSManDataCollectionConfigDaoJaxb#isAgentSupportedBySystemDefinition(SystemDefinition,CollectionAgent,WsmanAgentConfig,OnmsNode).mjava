@@ -1,0 +1,48 @@
+    public static boolean isAgentSupportedBySystemDefinition(SystemDefinition sysDef, CollectionAgent agent, WsmanAgentConfig agentConfig, OnmsNode node) {
+        // Determine the effective values for the productVendor and productVersion:
+        // The detected values are stored in the assets table, we allow these
+        // to be overridden by the agent specific configuration
+        String productVendor;
+        if (agentConfig.getProductVendor() != null) {
+            productVendor = agentConfig.getProductVendor();
+        } else {
+            productVendor = node.getAssetRecord().getVendor();
+            // Guarantee that the values are non-null
+            productVendor = Strings.nullToEmpty(productVendor);
+        }
+
+        String productVersion;
+        if (agentConfig.getProductVersion() != null) {
+            productVersion = agentConfig.getProductVersion();
+        } else {
+            productVersion = node.getAssetRecord().getModelNumber();
+            // Guarantee that the values are non-null
+            productVersion = Strings.nullToEmpty(productVersion);
+        }
+
+        // Build the evaluation context
+        StandardEvaluationContext context = new StandardEvaluationContext(node);
+        // Add the agent, so that the rule can determine the IP address in question, if required
+        context.setVariable("agent", agent);
+        context.setVariable("productVendor", productVendor);
+        context.setVariable("productVersion", productVersion);
+
+        // Evaluate the rules. Multiple rules are logically ORed.
+        for (String rule : sysDef.getRule()) {
+            ExpressionParser parser = new SpelExpressionParser();
+            Expression exp = parser.parseExpression(rule);
+            boolean passed = false;
+            try {
+                passed = exp.getValue(context, Boolean.class);
+            } catch (Exception e) {
+                LOG.error("Failed to evaluate expression {} for agent {} with context {}. System defintion with name {} will not be used. Msg: {}", rule, agent, context, sysDef.getName(), e.getMessage());
+            }
+            LOG.debug("Rule '{}' on {} passed? {}", rule, agent, passed);
+
+            if (passed) {
+                return true;
+            }
+        }
+        return false;
+    }
+
