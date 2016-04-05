@@ -2,15 +2,17 @@
         LOG.info("deleteNode: deleting LinkableNode for node {}",
                         nodeid);
 
-            m_queryMgr.delete(nodeid);
-
-        LinkableSnmpNode node = removeNode(nodeid);
+        Date now = new Date();
+        BroadcastDomain domain = m_queryMgr.getBridgeTopologyBroadcastDomain(nodeid);
+        LOG.debug("deleteNode: {}, found broadcast domain: nodes {}, macs {}", nodeid, domain.getBridgeNodesOnDomain(), domain.getMacsOnDomain());
+        // must be calculated the topology for nodeid...
+        Node node = removeNode(nodeid);
 
         if (node == null) {
             LOG.warn("deleteNode: node not found: {}", nodeid);
         } else {
             Collection<NodeDiscovery> collections = getSnmpCollections(node);
-            LOG.info("deleteNode: fetched SnmpCollections from scratch, iterating over {} objects to wake them up",
+            LOG.info("deleteNode: fetched SnmpCollections from scratch, iterating over {} objects to delete",
                             collections.size());
             for (NodeDiscovery collection : collections) {
                 ReadyRunnable rr = getReadyRunnable(collection);
@@ -19,12 +21,28 @@
                     LOG.warn("deleteNode: found null ReadyRunnable");
                     continue;
                 } else {
+                    if (collection instanceof NodeDiscoveryBridgeTopology) {
+                        NodeDiscoveryBridgeTopology ndbt= (NodeDiscoveryBridgeTopology) collection;
+                        ndbt.setDomain(domain);
+                        domain.getLock(this);
+                        LOG.info("deleteNode: node: {}, start: merging topology for domain",nodeid);
+                        ndbt.clearTopologyForBridge(domain.getBridge(nodeid));
+                        LOG.info("deleteNode: node: {}, end: merging topology for domain",nodeid);
+                        LOG.info("deleteNode: node: {}, start: save topology for domain",nodeid);
+                        m_queryMgr.store(domain);
+                        m_queryMgr.save(ndbt.getDomain().getRootBridgeId(),ndbt.getRootBridgeBFT());
+                        m_queryMgr.reconcileBridgeTopology(ndbt.getDomain().getRootBridgeId(), now);
+                        LOG.info("deleteNode: node: {}, end: save topology for domain",nodeid);
+                        domain.releaseLock(this);
+                    }
                     rr.unschedule();
                 }
 
             }
 
         }
+        m_queryMgr.delete(nodeid);
+        m_queryMgr.cleanBroadcastDomains();
 
     }
 

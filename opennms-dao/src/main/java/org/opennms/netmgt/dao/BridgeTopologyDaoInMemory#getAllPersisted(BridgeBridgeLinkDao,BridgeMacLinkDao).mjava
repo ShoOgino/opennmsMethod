@@ -1,0 +1,73 @@
+    public Set<BroadcastDomain> getAllPersisted(BridgeBridgeLinkDao bridgeBridgeLinkDao,BridgeMacLinkDao bridgeMacLinkDao) {
+        List<SharedSegment> segments = new ArrayList<SharedSegment>();
+
+BRIDGELINK:        for (BridgeBridgeLink link : bridgeBridgeLinkDao.findAll()) {
+            for (SharedSegment segment : segments) {
+                if (segment.containsPort(link.getNode().getId(),
+                                         link.getBridgePort())
+                     || segment.containsPort(link.getDesignatedNode().getId(),
+                                             link.getDesignatedPort())) {
+                    segment.add(link);
+                    continue BRIDGELINK;
+                }
+            }
+            SharedSegment segment = new SharedSegment();
+            segment.add(link);
+            segment.setDesignatedBridge(link.getDesignatedNode().getId());
+            segments.add(segment);
+        }
+
+MACLINK:  for (BridgeMacLink link : bridgeMacLinkDao.findAll()) {
+            link.setBridgeDot1qTpFdbStatus(BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED);
+            for (SharedSegment segment : segments) {
+                if (segment.containsMac(link.getMacAddress())
+                        || segment.containsPort(link.getNode().getId(),
+                                                link.getBridgePort())) {
+                    segment.add(link);
+                    continue MACLINK;
+                }
+            }
+            SharedSegment segment = new SharedSegment();
+            segment.add(link);
+            segment.setDesignatedBridge(link.getNode().getId());
+            segments.add(segment);
+        }
+
+        Set<Set<Integer>> nodelinked = new HashSet<Set<Integer>>();
+SHARED:        for (SharedSegment segment: segments) {
+            Set<Integer> nodesOnSegment = new HashSet<Integer>(segment.getBridgeIdsOnSegment());
+            for (Set<Integer> nodes: nodelinked) {
+                for (Integer nodeid: nodesOnSegment) {
+                    if (nodes.contains(nodeid)) 
+                        continue SHARED;
+                }
+            }
+            nodelinked.add(getNodesOnDomainSet(segments, segment, new HashSet<SharedSegment>(),nodesOnSegment));
+        }
+        
+        Set<BroadcastDomain> domains = new HashSet<BroadcastDomain>();
+        for (Set<Integer> nodes : nodelinked) {
+            BroadcastDomain domain = new BroadcastDomain();
+            for (Integer nodeid: nodes)
+                domain.addBridge(new Bridge(nodeid));
+            domains.add(domain);
+        }
+        // Assign the segment to domain and add to single nodes
+        for (SharedSegment segment : segments) {
+            BroadcastDomain domain = null;
+            for (BroadcastDomain cdomain: domains) {
+                if (cdomain.containsAtleastOne(segment.getBridgeIdsOnSegment())) {
+                    domain = cdomain;
+                    break;
+                }
+            }
+            if (domain == null) {
+                domain = new BroadcastDomain();
+                domains.add(domain);
+            }
+            domain.loadTopologyEntry(segment);
+        }
+
+        return domains;
+    }
+
