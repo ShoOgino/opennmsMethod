@@ -1,0 +1,58 @@
+    @Override
+    public Component getComponent(VertexRef ref) {
+        final BusinessServiceVertex vertex = (BusinessServiceVertex) ref;
+        final BusinessService businessService = businessServiceManager.getBusinessServiceById(vertex.getServiceId());
+
+        final FormLayout rootLayout = new FormLayout();
+        rootLayout.setSizeFull();
+        rootLayout.setSpacing(false);
+        rootLayout.setMargin(false);
+        rootLayout.addStyleName("severity");
+
+        rootLayout.addComponent(createStatusLabel("Overall", businessService.getOperationalStatus()));
+
+        rootLayout.addComponent(new Label());
+
+        final BusinessServiceGraph graph = businessServiceStateMachine.getGraph();
+        final Set<GraphVertex> impactingVertices = businessServiceStateMachine.calculateImpacting(businessService)
+                                                                              .stream()
+                                                                              .map(e -> graph.getDest(e))
+                                                                              .collect(Collectors.toSet());
+
+        for (final Edge edge : businessService.getEdges()) {
+            // Get the topology vertex for the child to determine the display label
+            final Vertex childVertex = businessServicesTopologyProvider.getVertex(edge.accept(new EdgeVisitor<VertexRef>() {
+                @Override
+                public VertexRef visit(final IpServiceEdge edge) {
+                    return new IpServiceVertex(edge.getIpService(),
+                                               0, null);
+                }
+
+                @Override
+                public VertexRef visit(final ReductionKeyEdge edge) {
+                    return new ReductionKeyVertex(edge.getReductionKey(),
+                                                  0, null);
+                }
+
+                @Override
+                public VertexRef visit(final ChildEdge edge) {
+                    return new BusinessServiceVertex(edge.getChild(),
+                                                     0, null);
+                }
+            }));
+
+            final Status mappedStatus = edge.getMapFunction().map(edge.getOperationalStatus()).orElse(Status.NORMAL);
+
+            rootLayout.addComponent(createStatusLabel(childVertex.getLabel(),
+                                                      mappedStatus,
+                                                      String.format("%s &times; %d <i class=\"pull-right glyphicon %s\"></i>",
+                                                                    mappedStatus.getLabel(),
+                                                                    edge.getWeight(),
+                                                                    impactingVertices.contains(graph.getVertexByEdgeId(edge.getId()))
+                                                                    ? "glyphicon-flash"
+                                                                    : "")));
+        }
+
+        return rootLayout;
+    }
+
