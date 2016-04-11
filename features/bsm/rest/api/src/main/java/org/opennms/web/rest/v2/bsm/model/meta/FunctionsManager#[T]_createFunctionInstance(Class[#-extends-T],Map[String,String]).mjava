@@ -1,0 +1,56 @@
+    public <T> T createFunctionInstance(Class<? extends T> functionClass, Map<String, String> parameterMap) {
+        Objects.requireNonNull(functionClass);
+        T functionInstance;
+        try {
+            functionInstance = functionClass.newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+        // TODO this logic is very similar to what AbstractFilterFactory (Measurement API) does
+        for(Field field : functionClass.getDeclaredFields()) {
+            Parameter parameter = field.getAnnotation(Parameter.class);
+            if (parameter != null) {
+                String effectiveValueAsStr;
+                if (parameterMap.containsKey(parameter.key())) {
+                    effectiveValueAsStr = parameterMap.get(parameter.key());
+                } else if (!parameter.required()) {
+                    effectiveValueAsStr = parameter.defaultValue();
+                } else {
+                    throw new IllegalArgumentException("Parameter with key '" + parameter.key() + "' is required, but no value was given.");
+                }
+
+                // Convert the value to the appropriate type
+                Object effectiveValue = effectiveValueAsStr;
+                if (field.getType() == Boolean.class || field.getType() == boolean.class) {
+                    effectiveValue = Boolean.valueOf(effectiveValueAsStr);
+                } else if (field.getType() == Double.class || field.getType() == double.class) {
+                    effectiveValue = Double.valueOf(effectiveValueAsStr);
+                } else if (field.getType() == Float.class || field.getType() == float.class) {
+                    effectiveValue = Float.valueOf(effectiveValueAsStr);
+                } else if (field.getType() == Integer.class || field.getType() == int.class) {
+                    effectiveValue = Integer.valueOf(effectiveValueAsStr);
+                } else if (field.getType() == Long.class || field.getType() == long.class) {
+                    effectiveValue = Long.valueOf(effectiveValueAsStr);
+                } else if (field.getType().isEnum()) {
+                    // we manually find the correct enum constant, as we require case insensitive match
+                    Object[] enumConstants = field.getType().getEnumConstants();
+                    for (Object eachEnumConstant : enumConstants) {
+                        if (effectiveValueAsStr.equalsIgnoreCase(String.valueOf(eachEnumConstant))) {
+                            effectiveValue = eachEnumConstant;
+                            break;
+                        }
+                    }
+                }
+
+                // Set the field's value
+                try {
+                    field.setAccessible(true);
+                    field.set(functionInstance, effectiveValue);
+                } catch (ReflectiveOperationException e) {
+                    throw Throwables.propagate(e);
+                }
+            }
+        }
+        return functionInstance;
+    }
+
