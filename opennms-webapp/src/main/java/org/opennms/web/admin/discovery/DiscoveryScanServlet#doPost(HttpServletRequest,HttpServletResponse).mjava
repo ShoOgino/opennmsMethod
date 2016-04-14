@@ -1,17 +1,15 @@
     @Override
-    public void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+	public void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
 
-        LOG.info("Loading Discovery configuration.");
+	    LOG.info("Loading Discovery configuration.");
         HttpSession sess = request.getSession(true);
         DiscoveryConfiguration config = (DiscoveryConfiguration) sess.getAttribute(ATTRIBUTE_DISCOVERY_CONFIGURATION);
         if (config == null) {
-            config = getDiscoveryConfig();
-            sess.setAttribute(ATTRIBUTE_DISCOVERY_CONFIGURATION, config);
+            config = new DiscoveryConfiguration();
         }
-
-        //Update general settings from the incoming request parameters
-        config = GeneralSettingsLoader.load(request, config);
-
+        //load current general settings
+        config = GeneralSettingsLoader.load(request,config);
+        
         String action = request.getParameter("action");
         LOG.debug("action: {}", action);
 
@@ -120,22 +118,31 @@
         	ExcludeRange er= config.getExcludeRange(index);
         	boolean result = config.removeExcludeRange(er);
         	LOG.debug("Removing Exclude Range result = {}", result);
-        }         
+        }
         
-        //save configuration and restart discovery service
+        // Submit the discovery job
         if(action.equals(saveAndRestartAction)){
-        	DiscoveryConfigFactory dcf=null;
-        	try{
-        			StringWriter configString = new StringWriter();
-        			config.marshal(configString);
-        			LOG.debug(configString.toString().trim());
-        		dcf = DiscoveryConfigFactory.getInstance();
-            	        dcf.saveConfiguration(config);
-        	}catch(Throwable ex){
-        		LOG.error("Error while saving configuration. {}", ex);
-        		throw new ServletException(ex);
-        	}
-        	
+        
+            try {
+                WebApplicationContext beanFactory = WebApplicationContextUtils.getRequiredWebApplicationContext(getServletContext());
+                // Fetch the ServiceRegistry
+                ServiceRegistry registry = beanFactory.getBean(ServiceRegistry.class);
+                // Use it to look up a DiscoveryTaskExecutor service
+                DiscoveryTaskExecutor executor = registry.findProvider(DiscoveryTaskExecutor.class);
+                // If the service exists...
+                if (executor != null) {
+                    // Submit the job to the discovery queue
+                    executor.handleDiscoveryTask(config);
+                } else {
+                    LOG.warn("No DiscoveryTaskExecutor service is available");
+                }
+            } catch(Throwable ex) {
+                LOG.error("Error while submitting task", ex);
+                throw new ServletException(ex);
+            }
+
+        	// TODO: Send an event here when the scan is started? Or do it on the Camel side?
+        	/*
         	EventProxy proxy = null;
         	try {
     			proxy = Util.createEventProxy();
@@ -152,14 +159,16 @@
     			LOG.error(me.getMessage());
     		}
 
-            LOG.info("Restart Discovery requested!");  
+            LOG.info("Restart Discovery requested!");
+            */
+
             sess.removeAttribute(ATTRIBUTE_DISCOVERY_CONFIGURATION);
-            response.sendRedirect(Util.calculateUrlBase( request, "admin/discovery/config-done.jsp" ));
+            response.sendRedirect(Util.calculateUrlBase( request, "admin/discovery/scan-done.jsp" ));
             return;
         }
         
         sess.setAttribute(ATTRIBUTE_DISCOVERY_CONFIGURATION, config);
-        RequestDispatcher dispatcher = this.getServletContext().getRequestDispatcher("/admin/discovery/edit-config.jsp");
+        RequestDispatcher dispatcher = this.getServletContext().getRequestDispatcher("/admin/discovery/edit-scan.jsp");
         dispatcher.forward(request, response);
     }
 
