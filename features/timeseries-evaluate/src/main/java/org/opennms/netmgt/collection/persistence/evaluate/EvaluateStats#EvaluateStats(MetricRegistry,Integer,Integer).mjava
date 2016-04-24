@@ -1,0 +1,53 @@
+    /**
+     * Instantiates a new evaluate statistics.
+     *
+     * @param registry the metrics registry
+     * @param dumpStatsFreq the frequency in minutes to dump the statistics to the log file
+     * @param dumpCacheFreq the frequency in minutes to dump the cache content to the log file
+     */
+    public EvaluateStats(MetricRegistry registry, Integer dumpStatsFreq, Integer dumpCacheFreq) {
+        Assert.notNull(registry, "MetricRegistry is required");
+        Assert.notNull(dumpStatsFreq, "Dump statistics frequency is required");
+        Assert.isTrue(dumpStatsFreq > 0, "Dump statistics frequency must be positive");
+        Assert.notNull(dumpCacheFreq, "Dump cache frequency is required");
+        Assert.isTrue(dumpCacheFreq > 0, "Dump cache frequency must be positive");
+
+        final Gauge<Integer> nodes = () -> { return nodeMap.keySet().size(); };
+        registry.register(MetricRegistry.name("evaluate", "nodes"), nodes);
+
+        final Gauge<Integer> interfaces = () -> { return interfaceMap.keySet().size(); };
+        registry.register(MetricRegistry.name("evaluate", "interfaces"), interfaces);
+
+        final Gauge<Integer> resources = () -> { return resourceMap.keySet().size(); };
+        registry.register(MetricRegistry.name("evaluate", "resources"), resources);
+
+        final Gauge<Integer> numericAttributes = () -> { return numericAttributeMap.keySet().size(); };
+        registry.register(MetricRegistry.name("evaluate", "numeric-attributes"), numericAttributes);
+
+        final Gauge<Integer> stringAttributes = () -> { return stringAttributeMap.keySet().size(); };
+        registry.register(MetricRegistry.name("evaluate", "string-attributes"), stringAttributes);
+
+        if (ResourceTypeUtils.isStoreByGroup()) {
+            final Gauge<Integer> groups = () -> { return groupMap.keySet().size(); };
+            registry.register(MetricRegistry.name("evaluate", "groups"), groups);
+        }
+
+        numericSamplesMeter = registry.meter(MetricRegistry.name("evaluate", "samples"));
+
+        // Metric Reporter
+        Logging.withPrefix(LOGGING_PREFFIX, () -> {
+            final Slf4jReporter reporter = Slf4jReporter.forRegistry(registry)
+                    .outputTo(LOG)
+                    .convertRatesTo(TimeUnit.SECONDS)
+                    .convertDurationsTo(TimeUnit.MILLISECONDS)
+                    .build();
+            reporter.start(dumpStatsFreq, TimeUnit.MINUTES);
+        });
+
+        // Cache Dump, for debugging purposes
+        Logging.withPrefix(LOGGING_PREFFIX + LOGGING_SUFFIX, () -> {
+            ScheduledExecutorService svc = Executors.newScheduledThreadPool(1);
+            svc.scheduleAtFixedRate(() -> { dumpCache(); }, 0, dumpCacheFreq, TimeUnit.MINUTES);
+        });
+    }
+
