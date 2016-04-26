@@ -1,0 +1,64 @@
+    private void getLldpLinks(Map<Integer, OnmsNode> nodemap, Map<Integer, List<OnmsSnmpInterface>> nodesnmpmap, Map<Integer, OnmsIpInterface> ipprimarymap) {
+        Map<Integer, LldpElement> lldpelementmap = new HashMap<Integer, LldpElement>();
+        for (LldpElement lldpelement: m_lldpElementDao.findAll()) {
+            lldpelementmap.put(lldpelement.getNode().getId(), lldpelement);
+        }
+        List<LldpLink> allLinks = m_lldpLinkDao.findAll();
+        Set<LldpLinkDetail> combinedLinkDetails = new HashSet<LldpLinkDetail>();
+        Set<Integer> parsed = new HashSet<Integer>();
+        for (LldpLink sourceLink : allLinks) {
+            if (parsed.contains(sourceLink.getId()))
+                continue;
+            LOG.debug("loadtopology: lldp link with id '{}' link '{}' ", sourceLink.getId(), sourceLink);
+            LldpElement sourceLldpElement = lldpelementmap.get(sourceLink.getNode().getId());
+            LldpLink targetLink = null;
+            for (LldpLink link : allLinks) {
+                if (sourceLink.getId().intValue() == link.getId().intValue()|| parsed.contains(link.getId()))
+                    continue;
+                LOG.debug("loadtopology: checking lldp link with id '{}' link '{}' ", link.getId(), link);
+                LldpElement element = lldpelementmap.get(link.getNode().getId());
+                //Compare the remote data to the targetNode element data
+                if (!sourceLink.getLldpRemChassisId().equals(element.getLldpChassisId()) || !link.getLldpRemChassisId().equals(sourceLldpElement.getLldpChassisId())) 
+                    continue;
+                boolean bool1 = sourceLink.getLldpRemPortId().equals(link.getLldpPortId()) && link.getLldpRemPortId().equals(sourceLink.getLldpPortId());
+                boolean bool3 = sourceLink.getLldpRemPortIdSubType() == link.getLldpPortIdSubType() && link.getLldpRemPortIdSubType() == sourceLink.getLldpPortIdSubType();
+
+                if (bool1 && bool3) {
+                    targetLink=link;
+                    LOG.info("loadtopology: found lldp mutual link: '{}' and '{}' ", sourceLink,targetLink);
+                    break;
+                }
+            }
+            
+            if (targetLink == null) {
+                List<OnmsNode> nodes = new ArrayList<OnmsNode>();
+                for (OnmsNode node: nodemap.values()) {
+                    if (node.getSysName() != null && sourceLink.getLldpRemSysname() != null && node.getSysName().equals(sourceLink.getLldpRemSysname()))
+                        nodes.add(node);
+                }
+                if (nodes.size() == 1) {
+                    targetLink = reverseLldpLink(nodes.get(0), sourceLldpElement, sourceLink); 
+                    LOG.info("loadtopology: found lldp link using lldp rem sysname: '{}' and '{}'", sourceLink, targetLink);
+                }
+            }
+            
+            if (targetLink == null) {
+                LOG.info("loadtopology: cannot found target node for link: '{}'", sourceLink);
+                continue;
+            }
+                
+            parsed.add(sourceLink.getId());
+            parsed.add(targetLink.getId());
+            Vertex source =  getOrCreateVertex(nodemap.get(sourceLink.getNode().getId()),ipprimarymap.get(sourceLink.getNode().getId()));
+            Vertex target = getOrCreateVertex(nodemap.get(targetLink.getNode().getId()),ipprimarymap.get(targetLink.getNode().getId()));
+            combinedLinkDetails.add(new LldpLinkDetail(Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
+                                                       source, sourceLink, target, targetLink));
+
+        }
+
+        for (LldpLinkDetail linkDetail : combinedLinkDetails) {
+            LinkdEdge edge = connectVertices(linkDetail, LLDP_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(linkDetail,nodesnmpmap));
+        }
+    }
+
