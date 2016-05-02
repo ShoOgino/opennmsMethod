@@ -1,0 +1,65 @@
+    private static GraphML convert(GraphmlType input) throws InvalidGraphException {
+        final Map<String, GraphMLGraph> nodeIdToGraphMapping = new HashMap<>();
+        final Map<String, KeyType> keyIdToTypeMapping = getKeyIdToTypeMapping(input.getKey());
+        final List<GraphType> graphs = filter(input.getGraphOrData(), GraphType.class);
+
+        final GraphML convertedGraphML = new GraphML();
+        addProperties(convertedGraphML, null, keyIdToTypeMapping, filter(input.getGraphOrData(), DataType.class));
+
+        for (GraphType eachGraph : graphs) {
+            GraphMLGraph convertedGraph = new GraphMLGraph();
+            addProperties(convertedGraph, eachGraph.getId(), keyIdToTypeMapping, filter(eachGraph.getDataOrNodeOrEdge(), DataType.class));
+
+            // Nodes
+            List<NodeType> nodes = filter(eachGraph.getDataOrNodeOrEdge(), NodeType.class);
+            for (NodeType eachNode : nodes) {
+                GraphMLNode convertedNode = new GraphMLNode();
+                nodeIdToGraphMapping.put(eachNode.getId(), convertedGraph);
+                addProperties(convertedNode, eachNode.getId(), keyIdToTypeMapping, filter(eachNode.getDataOrPort(), DataType.class));
+
+                List<PortType> ports = filter(eachNode.getDataOrPort(), PortType.class);
+                if (!ports.isEmpty()) {
+                    LOG.warn("Ports are defined for node with id {} but ports are not supported. Ignoring {} defined ports", eachNode.getId(), ports.size());
+                }
+                convertedGraph.addNode(convertedNode);
+            }
+            convertedGraphML.addGraph(convertedGraph);
+        }
+
+        // Add Edges Last, as they may connect between graphs, and we just now know all graphs
+        for (GraphType eachGraphType : graphs) {
+            // Edges
+            List<EdgeType> edges = filter(eachGraphType.getDataOrNodeOrEdge(), EdgeType.class);
+            for (EdgeType eachEdge : edges) {
+                GraphMLEdge convertedEdge = new GraphMLEdge();
+
+                GraphMLGraph sourceGraph = nodeIdToGraphMapping.get(eachEdge.getSource());
+                GraphMLGraph targetGraph = nodeIdToGraphMapping.get(eachEdge.getTarget());
+
+                if (sourceGraph == null) {
+                    throw new InvalidGraphException("No graph found for edge with id " + eachEdge.getSource());
+                }
+                if (targetGraph == null) {
+                    throw new InvalidGraphException("No graph found for edge with id " + eachEdge.getTarget());
+                }
+
+                GraphMLNode sourceNode = sourceGraph.getNodeById(eachEdge.getSource());
+                GraphMLNode targetNode = targetGraph.getNodeById(eachEdge.getTarget());
+
+                convertedEdge.setSource(sourceNode);
+                convertedEdge.setTarget(targetNode);
+
+                addProperties(convertedEdge, eachEdge.getId(), keyIdToTypeMapping, filter(eachEdge.getData(), DataType.class));
+                sourceGraph.addEdge(convertedEdge);
+            }
+
+            // Hyper Edges
+            List<HyperedgeType> hyperEdges = filter(eachGraphType.getDataOrNodeOrEdge(), HyperedgeType.class);
+            if (!hyperEdges.isEmpty()) {
+                LOG.warn("Hyper Edges are defined for graph with id {} but are not supported. Ignoring {} defined hyper edges", eachGraphType.getId(), hyperEdges.size());
+            }
+        }
+        validate(convertedGraphML);
+        return convertedGraphML;
+    }
+
