@@ -1,0 +1,58 @@
+	@Override
+	public void execute(List<VertexRef> targets, final OperationContext operationContext) {
+	    final GraphContainer graphContainer = operationContext.getGraphContainer();
+	    final MetaTopologyProvider metaTopologyProvider = graphContainer.getMetaTopologyProvider();
+        final Optional<VertexRef> vertexRef = targets.stream().findFirst();
+        if (!vertexRef.isPresent()) {
+            return;
+        }
+
+        // Find the vertices in other graphs that this vertex links to
+        final Collection<VertexRef> oppositeVertices = metaTopologyProvider.getOppositeVertices(vertexRef.get());
+
+        // We don't currently offer the user to select which graph to jump to, so select the first namespace
+        final String targetNamespace = oppositeVertices.stream().findFirst()
+                .map(v -> v.getNamespace()).orElse(null);
+
+        // Filter the vertices for those matching the target namespace
+        final List<VertexRef> targetVertices = oppositeVertices.stream()
+            .filter(v -> v.getNamespace().matches(targetNamespace))
+            .collect(Collectors.toList());
+
+        // Find the graph provider for the target namespace
+        final GraphProvider targetGraphProvider = metaTopologyProvider.getGraphProviders().stream()
+            .filter(g -> g.getVertexNamespace().equals(targetNamespace))
+            .findFirst().orElse(null);
+        if (targetGraphProvider == null) {
+            LOG.warn("No graph provider found for namespace '{}'.", targetNamespace);
+            return;
+        }
+
+        // TODO: Can we consolidate the graph switching code used here and in MetaTopologySelectorOperation
+        // We automatically set status providers if there are any
+        /*
+        final StatusProvider vertexStatusProvider = findVertexStatusProvider(graphProvider);
+        container.setVertexStatusProvider(vertexStatusProvider);
+
+        final EdgeStatusProvider edgeStatusProvider = findEdgeStatusProvider(graphProvider);
+        container.setEdgeStatusProvider(edgeStatusProvider);
+
+        final String preferredLayout = metaTopologyProvider.getPreferredLayout(graphProvider);
+        final LayoutAlgorithm layoutAlgorithm = findLayoutAlgorithm(preferredLayout);
+        if (layoutAlgorithm != null) {
+            container.setLayoutAlgorithm(layoutAlgorithm);
+        }
+        */
+
+        graphContainer.setBaseTopology(targetGraphProvider);
+        graphContainer.clearCriteria(); // Remove all criteria
+        // TODO: Use a default SZL per graph?
+        graphContainer.setSemanticZoomLevel(1); // Reset the SZL to 1 
+
+        // Add the target vertices to focus
+        targetVertices.stream().forEach(v -> graphContainer.addCriteria(new DefaultVertexHopCriteria(v)));
+
+        // Render
+        graphContainer.redoLayout();
+	}
+
