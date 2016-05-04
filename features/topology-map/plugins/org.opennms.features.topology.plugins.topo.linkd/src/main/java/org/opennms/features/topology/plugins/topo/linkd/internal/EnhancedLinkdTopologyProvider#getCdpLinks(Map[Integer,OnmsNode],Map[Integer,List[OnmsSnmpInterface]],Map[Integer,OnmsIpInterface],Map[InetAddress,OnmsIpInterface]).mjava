@@ -1,0 +1,67 @@
+    private void getCdpLinks(Map<Integer,OnmsNode> nodemap,Map<Integer, List<OnmsSnmpInterface>> nodesnmpmap, 
+            Map<Integer, OnmsIpInterface> ipprimarymap, Map<InetAddress,OnmsIpInterface> ipmap) {
+        Map<Integer, CdpElement> cdpelementmap = new HashMap<Integer, CdpElement>();
+        for (CdpElement cdpelement: m_cdpElementDao.findAll()) {
+            cdpelementmap.put(cdpelement.getNode().getId(), cdpelement);
+        }
+
+        List<CdpLink> allLinks = m_cdpLinkDao.findAll();
+        Set<CdpLinkDetail> combinedLinkDetails = new HashSet<CdpLinkDetail>();
+        Set<Integer> parsed = new HashSet<Integer>();
+
+        for (CdpLink sourceLink : allLinks) {
+            if (parsed.contains(sourceLink.getId())) 
+                continue;
+            LOG.debug("loadtopology: cdp link with id '{}' link '{}' ", sourceLink.getId(), sourceLink);
+            CdpElement sourceCdpElement = cdpelementmap.get(sourceLink.getNode().getId());
+            CdpLink targetLink = null;
+            for (CdpLink link : allLinks) {
+                if (sourceLink.getId().intValue() == link.getId().intValue()|| parsed.contains(link.getId()))
+                    continue;
+                LOG.debug("loadtopology: checking cdp link with id '{}' link '{}' ", link.getId(), link);
+                CdpElement element = cdpelementmap.get(link.getNode().getId());
+                //Compare the remote data to the targetNode element data
+                if (!sourceLink.getCdpCacheDeviceId().equals(element.getCdpGlobalDeviceId()) || !link.getCdpCacheDeviceId().equals(sourceCdpElement.getCdpGlobalDeviceId())) 
+                    continue;
+
+                if (sourceLink.getCdpInterfaceName().equals(link.getCdpCacheDevicePort()) && link.getCdpInterfaceName().equals(sourceLink.getCdpCacheDevicePort())) {
+                    targetLink=link;
+                    LOG.info("loadtopology: found cdp mutual link: '{}' and '{}' ", sourceLink,targetLink);
+                    break;
+                }
+            }
+            
+            if (targetLink == null) {
+                if (sourceLink.getCdpCacheAddressType() == CiscoNetworkProtocolType.ip) {
+                    try {
+                        InetAddress targetAddress = InetAddressUtils.addr(sourceLink.getCdpCacheAddress());
+                        if (ipmap.containsKey(targetAddress)) {
+                            targetLink = reverseCdpLink(ipmap.get(targetAddress), sourceCdpElement, sourceLink ); 
+                            LOG.info("loadtopology: found cdp link using cdp cache address: '{}' and '{}'", sourceLink, targetLink);
+                        }
+                    } catch (Exception e) {
+                        LOG.warn("loadtopology: cannot convert ip address: {}", sourceLink.getCdpCacheAddress(), e);
+                    }
+                }
+            }
+            
+            if (targetLink == null) {
+                LOG.info("loadtopology: cannot found target node for link: '{}'", sourceLink);
+                continue;
+            }
+                
+            parsed.add(sourceLink.getId());
+            parsed.add(targetLink.getId());
+            Vertex source =  getOrCreateVertex(nodemap.get(sourceLink.getNode().getId()),ipprimarymap.get(sourceLink.getNode().getId()));
+            Vertex target = getOrCreateVertex(nodemap.get(targetLink.getNode().getId()),ipprimarymap.get(targetLink.getNode().getId()));
+            combinedLinkDetails.add(new CdpLinkDetail(Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
+                                                       source, sourceLink, target, targetLink));
+
+        }
+        
+        for (CdpLinkDetail linkDetail : combinedLinkDetails) {
+            LinkdEdge edge = connectVertices(linkDetail, CDP_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(linkDetail,nodesnmpmap));
+        }
+    }
+

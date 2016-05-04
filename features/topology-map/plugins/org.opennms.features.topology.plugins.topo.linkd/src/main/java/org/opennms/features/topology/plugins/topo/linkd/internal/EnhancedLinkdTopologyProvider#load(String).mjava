@@ -1,112 +1,14 @@
     @Override
     @Transactional
     public void load(String filename) throws MalformedURLException, JAXBException {
+        final Timer.Context context = m_loadFullTimer.time();
         if (filename != null) {
             LOG.warn("Filename that was specified for linkd topology will be ignored: " + filename + ", using " + getConfigurationFile() + " instead");
         }
-        try{
-            //TODO: change to one query from the database that will return all links plus elements joined
-            //This reset container is set in here for the demo, don't commit
-
-            resetContainer();
-        } catch (Exception e){
-            LOG.error("Exception reset Container: "+e.getMessage(),e);
-        }
-        
-        Map<Integer, OnmsNode> nodemap = new HashMap<Integer, OnmsNode>();
-
         try {
-            for (OnmsNode node: m_nodeDao.findAll()) {
-                nodemap.put(node.getId(), node);
-            }
-        } catch (Exception e){
-            LOG.error("Exception getting node list: "+e.getMessage(),e);
+            loadCompleteTopology();
+        } finally {
+            context.stop();
         }
-
-        try{
-            getLldpLinks(nodemap);
-        } catch (Exception e){
-            LOG.error("Exception getting Lldp link: "+e.getMessage(),e);
-        }
-        try{
-            getOspfLinks(nodemap);
-        } catch (Exception e){
-            LOG.error("Exception getting Ospf link: "+e.getMessage(),e);
-        }
-        try{
-            getIsIsLinks();
-        } catch (Exception e){
-            LOG.error("Exception getting IsIs link: "+e.getMessage(),e);
-        }
-        try{
-            getBridgeLinks(nodemap);
-        } catch (Exception e){
-            LOG.error("Exception getting Bridge link: "+e.getMessage(),e);
-        }
-        try{
-            getCdpLinks();
-        } catch (Exception e){
-            LOG.error("Exception getting Cdp link: "+e.getMessage(),e);
-        }
-
-        LOG.debug("loadtopology: adding nodes without links: " + isAddNodeWithoutLink());
-        if (isAddNodeWithoutLink()) {
-            addNodesWithoutLinks();
-        }
-
-        File configFile = new File(getConfigurationFile());
-        if (configFile.exists() && configFile.canRead()) {
-            LOG.debug("loadtopology: loading topology from configuration file: " + getConfigurationFile());
-            WrappedGraph graph = getGraphFromFile(configFile);
-
-            // Add all groups to the topology
-            for (WrappedVertex eachVertexInFile: graph.m_vertices) {
-                if (eachVertexInFile.group) {
-                    LOG.debug("loadtopology: adding group to topology: " + eachVertexInFile.id);
-                    if (eachVertexInFile.namespace == null) {
-                        eachVertexInFile.namespace = getVertexNamespace();
-                        LoggerFactory.getLogger(this.getClass()).warn("Setting namespace on vertex to default: {}", eachVertexInFile);
-                    }
-                    if (eachVertexInFile.id == null) {
-                        LoggerFactory.getLogger(this.getClass()).warn("Invalid vertex unmarshalled from {}: {}", getConfigurationFile(), eachVertexInFile);
-                    }
-                    AbstractVertex newGroupVertex = addGroup(eachVertexInFile.id, eachVertexInFile.iconKey, eachVertexInFile.label);
-                    newGroupVertex.setIpAddress(eachVertexInFile.ipAddr);
-                    newGroupVertex.setLocked(eachVertexInFile.locked);
-                    if (eachVertexInFile.nodeID != null) newGroupVertex.setNodeID(eachVertexInFile.nodeID);
-                    if (!newGroupVertex.equals(eachVertexInFile.parent)) newGroupVertex.setParent(eachVertexInFile.parent);
-                    newGroupVertex.setSelected(eachVertexInFile.selected);
-                    newGroupVertex.setStyleName(eachVertexInFile.styleName);
-                    newGroupVertex.setTooltipText(eachVertexInFile.tooltipText);
-                    if (eachVertexInFile.x != null) newGroupVertex.setX(eachVertexInFile.x);
-                    if (eachVertexInFile.y != null) newGroupVertex.setY(eachVertexInFile.y);
-                }
-            }
-            for (Vertex vertex: getVertices()) {
-                if (vertex.getParent() != null && !vertex.equals(vertex.getParent())) {
-                    LOG.debug("loadtopology: setting parent of " + vertex + " to " + vertex.getParent());
-                    setParent(vertex, vertex.getParent());
-                }
-            }
-            // Add all children to the specific group
-            // Attention: We ignore all other attributes, they do not need to be merged!
-            for (WrappedVertex eachVertexInFile : graph.m_vertices) {
-                if (!eachVertexInFile.group && eachVertexInFile.parent != null) {
-                    final Vertex child = getVertex(eachVertexInFile);
-                    final Vertex parent = getVertex(eachVertexInFile.parent);
-                    if (child == null || parent == null) continue;
-                    LOG.debug("loadtopology: setting parent of " + child + " to " + parent);
-                    if (!child.equals(parent)) setParent(child, parent);
-                }
-            }
-        } else {
-            LOG.debug("loadtopology: could not load topology configFile:" + getConfigurationFile());
-        }
-        LOG.debug("Found " + getGroups().size() + " groups");
-        LOG.debug("Found " + getVerticesWithoutGroups().size() + " vertices");
-        LOG.debug("Found " + getEdges().size() + " edges");
-
-
-
     }
 
