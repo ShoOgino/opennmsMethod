@@ -1,35 +1,18 @@
 	@Test
 	public void testTrapd() throws Exception {
-		// Expect one TrapNotification message to be broadcast on the messaging
-		// channel
-		MockEndpoint broadcastTrapd = getMockEndpoint(
-				"mock:activemq:broadcastTrap", false);
+		// Expect one TrapNotification message to be broadcast on the messaging channel
+		MockEndpoint broadcastTrapd = getMockEndpoint("mock:activemq:broadcastTrap", false);
 		broadcastTrapd.setExpectedMessageCount(1);
 
-		MockEndpoint trapHandler = getMockEndpoint("mock:seda:trapHandler",
-				false);
+		MockEndpoint trapHandler = getMockEndpoint("mock:seda:trapHandler", false);
 		trapHandler.setExpectedMessageCount(1);
 
-		// Create a mock SyslogdConfig
-		TrapdConfigBean config = new TrapdConfigBean();
-		config.setSnmpTrapPort(10514);
-		config.setSnmpTrapAddress("127.0.0.1");
-		config.setNewSuspectOnTrap(false);
-
-		MockEventIpcManager mockEventIpcManager = new MockEventIpcManager();
-
+		/*
 		MockTrapdIpMgr m_trapdIpMgr=new MockTrapdIpMgr();
 
 		m_trapdIpMgr.clearKnownIpsMap();
 		m_trapdIpMgr.setNodeId("127.0.0.1", 1);
-
-		TrapQueueProcessor trapQProcessor = new TrapQueueProcessor();
-		EventCreator trapProcess = new EventCreator(m_trapdIpMgr);
-		trapProcess.setAgentAddress(InetAddressUtils.ONE_TWENTY_SEVEN);
-		trapProcess.setCommunity("comm");
-		trapProcess.setTimeStamp(System.currentTimeMillis());
-		trapProcess.setTrapAddress(InetAddressUtils.ONE_TWENTY_SEVEN);
-		trapQProcessor.setEventManager(mockEventIpcManager);
+		*/
 
 		// create instance of snmp4JV2cTrap
 		PDU snmp4JV2cTrapPdu = new PDU();
@@ -45,21 +28,22 @@
 
 		TrapNotification snmp4JV2cTrap = new Snmp4JTrapNotifier.Snmp4JV2TrapInformation(
 				InetAddressUtils.ONE_TWENTY_SEVEN, new String("public"),
-				snmp4JV2cTrapPdu, trapProcess);
+				snmp4JV2cTrapPdu, new BasicTrapProcessor());
 
-		trapQProcessor.setTrapNotification(snmp4JV2cTrap);
-
-		trapQProcessor.setEventConfDao(m_eventConfDao);
-
-		// Send a TrapQProcessor
-		template.sendBody("activemq:broadcastTrap?disableReplyTo=true", trapQProcessor.call());
+		// Send the TrapNotification
+		template.sendBody("activemq:broadcastTrap?disableReplyTo=true", snmp4JV2cTrap);
 
 		assertMockEndpointsSatisfied();
 
 		// Check that the input for the seda:trapHandler endpoint matches
 		// the TrapQProcessor that we simulated via ActiveMQ
-		TrapQueueProcessor result = trapHandler.getReceivedExchanges().get(0)
-				.getIn().getBody(TrapQueueProcessor.class);
-		System.out.println("Result ++++:" + result);
+		TrapNotification result = trapHandler.getReceivedExchanges().get(0).getIn().getBody(TrapNotification.class);
+		LOG.info("Result: " + result);
+
+		// Assert that the trap's content is correct
+		BasicTrapProcessor processor = (BasicTrapProcessor)result.getTrapProcessor();
+		assertEquals("v2", processor.getVersion());
+
+		// TODO: Use an EventAnticipator to assert that a trap event was created
 	}
 
