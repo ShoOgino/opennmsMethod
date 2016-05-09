@@ -1,13 +1,28 @@
-	@Override
-	public Collection<NodeLinkBridge> getNodeLinks(int nodeId) {
-	        Map<Integer, NodeLinkBridge> nodelinks = new HashMap<Integer,NodeLinkBridge>();
-		for (OnmsIpInterface ip: m_ipInterfaceDao.findByNodeId(nodeId)) {
-			for (IpNetToMedia ipnetomedia: m_ipNetToMediaDao.findByNetAddress(ip.getIpAddress())) {
-				for (BridgeMacLink maclink: m_bridgeMacLinkDao.findByMacAddress(ipnetomedia.getPhysAddress())) {
-					convertFromModel(nodeId, maclink, getNodePortString(str(ipnetomedia.getNetAddress()), ipnetomedia.getPhysAddress()),nodelinks);
-				}
-			}
-		}
-		return nodelinks.values();
-	}
+    @Override
+    public Collection<NodeLinkBridge> getNodeLinks(int nodeId) {
+        Map<String, Set<InetAddress>> mactoIpMap = new HashMap<String, Set<InetAddress>>();
+        for (OnmsIpInterface ip : m_ipInterfaceDao.findByNodeId(nodeId)) {
+            for (IpNetToMedia ipnetomedia : m_ipNetToMediaDao.findByNetAddress(ip.getIpAddress())) {
+                if (!mactoIpMap.containsKey(ipnetomedia.getPhysAddress()))
+                    mactoIpMap.put(ipnetomedia.getPhysAddress(),
+                                   new HashSet<InetAddress>());
+                mactoIpMap.get(ipnetomedia.getPhysAddress()).add(ip.getIpAddress());
+            }
+        }
+        List<NodeLinkBridge> nodelinks = new ArrayList<NodeLinkBridge>();
+        for (String mac : mactoIpMap.keySet()) {
+            SharedSegment segment = m_bridgetopologyDao.getHostNodeSharedSegment(m_bridgeBridgeLinkDao,
+                                                                                 m_bridgeMacLinkDao,
+                                                                                 mac);
+            if (segment.isEmpty())
+                continue;
+            if (!segment.containsMac(mac))
+                continue;
+            nodelinks.add(convertFromModel(mac,segment,
+                                           getNodePortString(mactoIpMap.get(mac),
+                                                             mac)));
+        }
+        Collections.sort(nodelinks);
+        return nodelinks;
+    }
 

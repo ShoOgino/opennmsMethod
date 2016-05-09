@@ -1,0 +1,72 @@
+	/** {@inheritDoc} */
+	@SuppressWarnings("unchecked")
+	public int send(List<Argument> arguments) {
+	
+	    m_arguments = arguments;
+	
+	    String url = getUrl();
+	    if (url == null) {
+	        LOG.error("send: url must not be null");
+	        return 1;
+	    }
+	    String iconUrl = getIconUrl();
+	    String iconEmoji = getIconEmoji();
+	    String channel = getChannel();
+	    String message = buildMessage(arguments);
+	
+	    final HttpClientWrapper clientWrapper = HttpClientWrapper.create()
+	            .setConnectionTimeout(3000)
+	            .setSocketTimeout(3000)
+	            .useSystemProxySettings();
+	
+	    HttpPost postMethod = new HttpPost(url);
+	
+	    JSONObject jsonData = new JSONObject();
+	    jsonData.put("username", getUsername());
+	    if (iconUrl != null) {
+	    	jsonData.put("icon_url", iconUrl);
+	    }
+	    if (iconEmoji != null) {
+	    	jsonData.put("icon_emoji", iconEmoji);
+	    }
+	    if (channel != null) {
+	    	jsonData.put("channel", channel);
+	    }
+	    jsonData.put("text", message);
+	    
+	    if ( jsonData.containsKey("icon_url") && jsonData.containsKey("icon_emoji") ) {
+	    	LOG.warn("Both URL and emoji specified for icon. Sending both; behavior is undefined.");
+	    }
+	
+	    LOG.debug("Prepared JSON POST data for webhook is: {}", jsonData.toJSONString());
+	    final HttpEntity entity = new StringEntity(jsonData.toJSONString(), ContentType.APPLICATION_JSON);
+	    postMethod.setEntity(entity);
+	    // Mattermost 1.1.0 does not like having charset specified alongside Content-Type
+	    postMethod.setHeader("Content-Type", "application/json");
+	
+	    String contents = null;
+	    int statusCode = -1;
+	    try {
+	        CloseableHttpResponse response = clientWrapper.getClient().execute(postMethod);
+	        statusCode = response.getStatusLine().getStatusCode();
+	        contents = EntityUtils.toString(response.getEntity());
+	        LOG.debug("send: Contents is: {}", contents);
+	    } catch (IOException e) {
+	        LOG.error("send: I/O problem with webhook post/response: {}", e);
+	        throw new RuntimeException("Problem with webhook post: "+e.getMessage());
+	    } finally {
+	        IOUtils.closeQuietly(clientWrapper);
+	    }
+	    
+	    if ("ok".equals(contents)) {
+	    	LOG.debug("Got 'ok' back from webhook, indicating success.");
+	    	statusCode = 0;
+	    } else {
+	    	LOG.info("Got a non-ok response from webhook, attempting to dissect response.");
+	    	LOG.error("Webhook returned non-OK response to notification post: {}", formatWebhookErrorResponse(statusCode, contents));
+	    	statusCode = 1;
+	    }
+	
+	    return statusCode;
+	}
+

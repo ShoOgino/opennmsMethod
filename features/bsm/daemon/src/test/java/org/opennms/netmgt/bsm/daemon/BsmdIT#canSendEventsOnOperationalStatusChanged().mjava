@@ -1,0 +1,61 @@
+    /**
+     * Verifies that the daemon generates events when the operational status
+     * of a Business Service is changed.
+     *
+     * @throws Exception
+     */
+    @Test
+    @Transactional
+    public void canSendEventsOnOperationalStatusChanged() throws Exception {
+        // Create a business service
+        BusinessServiceEntity simpleBs = createSimpleBusinessService();
+
+        // Start the daemon
+        m_bsmd.start();
+
+        // Expect a statusChanged event
+        EventBuilder ebldr = new EventBuilder(EventConstants.BUSINESS_SERVICE_OPERATIONAL_STATUS_CHANGED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_BUSINESS_SERVICE_ID, simpleBs.getId());
+        m_anticipator.anticipateEvent(ebldr.getEvent());
+
+        // Expect a serviceProblem event
+        ebldr = new EventBuilder(EventConstants.BUSINESS_SERVICE_PROBLEM_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_BUSINESS_SERVICE_ID, simpleBs.getId());
+        m_anticipator.anticipateEvent(ebldr.getEvent());
+
+        // Create the alarm
+        OnmsAlarm alarm = createAlarm();
+        m_alarmDao.save(alarm);
+
+        // Send alarm created event
+        ebldr = new EventBuilder(EventConstants.ALARM_CREATED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_ALARM_ID, alarm.getId());
+        m_bsmd.handleAlarmLifecycleEvents(ebldr.getEvent());
+
+        // Verify expectations
+        Collection<Event> stillWaitingFor = m_anticipator.waitForAnticipated(5000);
+        assertTrue("Expected events not forthcoming " + stillWaitingFor, stillWaitingFor.isEmpty());
+
+        // Expect a statusChanged event
+        ebldr = new EventBuilder(EventConstants.BUSINESS_SERVICE_OPERATIONAL_STATUS_CHANGED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_BUSINESS_SERVICE_ID, simpleBs.getId());
+        m_anticipator.anticipateEvent(ebldr.getEvent());
+
+        // Expect a serviceProblemResolved event
+        ebldr = new EventBuilder(EventConstants.BUSINESS_SERVICE_PROBLEM_RESOLVED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_BUSINESS_SERVICE_ID, simpleBs.getId());
+        m_anticipator.anticipateEvent(ebldr.getEvent());
+
+        // Clear the alarm
+        alarm.setSeverity(OnmsSeverity.CLEARED);
+
+        // Send an alarm cleared event
+        ebldr = new EventBuilder(EventConstants.ALARM_CLEARED_UEI, "test");
+        ebldr.addParam(EventConstants.PARM_ALARM_ID, alarm.getId());
+        m_bsmd.handleAlarmLifecycleEvents(ebldr.getEvent());
+
+        // Verify expectations
+        stillWaitingFor = m_anticipator.waitForAnticipated(5000);
+        assertTrue("Expected events not forthcoming " + stillWaitingFor, stillWaitingFor.isEmpty());
+    }
+
