@@ -1,0 +1,42 @@
+    public void load() {
+        graphsByNamespace.clear();
+        oppositeVertices.clear();
+        if (graphMLFile == null) {
+            LOG.warn("No graph defined");
+            return;
+        }
+        if (!graphMLFile.exists()) {
+            LOG.warn("No graph found at location " + graphMLFile.toString());
+            return;
+        }
+        try (InputStream input = new FileInputStream(graphMLFile)) {
+            final GraphML graphML = GraphMLReader.read(input);
+            validate(graphML);
+
+            for (GraphMLGraph eachGraph : graphML.getGraphs()) {
+                final GraphMLTopologyProvider topoProvider = new GraphMLTopologyProvider(eachGraph);
+                final VertexHopGraphProvider vertexHopGraphProvider = new VertexHopGraphProvider(topoProvider);
+                graphsByNamespace.put(topoProvider.getVertexNamespace(), vertexHopGraphProvider);
+                rawGraphsByNamespace.put(topoProvider.getVertexNamespace(), topoProvider);
+                preferredLayoutByNamespace.put(topoProvider.getVertexNamespace(), eachGraph.getProperty(GraphMLProperties.PREFERRED_LAYOUT));
+            }
+
+            for (GraphMLGraph eachGraph : graphML.getGraphs()) {
+                for (org.opennms.features.topology.plugins.topo.graphml.model.GraphMLEdge eachEdge : eachGraph.getEdges()) {
+                    final VertexRef sourceVertex = getVertex(eachEdge.getSource());
+                    final VertexRef targetVertex = getVertex(eachEdge.getTarget());
+                    if (!sourceVertex.getNamespace().equals(targetVertex.getNamespace())) {
+                        List<VertexRef> opposites = oppositeVertices.get(sourceVertex);
+                        if (opposites == null) {
+                            opposites = Lists.newArrayList();
+                            oppositeVertices.put(sourceVertex, opposites);
+                        }
+                        opposites.add(targetVertex);
+                    }
+                }
+            }
+        } catch (InvalidGraphException | IOException e) {
+            LOG.error(e.getMessage(), e);
+        }
+    }
+
