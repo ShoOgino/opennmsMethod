@@ -1,0 +1,60 @@
+    @Override
+    protected Void doExecute() {
+        // Apply sane lower bounds to all of the configurable options
+        intervalInSeconds = Math.max(1, intervalInSeconds);
+        numberOfNodes = Math.max(1, numberOfNodes);
+        numberOfInterfacesPerNode = Math.max(1, numberOfInterfacesPerNode);
+        numberOfGroupsPerInterface = Math.max(1, numberOfGroupsPerInterface);
+        numberOfNumericAttributesPerGroup = Math.max(0, numberOfNumericAttributesPerGroup);
+        numberOfStringAttributesPerGroup = Math.max(0, numberOfStringAttributesPerGroup);
+        reportIntervalInSeconds = Math.max(1, reportIntervalInSeconds);
+
+        // Display the effective settings and rates
+        double attributesPerSecond = (1 / (double)intervalInSeconds) * numberOfGroupsPerInterface
+                * numberOfInterfacesPerNode * numberOfNodes;
+        System.out.printf("Generating collection sets every %d seconds\n", intervalInSeconds);
+        System.out.printf("\t for %d nodes\n", numberOfNodes);
+        System.out.printf("\t with %d interfaces\n", numberOfInterfacesPerNode);
+        System.out.printf("\t with %d attribute groups\n", numberOfGroupsPerInterface);
+        System.out.printf("\t with %d numeric attributes\n", numberOfNumericAttributesPerGroup);
+        System.out.printf("\t with %d string attributes\n", numberOfStringAttributesPerGroup);
+        System.out.printf("Which will yield an effective\n");
+        System.out.printf("\t %.2f numeric attributes per second\n", numberOfNumericAttributesPerGroup * attributesPerSecond);
+        System.out.printf("\t %.2f string attributes per second\n", numberOfStringAttributesPerGroup * attributesPerSecond);
+
+        ConsoleReporter reporter = ConsoleReporter.forRegistry(metrics)
+                .convertRatesTo(TimeUnit.SECONDS)
+                .convertDurationsTo(TimeUnit.MILLISECONDS)
+                .build();
+
+        // Start the thread
+        try {
+            reporter.start(reportIntervalInSeconds, TimeUnit.SECONDS);
+
+            Thread t = new Thread(this);
+            t.setName("Metrics Stress Tool");
+            t.start();
+
+            while(true) {
+                try {
+                    Thread.sleep(reportIntervalInSeconds * 1000);
+                } catch (InterruptedException e) {
+                    Thread.interrupted();
+                    System.out.println("Stopping the collection set generator...");
+                    abort.set(true);
+                    t.interrupt();
+                    try {
+                        t.join();
+                    } catch (InterruptedException ee) {
+                        // pass
+                    }
+                    break;
+                }
+            }
+        } finally {
+            reporter.stop();
+        }
+
+        return null;
+    }
+
