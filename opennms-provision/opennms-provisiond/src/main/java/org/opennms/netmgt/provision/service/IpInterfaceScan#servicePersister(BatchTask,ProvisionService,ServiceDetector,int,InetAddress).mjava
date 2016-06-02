@@ -1,26 +1,27 @@
     /**
      * <p>servicePersister</p>
      * 
-     * TODO: Make this static
-     * 
      * @param currentPhase a {@link org.opennms.core.tasks.BatchTask} object.
      * @param serviceName a {@link java.lang.String} object.
      * @return a {@link org.opennms.core.tasks.Callback} object.
      */
-    public Callback<Boolean> servicePersister(final BatchTask currentPhase, final ServiceDetector detector) {
+    public static Callback<Boolean> servicePersister(final BatchTask currentPhase, final ProvisionService service, final ServiceDetector detector, final int nodeId, final InetAddress address) {
         return new Callback<Boolean>() {
             @Override
             public void accept(final Boolean serviceDetected) {
-                final String hostAddress = str(getAddress());
-				LOG.info("Attempted to detect service {} on address {}: {}", detector.getServiceName(), hostAddress, serviceDetected);
+                final String hostAddress = str(address);
+                LOG.info("Attempted to detect service {} on address {}: {}", detector.getServiceName(), hostAddress, serviceDetected);
                 if (serviceDetected) {
 
+                    /*
+                     * TODO: Convert this sequence into a chain of CompletableFutures 
+                     */
                     currentPhase.getBuilder().addSequence(
                             new RunInBatch() {
                                 @Override
                                 public void run(final BatchTask batch) {
                                     if ("SNMP".equals(detector.getServiceName())) {
-                                        setupAgentInfo(currentPhase);
+                                        service.setIsPrimaryFlag(nodeId, hostAddress);
                                     }
                                 }
                             },
@@ -28,23 +29,30 @@
                                 @Override
                                 public void run(BatchTask batch) {
                                     if (detector instanceof PersistsAgentInfo) {
-                                        ((PersistsAgentInfo)detector).persistAgentInfo(getNodeId(), getAddress());
+                                        ((PersistsAgentInfo)detector).persistAgentInfo(nodeId, address);
                                     }
                                 }
                             },
                             new RunInBatch() {
                                 @Override
                                 public void run(final BatchTask batch) {
-                                    getProvisionService().addMonitoredService(getNodeId(), hostAddress, detector.getServiceName());
+                                    service.addMonitoredService(nodeId, hostAddress, detector.getServiceName());
+                                }
+                            },
+                            new RunInBatch() {
+                                @Override
+                                public void run(final BatchTask batch) {
+                                    // NMS-3906
+                                    service.updateMonitoredServiceState(nodeId, hostAddress, detector.getServiceName());
                                 }
                             });
                 }
-                getProvisionService().updateMonitoredServiceState(getNodeId(), hostAddress, detector.getServiceName()); // NMS-3906
             }
 
             @Override
-            public void handleException(final Throwable t) {
-                LOG.info("Exception occurred while trying to detect service {} on address {}", detector.getServiceName(), str(getAddress()), t);
+            public Boolean apply(final Throwable t) {
+                LOG.info("Exception occurred while trying to detect service {} on address {}", detector.getServiceName(), str(address), t);
+                return false;
             }
         };
     }
