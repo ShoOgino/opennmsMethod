@@ -1,0 +1,56 @@
+    public CompletableFuture<SnmpResponseDTO> walk(SnmpRequestDTO request, SnmpWalkRequestDTO walk) {
+        final List<SnmpResult> results = new ArrayList<>();
+        final CompletableFuture<SnmpResponseDTO> future = new CompletableFuture<SnmpResponseDTO>();
+        
+        CollectionTracker tracker;
+        if (walk.isSingleInstance()) {
+            if (walk.getOids().size() != 1) {
+                future.completeExceptionally(new IllegalArgumentException("Single instance requests must have a single OID."));
+                return future;
+            }
+            final SnmpObjId oid = walk.getOids().get(0);
+            int[] ids = oid.getIds();
+            if (ids.length < 1) {
+                future.completeExceptionally(new IllegalArgumentException("OID oups."));
+                return future;
+            }
+            int[] baseIds = new int[ids.length - 1];
+            for (int i = 0; i < ids.length - 1; i++) {
+                baseIds[i] = ids[i];
+            }
+            SnmpObjId baseOid = new SnmpObjId(baseIds, false);
+            tracker = new SingleInstanceTracker(baseOid, oid.getInstance(baseOid));
+        } else {
+            final Collection<Collectable> columnTrackers = walk.getOids().stream()
+                    .map(oid -> SnmpObjId.get(oid))
+                    .map(objId -> new ColumnTracker(objId))
+                    .collect(Collectors.toList());
+            tracker = new AggregateTracker(columnTrackers) {
+                @Override
+                protected void storeResult(SnmpResult res) {
+                    results.add(res);
+                }
+            };
+        }
+        if (walk.getMaxRepetitions() != null) {
+            tracker.setMaxRepetitions(walk.getMaxRepetitions());
+        }
+
+        final SnmpWalker walker = SnmpUtils.createWalker(request.getAgent(), request.getDescription(), tracker);
+        walker.setCallback(new SnmpWalkCallback() {
+            @Override
+            public void complete(SnmpWalker tracker, Throwable t) {
+                if (t != null) {
+                    future.completeExceptionally(t);
+                } else {
+                    final SnmpResponseDTO response = new SnmpResponseDTO();
+                    response.setCorrelationId(walk.getCorrelationId());
+                    response.setResults(results);
+                    future.complete(response);
+                }
+            }
+        });
+        walker.start();
+        return future;
+    }
+
