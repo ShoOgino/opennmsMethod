@@ -1,5 +1,19 @@
     @Override
     public void submitToExecutor(String executorPreference, Runnable workToBeDone, AbstractTask owningTask) {
-        getCompletionService(executorPreference).submit(workToBeDone, taskCompleter(owningTask));
+        CompletableFuture
+            // Run the work on the preferred executor
+            .runAsync(workToBeDone, getExecutor(executorPreference))
+            // Log any uncaught exceptions from the task execution
+            .exceptionally(e -> {
+                LOG.warn("Unexpected exception during task execution: " + e.getMessage(), e);
+                return null;
+            })
+            // Then run the completer on the actor executor
+            .thenRunAsync(taskCompleter(owningTask), m_actorExecutor)
+            // Log any uncaught exceptions from the task completer
+            .exceptionally(e -> {
+                LOG.warn("Unexpected exception during task completion: " + e.getMessage(), e);
+                return null;
+            });
     }
 
