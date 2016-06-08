@@ -1,0 +1,60 @@
+    @Test
+    public void canReceiveTraps() throws Exception {
+        Date startOfTest = new Date();
+
+        // Install the handler on the OpenNMS system (this should probably be installed by default)
+        final InetSocketAddress sshAddr = minionSystem.getServiceAddress(ContainerAlias.OPENNMS, 8101);
+        try (
+            final SshClient sshClient = new SshClient(sshAddr, "admin", "admin");
+        ) {
+            PrintStream pipe = sshClient.openShell();
+            // Point the syslog handler at the local ActiveMQ broker
+            pipe.println("config:edit org.opennms.netmgt.syslog.handler.default");
+            pipe.println("config:propset brokerUri tcp://127.0.0.1:61616");
+            pipe.println("config:update");
+            // Point the trap handler at the local ActiveMQ broker
+            pipe.println("config:edit org.opennms.netmgt.trapd.handler.default");
+            pipe.println("config:propset brokerUri tcp://127.0.0.1:61616");
+            pipe.println("config:update");
+            // Install the syslog and trap handler features
+            pipe.println("features:install opennms-syslogd-handler-default opennms-trapd-handler-default");
+            pipe.println("logout");
+            try {
+                await().atMost(2, MINUTES).until(sshClient.isShellClosedCallable());
+            } finally {
+                LOG.info("Karaf output:\n{}", sshClient.getStdout());
+            }
+        }
+
+        // Send a trap to the Minion listener
+        final InetSocketAddress trapAddr = minionSystem.getServiceAddress(ContainerAlias.MINION, 162, "udp");
+
+        for (int i = 0; i < 3; i++) {
+            LOG.info("Sending trap");
+            try {
+                SnmpTrapBuilder pdu = SnmpUtils.getV2TrapBuilder();
+                pdu.addVarBind(SnmpObjId.get(".1.3.6.1.2.1.1.3.0"), SnmpUtils.getValueFactory().getTimeTicks(0));
+                // warmStart
+                pdu.addVarBind(SnmpObjId.get(".1.3.6.1.6.3.1.1.4.1.0"), SnmpUtils.getValueFactory().getObjectId(SnmpObjId.get(".1.3.6.1.6.3.1.1.5.2")));
+                pdu.addVarBind(SnmpObjId.get(".1.3.6.1.6.3.1.1.4.3.0"), SnmpUtils.getValueFactory().getObjectId(SnmpObjId.get(".1.3.6.1.4.1.5813")));
+                pdu.send(InetAddressUtils.str(trapAddr.getAddress()), trapAddr.getPort(), "public");
+            } catch (Throwable e) {
+                LOG.error(e.getMessage(), e);
+            }
+            LOG.info("Trap has been sent");
+        }
+
+        // Connect to the postgresql container
+        InetSocketAddress pgsql = minionSystem.getServiceAddress(ContainerAlias.POSTGRES, 5432);
+        HibernateDaoFactory daoFactory = new HibernateDaoFactory(pgsql);
+        EventDao eventDao = daoFactory.getDao(EventDaoHibernate.class);
+
+        // Parsing the message correctly relies on the customized syslogd-configuration.xml that is part of the OpenNMS image
+        Criteria criteria = new CriteriaBuilder(OnmsEvent.class)
+                .eq("eventUei", "uei.opennms.org/generic/traps/SNMP_Warm_Start")
+                .ge("eventTime", startOfTest)
+                .toCriteria();
+
+        await().atMost(1, MINUTES).pollInterval(5, SECONDS).until(DaoUtils.countMatchingCallable(eventDao, criteria), equalTo(3));
+    }
+
