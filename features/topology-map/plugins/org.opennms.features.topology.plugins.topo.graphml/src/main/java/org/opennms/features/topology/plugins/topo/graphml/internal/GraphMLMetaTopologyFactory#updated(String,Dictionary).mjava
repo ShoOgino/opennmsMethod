@@ -30,11 +30,24 @@
 					.collect(Collectors.toSet());
 
 			m_iconRepositories.put(pid, m_bundleContext.registerService(IconRepository.class, new GraphMLIconRepository(iconKeys), new Hashtable<>()));
+			m_vertexStatusProviders.putIfAbsent(pid, Lists.newArrayList());
 
 			metaTopologyProvider.getGraphProviders().forEach(it -> {
-				GraphMLSearchProvider searchProvider = new GraphMLSearchProvider(metaTopologyProvider.getRawTopologyProvider(it.getVertexNamespace()));
+				GraphMLTopologyProvider rawTopologyProvider = metaTopologyProvider.getRawTopologyProvider(it.getVertexNamespace());
+
+				GraphMLSearchProvider searchProvider = new GraphMLSearchProvider(rawTopologyProvider);
 				ServiceRegistration<SearchProvider> searchProviderServiceRegistration = m_bundleContext.registerService(SearchProvider.class, searchProvider, new Hashtable<>());
 				m_searchProviders.get(pid).add(searchProviderServiceRegistration);
+
+				// Only add status provider if explicitly set in graphml document
+				if (rawTopologyProvider.requiresStatusProvider()) {
+					GraphMLVertexStatusProvider statusProvider = new GraphMLVertexStatusProvider(
+							rawTopologyProvider.getVertexNamespace(),
+							(nodeIds) -> alarmDao.getNodeAlarmSummariesIncludeAcknowledgedOnes(nodeIds));
+					ServiceRegistration<StatusProvider> statusProviderRegistration = m_bundleContext.registerService(StatusProvider.class, statusProvider, new Hashtable<>());
+					m_vertexStatusProviders.get(pid).add(statusProviderRegistration);
+				}
+
 			});
 		} else {
 			// TODO we set the new location, but a reload is never triggered
