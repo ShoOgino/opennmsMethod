@@ -1,0 +1,57 @@
+    @Test
+    public void canReceiveTraps() throws Exception {
+        Date startOfTest = new Date();
+
+        // Install the handler on the OpenNMS system (this should probably be installed by default)
+        final InetSocketAddress sshAddr = minionSystem.getServiceAddress(ContainerAlias.OPENNMS, 8101);
+        try (
+            final SshClient sshClient = new SshClient(sshAddr, "admin", "admin");
+        ) {
+            PrintStream pipe = sshClient.openShell();
+            // Point the syslog handler at the local ActiveMQ broker
+            pipe.println("config:edit org.opennms.netmgt.syslog.handler.default");
+            pipe.println("config:propset brokerUri tcp://127.0.0.1:61616");
+            pipe.println("config:update");
+            // Point the trap handler at the local ActiveMQ broker
+            pipe.println("config:edit org.opennms.netmgt.trapd.handler.default");
+            pipe.println("config:propset brokerUri tcp://127.0.0.1:61616");
+            pipe.println("config:update");
+            // Install the syslog and trap handler features
+            pipe.println("features:install opennms-syslogd-handler-default opennms-trapd-handler-default");
+            pipe.println("features:list -i");
+            pipe.println("list");
+            pipe.println("logout");
+            try {
+                await().atMost(2, MINUTES).until(sshClient.isShellClosedCallable());
+            } finally {
+                LOG.info("Karaf output:\n{}", sshClient.getStdout());
+            }
+        }
+
+        final InetSocketAddress trapAddr = minionSystem.getServiceAddress(ContainerAlias.MINION, 162, "udp");
+
+        // Connect to the postgresql container
+        InetSocketAddress pgsql = minionSystem.getServiceAddress(ContainerAlias.POSTGRES, 5432);
+        HibernateDaoFactory daoFactory = new HibernateDaoFactory(pgsql);
+        EventDao eventDao = daoFactory.getDao(EventDaoHibernate.class);
+
+        // Parsing the message correctly relies on the customized syslogd-configuration.xml that is part of the OpenNMS image
+        Criteria criteria = new CriteriaBuilder(OnmsEvent.class)
+                .eq("eventUei", "uei.opennms.org/generic/traps/SNMP_Warm_Start")
+                .ge("eventTime", startOfTest)
+                .toCriteria();
+
+        // Send traps to the Minion listener until one makes it through
+        await().atMost(5, MINUTES).pollInterval(30, SECONDS).until(new Callable<Boolean>() {
+            @Override public Boolean call() throws Exception {
+                sendTrap(trapAddr);
+                try {
+                    await().atMost(30, SECONDS).pollInterval(5, SECONDS).until(DaoUtils.countMatchingCallable(eventDao, criteria), greaterThanOrEqualTo(1));
+                } catch (final Exception e) {
+                    return false;
+                }
+                return true;
+            }
+        });
+    }
+
