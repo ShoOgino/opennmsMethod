@@ -1,0 +1,103 @@
+    public BusinessServiceTreeTable(BusinessServiceManager businessServiceManager) {
+        this.businessServiceManager = Objects.requireNonNull(businessServiceManager);
+
+        setSizeFull();
+        setContainerDataSource(new BusinessServiceContainer());
+
+        // Add the "LINKS" columns
+        addGeneratedColumn("links", new Table.ColumnGenerator() {
+            private static final long serialVersionUID = 7113848887128656685L;
+
+            @Override
+            public Object generateCell(Table source, Object itemId, Object columnId) {
+                final HorizontalLayout layout = new HorizontalLayout();
+                final BusinessServiceStateMachine stateMachine = businessServiceManager.getStateMachine();
+                final BusinessService businessService = getItem(itemId).getBean().getBusinessService();
+                final Status status = stateMachine.getOperationalStatus(businessService);
+                if (status != null) {
+                    // Build the query string
+                    final List<BasicNameValuePair> urlParms = Lists.newArrayList(
+                            new BasicNameValuePair("focus-vertices", businessService.getId().toString()),
+                            new BasicNameValuePair("szl", "1"),
+                            new BasicNameValuePair("layout", "Hierarchy Layout"),
+                            new BasicNameValuePair("provider", "Business Services")
+                    );
+                    final String queryString = URLEncodedUtils.format(urlParms, Charset.forName("UTF-8"));
+
+                    // Generate the link
+                    final Link link = new Link("View in Topology UI", new ExternalResource(String.format("/opennms/topology?%s", queryString)));
+                    link.setIcon(FontAwesome.EXTERNAL_LINK_SQUARE);
+                    // This app is typically access in an iframe, so we open the URL in a new window/tab
+                    link.setTargetName("_blank");
+                    layout.addComponent(link);
+                    layout.setComponentAlignment(link, Alignment.MIDDLE_CENTER);
+                } else {
+                    Label label = new Label("N/A");
+                    label.setDescription("Try reloading the daemon and refreshing the table.");
+                    label.setWidth(null);
+                    layout.addComponent(label);
+                }
+                return layout;
+            }
+        });
+
+        // add edit and delete buttons
+        addGeneratedColumn("edit / delete", new Table.ColumnGenerator() {
+            private static final long serialVersionUID = 7113848887128656685L;
+
+            @Override
+            public Object generateCell(Table source, Object itemId, Object columnId) {
+                HorizontalLayout layout = new HorizontalLayout();
+                layout.setSpacing(true);
+
+                Button editButton = new Button("Edit", FontAwesome.PENCIL_SQUARE_O);
+                editButton.setId("editButton-" + getItem(itemId).getBean().getName());
+
+                editButton.addClickListener(UIHelper.getCurrent(TransactionAwareUI.class).wrapInTransactionProxy((Button.ClickListener) event -> {
+                    final Long businessServiceId = getItem(itemId).getBean().getBusinessService().getId();
+                    BusinessService businessService = businessServiceManager.getBusinessServiceById(businessServiceId);
+                    final BusinessServiceEditWindow window = new BusinessServiceEditWindow(businessService, businessServiceManager);
+                    window.addCloseListener(e -> refresh());
+
+                    getUI().addWindow(window);
+                }));
+                layout.addComponent(editButton);
+
+                Button deleteButton = new Button("Delete", FontAwesome.TRASH_O);
+                deleteButton.setId("deleteButton-" + getItem(itemId).getBean().getName());
+
+                deleteButton.addClickListener((Button.ClickListener)event -> {
+                    final Long businessServiceId = getItem(itemId).getBean().getBusinessService().getId();
+                    BusinessService businessService = businessServiceManager.getBusinessServiceById(businessServiceId);
+                    if (businessService.getParentServices().isEmpty() && businessService.getChildEdges().isEmpty()) {
+                        UIHelper.getCurrent(TransactionAwareUI.class).runInTransaction(() -> {
+                            businessServiceManager.getBusinessServiceById(businessServiceId).delete();
+                            refresh();
+                        });
+                    } else {
+                        new org.opennms.netmgt.vaadin.core.ConfirmationDialog()
+                                .withOkAction((org.opennms.netmgt.vaadin.core.ConfirmationDialog.Action) UIHelper.getCurrent(TransactionAwareUI.class).wrapInTransactionProxy(new org.opennms.netmgt.vaadin.core.ConfirmationDialog.Action() {
+                                    @Override
+                                    public void execute(org.opennms.netmgt.vaadin.core.ConfirmationDialog window) {
+                                        businessServiceManager.getBusinessServiceById(businessServiceId).delete();
+                                        refresh();
+                                    }
+                                }))
+                                .withOkLabel("Delete anyway")
+                                .withCancelLabel("Cancel")
+                                .withCaption("Warning")
+                                .withDescription("This entry is referencing or is referenced by other Business Services! Do you really want to delete this entry?")
+                                .open();
+                    }
+                });
+                layout.addComponent(deleteButton);
+
+                return layout;
+            }
+        });
+
+        setColumnExpandRatio("name", 5);
+        setColumnExpandRatio("links", 1);
+        setColumnExpandRatio("edit / delete", 1);
+    }
+
