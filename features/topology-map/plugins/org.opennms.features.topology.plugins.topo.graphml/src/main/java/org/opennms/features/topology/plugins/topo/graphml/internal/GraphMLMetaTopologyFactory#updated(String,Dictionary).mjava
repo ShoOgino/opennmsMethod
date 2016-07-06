@@ -2,7 +2,7 @@
 	public void updated(String pid, @SuppressWarnings("rawtypes") Dictionary properties) throws ConfigurationException {
 		LOG.debug("updated(String, Dictionary) invoked");
 		String location = (String)properties.get(TOPOLOGY_LOCATION);
-		if (!m_providers.containsKey(pid)) {
+		if (!m_serviceRegistration.containsKey(pid)) {
 			LOG.debug("Service with pid '{}' is new. Register {}", pid, GraphMLMetaTopologyProvider.class.getSimpleName());
 			final Dictionary<String,Object> metaData = new Hashtable<>();
 			metaData.put(Constants.SERVICE_PID, pid);
@@ -11,42 +11,43 @@
 			}
 
 			// Expose the MetaTopologyProvider
-			final GraphMLMetaTopologyProvider metaTopologyProvider = new GraphMLMetaTopologyProvider();
+			final GraphMLMetaTopologyProvider metaTopologyProvider = new GraphMLMetaTopologyProvider(m_serviceAccessor);
 			metaTopologyProvider.setTopologyLocation(location);
 			metaTopologyProvider.load();
-			ServiceRegistration<MetaTopologyProvider> registration = m_bundleContext.registerService(MetaTopologyProvider.class, metaTopologyProvider, metaData);
+			registerService(pid, MetaTopologyProvider.class, metaTopologyProvider, metaData);
 
-			m_registrations.put(pid, registration);
-			m_providers.put(pid, metaTopologyProvider);
-
-			// Create and register a SearchProvider for each GraphMLTopologyProvider
-			m_searchProviders.putIfAbsent(pid, Lists.newArrayList());
-
-			Set<String> iconKeys = metaTopologyProvider.getGraphProviders().stream()
+			// Create and register additional services
+			final Set<String> iconKeys = metaTopologyProvider.getGraphProviders().stream()
 					.map(eachProvider -> eachProvider.getVertexNamespace())
 					.flatMap(eachNamespace -> metaTopologyProvider.getRawTopologyProvider(eachNamespace).getVertices().stream())
 					.map(eachVertex -> eachVertex.getIconKey())
 					.filter(eachIconKey -> eachIconKey != null)
 					.collect(Collectors.toSet());
+			registerService(pid, IconRepository.class, new GraphMLIconRepository(iconKeys));
 
-			m_iconRepositories.put(pid, m_bundleContext.registerService(IconRepository.class, new GraphMLIconRepository(iconKeys), new Hashtable<>()));
-
+			// Create a OSGi aware script engine manager
+			final ScriptEngineManager scriptEngineManager = new OSGiScriptEngineManager(m_bundleContext);
 			metaTopologyProvider.getGraphProviders().forEach(it -> {
-				GraphMLSearchProvider searchProvider = new GraphMLSearchProvider(metaTopologyProvider.getRawTopologyProvider(it.getVertexNamespace()));
-				ServiceRegistration<SearchProvider> searchProviderServiceRegistration = m_bundleContext.registerService(SearchProvider.class, searchProvider, new Hashtable<>());
-				m_searchProviders.get(pid).add(searchProviderServiceRegistration);
+				// Find Topology Provider
+				final GraphMLTopologyProvider rawTopologyProvider = metaTopologyProvider.getRawTopologyProvider(it.getVertexNamespace());
+
+				// EdgeStatusProvider
+				registerService(pid, EdgeStatusProvider.class, new GraphMLEdgeStatusProvider(rawTopologyProvider, scriptEngineManager, m_serviceAccessor));
+
+				// SearchProvider
+				registerService(pid, SearchProvider.class, new GraphMLSearchProvider(rawTopologyProvider));
+
+				// Vertex Status Provider
+				// Only add status provider if explicitly set in GraphML document
+				if (rawTopologyProvider.requiresStatusProvider()) {
+					GraphMLVertexStatusProvider statusProvider = new GraphMLVertexStatusProvider(
+							rawTopologyProvider.getVertexNamespace(),
+							(nodeIds) -> m_serviceAccessor.getAlarmDao().getNodeAlarmSummariesIncludeAcknowledgedOnes(nodeIds));
+					registerService(pid, StatusProvider.class, statusProvider);
+				}
 			});
 		} else {
-			// TODO we set the new location, but a reload is never triggered
-			LOG.debug("Service with pid '{}' updated. Updating properties.", pid);
-			m_providers.get(pid).setTopologyLocation(location);
-			ServiceRegistration<MetaTopologyProvider> registration = m_registrations.get(pid);
-			Dictionary<String,Object> metaData = new Hashtable<>();
-			metaData.put(Constants.SERVICE_PID, pid);
-			if (properties.get(LABEL) != null) {
-				metaData.put(LABEL, properties.get(LABEL));
-			}
-			registration.setProperties(metaData);
+			LOG.warn("Service with pid '{}' updated. Updating is not supported. Ignoring...");
 		}
 	}
 

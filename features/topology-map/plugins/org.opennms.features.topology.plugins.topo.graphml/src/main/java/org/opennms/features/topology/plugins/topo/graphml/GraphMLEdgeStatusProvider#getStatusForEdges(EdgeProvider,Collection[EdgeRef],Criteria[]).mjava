@@ -1,0 +1,30 @@
+    @Override
+    public Map<EdgeRef, Status> getStatusForEdges(EdgeProvider edgeProvider, Collection<EdgeRef> edges, Criteria[] criteria) {
+        final List<StatusScript> scripts = Lists.newArrayList();
+        try (final DirectoryStream<Path> stream = Files.newDirectoryStream(getScriptPath())) {
+            for (final Path path : stream) {
+                final String extension = FilenameUtils.getExtension(path.toString());
+                final ScriptEngine scriptEngine = this.scriptEngineManager.getEngineByExtension(extension);
+                if (scriptEngine == null) {
+                    LOG.warn("No script engine found for extension '{}'", extension);
+                    continue;
+                }
+                LOG.debug("Found script: path={}, extension={}, engine={}", path, extension, scriptEngine);
+                final String source = Files.lines(path, Charset.defaultCharset()).collect(Collectors.joining("\n"));
+                scripts.add(new StatusScript(scriptEngine, source));
+            }
+        } catch (final IOException e) {
+            LOG.error("Failed to walk template directory: {}", getScriptPath());
+            return Collections.emptyMap();
+        }
+
+        return serviceAccessor.getTransactionOperations().execute(transactionStatus ->
+            edges.stream()
+                .filter(eachEdge -> eachEdge instanceof GraphMLEdge)
+                .map(edge -> (GraphMLEdge) edge)
+                .map(edge -> new HashMap.SimpleEntry<>(edge, computeEdgeStatus(scripts, edge)))
+                .filter(e -> e.getValue() != null)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))
+        );
+    }
+
