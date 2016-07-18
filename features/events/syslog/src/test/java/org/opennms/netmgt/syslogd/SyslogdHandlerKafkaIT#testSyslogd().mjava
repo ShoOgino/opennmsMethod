@@ -1,5 +1,27 @@
 	@Test
 	public void testSyslogd() throws Exception {
-		// TODO: Perform integration testing
+
+		SimpleRegistry registry = new SimpleRegistry();
+		CamelContext syslogd = new DefaultCamelContext(registry);
+		syslogd.addComponent("kafka", new KafkaComponent());
+		syslogd.addRoutes(new RouteBuilder() {
+			@Override
+			public void configure() throws Exception {
+
+				from("seda:handleMessage").convertBodyTo(SyslogConnection.class).process(new Processor() {
+					@Override
+					public void process(Exchange exchange) throws Exception {
+						SyslogConnection connection = new SyslogConnection();
+						connection.setSourceAddress(InetAddress.getByName("www.opennms.com"));
+						exchange.getIn().setBody(connection);
+						exchange.getIn().setHeader(KafkaConstants.PARTITION_KEY,simple("${body.hostname}"));
+					}
+				}).log("address:${body.sourceAddress}").log("port: ${body.port}").transform(simple("${body.byteBuffer}")).convertBodyTo(String.class).log(body().toString()).to("kafka:localhost:" + kafkaPort + "?topic=syslog;serializerClass=kafka.serializer.StringEncoder");
+
+			}
+		});
+
+		syslogd.start();
+
 	}
 
