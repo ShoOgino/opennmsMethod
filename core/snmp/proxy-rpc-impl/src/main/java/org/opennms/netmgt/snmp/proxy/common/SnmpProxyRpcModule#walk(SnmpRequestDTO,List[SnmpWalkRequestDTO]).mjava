@@ -1,0 +1,53 @@
+    private CompletableFuture<Collection<SnmpResponseDTO>> walk(SnmpRequestDTO request, List<SnmpWalkRequestDTO> walks) {
+        final CompletableFuture<Collection<SnmpResponseDTO>> future = new CompletableFuture<>();
+        final Map<String, SnmpResponseDTO> responsesByCorrelationId = new LinkedHashMap<>();
+
+        final List<Collectable> trackers = new ArrayList<>(walks.size());
+        for (final SnmpWalkRequestDTO walk : walks) {
+            CollectionTracker tracker;
+            if (walk.getInstance() != null) {
+                if (walk.getOids().size() != 1) {
+                    future.completeExceptionally(new IllegalArgumentException("Single instance requests must have a single OID."));
+                    return future;
+                }
+                final SnmpObjId oid = walk.getOids().get(0);
+                tracker = new SingleInstanceTracker(oid, new SnmpInstId(walk.getInstance())) {
+                    @Override
+                    protected void storeResult(SnmpResult res) {
+                        addResult(res, walk.getCorrelationId(), responsesByCorrelationId);
+                    }
+                };
+            } else {
+                final Collection<Collectable> columnTrackers = walk.getOids().stream()
+                        .map(oid -> SnmpObjId.get(oid))
+                        .map(objId -> new ColumnTracker(objId))
+                        .collect(Collectors.toList());
+                tracker = new AggregateTracker(columnTrackers) {
+                    @Override
+                    protected void storeResult(SnmpResult res) {
+                        addResult(res, walk.getCorrelationId(), responsesByCorrelationId);
+                    }
+                };
+            }
+            if (walk.getMaxRepetitions() != null) {
+                tracker.setMaxRepetitions(walk.getMaxRepetitions());
+            }
+            trackers.add(tracker);
+        }
+
+        AggregateTracker aggregate = new AggregateTracker(trackers);
+        final SnmpWalker walker = SnmpUtils.createWalker(request.getAgent(), request.getDescription(), aggregate);
+        walker.setCallback(new SnmpWalkCallback() {
+            @Override
+            public void complete(SnmpWalker tracker, Throwable t) {
+                if (t != null) {
+                    future.completeExceptionally(t);
+                } else {
+                    future.complete(responsesByCorrelationId.values());
+                }
+            }
+        });
+        walker.start();
+        return future;
+    }
+
