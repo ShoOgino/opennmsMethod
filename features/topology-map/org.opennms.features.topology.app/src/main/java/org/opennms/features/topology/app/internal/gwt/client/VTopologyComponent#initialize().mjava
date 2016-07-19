@@ -5,10 +5,8 @@
 		serviceRegistry.register(vertexClickHandler(), new HashMap<String, String>(){{ put("handlerType", "vertexClick"); }}, Handler.class);
 		serviceRegistry.register(vertexDblClickHandler(), new HashMap<String, String>(){{ put("handlerType", "vertexDblClick"); }}, Handler.class);
 		serviceRegistry.register(vertexContextMenuHandler(), new HashMap<String, String>(){{ put("handlerType", "vertexContextMenu"); }}, Handler.class);
-		serviceRegistry.register(vertexTooltipHandler(), new HashMap<String, String>(){{ put("handlerType", "vertexTooltip"); }}, Handler.class);
-		
+
 		serviceRegistry.register(edgeContextHandler(), new HashMap<String, String>(){{ put("handlerType", "edgeContextMenu"); }}, Handler.class);
-		serviceRegistry.register(edgeTooltipHandler(), new HashMap<String, String>(){{ put("handlerType", "edgeTooltip"); }}, Handler.class);
 		serviceRegistry.register(edgeClickHandler(), new HashMap<String, String>(){{ put("handlerType", "edgeClick"); }}, Handler.class);
 		
 		
@@ -18,11 +16,12 @@
 		m_componentHolder.add(m_topologyView.asWidget());
 		
 		m_svgDragHandlerManager = new DragHandlerManager();
-		m_svgDragHandlerManager.addDragBehaviorHandler(PanHandler.DRAG_BEHAVIOR_KEY, new PanHandler(this, serviceRegistry));
+		m_svgDragHandlerManager.addDragBehaviorHandler(PanHandler.DRAG_BEHAVIOR_KEY, new PanHandler(this));
 		m_svgDragHandlerManager.addDragBehaviorHandler(MarqueeSelectHandler.DRAG_BEHAVIOR_KEY, new MarqueeSelectHandler(this, m_topologyView));
 		m_svgDragHandlerManager.setCurrentDragHandler(PanHandler.DRAG_BEHAVIOR_KEY);
-		D3 svgElement = D3.d3().select(m_topologyView.getSVGElement());
         setupDragBehavior(m_topologyView.getSVGElement(), m_svgDragHandlerManager);
+
+		D3 svgElement = D3.d3().select(m_topologyView.getSVGElement());
 //        svgElement.on("dblclick", new Handler<Void>() {
 //
 //            @Override
@@ -30,9 +29,44 @@
 //                JsArrayInteger pos = D3.getMouse(m_topologyView.getSVGElement());
 //                onBackgroundDoubleClick(m_topologyView.getPoint(pos.get(0), pos.get(1)));
 //            }
-//        
+//
 //		})
-		svgElement.on("mousewheel", new Handler<Void>() {
+		svgElement.on(D3Events.CONTEXT_MENU.event(), new Handler<Void>() {
+			@Override
+			public void call(Void aVoid, int index) {
+				NativeEvent event = D3.getEvent();
+				if(D3.eventDefaultPrevented()) {
+					return;
+				}
+				if (!isMarqueeSelected()) {
+					EventTarget target = event.getEventTarget();
+					if (target.equals(m_topologyView.getSVGElement())) {
+						onContextMenu(null, event.getClientX(), event.getClientY(), "map");
+					}
+				}
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		});
+
+		svgElement.on(D3Events.CLICK.event(), new Handler<Void>() {
+			@Override
+			public void call(Void aVoid, int index) {
+				NativeEvent event = D3.getEvent();
+				if (D3.eventDefaultPrevented()) {
+					return;
+				}
+				if (!isMarqueeSelected()
+					&& event.getButton() == NativeEvent.BUTTON_LEFT
+						&& event.getEventTarget().equals(m_topologyView.getSVGElement())) {
+					onBackgroundClick();
+				}
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		});
+
+		svgElement.on(D3Events.MOUSE_WHEEL.event(), new Handler<Void>() {
 
             @Override
             public void call(Void t, int index) {
@@ -64,22 +98,6 @@
 		
 		setTopologyViewRenderer(m_graphDrawer);
 
-        m_windowResizeRegistration = Window.addResizeHandler(new ResizeHandler() {
-			// Each size change will invoke a onResize(ResizeEvent).
-			// This has a huge impact on performance.
-			// Therefore the call is wrapped by a timer with a certain delay
-			// to wait before making the request.
-			final Timer resizeTimer = new Timer() {
-				@Override
-				public void run() {
-					sendPhysicalDimensions();
-				}
-			};
-
-            @Override
-            public void onResize(ResizeEvent resizeEvent) {
-				resizeTimer.schedule(250);
-            }
-        });
+		m_updatePhysicalDimensionTimer.scheduleRepeating(UPDATE_PHYSICAL_DIMENSIONS_TIMER_PERIOD_MILLIS);
     }
 

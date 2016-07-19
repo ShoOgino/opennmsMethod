@@ -1,0 +1,107 @@
+        /**
+         * The main worker of the fiber. This method is executed by the encapsulated
+         * thread to read events from the execution queue and to execute any
+         * configured scripts, allowing these scripts to react to the received
+         * event. If the thread is interrupted then the method will return as quickly as
+         * possible.
+         */
+        @Override
+        public void run() {
+
+            // check for reload event
+            if (isReloadConfigEvent(m_event)) {
+                try {
+                    ScriptdConfigFactory.reload();
+                    m_config = ScriptdConfigFactory.getInstance();
+                    loadConfig();
+
+                    ReloadScript[] reloadScripts = m_config.getReloadScripts();
+
+                    for (ReloadScript script : reloadScripts) {
+                        try {
+                            m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                        } catch (BSFException e) {
+                            LOG.error("Reload script[{}] failed.", script, e);
+                        }
+                    }
+
+                    LOG.debug("Scriptd configuration reloaded");
+                } catch (Throwable e) {
+                    LOG.error("Unable to reload Scriptd configuration: ", e);
+                }
+            }
+
+            Script[] attachedScripts = m_event.getScript();
+
+            Set<EventScript> mapScripts = null;
+
+            try {
+                mapScripts = m_eventScriptMap.get(m_event.getUei());
+            } catch (Throwable e) {
+                LOG.warn("Unexpected exception: " + e.getMessage(), e);
+            }
+
+            if (attachedScripts.length > 0 || mapScripts != null || m_eventScripts.size() > 0) {
+                LOG.debug("Executing scripts for: {}", m_event.getUei());
+
+                m_scriptManager.registerBean("event", m_event);
+
+                // And the event's node to the script context
+                OnmsNode node = null;
+
+                if (m_event.hasNodeid()) {
+                    Long nodeLong = m_event.getNodeid();
+                    Integer nodeInt = Integer.valueOf(nodeLong.intValue());
+                    // NMS-8294: Initialize the entire node hierarchy so that
+                    // BSF scripts can execute outside of a transaction
+                    node = m_nodeDao.getHierarchy(nodeInt);
+                    m_scriptManager.registerBean("node", node);
+                }
+
+                // execute the scripts attached to the event
+
+                LOG.debug("Executing attached scripts");
+                if (attachedScripts.length > 0) {
+                    for (Script script : attachedScripts) {
+                        try {
+                            m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                        } catch (BSFException e) {
+                            LOG.error("Attached script [{}] execution failed", script, e);
+                        }
+                    }
+                }
+
+                // execute the scripts mapped to the UEI
+
+                LOG.debug("Executing mapped scripts");
+                if (mapScripts != null) {
+                    for (EventScript script : mapScripts) {
+                        try {
+                            m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                        } catch (BSFException e) {
+                            LOG.error("UEI-specific event handler script execution failed: {}", m_event.getUei(), e);
+                        }
+                    }
+                }
+
+                // execute the scripts that are not mapped to any UEI
+
+                LOG.debug("Executing global scripts");
+                for (EventScript script : m_eventScripts) {
+                    try {
+                        m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                    } catch (BSFException e) {
+                        LOG.error("Non-UEI-specific event handler script execution failed : " + script, e);
+                    }
+                }
+
+                if (node != null) {
+                    m_scriptManager.unregisterBean("node");
+                }
+
+                m_scriptManager.unregisterBean("event");
+
+                LOG.debug("Finished executing scripts for: {}", m_event.getUei());
+            }
+        } // end run
+
