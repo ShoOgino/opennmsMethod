@@ -1,41 +1,10 @@
 	@Test
-	//public void main(final String[] args) {
-	public void main() throws Exception {
+	public void testMe() throws Exception {
 
 		MockLogAppender.setupLogging(true, "INFO");
 
-		String abc = "<190>Mar 11 08:35:17 127.0.0.1 30128311: Mar 11 08:35:16.844 CST: %SEC-6-IPACCESSLOGP: list in110 denied tcp 192.168.10.100(63923) -> 192.168.11.128(1521), 1 packetZ";
+		String abc = "<190>Mar 11 08:35:17 127.0.0.1 30128311[4]: Mar 11 08:35:16.844 CST: %SEC-6-IPACCESSLOGP: list in110 denied tcp 192.168.10.100(63923) -> 192.168.11.128(1521), 1 packet";
 		ByteBuffer incoming = ByteBuffer.wrap(abc.getBytes());
-
-		/***
-			CompletableFuture future = CompletableFuture
-				    .runAsync(new MatchChar(incoming, '<'), m_executor)
-				.thenRunAsync(new MatchInteger(incoming, v -> { facility = SyslogFacility.getFacilityForCode(v); }), m_executor)
-				.thenRunAsync(new MatchChar(incoming, '>'), m_executor)
-				/ *
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				* /
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchAny(incoming), m_executor)
-				.thenRunAsync(new MatchWhitespace(incoming), m_executor)
-				//.thenRunAsync(new MatchAny(incoming, System.out::println), m_executor)
-				.exceptionally(e -> { return null; })
-				.thenAccept(v -> {
-//					System.out.println("5: " + CamelUtils.nanoTime());
-//					System.out.println(event.toString());
-					end.set(System.nanoTime());
-				});
-			;
-		***/
 
 		AtomicReference<SyslogFacility> facility = new AtomicReference<>();
 		AtomicReference<Integer> year = new AtomicReference<>();
@@ -48,6 +17,7 @@
 		// SyslogNG format
 		ParserFactory factory = new ParserFactory()
 			.intBetweenDelimiters('<', '>', (s,v) -> { facility.set(SyslogFacility.getFacilityForCode(v)); })
+			.whitespace()
 			.month((s,v) -> month.set(v))
 			.whitespace()
 			.integer((s,v) -> day.set(v))
@@ -60,7 +30,11 @@
 			.whitespace()
 			.stringUntilWhitespace((s,v) -> { s.builder.setHost(v); })
 			.whitespace()
-			.stringUntilWhitespace((s,v) -> { s.builder.addParam("processId", v); })
+			.stringUntil("\\s[:", (s,v) -> { s.builder.addParam("processName", v); })
+			.optional().character('[')
+			.optional().integer((s,v) -> { s.builder.addParam("processId", v); })
+			.optional().character(']')
+			.optional().character(':')
 			.whitespace()
 			.stringUntilWhitespace(null) // Original month
 			.whitespace()
@@ -76,8 +50,9 @@
 			.stringUntilChar('-', (s,v) -> { /* TODO: Set severity */ })
 			.character('-')
 			.stringUntilChar(':', (s,v) -> { /* TODO: Set mnemonic */ })
+			.character(':')
 			.whitespace()
-			.stringUntilChar('Z', (s,v) -> { s.builder.setLogMessage(v); })
+			.terminal().string((s,v) -> { s.builder.setLogMessage(v); })
 			;
 
 		int iterations = 100000;
