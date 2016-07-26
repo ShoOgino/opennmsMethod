@@ -1,41 +1,13 @@
 	@Test
 	//public void main(final String[] args) {
-	public void main() {
+	public void main() throws Exception {
 
-		/*
-		System.out.println("1: " + CamelUtils.nanoTime());
+		MockLogAppender.setupLogging(true, "INFO");
 
-		Parser parser = new Parser(
-			new Stage[] {
-				new MatchChar('<'),
-				new MatchInteger(event::setPriority),
-				new MatchChar('>'),
-				new MatchWhitespace(),
-				new MatchAny('a'),
-				new MatchAny('b')
-			}
-		);
-		*/
-
-		// Try to use ByteBuffer directly instead of LBQ
-		//ByteBuffer incoming = new LinkedBlockingDeque<>();
-
-		String abc = "<5>aaabbb    ccc";
+		String abc = "<190>Mar 11 08:35:17 127.0.0.1 30128311: Mar 11 08:35:16.844 CST: %SEC-6-IPACCESSLOGP: list in110 denied tcp 192.168.10.100(63923) -> 192.168.11.128(1521), 1 packetZ";
 		ByteBuffer incoming = ByteBuffer.wrap(abc.getBytes());
 
 		/***
-		System.out.println("2: " + CamelUtils.nanoTime());
-
-		EventBuilder builder = new EventBuilder();
-
-		long total = 0; 
-
-		for (int i = 0; i < 100000; i++) {
-
-			AtomicLong end = new AtomicLong();
-
-			SyslogFacility facility = null;
-
 			CompletableFuture future = CompletableFuture
 				    .runAsync(new MatchChar(incoming, '<'), m_executor)
 				.thenRunAsync(new MatchInteger(incoming, v -> { facility = SyslogFacility.getFacilityForCode(v); }), m_executor)
@@ -63,46 +35,56 @@
 					end.set(System.nanoTime());
 				});
 			;
-
-			long start = System.nanoTime();
-			//System.out.println("3: " + );
-			/ *
-			try {
-				while(buffer.hasRemaining()) {
-					incoming.put((char)buffer.get());
-				}
-			} catch (InterruptedException e) {
-				// TODO: Do something
-			}
-			* /
-			//System.out.println("4: " + CamelUtils.nanoTime());
-			try {
-				future.get();
-			} catch (InterruptedException e1) {
-				// TODO Auto-generated catch block
-				e1.printStackTrace();
-			}
-			total += (end.get() - start);
-		}
-
-		System.out.println("TOTAL TIME: " + total);
-		//try { Thread.sleep(2000); } catch (Exception e) {}
 		***/
 
-		//EventBuilder builder = new EventBuilder();
 		AtomicReference<SyslogFacility> facility = new AtomicReference<>();
+		AtomicReference<Integer> year = new AtomicReference<>();
+		AtomicReference<Integer> month = new AtomicReference<>();
+		AtomicReference<Integer> day = new AtomicReference<>();
+		AtomicReference<Integer> hour = new AtomicReference<>();
+		AtomicReference<Integer> minute = new AtomicReference<>();
+		AtomicReference<Integer> second = new AtomicReference<>();
 
-		ParserFactory factory = new ParserFactory();
-		factory
-			.intBetweenDelimiters('<', '>', v -> { facility.set(SyslogFacility.getFacilityForCode(v)); })
-			.stringBetweenDelimiters('a', 'b', v -> { factory.getBuilder().setHost(v); })
-			.character('b')
-			.character('b')
-			.whitespace();
+		// SyslogNG format
+		ParserFactory factory = new ParserFactory()
+			.intBetweenDelimiters('<', '>', (s,v) -> { facility.set(SyslogFacility.getFacilityForCode(v)); })
+			.month((s,v) -> month.set(v))
+			.whitespace()
+			.integer((s,v) -> day.set(v))
+			.whitespace()
+			.integer((s,v) -> hour.set(v))
+			.character(':')
+			.integer((s,v) -> minute.set(v))
+			.character(':')
+			.integer((s,v) -> second.set(v))
+			.whitespace()
+			.stringUntilWhitespace((s,v) -> { s.builder.setHost(v); })
+			.whitespace()
+			.stringUntilWhitespace((s,v) -> { s.builder.addParam("processId", v); })
+			.whitespace()
+			.stringUntilWhitespace(null) // Original month
+			.whitespace()
+			.integer(null) // Original day
+			.whitespace()
+			.stringUntilWhitespace(null) // Original timestamp
+			.whitespace()
+			.stringUntilWhitespace(null) // Original time zone
+			.whitespace()
+			.character('%')
+			.stringUntilChar('-', (s,v) -> { /* TODO: Set facility */ })
+			.character('-')
+			.stringUntilChar('-', (s,v) -> { /* TODO: Set severity */ })
+			.character('-')
+			.stringUntilChar(':', (s,v) -> { /* TODO: Set mnemonic */ })
+			.whitespace()
+			.stringUntilChar('Z', (s,v) -> { s.builder.setLogMessage(v); })
+			;
+
+		int iterations = 100000;
 
 		CompletableFuture<Event> event = null;
-		for (int i = 0; i < 100; i++) {
-			//incoming.rewind();
+		long start = System.currentTimeMillis();
+		for (int i = 0; i < iterations; i++) {
 			event = factory.parse(incoming.asReadOnlyBuffer(), m_executor);
 			event.whenComplete((e, ex) -> {
 				if (ex == null) {
@@ -112,10 +94,31 @@
 				}
 			});
 		}
+		// Wait for the last future to complete
 		try {
 			event.get();
 		} catch (InterruptedException | ExecutionException e) {
 			e.printStackTrace();
 		}
+		long end = System.currentTimeMillis();
+		System.out.println("NEW: " + (end - start) + "ms");
+
+		InputStream stream = ConfigurationTestUtils.getInputStreamForResource(this, "/etc/syslogd-syslogng-configuration.xml");
+		SyslogdConfig config = new SyslogdConfigFactory(stream);
+
+		start = System.currentTimeMillis();
+		for (int i = 0; i < iterations; i++) {
+			ConvertToEvent convertToEvent = new ConvertToEvent(
+				DistPollerDao.DEFAULT_DIST_POLLER_ID,
+				InetAddressUtils.ONE_TWENTY_SEVEN,
+				9999,
+				abc, 
+				config
+			);
+			Event event2 = convertToEvent.getEvent();
+		}
+		end = System.currentTimeMillis();
+		System.out.println("OLD: " + (end - start) + "ms");
+
 	}
 

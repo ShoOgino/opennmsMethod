@@ -1,28 +1,21 @@
 		public CompletableFuture<Event> parse(ByteBuffer incoming, ExecutorService executor) {
 
-			// Build a CompletableFuture chain out of the Stages
-			boolean first = true;
-			CompletableFuture<Void> future = null;
+			// Put all mutable parts of the parse operation into a state object
+			SyslogParserState state = new SyslogParserState();
+			state.buffer = incoming;
+			state.builder = new EventBuilder();
 
+			CompletableFuture<SyslogParserState> future = CompletableFuture.completedFuture(state);
+
+			// Apply each parse stage to the message
 			for (Stage stage : m_stages) {
-				// Reset the stage's state
-				stage.reset();
-				// Give the stage a reference to the buffer
-				stage.setBuffer(incoming);
-				if (first) {
-					future = CompletableFuture.runAsync(stage, executor);
-					first = false;
-				} else {
-					future = future.thenRun(stage);
-				}
+				future = future.thenApply(stage::apply);
 			}
 
 			future.exceptionally(e -> { /* DO SOMETHING */ return null; });
 
-			//futureRef.set(future);
-
-			return future.thenCompose(v -> {
-				return CompletableFuture.completedFuture(m_builder.get().getEvent());
+			return future.thenApply(v -> {
+				return state.builder.getEvent();
 			});
 		}
 
