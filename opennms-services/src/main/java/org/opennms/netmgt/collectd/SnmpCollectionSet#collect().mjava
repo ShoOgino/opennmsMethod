@@ -2,18 +2,20 @@
         // XXX Should we have a call to hasDataToCollect here?
         try {
             // now collect the data
-            SnmpWalker walker = createWalker();
-            walker.start();
-
+            CollectionAgent agent = getCollectionAgent();
             logStartedWalker();
 
+            CompletableFuture<CollectionTracker> future = m_client.walk(getAgentConfig(), getTracker())
+                .withDescription("SnmpCollectors for " + agent.getHostAddress())
+                .withLocation(getCollectionAgent().getLocationName())
+                .execute();
+
             // wait for collection to finish
-            walker.waitFor();
-
-            logFinishedWalker();
-
-            // Was the collection successful?
-            verifySuccessfulWalk(walker);
+            try {
+                future.get();
+            } finally {
+                logFinishedWalker();
+            }
 
             // Execute POST Updates (add custom parameters)
             SnmpPropertyExtenderProcessor processor = new SnmpPropertyExtenderProcessor();
@@ -25,6 +27,8 @@
             throw new CollectionWarning("collect: Collection of node SNMP "
                     + "data for interface " + getCollectionAgent().getHostAddress()
                     + " interrupted: " + e, e);
+        } catch (ExecutionException e) {
+            throw new CollectionWarning(e.getMessage(), e.getCause());
         }
     }
 
