@@ -1,82 +1,61 @@
     private void addHostSystem(OnmsNode hostSystem) {
         String vmwareManagementServer = hostSystem.getAssetRecord().getVmwareManagementServer().trim();
         String vmwareManagedObjectId = hostSystem.getAssetRecord().getVmwareManagedObjectId().trim();
-        String vmwareTopologyInfo = hostSystem.getAssetRecord().getVmwareTopologyInfo().trim();
         String vmwareState = hostSystem.getAssetRecord().getVmwareState().trim();
-        String datacenterName = "Datacenter (" + vmwareManagementServer + ")";
-        String datacenterMoId = null;
-
-        ArrayList<String> networks = new ArrayList<String>();
-        ArrayList<String> datastores = new ArrayList<String>();
-
-        HashMap<String, String> moIdToName = new HashMap<String, String>();
-
-        String[] entities = vmwareTopologyInfo.split(SPLIT_REGEXP);
-
-        for (String entityAndName : entities) {
-            String[] splitBySlash = entityAndName.split("/");
-            String entityId = splitBySlash[0];
-
-            String entityName = "unknown";
-
-            if (splitBySlash.length > 1) {
-                try {
-                    entityName = new String(URLDecoder.decode(splitBySlash[1], "UTF-8"));
-                } catch (UnsupportedEncodingException e) {
-                    LOG.error(e.getMessage(), e);
-                }
-            }
-
-            String entityType = entityId.split("-")[0];
-
-            if ("network".equals(entityType)) {
-                networks.add(entityId);
-            }
-
-            if ("datastore".equals(entityType)) {
-                datastores.add(entityId);
-            }
-
-            if ("datacenter".equals(entityType)) {
-                datacenterMoId = entityId;
-            }
-
-            moIdToName.put(entityId, entityName);
-        }
-
-        if (datacenterMoId != null) {
-            datacenterName = moIdToName.get(datacenterMoId) + " (" + vmwareManagementServer + ")";
-        }
-
-        AbstractVertex datacenterVertex = createDatacenterVertex(vmwareManagementServer, datacenterName);
-        addVertices(datacenterVertex);
-
         String primaryInterface = "unknown";
-
-        // get the primary interface ip address
         OnmsIpInterface ipInterface = m_ipInterfaceDao.findPrimaryInterfaceByNodeId(hostSystem.getId());
 
         if (ipInterface != null) {
             primaryInterface = ipInterface.getIpHostName();
         }
 
-        AbstractVertex hostSystemVertex = createHostSystemVertex(vmwareManagementServer + "/" + vmwareManagedObjectId, hostSystem.getLabel(), primaryInterface, hostSystem.getId(), vmwareState);
+        AbstractVertex hostSystemVertex = createHostSystemVertex(
+                vmwareManagementServer + "/" + vmwareManagedObjectId,
+                hostSystem.getLabel(),
+                primaryInterface,
+                hostSystem.getId(),
+                vmwareState
+        );
+
         addVertices(hostSystemVertex);
 
-        // set the parent vertex
+        Map<String, ParsedEntity> parsedEntities = parseNodeAssets(hostSystem);
+
+        String datacenterName = parsedEntities.values().stream().filter(e -> "datacenter".equals(e.getEntityType())).findFirst().map(e -> parsedEntities.get(e.getEntityId()).getEntityName() + " (" + vmwareManagementServer + ")").orElse("Datacenter (" + vmwareManagementServer + ")");
+
+        AbstractVertex datacenterVertex = createDatacenterVertex(vmwareManagementServer, datacenterName);
+        addVertices(datacenterVertex);
+
         if (!hostSystemVertex.equals(datacenterVertex)) {
             connectVertices(hostSystemVertex, datacenterVertex);
         }
 
-        for (String network : networks) {
-            AbstractVertex networkVertex = createNetworkVertex(vmwareManagementServer + "/" + network, moIdToName.get(network));
-            addVertices(networkVertex);
-            connectVertices(vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + network, hostSystemVertex, networkVertex, getEdgeNamespace());
-        }
-        for (String datastore : datastores) {
-            AbstractVertex datastoreVertex = createDatastoreVertex(vmwareManagementServer + "/" + datastore, moIdToName.get(datastore));
-            addVertices(datastoreVertex);
-            connectVertices(vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + datastore, hostSystemVertex, datastoreVertex, getEdgeNamespace());
-        }
+        parsedEntities.values().stream().filter(e -> "network".equals(e.getEntityType())).forEach(
+                e -> {
+                    AbstractVertex networkVertex = createNetworkVertex(vmwareManagementServer + "/" + e.getEntityId(), parsedEntities.get(e.getEntityId()).getEntityName());
+                    addVertices(networkVertex);
+
+                    connectVertices(
+                            vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + e.getEntityId(),
+                            hostSystemVertex,
+                            networkVertex,
+                            getEdgeNamespace()
+                    );
+                }
+        );
+
+        parsedEntities.values().stream().filter(e -> "datastore".equals(e.getEntityType())).forEach(
+                e -> {
+                    AbstractVertex datastoreVertex = createDatastoreVertex(vmwareManagementServer + "/" + e.getEntityId(), parsedEntities.get(e.getEntityId()).getEntityName());
+                    addVertices(datastoreVertex);
+
+                    connectVertices(
+                            vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + e.getEntityId(),
+                            hostSystemVertex,
+                            datastoreVertex,
+                            getEdgeNamespace()
+                    );
+                }
+        );
     }
 
