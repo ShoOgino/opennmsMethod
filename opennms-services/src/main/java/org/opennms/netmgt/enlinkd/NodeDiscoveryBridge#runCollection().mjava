@@ -1,36 +1,69 @@
-	protected void runCollection() {
+    protected void runCollection() {
 
-	        LOG.info("run: start: node discovery operations for bridge: '{}'",getNodeId());
-		final Date now = new Date();
+        LOG.info("run: start: node discovery operations for bridge: '{}'",
+                 getNodeId());
+        final Date now = new Date();
 
-		LOG.debug("run: collecting: {}", getPeer());
-		Map<Integer,String> vlanmap = getVtpVlanMap();
-		Map<Integer,Integer> bridgeifindex = new HashMap<Integer, Integer>();
-		List<BridgeMacLink> bft = new ArrayList<BridgeMacLink>();
-		
-		if (vlanmap.isEmpty()) {
-			bridgeifindex.putAll(walkDot1d(null,null));
-                        bft = walkDot1dTpFdp(null,bridgeifindex,bft,getPeer());
-		} else {
-			String community = getPeer().getReadCommunity();
-			for (Entry<Integer, String> entry: vlanmap.entrySet()) {
-				LOG.debug("run: cisco vlan collection setting peer community: {} with VLAN {}",
-						community, entry.getKey());
-				SnmpAgentConfig peer = getPeer();
-				peer.setReadCommunity(community + "@" + entry.getKey());
-				bridgeifindex.putAll(walkDot1d(entry.getKey(), entry.getValue()));
-			        bft = walkDot1dTpFdp(entry.getKey(),bridgeifindex,bft,peer);
+        Map<Integer, String> vlanmap = getVtpVlanMap(getPeer());
+        if (vlanmap.isEmpty())
+            vlanmap.put(null, null);
 
-			}
-		}
-		LOG.debug("run: found on node: '{}' bridge ifindex map {}",getNodeId(), bridgeifindex);
-		bft = walkDot1qTpFdb(bridgeifindex,bft);
+        List<BridgeMacLink> bft = new ArrayList<BridgeMacLink>();
+        Map<Integer, Integer> bridgeifindex = new HashMap<Integer, Integer>();
+
+        String community = getPeer().getReadCommunity();
+        for (Entry<Integer, String> entry : vlanmap.entrySet()) {
+            LOG.debug("run: cisco vlan collection setting peer community: {} with VLAN {}",
+                      community, entry.getKey());
+            SnmpAgentConfig peer = getPeer();
+            if (entry.getKey() != null)
+                peer.setReadCommunity(community + "@" + entry.getKey());
+            LOG.debug("run: Bridge Linkd node scan : ready to walk dot1d basedata on {}, vlan {}, vlanname {}.",
+                      getNodeId(), entry.getKey(), entry.getValue());
+
+            BridgeElement bridge = getDot1dBridgeBase(peer);
+            if (bridge != null) {
+                bridge.setVlan(entry.getKey());
+                bridge.setVlanname(entry.getValue());
+                m_linkd.getQueryManager().store(getNodeId(), bridge);
+            } else {
+                LOG.debug("run: Bridge Linkd node scan : no dot1d data found on {}, vlan {}, vlanname {}. skipping other operations",
+                          getNodeId(), entry.getKey(), entry.getValue());
+                continue;
+            }
+
+            Map<Integer,Integer> vlanbridgetoifindex = walkDot1dBasePortTable(peer);
+            LOG.debug("run: found on node: '{}' vlan: '{}', bridge ifindex map {}",
+                      getNodeId(), entry.getValue(), vlanbridgetoifindex);
+            if (!isValidStpBridgeId(bridge.getStpDesignatedRoot())) {
+                LOG.info("run: invalid Stp designated root: spanning tree not supported on: {}",
+                         getNodeId());
+            } else if (bridge.getBaseBridgeAddress().equals(getBridgeAddressFromStpBridgeId(bridge.getStpDesignatedRoot()))) {
+                LOG.info("run: designated root of spanning tree is itself on bridge {}, on: {}",
+                         bridge.getStpDesignatedRoot(), getNodeId());
+            } else {
+                for (BridgeStpLink stplink: walkSpanningTree(peer,
+                                 bridge.getBaseBridgeAddress())) {
+                    stplink.setVlan(entry.getKey());
+                    stplink.setStpPortIfIndex(vlanbridgetoifindex.get(stplink.getStpPort()));
+                    m_linkd.getQueryManager().store(getNodeId(), stplink);
+
+                }
+            }
+
+            bridgeifindex.putAll(vlanbridgetoifindex);
+            bft = walkDot1dTpFdp(entry.getKey(), bridgeifindex, bft, peer);
+        }
 		
-		
-		m_linkd.getQueryManager().store(getNodeId(), bft);
-                LOG.debug("run: reconciling bridge: '{}' time {}",getNodeId(), now);
-		m_linkd.getQueryManager().reconcileBridge(getNodeId(), now);
-                LOG.debug("run: updating topology bridge: '{}'",getNodeId());
-                LOG.info("run: end: node discovery operations for bridge: '{}'",getNodeId());
-	}
+        LOG.debug("run: found on node: '{}' bridge ifindex map {}",
+                  getNodeId(), bridgeifindex);
+        bft = walkDot1qTpFdb(getPeer(),bridgeifindex, bft);
+
+        m_linkd.getQueryManager().store(getNodeId(), bft);
+        LOG.debug("run: reconciling bridge: '{}' time {}", getNodeId(), now);
+        m_linkd.getQueryManager().reconcileBridge(getNodeId(), now);
+        LOG.debug("run: updating topology bridge: '{}'", getNodeId());
+        LOG.info("run: end: node discovery operations for bridge: '{}'",
+                 getNodeId());
+    }
 
