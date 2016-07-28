@@ -1,56 +1,57 @@
-    private List<BridgeMacLink> walkDot1dTpFdp(final Integer vlan,
+    private List<BridgeMacLink> walkDot1qTpFdb(SnmpAgentConfig peer,
             final Map<Integer, Integer> bridgeifindex,
-            List<BridgeMacLink> bft, SnmpAgentConfig peer) {
-        String trackerName = "dot1dTbFdbPortTable";
+            final List<BridgeMacLink> bft) {
 
-        Dot1dTpFdbTableTracker stpPortTableTracker = new Dot1dTpFdbTableTracker() {
+        String trackerName = "dot1qTbFdbPortTable";
+
+        Dot1qTpFdbTableTracker dot1qTpFdbTableTracker = new Dot1qTpFdbTableTracker() {
 
             @Override
-            public void processDot1dTpFdbRow(final Dot1dTpFdbRow row) {
+            public void processDot1qTpFdbRow(final Dot1qTpFdbRow row) {
                 BridgeMacLink link = row.getLink();
                 if (link.getBridgeDot1qTpFdbStatus() == null) {
-                    LOG.warn("processDot1dTpFdbRow: row has null status. mac {}: vlan {}: on port {}",
-                             row.getDot1dTpFdbAddress(), vlan,
-                             row.getDot1dTpFdbPort());
+                    LOG.warn("processDot1qTpFdbRow: row has null status. mac {}: on port {}",
+                             row.getDot1qTpFdbAddress(),
+                             row.getDot1qTpFdbPort());
                     return;
                 }
                 if (link.getBridgePort() == null) {
-                    LOG.warn("processDot1dTpFdbRow: row has null bridge port.  mac {}: vlan {}: on port {} status {}",
-                             row.getDot1dTpFdbAddress(), vlan,
-                             row.getDot1dTpFdbPort(),
+                    LOG.warn("processDot1qTpFdbRow: row has null bridge port.  mac {}: on port {} status {}",
+                             row.getDot1qTpFdbAddress(),
+                             row.getDot1qTpFdbPort(),
                              link.getBridgeDot1qTpFdbStatus());
                     return;
                 }
                 if (link.getMacAddress() == null
                         || !isValidBridgeAddress(link.getMacAddress())) {
-                    LOG.warn("processDot1dTpFdbRow: row has invalid mac. mac {}: vlan {}: on port {} ifindex {} status {}",
-                             row.getDot1dTpFdbAddress(), vlan,
-                             row.getDot1dTpFdbPort(),
+                    LOG.warn("processDot1qTpFdbRow: row has invalid mac. mac {}: on port {} ifindex {} status {}",
+                             row.getDot1qTpFdbAddress(),
+                             row.getDot1qTpFdbPort(),
                              link.getBridgePortIfIndex(),
                              link.getBridgeDot1qTpFdbStatus());
                     return;
                 }
-                link.setVlan(vlan);
-
                 if (!bridgeifindex.containsKey(link.getBridgePort())
                         && link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) {
-                    LOG.warn("processDot1dTpFdbRow: row has invalid bridge port no ifindex found. mac {}: vlan {}: on port {} ifindex {} status {}",
-                             row.getDot1dTpFdbAddress(), vlan,
-                             row.getDot1dTpFdbPort(),
+                    LOG.warn("processDot1qTpFdbRow: row has invalid bridgeport no ifindex found. mac {}: on port {} ifindex {} status {}",
+                             row.getDot1qTpFdbAddress(),
+                             row.getDot1qTpFdbPort(),
                              link.getBridgePortIfIndex(),
                              link.getBridgeDot1qTpFdbStatus());
                     return;
                 }
+
                 link.setBridgePortIfIndex(bridgeifindex.get(link.getBridgePort()));
-                LOG.info("processDot1dTpFdbRow: row processed: mac {}: vlan {}: on port {} ifindex {} status {}",
+                LOG.info("processDot1qTpFdbRow: row processed: mac {}: vlan {}: on port {} ifindex {} status {}",
                          link.getMacAddress(), link.getVlan(),
                          link.getBridgePort(), link.getBridgePortIfIndex(),
                          link.getBridgeDot1qTpFdbStatus());
                 bft.add(link);
             }
+
         };
         SnmpWalker walker = SnmpUtils.createWalker(peer, trackerName,
-                                                   stpPortTableTracker);
+                                                   dot1qTpFdbTableTracker);
         walker.start();
 
         try {
@@ -58,11 +59,9 @@
             if (walker.timedOut()) {
                 LOG.info("run:Aborting Bridge Linkd node scan : Agent timed out while scanning the {} table",
                          trackerName);
-                return bft;
             } else if (walker.failed()) {
                 LOG.info("run:Aborting Bridge Linkd node scan : Agent failed while scanning the {} table: {}",
                          trackerName, walker.getErrorMessage());
-                return bft;
             }
         } catch (final InterruptedException e) {
             LOG.error("run: Bridge Linkd node collection interrupted, exiting",
