@@ -1,0 +1,86 @@
+    /**
+     * Creates the PingWindow to make ping requests.
+     *
+     * @param vertex The vertex which IP Address is pinged.
+     *               It is expected that the IP Address os not null and parseable.
+     * @param pingService The {@link PingService} to actually make the ping request.
+     */
+    public PingWindow(Vertex vertex, PingService pingService) {
+        Objects.requireNonNull(vertex);
+        Objects.requireNonNull(pingService);
+
+        // Remember initial poll interval, as we poll as soon as we start pinging
+        final int initialPollInterval = UI.getCurrent().getPollInterval();
+
+        // Ping Form
+        pingForm = new PingForm(InetAddressUtils.getInetAddress(vertex.getIpAddress()));
+
+        // Result
+        final TextArea resultArea = new TextArea();
+        resultArea.setRows(15);
+        resultArea.setSizeFull();
+
+        // Progress Indicator
+        progressIndicator = new ProgressBar();
+        progressIndicator.setIndeterminate(true);
+
+        // Buttons
+        cancelButton = new Button("Cancel");
+        cancelButton.addClickListener((event) -> {
+            pingService.cancel();
+            resultArea.setValue(resultArea.getValue() + "\n" + "Ping cancelled by user");
+            getUI().setPollInterval(initialPollInterval);
+            setRunning(false);
+        } );
+        pingButton = new Button("Ping");
+        pingButton.addClickListener((event) -> {
+                try {
+                    final PingRequest pingRequest = pingForm.getPingRequest();
+                    setRunning(true);
+                    getUI().setPollInterval(POLL_INTERVAL);
+                    resultArea.setValue(""); // Clear
+                    pingService.ping(pingRequest, (result) -> {
+                        setRunning(!result.isComplete());
+                        resultArea.setValue(result.toDetailString());
+                        if (result.isComplete()) {
+                            getUI().setPollInterval(initialPollInterval);
+                        }
+                    });
+                } catch (FieldGroup.CommitException e) {
+                    Notification.show("Validation errors", "Please correct them. Make sure all required fields are set.", Notification.Type.ERROR_MESSAGE);
+                }
+        });
+        // Button Layout
+        final HorizontalLayout buttonLayout = new HorizontalLayout();
+        buttonLayout.setSpacing(true);
+        buttonLayout.addComponent(pingButton);
+        buttonLayout.addComponent(cancelButton);
+        buttonLayout.addComponent(progressIndicator);
+
+        // Root Layout
+        final VerticalLayout rootLayout = new VerticalLayout();
+        rootLayout.setSpacing(true);
+        rootLayout.setMargin(true);
+        rootLayout.addComponent(pingForm);
+        rootLayout.addComponent(buttonLayout);
+        rootLayout.addComponent(new Label("<b>Results</b>", ContentMode.HTML));
+        rootLayout.addComponent(resultArea);
+        rootLayout.setExpandRatio(resultArea, 1.0f);
+
+        // Window Config
+        setCaption(String.format("Ping - %s (%s)", vertex.getLabel(), vertex.getIpAddress()));
+        setResizable(false);
+        setModal(true);
+        setWidth(800, Unit.PIXELS);
+        setHeight(550, Unit.PIXELS);
+        setContent(rootLayout);
+        center();
+        setRunning(false);
+
+        // Set back to default, when closing
+        addCloseListener((CloseListener) e -> {
+            pingService.cancel();
+            getUI().setPollInterval(initialPollInterval);
+        });
+    }
+

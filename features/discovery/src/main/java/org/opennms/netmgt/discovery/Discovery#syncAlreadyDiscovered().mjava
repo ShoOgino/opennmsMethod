@@ -2,35 +2,32 @@
      * <p>syncAlreadyDiscovered</p>
      */
     protected void syncAlreadyDiscovered() {
-    	/**
-    	 * Make a new list with which we'll replace the existing one, that way
-    	 * if something goes wrong with the DB we won't lose whatever was already
-    	 * in there
-    	 */
-    	Set<String> newAlreadyDiscovered = Collections.synchronizedSet(new HashSet<String>());
-    	Connection conn = null;
-        final DBUtils d = new DBUtils(getClass());
-
-    	try {
-    		conn = DataSourceFactory.getInstance().getConnection();
-    		d.watch(conn);
-    		PreparedStatement stmt = conn.prepareStatement(ALL_IP_ADDRS_SQL);
-    		d.watch(stmt);
-    		ResultSet rs = stmt.executeQuery();
-    		d.watch(rs);
-    		if (rs != null) {
-    			while (rs.next()) {
-    				newAlreadyDiscovered.add(rs.getString(1));
-    			}
-    		} else {
-    			LOG.warn("Got null ResultSet from query for all IP addresses");
-    		}
-    		m_interfaceFilter.setManagedAddresses(newAlreadyDiscovered);
-    	} catch (SQLException sqle) {
-		LOG.warn("Caught SQLException while trying to query for all IP addresses: {}", sqle.getMessage());
-    	} finally {
-    	    d.cleanUp();
-    	}
-    	LOG.info("syncAlreadyDiscovered initialized list of managed IP addresses with {} members", m_interfaceFilter.size());
+        m_transactionOperations.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus transactionStatus) {
+                /**
+                 * Make a new list with which we'll replace the existing one, that way
+                 * if something goes wrong with the DB we won't lose whatever was already
+                 * in there
+                 */
+                Set<LocationIpAddressKey> newAlreadyDiscovered = Collections.synchronizedSet(new HashSet<>());
+                // Fetch all non-deleted nodes
+                CriteriaBuilder builder = new CriteriaBuilder(OnmsNode.class);
+                builder.ne("type", String.valueOf(NodeType.DELETED.value()));
+                for (OnmsNode node : m_nodeDao.findMatching(builder.toCriteria())) {
+                    for (OnmsIpInterface iface : node.getIpInterfaces()) {
+                        // Skip deleted interfaces
+                        // TODO: Refactor the 'D' value with an enumeration
+                        if ("D".equals(iface.getIsManaged())) {
+                            continue;
+                        }
+                        // TODO: Refactor this to use {@link InetAddress}
+                        newAlreadyDiscovered.add(new LocationIpAddressKey(node.getLocation().getLocationName(), iface.getIpAddressAsString()));
+                    }
+                }
+                m_interfaceFilter.setManagedAddresses(newAlreadyDiscovered);
+                LOG.info("syncAlreadyDiscovered initialized list of managed IP addresses with {} members", m_interfaceFilter.size());
+            }
+        });
     }
 

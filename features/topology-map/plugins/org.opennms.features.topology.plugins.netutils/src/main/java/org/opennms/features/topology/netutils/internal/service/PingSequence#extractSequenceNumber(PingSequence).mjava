@@ -1,0 +1,31 @@
+    private static int extractSequenceNumber(PingSequence sequence) {
+        try {
+            return sequence.getResponse().getSequenceNumber();
+        } catch (NullPointerException ex) {
+            // we swallow the exception, as we bail out afterwards
+        }
+        // This is ugly as hell, but necessary.
+        // Depending if the ping command was executed properly, either a EchoPacket response
+        // (see interface Response) or a EchoPacket request (see interface Request) implementation is provided.
+        // Only the EchoPacket response implementation has a getSequenceNumber() which returns a not null value.
+        // The EchoPacket request implementation uses the "getId()" method which contains the "sequenceNumber".
+        // As the API of the "EchoPacket" itself does not have a "SequenceIdentifier" interface, it is not possible
+        // to use that API without adding unnecessary dependencies to other modules.
+        // To avoid this problem in case the request was not successful, the sequenceNumber is extracted via
+        // reflections from the according EchoPacket request implementations.
+        try {
+            Object requestId = sequence.getResponse().getClass().getMethod("getId").invoke(sequence.getResponse());
+            if (requestId != null) {
+                Field sequenceNumberField = requestId.getClass().getDeclaredField("m_sequenceNumber");
+                if (sequenceNumberField != null) {
+                    sequenceNumberField.setAccessible(true);
+                    Object sequenceNumber = sequenceNumberField.get(requestId);
+                    return ((Integer) sequenceNumber).intValue();
+                }
+            }
+        } catch (NoSuchFieldException | InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
+            // we swallow the exception, as we bail out afterwards
+        }
+        throw new IllegalArgumentException("Cannot determine sequence number");
+    }
+
