@@ -1,0 +1,26 @@
+    @Override
+    public CompletableFuture<PingSummary> execute(PingRequestDTO requestDTO) {
+        final ExecutorService executor = Executors.newFixedThreadPool(1);
+        final PingSummary overallPingSummary = new PingSummary(requestDTO.toPingRequest(), numberOfRequests);
+
+        final CompletableFuture<PingSummary> overallFuture = CompletableFuture.supplyAsync(() -> {
+            for (int sequenceId = 1; sequenceId <= numberOfRequests; sequenceId++) {
+                reportProgress(null, overallPingSummary);
+                final CompletableFuture<PingSummary> singlePingResponse = new SinglePingExecutionStrategy(client).execute(requestDTO);
+                try {
+                    final PingSummary singleSummary = singlePingResponse.get(requestDTO.getTimeToLiveMs(), TimeUnit.MILLISECONDS);
+                    final PingSequence newSequence = new PingSequence(sequenceId, singleSummary.getSequence(0).getResponse());
+                    overallPingSummary.addSequence(newSequence);
+                    reportProgress(newSequence, overallPingSummary);
+                } catch (ExecutionException | InterruptedException | TimeoutException e) {
+                    PingSequence newSequence = new PingSequence(sequenceId, e);
+                    overallPingSummary.addSequence(newSequence);
+                    reportProgress(newSequence, overallPingSummary);
+                }
+
+            }
+            return overallPingSummary;
+        }, executor);
+        return overallFuture;
+    }
+
