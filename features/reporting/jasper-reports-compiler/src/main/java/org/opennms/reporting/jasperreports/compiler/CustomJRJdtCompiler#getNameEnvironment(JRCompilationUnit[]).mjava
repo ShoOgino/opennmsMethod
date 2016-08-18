@@ -1,0 +1,141 @@
+    protected INameEnvironment getNameEnvironment(final JRCompilationUnit[] units) {
+        final INameEnvironment env = new INameEnvironment() {
+            @Override
+            public NameEnvironmentAnswer findType(char[][] compoundTypeName) {
+                StringBuilder result = new StringBuilder();
+                String sep = "";
+                for (int i = 0; i < compoundTypeName.length; i++) {
+                    result.append(sep);
+                    result.append(compoundTypeName[i]);
+                    sep = ".";
+                }
+                return findType(result.toString());
+            }
+
+            @Override
+            public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName) {
+                StringBuilder result = new StringBuilder();
+                String sep = "";
+                for (int i = 0; i < packageName.length; i++) {
+                    result.append(sep);
+                    result.append(packageName[i]);
+                    sep = ".";
+                }
+                result.append(sep);
+                result.append(typeName);
+                return findType(result.toString());
+            }
+
+            private int getClassIndex(String className) {
+                int classIdx;
+                for (classIdx = 0; classIdx < units.length; ++classIdx) {
+                    if (className.equals(units[classIdx].getName())) {
+                        break;
+                    }
+                }
+
+                if (classIdx >= units.length) {
+                    classIdx = -1;
+                }
+
+                return classIdx;
+            }
+
+            private NameEnvironmentAnswer findType(String className) {
+                try {
+                    int classIdx = getClassIndex(className);
+
+                    if (classIdx >= 0) {
+                        ICompilationUnit compilationUnit = new CompilationUnit(units[classIdx].getSourceCode(),
+                                className);
+                        return new NameEnvironmentAnswer(compilationUnit, null);
+                    }
+
+                    String resourceName = className.replace('.', '/') + ".class";
+                    InputStream is = getResource(resourceName);
+                    if (is != null) {
+                        try {
+                            byte[] classBytes = JRLoader.loadBytes(is);
+                            char[] fileName = className.toCharArray();
+                            ClassFileReader classFileReader = new ClassFileReader(classBytes, fileName, true);
+                            return new NameEnvironmentAnswer(classFileReader, null);
+                        } finally {
+                            try {
+                                is.close();
+                            } catch (IOException e) {
+                                // ignore
+                            }
+                        }
+                    }
+                } catch (JRException e) {
+                    LOG.error("Compilation error", e);
+                } catch (org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException exc) {
+                    LOG.error("Compilation error", exc);
+                } catch (IllegalArgumentException e) {
+                    throw new JRRuntimeException(EXCEPTION_MESSAGE_KEY_NAME_ENVIRONMENT_ANSWER_INSTANCE_ERROR,
+                            (Object[]) null, e);
+                }
+                return null;
+            }
+
+            private boolean isPackage(String result) {
+                int classIdx = getClassIndex(result);
+                if (classIdx >= 0) {
+                    return false;
+                }
+
+                String resourceName = result.replace('.', '/') + ".class";
+
+                boolean isPackage = true;
+
+                InputStream is = getResource(resourceName);
+                if (is != null) {
+                    // cannot just test for null; need to read from "is" to
+                    // avoid bug with sun.plugin.cache.EmptyInputStream on JRE
+                    // 1.5 plugin
+                    try {
+                        isPackage = (is.read() > 0);
+                    } catch (IOException e) {
+                        // ignore
+                    } finally {
+                        try {
+                            is.close();
+                        } catch (IOException e) {
+                            // ignore
+                        }
+                    }
+                }
+
+                return isPackage;
+            }
+
+            @Override
+            public boolean isPackage(char[][] parentPackageName, char[] packageName) {
+                StringBuilder result = new StringBuilder();
+                String sep = "";
+                if (parentPackageName != null) {
+                    for (int i = 0; i < parentPackageName.length; i++) {
+                        result.append(sep);
+                        result.append(parentPackageName[i]);
+                        sep = ".";
+                    }
+                }
+                if (Character.isUpperCase(packageName[0])) {
+                    if (!isPackage(result.toString())) {
+                        return false;
+                    }
+                }
+                result.append(sep);
+                result.append(packageName);
+                return isPackage(result.toString());
+            }
+
+            @Override
+            public void cleanup() {
+            }
+
+        };
+
+        return env;
+    }
+
