@@ -1,42 +1,54 @@
     @Test
     @Transactional
-    public void testUpdateSyslogIPMgr() throws Exception {
-        final byte[] bytes = "<34>1 2010-08-19T22:14:15.000Z localhost - - - - BOMfoo0: load test 0 on tty1\0".getBytes();
-        final DatagramPacket pkt = new DatagramPacket(bytes, bytes.length, InetAddressUtils.ONE_TWENTY_SEVEN, SyslogClient.PORT);
-        final InterfaceToNodeCacheEventProcessor eventProcessor = m_processor;
+    public void testUpdateInterfaceToNodeCache() throws Exception {
+
+        // The cache has not been sync'd with the database yet
+        assertEquals(0, m_cache.size());
+
         final Integer nodeId = m_databasePopulator.getNode1().getId();
+        // One of the interfaces on node1
+        final InetAddress addr = InetAddressUtils.addr("192.168.1.3");
+
+        final byte[] bytes = ("<34>1 2010-08-19T22:14:15.000Z " + InetAddressUtils.str(addr) + " - - - - BOMfoo0: load test 0 on tty1\0").getBytes();
+        final DatagramPacket pkt = new DatagramPacket(bytes, bytes.length, addr, SyslogClient.PORT);
 
         // Create a mock SyslogdConfig
         SyslogdConfigFactory config = loadSyslogConfiguration("/etc/syslogd-rfc-configuration.xml");
 
         // Create a new SyslogConnection and call it to create the processed event
-        SyslogConnection connection = new SyslogConnection(pkt, config, s_systemId, s_location);
+        SyslogConnection connection = new SyslogConnection(pkt, config, SYSTEM_ID, LOCATION);
         SyslogProcessor processor = connection.call();
         // The node is not present so nodeID should be blank
         Long foundid = processor.getEvent().getNodeid();
-        LOG.debug("found id: {}", foundid);
+        LOG.debug("Found node ID: {}", foundid);
         assertTrue("Node ID was unexpectedly present: " + processor.getEvent().getNodeid(), foundid < 1);
 
         // Simulate a nodeGainedInterface event
         EventBuilder builder = new EventBuilder(EventConstants.NODE_GAINED_INTERFACE_EVENT_UEI, getClass().getSimpleName());
         builder.setNodeid(nodeId);
-        builder.setInterface(InetAddressUtils.ONE_TWENTY_SEVEN);
-        eventProcessor.handleNodeGainedInterface(builder.getEvent());
+        builder.setInterface(addr);
+        m_processor.handleNodeGainedInterface(builder.getEvent());
 
-        connection = new SyslogConnection(pkt, config, s_systemId, s_location);
+        // The entry was added to the cache
+        assertEquals(1, m_cache.size());
+
+        connection = new SyslogConnection(pkt, config, SYSTEM_ID, LOCATION);
         processor = connection.call();
         // Assert that the event was associated with the node correctly
         foundid = processor.getEvent().getNodeid();
-        LOG.debug("found id: {}", foundid);
+        LOG.debug("Found node ID: {}", foundid);
         assertEquals("Node ID was not present: " + processor.getEvent().getNodeid(), Long.valueOf(nodeId.longValue()), foundid);
 
         // Simulate an interfaceDeleted event
         builder = new EventBuilder(EventConstants.INTERFACE_DELETED_EVENT_UEI, getClass().getSimpleName());
         builder.setNodeid(nodeId);
-        builder.setInterface(InetAddressUtils.ONE_TWENTY_SEVEN);
-        eventProcessor.handleInterfaceDeleted(builder.getEvent());
+        builder.setInterface(addr);
+        m_processor.handleInterfaceDeleted(builder.getEvent());
 
-        connection = new SyslogConnection(pkt, config, s_systemId, s_location);
+        // The entry was removed from the cache
+        assertEquals(0, m_cache.size());
+
+        connection = new SyslogConnection(pkt, config, SYSTEM_ID, LOCATION);
         processor = connection.call();
         // Assert that the event is no longer associated with the node
         assertTrue("Node ID was unexpectedly present: " + processor.getEvent().getNodeid(), processor.getEvent().getNodeid() < 1);
