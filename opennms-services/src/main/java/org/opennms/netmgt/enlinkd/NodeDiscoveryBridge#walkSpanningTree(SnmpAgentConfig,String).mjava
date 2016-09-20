@@ -1,0 +1,38 @@
+    private List<BridgeStpLink> walkSpanningTree(SnmpAgentConfig peer, final String baseBridgeAddress) {
+
+        String trackerName = "dot1dStpPortTable";
+
+        final List<BridgeStpLink> stplinks = new ArrayList<BridgeStpLink>();
+        Dot1dStpPortTableTracker stpPortTableTracker = new Dot1dStpPortTableTracker() {
+
+            @Override
+            public void processDot1dStpPortRow(final Dot1dStpPortRow row) {
+                BridgeStpLink link = row.getLink();
+                if (isValidStpBridgeId(link.getDesignatedRoot())
+                        && isValidStpBridgeId(link.getDesignatedBridge())
+                        && !baseBridgeAddress.equals(link.getDesignatedBridgeAddress())) {
+                    stplinks.add(link);
+                }
+            }
+        };
+
+        SnmpWalker walker = SnmpUtils.createWalker(peer, trackerName,
+                                                   stpPortTableTracker);
+        walker.start();
+
+        try {
+            walker.waitFor();
+            if (walker.timedOut()) {
+                LOG.info("run:Aborting Bridge Linkd node scan : Agent timed out while scanning the {} table",
+                         trackerName);
+            } else if (walker.failed()) {
+                LOG.info("run:Aborting Bridge Linkd node scan : Agent failed while scanning the {} table: {}",
+                         trackerName, walker.getErrorMessage());
+            }
+        } catch (final InterruptedException e) {
+            LOG.error("run: Bridge Linkd node collection interrupted, exiting",
+                      e);
+        }
+        return stplinks;
+    }
+
