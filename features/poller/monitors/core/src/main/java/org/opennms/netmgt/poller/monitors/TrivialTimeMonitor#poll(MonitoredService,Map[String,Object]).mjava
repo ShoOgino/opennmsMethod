@@ -1,0 +1,60 @@
+    /**
+     * {@inheritDoc}
+     *
+     * Poll the specified address for service availability.
+     *
+     * During the poll an attempt is made to retrieve the time value from the
+     * remote system.  This can be done via either TCP or UDP depending on the
+     * provided parameters (default TCP).  If the time value returned is within
+     * the specified number of seconds of the local system's clock time, then
+     * the service is considered available.
+     */
+    @Override
+    public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+        //
+        // Process parameters
+        //
+
+        TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
+
+        // Port
+        //
+        int port = ParameterMap.getKeyedInteger(parameters, "port", DEFAULT_PORT);
+
+        // Get the address instance.
+        //
+        InetAddress ipAddr = svc.getAddress();
+
+        LOG.debug("poll: address = {}, port = {}, tracker = {}", InetAddressUtils.str(ipAddr), port, tracker);
+        
+        // Get the permissible amount of skew.
+        //
+        int allowedSkew = ParameterMap.getKeyedInteger(parameters, "allowed-skew", DEFAULT_ALLOWED_SKEW);
+
+        // Determine whether to persist the skew value in addition to the latency
+        boolean persistSkew = ParameterMap.getKeyedBoolean(parameters, "persist-skew", DEFAULT_PERSIST_SKEW);
+
+        // Give it a whirl
+        //
+        PollStatus serviceStatus = PollStatus.unavailable();
+
+        String protocol = ParameterMap.getKeyedString(parameters, "protocol", DEFAULT_PROTOCOL).toLowerCase();
+        if (! protocol.equalsIgnoreCase("tcp") && ! protocol.equalsIgnoreCase("udp")) {
+            throw new  IllegalArgumentException("Unsupported protocol, only TCP and UDP currently supported");
+        } else if (protocol.equalsIgnoreCase("udp")) {
+            // TODO test UDP support
+            LOG.warn("UDP support is largely untested");
+        }
+        
+        if (protocol.equalsIgnoreCase("tcp")) {
+            serviceStatus = pollTimeTcp(svc, parameters, serviceStatus, tracker, ipAddr, port, allowedSkew, persistSkew);
+        } else if (protocol.equalsIgnoreCase("udp")) {
+            serviceStatus = pollTimeUdp(svc, parameters, serviceStatus, tracker, ipAddr, port, allowedSkew, persistSkew);
+        }
+
+        //
+        // return the status of the service
+        //
+        return serviceStatus;
+    }
+

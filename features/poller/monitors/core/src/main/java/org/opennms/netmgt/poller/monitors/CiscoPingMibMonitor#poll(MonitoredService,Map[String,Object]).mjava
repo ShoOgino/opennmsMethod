@@ -1,0 +1,138 @@
+    /**
+     * {@inheritDoc}
+     *
+     * <P>
+     * The poll() method is responsible for setting up and following up the IOS
+     * ping entry that proxies monitoring of the specified address for ICMP
+     * service availability.
+     * </P>
+     * @exception RuntimeException
+     *                Thrown for any unrecoverable errors.
+     */
+    @Override
+    public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
+        final InetAddress targetIpAddr = InetAddrUtils.addr(getKeyedString(parameters, "targetIpAddr", null));
+        final InetAddress proxyIpAddr = InetAddrUtils.addr(getKeyedString(parameters, "proxyIpAddr", null));
+
+        int pingProtocol = 0;
+        try {
+            pingProtocol = determineAddrType(targetIpAddr);
+        } catch (RuntimeException e) {
+            LOG.debug("Unknown address type - neither IPv4 nor IPv6", e);
+            return PollStatus.unavailable("Unknown address type - neither IPv4 nor IPv6");
+        }
+
+        // Get configuration parameters into a CiscoPingEntry object
+        //
+        CiscoPingEntry pingEntry = new CiscoPingEntry();
+        pingEntry.setCiscoPingPacketCount(ParameterMap.getKeyedInteger(parameters, PARM_PACKET_COUNT, PARM_PACKET_COUNT_DEFAULT));
+        pingEntry.setCiscoPingPacketSize(ParameterMap.getKeyedInteger(parameters, PARM_PACKET_SIZE, PARM_PACKET_SIZE_DEFAULT));
+        pingEntry.setCiscoPingPacketTimeout(ParameterMap.getKeyedInteger(parameters, PARM_PACKET_TIMEOUT, PARM_PACKET_TIMEOUT_DEFAULT));
+        pingEntry.setCiscoPingPacketDelay(ParameterMap.getKeyedInteger(parameters, PARM_PACKET_DELAY, PARM_PACKET_DELAY_DEFAULT));
+        pingEntry.setCiscoPingEntryOwner(ParameterMap.getKeyedString(parameters, PARM_ENTRY_OWNER, PARM_ENTRY_OWNER_DEFAULT));
+        pingEntry.setCiscoPingVrfName(ParameterMap.getKeyedString(parameters, PARM_VRF_NAME, PARM_VRF_NAME_DEFAULT));
+        
+        pingEntry.setCiscoPingSerialNumber(Double.valueOf(System.currentTimeMillis() / 1000).intValue());
+        pingEntry.setCiscoPingProtocol(pingProtocol);
+        pingEntry.setCiscoPingAddress(targetIpAddr);
+        pingEntry.setCiscoPingEntryStatus(ROWSTATUS_CREATE_AND_GO);
+        
+        int minSuccessPercent = ParameterMap.getKeyedInteger(parameters, PARM_SUCCESS_PERCENT, PARM_SUCCESS_PERCENT_DEFAULT);
+        
+        // FIXME: Should the cleanup stuff be fixed to actually use this? Not clear if it really matters.
+        // int cleanupInterval = ParameterMap.getKeyedInteger(parameters, PARM_CLEANUP_INTERVAL, PARM_CLEANUP_INTERVAL_DEFAULT);
+
+        // Retrieve the *proxy* interface's SNMP peer object
+        //
+        SnmpAgentConfig agentConfig = getAgentConfig(svc, parameters);
+        LOG.debug("poll: setting SNMP peer attribute for interface {}", proxyIpAddr.getHostAddress());
+
+        // set timeout and retries on SNMP peer object
+        //
+        agentConfig.setTimeout(ParameterMap.getKeyedInteger(parameters, "timeout", agentConfig.getTimeout()));
+        agentConfig.setRetries(ParameterMap.getKeyedInteger(parameters, "retry", ParameterMap.getKeyedInteger(parameters, "retries", agentConfig.getRetries())));
+        agentConfig.setPort(ParameterMap.getKeyedInteger(parameters, "port", agentConfig.getPort()));
+
+        LOG.debug("Setting up CISCO-PING-MIB proxy poll for service {} on interface {} -- {}", svc.getSvcName(), targetIpAddr, pingEntry);
+
+        PollStatus serviceStatus = null;
+        TimeoutTracker timeoutTracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
+        
+        // Send the SET-REQUEST PDU to create the ciscoPingEntry in createAndGo mode
+        SnmpValue[] setResult = SnmpUtils.set(agentConfig, pingEntry.generateCreateOids(), pingEntry.generateCreateValues());
+        if (setResult == null) {
+		LOG.warn("SNMP SET operation unsuccessful for proxy-ping entry for target {} -- {}", targetIpAddr, pingEntry);
+        	return PollStatus.unknown("SNMP SET failed for ciscoPingTable entry on proxy interface " + proxyIpAddr + " with instance ID " + pingEntry.getCiscoPingSerialNumber());
+        }
+        
+        // With the ciscoPingEntry created, we now wait until the specified pings have had time to
+        // complete.  Twice the time it would take assuming a zero response time per ping seems like
+        // a good starting point.
+        try {
+			Thread.sleep(pingEntry.calculateMinInitialWait() * 2);
+		} catch (InterruptedException e) { }
+        
+        // Now check whether the ping has completed and, if so, whether it succeeded and its times
+        SnmpValue[] statusValues = null;
+        for (timeoutTracker.reset(); (timeoutTracker.shouldRetry() && (statusValues == null || statusValues.length < 6 || statusValues[5].toInt() != 1)); timeoutTracker.nextAttempt()) {
+        	statusValues = SnmpUtils.get(agentConfig, pingEntry.generateResultsOids());
+        }
+
+        // If we didn't get the results back, mark the service as unknown
+        if (statusValues == null || (statusValues.length == 1 && statusValues[0] == null)) {
+		LOG.warn("SNMP GET operation unsuccessful for proxy-ping entry for target {} -- {}", targetIpAddr, pingEntry);
+        	return PollStatus.unknown("SNMP GET failed for ciscoPingTable entry on proxy interface " + proxyIpAddr + " with instance ID " + pingEntry.getCiscoPingSerialNumber());
+        }
+        
+        // If we got results back but they do not contain the pingCompleted column is missing,
+        // mark the service unknown
+        if (statusValues.length < 6) {
+		LOG.warn("Proxy-ping entry did not indicate whether ping completed after retries exhausted for target {} -- {}", targetIpAddr, pingEntry);
+        	return PollStatus.unknown("ciscoPingTable entry is missing pingCompleted column on proxy interface " + proxyIpAddr + " with instance ID " + pingEntry.getCiscoPingSerialNumber());        	        	
+        }
+        
+        // If we got the results back but they indicate that the ping still has not completed,
+        // mark the service unknown
+        if (statusValues[5].toInt() != 1) {
+		LOG.warn("Proxy-ping entry marked not completed after retries exhausted for target {} -- {}", targetIpAddr, pingEntry);
+        	return PollStatus.unknown("ciscoPingTable entry marked not completed on proxy interface " + proxyIpAddr + " with instance ID " + pingEntry.getCiscoPingSerialNumber());        	
+        }
+        
+        // If the ping has completed, verify that the percent of completed pings meets our minimum
+        // success percent.  If not, mark the service down.
+        double sentPings = statusValues[0].toInt();
+        double receivedPings = statusValues[1].toInt();
+        double successPct = receivedPings / sentPings * 100;
+        if (receivedPings == 0) {
+		LOG.info("Proxy-ping entry indicates no pings succeeded for target {} -- {}", targetIpAddr, pingEntry);
+        	cleanupCurrentEntry(pingEntry, proxyIpAddr, agentConfig);
+        	return PollStatus.unavailable("All remote pings (" + sentPings + " of " + sentPings + ") failed");
+        } else if (successPct < minSuccessPercent) {
+		LOG.info("Proxy-ping entry indicates {}% success, which misses the success-percent target of {}% for target {} -- {}", successPct, minSuccessPercent, targetIpAddr, pingEntry);
+        	cleanupCurrentEntry(pingEntry, proxyIpAddr, agentConfig);
+        	return PollStatus.unavailable(successPct + " percent (" + receivedPings + "/" + sentPings+ ") pings succeeded, less than target " + minSuccessPercent + " percent");
+        }
+        
+        // If we've arrived here, then enough pings completed to consider the service up!
+        Map<String,Number> pingProps = new HashMap<String,Number>();
+        double minRtt = statusValues[2].toInt();
+        double avgRtt = statusValues[3].toInt();
+        double maxRtt = statusValues[4].toInt();
+        LOG.debug("Logging successful poll: sent={}, received={}, minRtt={}, avgRtt={}, maxRtt={} for proxy-ping of target {} -- {}", sentPings, receivedPings, minRtt, avgRtt, maxRtt, targetIpAddr, pingEntry);
+        pingProps.put("sent", sentPings);
+        pingProps.put("received", receivedPings);
+        pingProps.put("minRtt", minRtt);
+        pingProps.put("avgRtt", avgRtt);
+        pingProps.put("maxRtt", maxRtt);
+        
+        cleanupCurrentEntry(pingEntry, proxyIpAddr, agentConfig);
+        
+        // TODO: Find and clean up defunct rows before returning
+        // Actually it's not clear that this is necessary, seems IOS cleans up old
+        // entries on its own some minutes after their creation.  Need to investigate.
+        
+        serviceStatus = PollStatus.available(avgRtt);
+        serviceStatus.setProperties(pingProps);
+        return serviceStatus;
+    }
+
