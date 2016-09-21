@@ -1,6 +1,7 @@
 	@Test
 	public void testTrapd() throws Exception {
 
+		/*
 		SimpleRegistry registry = new SimpleRegistry();
 		CamelContext trapd = new DefaultCamelContext(registry);
 		trapd.addComponent("kafka", new KafkaComponent());
@@ -20,5 +21,40 @@
 		});
 
 		trapd.start();
+		*/
+
+		MockEndpoint broadcastTrap = getMockEndpoint("mock:kafka:127.0.0.1:" + kafkaPort, false);
+		broadcastTrap.setExpectedMessageCount(1);
+
+		PDU snmp4JV2cTrapPdu = new PDU();
+
+		OID oid = new OID(".1.3.6.1.2.1.1.3.0");
+		snmp4JV2cTrapPdu.add(new VariableBinding(SnmpConstants.sysUpTime, new TimeTicks(5000)));
+		snmp4JV2cTrapPdu.add(new VariableBinding(SnmpConstants.snmpTrapOID, new OID(oid)));
+		snmp4JV2cTrapPdu.add(new VariableBinding(SnmpConstants.snmpTrapAddress,
+				new IpAddress("127.0.0.1")));
+
+		snmp4JV2cTrapPdu.add(new VariableBinding(new OID(oid), new OctetString("Major")));
+		snmp4JV2cTrapPdu.setType(PDU.NOTIFICATION);
+
+		TrapNotification snmp4JV2cTrap = new Snmp4JTrapNotifier.Snmp4JV2TrapInformation(
+				InetAddressUtils.ONE_TWENTY_SEVEN, "public",
+				snmp4JV2cTrapPdu, new BasicTrapProcessor());
+
+		template.requestBody("seda:handleMessage", snmp4JV2cTrap);
+
+		assertMockEndpointsSatisfied();
+
+		String trapDtoXml = broadcastTrap.getReceivedExchanges().get(0).getIn().getBody(String.class);
+		assertNotNull(trapDtoXml);
+		TrapDTO trapDto = JaxbUtils.unmarshal(TrapDTO.class, trapDtoXml);
+		TrapNotification received = TrapDTOToObjectProcessor.dto2object(trapDto);
+		BasicTrapProcessor receivedProcessor = (BasicTrapProcessor)received.getTrapProcessor();
+		assertEquals("public", receivedProcessor.getCommunity());
+		assertEquals(InetAddressUtils.ONE_TWENTY_SEVEN, receivedProcessor.getTrapAddress());
+		assertEquals(InetAddressUtils.ONE_TWENTY_SEVEN, receivedProcessor.getAgentAddress());
+		assertEquals(".1.3.6.1.2.1.1.3", receivedProcessor.getTrapIdentity().getEnterpriseId());
+		assertEquals(6, receivedProcessor.getTrapIdentity().getGeneric());
+		assertEquals(0, receivedProcessor.getTrapIdentity().getSpecific());
 	}
 
