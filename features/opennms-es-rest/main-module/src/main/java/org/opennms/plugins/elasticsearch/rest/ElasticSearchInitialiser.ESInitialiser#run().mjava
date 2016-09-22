@@ -1,0 +1,58 @@
+		@Override
+		public void run() {
+			LOG.debug("starting ESInitialiser thread");
+			// try sending templates to ES
+			// if no connection then retry until connection succeeds. 
+			// This blocks sending of events until all templates sent and initialised
+			while (! initialised.get() && initialiserIsRunning.get()){
+				String templateName=null;
+				try {
+
+					Iterator<Entry<String, StringBuffer>> entries = loadedFiles.entrySet().iterator();
+					while (entries.hasNext() && initialiserIsRunning.get() ) {
+
+						Entry<String, StringBuffer> entry = entries.next();
+
+						templateName=entry.getKey();
+						String body= entry.getValue().toString();
+
+						PutTemplate putTemplate = new PutTemplate.Builder(templateName, body).build();
+
+						JestResult jestResult = getJestClient().execute(putTemplate);
+
+						if (! jestResult.isSucceeded()){
+							LOG.error("Error sending template '"+templateName+"' to Elastic Search"
+									+ " received result: "+jestResult.getJsonString()
+									+ "\n   response code:" +jestResult.getResponseCode() 
+									+ "\n   error message: "+jestResult.getErrorMessage());
+						} else {
+							LOG.info("Sent template '"+templateName+"' to Elastic Search"
+									+ " received result: "+jestResult.getJsonString()
+									+ "\n   response code:" +jestResult.getResponseCode() 
+									+ "\n   error message: "+jestResult.getErrorMessage());
+						}
+
+					}
+
+					initialised.set(true); // will only be true if all json templates processed
+
+				} catch (Exception ex) {
+					LOG.error("could not send template '"+templateName+"' to Elastic Search",ex);
+				}
+
+				if ( initialiserIsRunning.get() && ! initialised.get()) {
+					try {
+						LOG.error("waiting "+retryTimer+" ms before retrying to sending all templates again to Elastic Search");
+						synchronized (this){
+							wait(retryTimer);
+						}
+					} catch (InterruptedException e) {}
+				}
+			}
+
+			if (initialised.get()){
+				LOG.info("ElasticSearcInitialiser initialisation complete");
+			} else LOG.error("ElasticSearcInitialiser initialisation not complete. Initialiser shutting down.");
+
+		}
+
