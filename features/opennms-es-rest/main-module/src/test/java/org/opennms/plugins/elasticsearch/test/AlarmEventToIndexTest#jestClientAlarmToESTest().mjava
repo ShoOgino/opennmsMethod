@@ -1,0 +1,155 @@
+	/**
+	 * simple test to create an alarm change event which will create a new alarm in the alarm index
+	 * and create an alarm change event in the alarm change index
+	 */
+	@Test
+	public void jestClientAlarmToESTest(){
+		LOG.debug("***************** start of test jestClientAlarmToESTest");
+
+		EventToIndex eventToIndex = new EventToIndex();
+		JestClient jestClient=null;
+
+		try {
+
+			// Get Jest client
+			String esusername="";
+			String espassword="";
+			String elasticsearchUrl="http://localhost:9200";
+
+			RestClientFactory restClientFactory = new RestClientFactory(elasticsearchUrl,esusername,espassword);
+
+			IndexNameFunction indexNameFunction = new IndexNameFunction("yyyy.MM");
+
+			NodeCache nodeCache = new MockNodeCache();
+
+			eventToIndex.setRestClientFactory(restClientFactory);
+			eventToIndex.setNodeCache(nodeCache);
+			eventToIndex.setIndexNameFunction(indexNameFunction);
+			eventToIndex.setLogEventDescription(true);
+			eventToIndex.setArchiveRawEvents(true);
+			eventToIndex.setArchiveAlarms(true);
+			eventToIndex.setArchiveAlarmChangeEvents(true);
+			eventToIndex.setArchiveOldAlarmValues(true);
+			eventToIndex.setArchiveNewAlarmValues(true);
+
+			// create an alarm change event
+			EventBuilder eb = new EventBuilder( ALARM_ACKNOWLEDGED_EVENT, EVENT_SOURCE_NAME);
+
+			//copy in all values as json in params
+			eb.addParam("oldalarmvalues",TEST_ALARM_JSON_1);
+			eb.addParam("newalarmvalues",TEST_ALARM_JSON_1);
+			Event event = eb.getEvent();
+			event.setDbid(100);
+			event.setNodeid((long) 34);
+
+			// forward event to elastic search
+			eventToIndex.forwardEvent(event);
+			
+			// waiting 5 seconds for index 
+            try {
+            	TimeUnit.SECONDS.sleep(5);
+            } catch (InterruptedException e) { }
+
+			// send query to check that alarm has been created
+			jestClient = restClientFactory.getJestClient();
+
+			// search for resulting alarm
+			String query = "{\n" 
+					+"\n       \"query\": {"
+					+ "\n         \"match\": {"
+					+ "\n         \"alarmid\": \"807\""
+					+ "\n          }"
+					+ "\n        }"
+					+ "\n     }";
+			
+			LOG.debug("alarm check search query: "+query);
+
+			Search search = new Search.Builder(query)
+			// multiple index or types can be added.
+			.addIndex("opennms-*")
+			.build();
+
+			SearchResult sresult = jestClient.execute(search);
+
+			LOG.debug("received search sresult: "+sresult.getJsonString()
+					+ "\n   response code:" +sresult.getResponseCode() 
+					+ "\n   error message: "+sresult.getErrorMessage());
+			
+			assertEquals(200, sresult.getResponseCode());
+
+			JSONParser parser = new JSONParser();
+			Object obj = parser.parse(sresult.getJsonString());
+			JSONObject resultValues = (JSONObject) obj;
+			JSONObject hits = (JSONObject) resultValues.get("hits");
+
+			LOG.debug("search result hits:total="+hits.get("total"));
+
+			assertEquals(Long.valueOf(1), hits.get("total"));
+			
+			
+			// waiting 5 seconds for index 
+            try {
+            	TimeUnit.SECONDS.sleep(5);
+            } catch (InterruptedException e) { }
+			
+			// search for resulting alarm change event
+			String eventquery = "{\n" 
+					+"\n       \"query\": {"
+					+ "\n         \"match\": {"
+					+ "\n         \"id\": \"100\""
+					+ "\n          }"
+					+ "\n        }"
+					+ "\n     }";
+			
+			LOG.debug("event check search query: "+eventquery);
+
+			Search eventsearch = new Search.Builder(eventquery)
+			// multiple index or types can be added.
+			.addIndex("opennms-*")
+			.build();
+
+			SearchResult eventsresult = jestClient.execute(eventsearch);
+
+			LOG.debug("received search eventsresult: "+eventsresult.getJsonString()
+					+ "\n   response code:" +eventsresult.getResponseCode() 
+					+ "\n   error message: "+eventsresult.getErrorMessage());
+			
+			assertEquals(200, eventsresult.getResponseCode());
+
+			Object obj2 = parser.parse(eventsresult.getJsonString());
+			JSONObject eventsresultValues = (JSONObject) obj2;
+			
+			JSONObject eventhits = (JSONObject) eventsresultValues.get("hits");
+			LOG.debug("search result event hits:total="+eventhits.get("total"));
+			assertEquals(Long.valueOf(1), eventhits.get("total"));
+			
+			JSONArray eventhitsvalues = (JSONArray) eventhits.get("hits");
+			LOG.debug("   eventhitsvalues: "+eventhitsvalues.toJSONString());
+			
+			JSONObject hitObj = (JSONObject) eventhitsvalues.get(0);
+			LOG.debug("   hitObj: "+hitObj.toJSONString());
+			
+			String typeStr =  hitObj.get("_type").toString();
+
+			LOG.debug("search result index type="+typeStr);
+			assertEquals(EVENT_INDEX_TYPE, typeStr);
+			
+			JSONObject sourceObj = (JSONObject) hitObj.get("_source");
+			LOG.debug("   sourceObj: "+sourceObj.toJSONString());
+			
+			String eventUeiStr =  sourceObj.get("eventuei").toString();
+
+			LOG.debug("search result event eventueistr="+eventUeiStr);
+			assertEquals(ALARM_ACKNOWLEDGED_EVENT, eventUeiStr);
+
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			throw new RuntimeException(ex);
+		} finally {
+			// shutdown client
+			if (jestClient !=null )   jestClient.shutdownClient();
+			if (eventToIndex !=null ) eventToIndex.destroy();
+		}
+		LOG.debug("***************** end of test jestClientAlarmToESTest");
+	}
+
