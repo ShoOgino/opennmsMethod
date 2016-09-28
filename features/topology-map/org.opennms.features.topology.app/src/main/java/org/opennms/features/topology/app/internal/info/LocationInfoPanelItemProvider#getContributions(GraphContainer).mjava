@@ -1,0 +1,40 @@
+    @Override
+    public Collection<? extends InfoPanelItem> getContributions(GraphContainer container) {
+        final List<Vertex> vertices = new ArrayList<>(container.getGraph().getDisplayVertices());
+        final Set<Integer> nodeIds = vertices.stream()
+                .filter(v -> v.getNodeID() != null)
+                .map(v -> v.getNodeID())
+                .collect(Collectors.toSet());
+
+        final CoordinateResolver.Result result = new CoordinateResolver(geocoderService, nodeDao).resolve(nodeIds);
+        final List<Marker> markers = vertices.stream()
+                .filter(v -> result.getCoordinates(v.getNodeID()) != null)
+                .map(v -> {
+                    Coordinates coordinates = result.getCoordinates(v.getNodeID());
+                    OnmsGeolocation geolocation = result.getGeoLocation(v.getNodeID());
+                    return new Marker(
+                            coordinates,
+                            createTooltip(v, coordinates, geolocation),
+                            container.getSelectionManager().isVertexRefSelected(v));
+                }).collect(Collectors.toList());
+
+        if (!markers.isEmpty()) {
+            final LocationConfiguration config = new LocationConfiguration()
+                    .withTileLayer(GeocoderConfig.getTileServerUrl())
+                    .withMarker(markers)
+                    .withInitialZoom(10)
+                    .withLayerOptions(GeocoderConfig.getOptions());
+
+            final LocationComponent locationComponent = new LocationComponent(config, "mapId-" + getClass().getSimpleName().toLowerCase());
+            locationComponent.setWidth(300, Sizeable.Unit.PIXELS);
+            locationComponent.setHeight(300, Sizeable.Unit.PIXELS);
+
+            return Collections.singleton(
+                    new DefaultInfoPanelItem()
+                        .withTitle(String.format("Geolocation (%d/%d)", markers.size(), vertices.size()))
+                        .withOrder(1)
+                        .withComponent(locationComponent));
+        }
+        return Collections.emptyList();
+    }
+

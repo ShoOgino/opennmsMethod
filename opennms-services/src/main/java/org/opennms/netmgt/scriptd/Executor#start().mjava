@@ -1,33 +1,12 @@
-    /**
-     * Starts the fiber. If the fiber has already been run or is currently
-     * running then an exception is generated. The status of the fiber is
-     * updated to <code>STARTING</code> and will transition to <code>
-     * RUNNING</code>
-     * when the fiber finishes initializing and begins processing the
-     * encapsulaed queue.
-     *
-     * @throws java.lang.IllegalStateException
-     *             Thrown if the fiber is stopped or has never run.
-     */
-    @Override
     public synchronized void start() {
 
-        if (m_worker != null) {
-            throw new IllegalStateException("The fiber has already been run");
-        }
-
-        m_status = STARTING;
-
-        Engine[] engines = m_config.getEngines();
-
-        for (int i = 0; i < engines.length; i++) {
-            Engine engine = engines[i];
+        for (Engine engine : m_config.getEngines()) {
 
             LOG.debug("Registering engine: {}", engine.getLanguage());
 
             String[] extensions = null;
 
-            String extensionList = engines[i].getExtensions();
+            String extensionList = engine.getExtensions();
 
             if (extensionList != null) {
                 StringTokenizer st = new StringTokenizer(extensionList);
@@ -41,25 +20,33 @@
                 }
             }
 
-            BSFManager.registerScriptingEngine(engines[i].getLanguage(), engines[i].getClassName(), extensions);
+            BSFManager.registerScriptingEngine(engine.getLanguage(), engine.getClassName(), extensions);
         }
 
-        m_mgr = new BSFManager();
-        m_mgr.registerBean("log", LOG);
+        m_scriptManager = new BSFManager();
+        m_scriptManager.registerBean("log", LOG);
 
-        StartScript[] startScripts = m_config.getStartScripts();
-
-        for (int i = 0; i < startScripts.length; i++) {
+        // Run all start scripts
+        for (StartScript startScript : m_config.getStartScripts()) {
             try {
-                m_mgr.exec(startScripts[i].getLanguage(), "", 0, 0, startScripts[i].getContent());
-            }
-
-            catch (BSFException ex) {
-                LOG.error("Start script[{}] failed.", i, ex);
+                m_scriptManager.exec(startScript.getLanguage(), "", 0, 0, startScript.getContent());
+            } catch (BSFException e) {
+                LOG.error("Start script failed: " + startScript, e);
             }
         }
 
-        m_worker = new Thread(this, getName());
-        m_worker.start();
+        // Start the thread pool
+        m_executorService = Executors.newFixedThreadPool(1, new LogPreservingThreadFactory("Scriptd-Executor", 1));
+
+        // Register the event listener after the thread pool has been
+        // started
+        try {
+            m_broadcastEventProcessor = new BroadcastEventProcessor(this);
+        } catch (Throwable e) {
+            LOG.error("Failed to setup event reader", e);
+            throw new UndeclaredThrowableException(e);
+        }
+
+        LOG.debug("Scriptd executor started");
     }
 

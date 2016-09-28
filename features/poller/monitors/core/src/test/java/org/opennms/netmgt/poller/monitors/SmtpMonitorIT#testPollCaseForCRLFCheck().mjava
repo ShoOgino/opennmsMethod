@@ -1,0 +1,45 @@
+    @Test
+    public void testPollCaseForCRLFCheck() throws UnknownHostException, InterruptedException {
+        m_serverThread = new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+                try {
+                    m_serverSocket.setSoTimeout(1000);
+                    Socket s = m_serverSocket.accept();
+                    System.out.println("S: 220 localhost.localdomain ESMTP bogon");
+                    // Having \r should fail in cheking for end of the line as the requirement is for CRLF
+                    s.getOutputStream().write("220 localhost.localdomain ESMTP bogon\r".getBytes());
+                    BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream()));
+                    String command = r.readLine();
+                    System.out.println("C: " + command);
+                    if (command.startsWith("HELO ")) {
+                        System.out.println("S: 250 Hello");
+                        s.getOutputStream().write("250 Hello\r\n".getBytes());
+                    }
+                    command = r.readLine();
+                    System.out.println("C: " + command);
+                    if (command.equals("QUIT")) {
+                        System.out.println("S: 221-Goodbye, friend.");
+                        s.getOutputStream().write("221-Goodbye, friend.\r\n".getBytes());
+                        System.out.println("S: 221 See ya");
+                        s.getOutputStream().write("221 See ya\r\n".getBytes());
+                    }
+                } catch (Throwable e) {
+                    throw new UndeclaredThrowableException(e);
+                }
+            }
+        });
+
+        m_serverThread.start();
+
+        ServiceMonitor sm = new SmtpMonitor();
+        MonitoredService svc = new MockMonitoredService(1, "Node One", InetAddressUtils.addr("127.0.0.1"), "SMTP");
+        Map<String, Object> parms = new HashMap<String, Object>();
+        parms.put("port", m_serverSocket.getLocalPort());
+
+        PollStatus ps = sm.poll(svc, parms);
+        assertTrue(ps.isUnavailable());
+        assertFalse(ps.isUp());
+    }
+

@@ -6,33 +6,27 @@
     	SnmpAgentConfig  config = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(SWITCH1_IP));
         String trackerName = "ospfIfTable";
         final List<OspfLink> links = new ArrayList<OspfLink>();
-        final OspfIpAddrTableGetter ipAddrTableGetter = new OspfIpAddrTableGetter(config);
         OspfIfTableTracker ospfIfTableTracker = new OspfIfTableTracker() {
 
         	public void processOspfIfRow(final OspfIfRow row) {
-        		links.add(row.getOspfLink(ipAddrTableGetter));
+        		links.add(row.getOspfLink());
          	}
         };
 
-    	SnmpWalker walker =  SnmpUtils.createWalker(config, trackerName, ospfIfTableTracker);
-
-        walker.start();
-
         try {
-            walker.waitFor();
-            if (walker.timedOut()) {
-            	LOG.info(
-                        "run:Aborting node scan : Agent timed out while scanning the {} table", trackerName);
-            }  else if (walker.failed()) {
-            	LOG.info(
-                        "run:Aborting node scan : Agent failed while scanning the {} table: {}", trackerName,walker.getErrorMessage());
-            }
+            m_client.walk(config,ospfIfTableTracker)
+            .withDescription(trackerName)
+            .withLocation(null)
+            .execute()
+            .get();
         } catch (final InterruptedException e) {
             LOG.error("run: collection interrupted, exiting",e);
             return;
         }
         
+        final OspfIpAddrTableGetter ipAddrTableGetter = new OspfIpAddrTableGetter(config,m_client,null);
         for (OspfLink link: links) {
+                link = ipAddrTableGetter.get(link);
 			assertEquals(0, link.getOspfAddressLessIndex().intValue());
 			if (link.getOspfIpAddr().equals(InetAddress.getByName("192.168.100.246"))) {
 				assertEquals(10101, link.getOspfIfIndex().intValue());

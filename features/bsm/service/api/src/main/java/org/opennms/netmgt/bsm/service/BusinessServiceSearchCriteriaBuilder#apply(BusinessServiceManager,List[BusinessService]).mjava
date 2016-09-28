@@ -1,0 +1,52 @@
+    @Override
+    public List<BusinessService> apply(BusinessServiceManager businessServiceManager, List<BusinessService> businessServiceDTOs) {
+        Stream<BusinessService> s = businessServiceDTOs.stream();
+
+        for (String nameRegexp : m_nameFilters) {
+            s = s.filter(p -> p.getName().matches(nameRegexp));
+        }
+
+        for (Pair<String, String> pair : m_attributeFilters) {
+            s = s.filter(p -> p.getAttributes().containsKey(pair.getA()) && p.getAttributes().get(pair.getA()).matches(pair.getB()));
+        }
+
+        for (Pair<CompareOperator, Status> pair : m_severityFilters) {
+            s = s.filter(p -> pair.getA().check(businessServiceManager.getOperationalStatus(p).compareTo(pair.getB())));
+        }
+
+        Comparator<BusinessService> comparator = new Comparator<BusinessService>() {
+
+            private final BusinessServiceGraph graph = businessServiceManager.getGraph();
+
+            @Override
+            public int compare(BusinessService p1, BusinessService p2) {
+                switch (m_order) {
+                    case Name: {
+                        return p1.getName().compareTo(p2.getName());
+                    }
+                    case Severity: {
+                        return businessServiceManager.getOperationalStatus(p1).compareTo(businessServiceManager.getOperationalStatus(p2));
+                    }
+                    case Level: {
+                        return Integer.compare(graph.getVertexByBusinessServiceId(p1.getId()).getLevel(),
+                                               graph.getVertexByBusinessServiceId(p2.getId()).getLevel());
+                    }
+                    default:
+                        throw new IllegalArgumentException("Order not set");
+                }
+            }
+        };
+
+        if (m_sequence.equals(Sequence.Descending)) {
+            comparator = comparator.reversed();
+        }
+
+        s = s.sorted(comparator);
+
+        if (m_limit > 0) {
+            s = s.limit(m_limit);
+        }
+
+        return s.collect(Collectors.toList());
+    }
+

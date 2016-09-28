@@ -1,0 +1,55 @@
+	/**
+	 * sends events to elastic search returns true if successful
+	 * @return
+	 */
+	public String sendEventsToEs(){
+
+		OnmsRestEventsClient onmsRestEventsClient = new OnmsRestEventsClient();
+		onmsRestEventsClient.setOnmsUrl(onmsUrl);
+		onmsRestEventsClient.setOnmsPassWord(onmsPassWord);
+		onmsRestEventsClient.setOnmsUserName(onmsUserName);
+		Event firstEvent=null;
+		Event lastEvent=null;
+
+		boolean endofEvents=false;
+		int eventsSent=0;
+
+		int eventOffset=offset;
+
+		while (!endofEvents && eventsSent<=limit){
+
+			List<Event> events = onmsRestEventsClient.getEvents(EVENT_RETREIVAL_LIMIT, eventOffset);
+
+			endofEvents = events.isEmpty();
+
+			for(Event event:events){
+				if(firstEvent==null) firstEvent=event;
+				lastEvent=event;
+				eventsSent++;
+				
+				// remove node label param if included in event
+				if (! useNodeLabel){
+					List<Parm> parmCollection = event.getParmCollection();
+					ListIterator<Parm> iter = parmCollection.listIterator();
+					while(iter.hasNext()){
+					    if(OnmsRestEventsClient.NODE_LABEL.equals(iter.next().getParmName())){
+					        iter.remove();
+					    }
+					}
+					
+				}
+				
+				LOG.debug("sending event to es: eventid="+event.getDbid());
+				getEventForwarder().sendNow(event);
+			}
+
+			eventOffset=eventOffset+EVENT_RETREIVAL_LIMIT;
+
+		}
+
+		return "Sent "+eventsSent
+				+ " events to Elastic Search. First event "
+				+ "id="+((firstEvent!=null) ? firstEvent.getDbid() : "firstEvent null")
+				+ " last event id="+((lastEvent!=null) ? lastEvent.getDbid() : "lastEvent null");
+	}
+

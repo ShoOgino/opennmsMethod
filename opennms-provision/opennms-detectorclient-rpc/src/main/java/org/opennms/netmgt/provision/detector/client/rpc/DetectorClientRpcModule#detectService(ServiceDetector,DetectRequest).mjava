@@ -1,0 +1,43 @@
+    private CompletableFuture<DetectorResponseDTO> detectService(ServiceDetector detector, DetectRequest detectRequest) {
+        detector.init();
+        if (detector instanceof SyncServiceDetector) {
+            final SyncServiceDetector syncDetector = (SyncServiceDetector) detector;
+            return CompletableFuture.supplyAsync(new Supplier<DetectorResponseDTO>() {
+                @Override
+                public DetectorResponseDTO get() {
+                    try {
+                        return new DetectorResponseDTO(syncDetector.detect(detectRequest));
+                    } catch (Throwable t) {
+                        return new DetectorResponseDTO(t);
+                    } finally {
+                        syncDetector.dispose();
+                    }
+                }
+            }, executor);
+        } else if (detector instanceof AsyncServiceDetector) {
+            final CompletableFuture<DetectorResponseDTO> future = new CompletableFuture<>();
+            final AsyncServiceDetector asyncDetector = (AsyncServiceDetector) detector;
+            try {
+                DetectFuture detectFuture = asyncDetector.detect(detectRequest);
+                detectFuture.addListener(new DetectFutureListener<DetectFuture>() {
+                    @Override
+                    public void operationComplete(DetectFuture detectFuture) {
+                        if (detectFuture.getException() != null) {
+                            future.complete(new DetectorResponseDTO(detectFuture.getException()));
+                        } else {
+                            future.complete(new DetectorResponseDTO(detectFuture));
+                        }
+                    }
+                });
+            } catch (Throwable t) {
+                DetectorResponseDTO responseDTO = new DetectorResponseDTO();
+                responseDTO.setDetected(false);
+                responseDTO.setFailureMessage(t.getMessage());
+                future.complete(responseDTO);
+            }
+            return future;
+        } else {
+            throw new IllegalArgumentException("Unsupported detector type.");
+        }
+    }
+

@@ -12,6 +12,10 @@
         Assert.notNull(m_alarmTable);
         Assert.notNull(m_nodeTable);
 
+        final String searchString = vaadinRequest.getParameter("search");
+        final Integer maxClusterRadius = Integer.getInteger("gwt.maxClusterRadius", 350);
+        LOG.info("Starting search string: {}, max cluster radius: {}", searchString, maxClusterRadius);
+
         m_alarmTable.setVaadinApplicationContext(context);
         final EventProxy eventProxy = new EventProxy() {
             @Override public <T> void fireEvent(final T eventObject) {
@@ -38,8 +42,25 @@
         m_alarmTable.setEventProxy(eventProxy);
         m_nodeTable.setEventProxy(eventProxy);
 
-        createMapPanel(vaadinRequest.getParameter("search"));
+        createMapPanel(searchString, maxClusterRadius);
         createRootLayout();
         addRefresher();
+
+        // Notify the user if no tileserver url or options are set
+        if (!NodeMapConfiguration.isValid()) {
+            new InvalidConfigurationWindow().open();
+        }
+
+        // Schedule refresh of node data
+        m_executor.scheduleWithFixedDelay(() -> m_mapWidgetComponent.refreshNodeData(), 0, 5, TimeUnit.MINUTES);
+
+        // If we do not shutdown the executor, the scheduler keeps refreshing the node data, even if the
+        // UI may already been detached, resulting at one point in a OutOfMemory. See NMS-8589.
+        vaadinRequest.getService().addSessionDestroyListener(new SessionDestroyListener() {
+            @Override
+            public void sessionDestroy(SessionDestroyEvent event) {
+                m_executor.shutdown();
+            }
+        });
     }
 

@@ -1,232 +1,83 @@
-    private AbsoluteLayout createMapLayout() {
-        final Property<Double> scale = m_graphContainer.getScaleProperty();
-
-        m_lastUpdatedTimeLabel = new LastUpdatedLabel();
-        m_lastUpdatedTimeLabel.setImmediate(true);
-
-        m_hudDisplay = new HudDisplay();
-        m_hudDisplay.setImmediate(true);
-
-        m_zoomLevelLabel.setHeight(20, Unit.PIXELS);
-        m_zoomLevelLabel.setWidth(22, Unit.PIXELS);
-        m_zoomLevelLabel.addStyleName("center-text");
-        m_zoomLevelLabel.addTextChangeListener(new FieldEvents.TextChangeListener() {
-            @Override
-            public void textChange(FieldEvents.TextChangeEvent event) {
-                try{
-                    int zoomLevel = Integer.parseInt(event.getText());
-                    setSemanticZoomLevel(zoomLevel);
-                } catch(NumberFormatException e){
-                    setSemanticZoomLevel(m_graphContainer.getSemanticZoomLevel());
-                }
-
-            }
-        });
-
+    private Component createMapLayout() {
+        // Topology (Map) Component
         m_topologyComponent = new TopologyComponent(m_graphContainer, m_iconRepositoryManager, this);
         m_topologyComponent.setSizeFull();
         m_topologyComponent.addMenuItemStateListener(this);
         m_topologyComponent.addVertexUpdateListener(this);
 
-        final Slider slider = new Slider(0, 1);
-        slider.setPropertyDataSource(scale);
-        slider.setResolution(1);
-        slider.setHeight("200px");
-        slider.setOrientation(SliderOrientation.VERTICAL);
+        // Search Box
+        m_searchBox = new SearchBox(m_serviceManager, new DefaultOperationContext(this, m_graphContainer, OperationContext.DisplayLocation.SEARCH));
 
-        slider.setImmediate(true);
+        // Info Panel
+        m_infoPanel = new InfoPanel(m_searchBox);
 
-        final NativeButton showFocusVerticesBtn = new NativeButton(FontAwesomeIcons.Icon.eye_open.variant());
-        showFocusVerticesBtn.setDescription("Toggle Highlight Focus Nodes");
-        showFocusVerticesBtn.setHtmlContentAllowed(true);
-        showFocusVerticesBtn.addClickListener(new ClickListener() {
+        // Breadcrumb
+        m_breadcrumbComponent = new BreadcrumbComponent();
+
+        // Toolbar
+        m_toolbarPanel = new ToolbarPanel(new ToolbarPanelController() {
             @Override
-            public void buttonClick(ClickEvent event) {
-                if(showFocusVerticesBtn.getCaption().equals(FontAwesomeIcons.Icon.eye_close.variant())){
-                    showFocusVerticesBtn.setCaption(FontAwesomeIcons.Icon.eye_open.variant());
-                } else {
-                    showFocusVerticesBtn.setCaption(FontAwesomeIcons.Icon.eye_close.variant());
-                }
+            public void refreshUI() {
+                new TopologyUI.DynamicUpdateRefresher().refreshUI();
+            }
+
+            @Override
+            public void saveHistory() {
+                TopologyUI.this.saveHistory();
+            }
+
+            @Override
+            public void setActiveTool(ActiveTool activeTool) {
+                Objects.requireNonNull(activeTool);
+                m_topologyComponent.setActiveTool(activeTool.name());
+            }
+
+            @Override
+            public void showAllMap() {
+                m_topologyComponent.showAllMap();
+            }
+
+            @Override
+            public void centerMapOnSelection() {
+                m_topologyComponent.centerMapOnSelection();
+            }
+
+            @Override
+            public void toggleHighlightFocus() {
                 m_topologyComponent.getState().setHighlightFocus(!m_topologyComponent.getState().isHighlightFocus());
                 m_topologyComponent.updateGraph();
             }
-        });
 
-        final NativeButton magnifyBtn = new NativeButton();
-        magnifyBtn.setHtmlContentAllowed(true);
-        magnifyBtn.setCaption("<i class=\"" + FontAwesomeIcons.Icon.zoom_in.stylename() + "\" ></i>");
-        magnifyBtn.setStyleName("icon-button");
-        magnifyBtn.addClickListener(new ClickListener() {
             @Override
-            public void buttonClick(ClickEvent event) {
-                if(slider.getValue() < 1){
-                    slider.setValue(Math.min(1, slider.getValue() + 0.25));
-                }
+            public void setSemanticZoomLevel(int semanticZoomLevel) {
+                m_graphContainer.setSemanticZoomLevel(semanticZoomLevel);
+                m_graphContainer.redoLayout();
+            }
+
+            public int getSemanticZoomLevel() {
+                return m_graphContainer.getSemanticZoomLevel();
+            }
+
+            @Override
+            public Property<Double> getScaleProperty() {
+                return m_graphContainer.getScaleProperty();
             }
         });
 
-        final NativeButton demagnifyBtn = new NativeButton();
-        demagnifyBtn.setHtmlContentAllowed(true);
-        demagnifyBtn.setCaption("<i class=\"" + FontAwesomeIcons.Icon.zoom_out.stylename() + "\" ></i>");
-        demagnifyBtn.setStyleName("icon-button");
-        demagnifyBtn.addClickListener(new ClickListener() {
-            @Override
-            public void buttonClick(ClickEvent event) {
-                if(slider.getValue() != 0){
-                    slider.setValue(Math.max(0, slider.getValue() - 0.25));
-                }
-            }
-        });
-
-        VerticalLayout sliderLayout = new VerticalLayout();
-        sliderLayout.setDefaultComponentAlignment(Alignment.MIDDLE_CENTER);
-        sliderLayout.addComponent(magnifyBtn);
-        sliderLayout.addComponent(slider);
-        sliderLayout.addComponent(demagnifyBtn);
-
-        m_szlOutBtn = new Button();
-        m_szlOutBtn.setHtmlContentAllowed(true);
-        m_szlOutBtn.setCaption(FontAwesomeIcons.Icon.arrow_down.variant());
-        m_szlOutBtn.setDescription("Collapse Semantic Zoom Level");
-        m_szlOutBtn.setEnabled(m_graphContainer.getSemanticZoomLevel() > 0);
-        m_szlOutBtn.addClickListener(new ClickListener() {
-            @Override
-            public void buttonClick(ClickEvent event) {
-                int szl = m_graphContainer.getSemanticZoomLevel();
-                if (szl > 0) {
-                    szl--;
-                    setSemanticZoomLevel(szl);
-                    saveHistory();
-                }
-            }
-        });
-
-        final Button szlInBtn = new Button();
-        szlInBtn.setHtmlContentAllowed(true);
-        szlInBtn.setCaption(FontAwesomeIcons.Icon.arrow_up.variant());
-        szlInBtn.setDescription("Expand Semantic Zoom Level");
-        szlInBtn.addClickListener(new ClickListener() {
-
-            @Override
-            public void buttonClick(ClickEvent event) {
-                int szl = m_graphContainer.getSemanticZoomLevel();
-                szl++;
-                setSemanticZoomLevel(szl);
-                saveHistory();
-            }
-        });
-
-
-        m_panBtn = new Button();
-        m_panBtn.setIcon(new ThemeResource("images/cursor_drag_arrow.png"));
-        m_panBtn.setDescription("Pan Tool");
-        m_panBtn.setStyleName("toolbar-button down");
-
-        m_selectBtn = new Button();
-        m_selectBtn.setIcon(new ThemeResource("images/selection.png"));
-        m_selectBtn.setDescription("Selection Tool");
-        m_selectBtn.setStyleName("toolbar-button");
-        m_selectBtn.addClickListener(new ClickListener() {
-
-            @Override
-            public void buttonClick(ClickEvent event) {
-                m_selectBtn.setStyleName("toolbar-button down");
-                m_panBtn.setStyleName("toolbar-button");
-                m_topologyComponent.setActiveTool("select");
-            }
-        });
-
-        m_panBtn.addClickListener(new ClickListener() {
-
-            @Override
-            public void buttonClick(ClickEvent event) {
-                m_panBtn.setStyleName("toolbar-button down");
-                m_selectBtn.setStyleName("toolbar-button");
-                m_topologyComponent.setActiveTool("pan");
-            }
-        });
-
-        final Button historyBackBtn = new Button(FontAwesomeIcons.Icon.arrow_left.variant());
-        historyBackBtn.setHtmlContentAllowed(true);
-        historyBackBtn.setDescription("Click to go back");
-        historyBackBtn.addClickListener(new ClickListener() {
-            @Override
-            public void buttonClick(ClickEvent event) {
-                com.vaadin.ui.JavaScript.getCurrent().execute("window.history.back()");
-            }
-        });
-
-        final Button historyForwardBtn = new Button(FontAwesomeIcons.Icon.arrow_right.variant());
-        historyForwardBtn.setHtmlContentAllowed(true);
-        historyForwardBtn.setDescription("Click to go forward");
-        historyForwardBtn.addClickListener(new ClickListener() {
-            @Override
-            public void buttonClick(ClickEvent event) {
-                com.vaadin.ui.JavaScript.getCurrent().execute("window.history.forward()");
-            }
-        });
-
-        m_searchBox = new SearchBox(m_serviceManager, new CommandManager.DefaultOperationContext(this, m_graphContainer, OperationContext.DisplayLocation.SEARCH));
-        m_selectionManager.addSelectionListener(m_searchBox);
-        m_graphContainer.addChangeListener(m_searchBox);
-
-        //History Button Layout
-        HorizontalLayout historyButtonLayout = new HorizontalLayout();
-        historyButtonLayout.setSpacing(true);
-        historyButtonLayout.addComponent(historyBackBtn);
-        historyButtonLayout.addComponent(historyForwardBtn);
-
-        //Semantic Controls Layout
-        HorizontalLayout semanticLayout = new HorizontalLayout();
-        semanticLayout.setSpacing(true);
-        semanticLayout.addComponent(szlInBtn);
-        semanticLayout.addComponent(m_zoomLevelLabel);
-        semanticLayout.addComponent(m_szlOutBtn);
-        semanticLayout.setComponentAlignment(m_zoomLevelLabel, Alignment.MIDDLE_CENTER);
-
-        VerticalLayout historyCtrlLayout = new VerticalLayout();
-        historyCtrlLayout.setDefaultComponentAlignment(Alignment.MIDDLE_CENTER);
-        historyCtrlLayout.addComponent(historyButtonLayout);
-
-        HorizontalLayout controlLayout = new HorizontalLayout();
-        controlLayout.setDefaultComponentAlignment(Alignment.MIDDLE_CENTER);
-        controlLayout.addComponent(m_panBtn);
-        controlLayout.addComponent(m_selectBtn);
-
-        VerticalLayout semanticCtrlLayout = new VerticalLayout();
-        semanticCtrlLayout.setDefaultComponentAlignment(Alignment.MIDDLE_CENTER);
-        semanticCtrlLayout.addComponent(semanticLayout);
-
-        HorizontalLayout locationToolLayout = createLocationToolLayout();
-
-        //Vertical Layout for all tools on right side
-        VerticalLayout toolbar = new VerticalLayout();
-        toolbar.setDefaultComponentAlignment(Alignment.MIDDLE_CENTER);
-        toolbar.setSpacing(true);
-
-        toolbar.addComponent(historyCtrlLayout);
-        toolbar.addComponent(locationToolLayout);
-        toolbar.addComponent(showFocusVerticesBtn);
-        toolbar.addComponent(sliderLayout);
-        toolbar.addComponent(controlLayout);
-        toolbar.addComponent(semanticCtrlLayout);
-
-
+        // Map Layout (we need to wrap it in an absolute layout otherwise it shows up twice on the topology map)
         AbsoluteLayout mapLayout = new AbsoluteLayout();
-
-
         mapLayout.addComponent(m_topologyComponent, "top:0px; left: 0px; right: 0px; bottom: 0px;");
-        mapLayout.addComponent(m_lastUpdatedTimeLabel, "top: 5px; right: 10px;");
-        mapLayout.addComponent(m_hudDisplay, "top: 445px; right: 10px");
-        mapLayout.addComponent(toolbar, "top: 25px; right: 10px;");
-        mapLayout.addComponent(m_searchBox, "top:5px; left:5px;");
-        //mapLayout.addComponent(locationToolLayout, "top: 5px; left: 50%");
+        mapLayout.addComponent(m_breadcrumbComponent, "top:10px; left: 50px");
         mapLayout.setSizeFull();
 
-        m_noContentWindow = new NoContentAvailableWindow(m_graphContainer);
-        m_noContentWindow.setVisible(true);
-        addWindow(m_noContentWindow);
+        HorizontalLayout layout = new HorizontalLayout();
+        layout.addStyleName("map-layout");
+        layout.addComponent(m_infoPanel);
+        layout.addComponent(mapLayout);
+        layout.addComponent(m_toolbarPanel);
+        layout.setExpandRatio(mapLayout, 1);
+        layout.setSizeFull();
 
-        return mapLayout;
+        return layout;
     }
 

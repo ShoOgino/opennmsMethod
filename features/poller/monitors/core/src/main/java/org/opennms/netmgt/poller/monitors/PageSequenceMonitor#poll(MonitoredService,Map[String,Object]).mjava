@@ -1,0 +1,44 @@
+    /** {@inheritDoc} */
+    @Override
+    public PollStatus poll(final MonitoredService svc, final Map<String, Object> parameterMap) {
+        PollStatus serviceStatus = PollStatus.unavailable("Poll not completed yet");
+
+        final Map<String,Number> responseTimes = new LinkedHashMap<String,Number>();
+
+        SequenceTracker tracker = new SequenceTracker(parameterMap, DEFAULT_SEQUENCE_RETRY, DEFAULT_TIMEOUT);
+        for(tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt() ) {
+            HttpClientWrapper clientWrapper = null;
+            try {
+                PageSequenceMonitorParameters parms = PageSequenceMonitorParameters.get(parameterMap);
+
+                clientWrapper = parms.createHttpClient();
+
+                // TODO: Is it normal for monitors to set 'response-time' to NaN
+                // before the poll is executed?
+                responseTimes.put(PollStatus.PROPERTY_RESPONSE_TIME, Double.NaN);
+
+                tracker.startAttempt();
+                parms.getPageSequence().execute(clientWrapper, svc, responseTimes);
+                double responseTime = tracker.elapsedTimeInMillis();
+
+                serviceStatus = PollStatus.available();
+                // Update response time with the actual execution time
+                responseTimes.put(PollStatus.PROPERTY_RESPONSE_TIME, responseTime);
+
+            } catch (PageSequenceMonitorException e) {
+                serviceStatus = PollStatus.unavailable(e.getMessage());
+            } catch (IllegalArgumentException e) {
+                LOG.error("Invalid parameters to monitor", e);
+                serviceStatus = PollStatus.unavailable("Invalid parameter to monitor: " + e.getMessage() + ".  See log for details.");
+            } catch (Throwable e) {
+                LOG.error("Unexpected exception: " + e.getMessage(), e);
+                serviceStatus = PollStatus.unavailable("Unexpected exception: " + e.getMessage());
+            } finally {
+                serviceStatus.setProperties(responseTimes);
+                IOUtils.closeQuietly(clientWrapper);
+            }
+        }
+
+        return serviceStatus;
+    }
+

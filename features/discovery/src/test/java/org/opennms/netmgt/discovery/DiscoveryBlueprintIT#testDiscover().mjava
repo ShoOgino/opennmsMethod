@@ -1,9 +1,30 @@
-    @Test
-    public void testDiscover() throws Exception
-    {
+    @Test(timeout=60000)
+    public void testDiscover() throws Exception {
+
+        /*
+         * Create a Camel listener for the location queue that will respond with
+         * {@link DiscoveryResult} objects.
+         */
+        SimpleRegistry registry = new SimpleRegistry();
+        CamelContext mockDiscoverer = new DefaultCamelContext(registry);
+        mockDiscoverer.addComponent("queuingservice", ActiveMQComponent.activeMQComponent("vm://localhost?create=false"));
+
+        mockDiscoverer.addRoutes(new LocationAwareTestRouteBuilder(LOCATION, job -> {
+            final String foreignSource = job.getForeignSource();
+            final String location = job.getLocation();
+            final DiscoveryResults results = new DiscoveryResults(
+                    Collections.singletonMap(InetAddressUtils.addr("4.2.2.2"), 1000L),
+                    foreignSource,
+                    location
+            );
+            return results;
+        }));
+
+        mockDiscoverer.start();
+
         final String ipAddress = "4.2.2.2";
-        final String foreignSource = "Bogus FS";
-        final String location = "LOC1";
+        final String foreignSource = "testDiscover";
+        final String location = LOCATION;
 
         EventAnticipator anticipator = IPC_MANAGER_INSTANCE.getEventAnticipator();
 
@@ -28,9 +49,11 @@
         config.setLocation( location );
 
         // Execute the job
-        template.requestBody( "direct:submitDiscoveryTask", config );
+        template.requestBody( "seda:submitDiscoveryTask", config );
 
         Thread.sleep( 1000 );
         anticipator.verifyAnticipated();
+
+        mockDiscoverer.stop();
     }
 

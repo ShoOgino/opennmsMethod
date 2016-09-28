@@ -9,6 +9,11 @@
         // Get a log instance
         Logging.putPrefix(Syslogd.LOG4J_CATEGORY);
 
+        // Create some metrics
+        Meter packetMeter = METRICS.meter(MetricRegistry.name(getClass(), "packets"));
+        Meter connectionMeter = METRICS.meter(MetricRegistry.name(getClass(), "connections"));
+        Histogram packetSizeHistogram = METRICS.histogram(MetricRegistry.name(getClass(), "packetSize"));
+
         if (m_stop) {
             LOG.debug("Stop flag set before thread started, exiting");
             return;
@@ -65,12 +70,27 @@
                             }
 
                             // Write the datagram into the ByteBuffer
-                            InetSocketAddress source = (InetSocketAddress)m_channel.receive(buffer);
+                            InetSocketAddress source =  (InetSocketAddress)m_channel.receive(buffer);
 
+                            // Increment the packet counter
+                            packetMeter.mark();
+                            
                             // Flip the buffer from write to read mode
                             buffer.flip();
 
-                            WaterfallExecutor.waterfall(m_executor, new SyslogConnection(SyslogConnection.copyPacket(source.getAddress(), source.getPort(), buffer), m_config));
+                            // Create a metric for the syslog packet size
+                            packetSizeHistogram.update(buffer.remaining());
+                            
+                            SyslogConnection connection = new SyslogConnection(SyslogConnection.copyPacket(source.getAddress(), source.getPort(), buffer), m_config, m_distPollerDao.whoami().getId(), m_distPollerDao.whoami().getLocation());
+
+                            try {
+                                for (SyslogConnectionHandler handler : m_syslogConnectionHandlers) {
+                                    connectionMeter.mark();
+                                    handler.handleSyslogConnection(connection);
+                                }
+                            } catch (Throwable e) {
+                                LOG.error("Handler execution failed in {}", this.getClass().getSimpleName(), e);
+                            }
 
                             // Clear the buffer so that it's ready for writing again
                             buffer.clear();
@@ -83,14 +103,11 @@
                         } catch (InterruptedIOException e) {
                             ioInterrupted = true;
                             continue;
-                        } catch (ExecutionException e) {
-                            LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
-                            break;
-                        } catch (InterruptedException e) {
-                            LOG.error("Task interrupted in {}", this.getClass().getSimpleName(), e);
-                            break;
                         } catch (IOException e) {
-                            LOG.error("An I/O exception occured on the datagram receipt port, exiting", e);
+                            ioInterrupted = true;
+                            continue;
+                        } catch (Throwable e) {
+                            LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
                             break;
                         }
 

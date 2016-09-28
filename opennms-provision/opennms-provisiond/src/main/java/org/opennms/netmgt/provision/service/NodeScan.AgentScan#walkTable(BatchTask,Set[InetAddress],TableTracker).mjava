@@ -7,39 +7,32 @@
             } else {
                 Assert.notNull(getAgentConfigFactory(), "agentConfigFactory was not injected");
 
-                final SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(getAgentAddress());
-
-                final SnmpWalker walker = SnmpUtils.createWalker(agentConfig, "IP address tables", tracker);
-                walker.start();
-
                 try {
-                    walker.waitFor();
+                    final SnmpAgentConfig agentConfig = getAgentConfigFactory().getAgentConfig(getAgentAddress());
+                    m_provisionService.getLocationAwareSnmpClient().walk(agentConfig, tracker)
+                        .withDescription("IP address tables")
+                        .withLocation(getLocationName())
+                        .execute()
+                        .get();
 
-                    if (walker.timedOut()) {
-                        abort("Aborting node scan : Agent timed out while scanning the IP address tables");
-                    }
-                    else if (walker.failed()) {
-                        abort("Aborting node scan : Agent failed while scanning the IP address tables : " + walker.getErrorMessage());
-                    } else {
+                    // After processing the SNMP provided interfaces then we need to scan any that
+                    // were provisioned but missing from the ip table
+                    for(final InetAddress ipAddr : provisionedIps) {
+                        final OnmsIpInterface iface = node.getIpInterfaceByIpAddress(ipAddr);
 
-                        // After processing the SNMP provided interfaces then we need to scan any that 
-                        // were provisioned but missing from the ip table
-                        for(final InetAddress ipAddr : provisionedIps) {
-                            final OnmsIpInterface iface = node.getIpInterfaceByIpAddress(ipAddr);
+                        if (iface != null) {
+                            iface.setIpLastCapsdPoll(getScanStamp());
+                            iface.setIsManaged("M");
 
-                            if (iface != null) {
-                                iface.setIpLastCapsdPoll(getScanStamp());
-                                iface.setIsManaged("M");
-
-                                currentPhase.add(ipUpdater(currentPhase, iface), "write");
-                            }
+                            currentPhase.add(ipUpdater(currentPhase, iface), "write");
                         }
-
-                        LOG.debug("Finished phase {}", currentPhase);
-
                     }
+
+                    LOG.debug("Finished phase {}", currentPhase);
+                } catch (ExecutionException e) {
+                    abort("Aborting node scan : Agent failed while scanning the IP address tables : " + e.getMessage());
                 } catch (final InterruptedException e) {
-                    abort("Aborting node scan : Scan thread failed while waiting for the IP address tables");
+                abort("Aborting node scan : Scan thread failed while waiting for the IP address tables");
                 }
             }
         }
