@@ -1,0 +1,221 @@
+	/**
+	 * An alarm change event will have a payload corresponding to the json representation of the
+	 * Alarms table row for this alarm id. Both "oldalarmvalues" and "newalarmvalues" params may be populated
+	 * The alarm index body will be populated with the "newalarmvalues" but if "newalarmvalues" is null then the
+	 * "oldalarmvalues" json string will be used
+	 * If cannot parse event into alarm then null index is returned
+	 * @param body
+	 * @param event
+	 */
+	public Update populateAlarmIndexBodyFromAlarmChangeEvent(Event event, String rootIndexName, String indexType) {
+
+		Update update=null;
+
+		Map<String,String> body = new HashMap<String,String>();
+
+		//get alarm change params from event
+		Map<String,String> parmsMap = new HashMap<String,String>();
+		for(Parm parm : event.getParmCollection()) {
+			parmsMap.put( parm.getParmName(), parm.getValue().getContent());
+		}
+
+		String oldValuesStr=parmsMap.get(OLD_ALARM_VALUES);
+		String newValuesStr=parmsMap.get(NEW_ALARM_VALUES);
+
+		if (LOG.isDebugEnabled()) LOG.debug("AlarmChangeEvent from eventid "+event.getDbid()
+				+ "\n  newValuesStr="+newValuesStr
+				+ "\n  oldValuesStr="+oldValuesStr);
+
+		JSONObject alarmValues=null ;
+		JSONObject newAlarmValues=null;
+		JSONObject oldAlarmValues=null;
+
+		JSONParser parser = new JSONParser();
+		if (newValuesStr!=null){
+			try{
+				Object obj = parser.parse(newValuesStr);
+				newAlarmValues = (JSONObject) obj;
+			} catch (ParseException e1) {
+				LOG.error("cannot parse newValuesStr from eventid "+event.getDbid()
+						+ " to json object. newValuesStr="+ newValuesStr, e1);
+			}
+		}
+
+		if(newAlarmValues!=null && ! newAlarmValues.isEmpty()) {
+			alarmValues=newAlarmValues;
+		} else {
+			if (oldValuesStr==null){
+				LOG.error("newValuesStr and oldValuesStr both empty in AlarmChangeEvent from eventid "+event.getDbid()
+						+ "\n  newValuesStr="+newValuesStr
+						+ "\n  oldValuesStr="+oldValuesStr);
+				return null;
+			} else {
+				try{
+					Object obj = parser.parse(oldValuesStr);
+					oldAlarmValues = (JSONObject) obj;
+				} catch (ParseException e1) {
+					LOG.error("cannot parse oldValuesStr from eventid "+event.getDbid()
+							+ " to json object. oldValuesStr="+ oldValuesStr, e1);
+					return null;
+				}
+				if (! oldAlarmValues.isEmpty()){
+					alarmValues=oldAlarmValues;
+				} else {
+					LOG.error("oldValuesStr and newValuesStr both empty in AlarmChangeEvent from eventid "+event.getDbid()
+							+ "\n  newValuesStr="+newValuesStr
+							+ "\n  oldValuesStr="+oldValuesStr);
+					return null;
+				}
+			}
+		}
+
+
+		for (Object x: alarmValues.keySet()){
+			String key=(String) x;
+			String value = (alarmValues.get(key)==null) ? null : alarmValues.get(key).toString();
+
+			if (EVENT_PARAMS.equals(key) && value!=null){
+				//decode event parms into alarm record
+				List<Parm> params = EventParameterUtils.decode(value);
+				for(Parm parm : params) {
+					body.put("p_" + parm.getParmName(), parm.getValue().getContent());
+				}
+			} else if((SEVERITY.equals(key) && value!=null)){ 
+				try{
+					int id= Integer.parseInt(value);
+					String label = OnmsSeverity.get(id).getLabel();
+					body.put(SEVERITY_TEXT,label);
+				}
+				catch (Exception e){
+					LOG.error("cannot parse severity for alarm change event id"+event.getDbid());
+				}
+			} else{
+				body.put(key, value);
+			}
+
+		}
+
+		// set alarm cleared / deleted time null if an alarm create event
+		if(ALARM_CREATED_EVENT.equals(event.getUei())){
+			body.put(ALARM_CLEAR_TIME, null);
+			body.put(ALARM_DELETED_TIME, null);
+		}
+
+		// set alarm cleared time if an alarm clear event
+		if(ALARM_CLEARED_EVENT.equals(event.getUei())){
+			Calendar alarmClearCal=Calendar.getInstance();
+			alarmClearCal.setTime(event.getTime());
+			body.put(ALARM_CLEAR_TIME, DatatypeConverter.printDateTime(alarmClearCal));
+		}
+
+		// set alarm deleted time if an alarm clear event
+		if(ALARM_DELETED_EVENT.equals(event.getUei())){
+			Calendar alarmDeletionCal=Calendar.getInstance();
+			alarmDeletionCal.setTime(event.getTime());
+			body.put(ALARM_DELETED_TIME, DatatypeConverter.printDateTime(alarmDeletionCal));
+		}
+
+
+		// remove ack if not in parameters i,e alarm not acknowleged
+		if(parmsMap.get(ALARM_ACK_TIME)==null || "".equals(parmsMap.get(ALARM_ACK_TIME)) ){
+			body.put(ALARM_ACK_TIME, null);
+			body.put(ALARM_ACK_USER, null);
+		}
+
+		// add "initialseverity"
+		if(parmsMap.get(INITIAL_SEVERITY)!=null){
+			String severityId = parmsMap.get(INITIAL_SEVERITY);
+			body.put(INITIAL_SEVERITY,severityId);
+
+			try{
+				int id= Integer.parseInt(severityId);
+				String label = OnmsSeverity.get(id).getLabel();
+				body.put(INITIAL_SEVERITY_TEXT,label);
+			}
+			catch (Exception e){
+				LOG.error("cannot parse initial severity for alarm change event id"+event.getDbid());
+			}
+		}
+
+		// if the event contains nodelabel parameter then do not use node cache
+		if (parmsMap.get(NODE_LABEL)!=null){
+			body.put(NODE_LABEL, parmsMap.get(NODE_LABEL));
+		} else {
+			// add node details from cache
+			if (nodeCache!=null && event.getNodeid()!=null){
+				Map nodedetails = nodeCache.getEntry(event.getNodeid());
+				for (Object key: nodedetails.keySet()){
+					String keyStr = (String) key;
+					String value = (String) nodedetails.get(key);
+					body.put(keyStr, value);
+				}
+			}
+		}
+
+
+		if (alarmValues.get("alarmid")==null){
+			LOG.error("No alarmid param - cannot create alarm elastic search record from event content:"+ event.toString());
+		} else{
+			String id = alarmValues.get("alarmid").toString();
+
+			// add the p_alarmid so that we can easily match alarm change events with same alarmid
+			body.put("p_alarmid", id);
+
+			String alarmCreationTime=null;
+			Date alarmCreationDate=null;
+			Calendar alarmCreationCal=null;
+
+			// try to parse firsteventtime but if not able then use current date
+			try{
+				alarmCreationTime = alarmValues.get("firsteventtime").toString();
+				alarmCreationCal = DatatypeConverter.parseDateTime(alarmCreationTime);
+			} catch (Exception e){
+				LOG.error("using current Date() for @timestamp because problem creating date from alarmchange event "+event.getDbid()
+						+ " from firsteventtime="+alarmCreationTime, e);
+			}
+
+			if (alarmCreationCal==null){
+				alarmCreationCal=Calendar.getInstance();
+				alarmCreationCal.setTime(new Date());
+			}
+
+			body.put("@timestamp", DatatypeConverter.printDateTime(alarmCreationCal));
+			body.put("dow", Integer.toString(alarmCreationCal.get(Calendar.DAY_OF_WEEK)));
+			body.put("hour",Integer.toString(alarmCreationCal.get(Calendar.HOUR_OF_DAY)));
+			body.put("dom", Integer.toString(alarmCreationCal.get(Calendar.DAY_OF_MONTH))); 
+
+			alarmCreationDate = alarmCreationCal.getTime();
+			String completeIndexName=indexNameFunction.apply(rootIndexName, alarmCreationDate);
+
+			if (LOG.isDebugEnabled()){
+				String str = "populateAlarmIndexBodyFromAlarmChangeEvent - index:"
+						+ "/"+completeIndexName
+						+ "/"+indexType
+						+ "/"+id
+						+ "\n   body: ";
+				for (String key:body.keySet()){
+					str=str+"["+ key+" : "+body.get(key)+"]";
+				}
+				LOG.debug(str);
+			}
+
+			//index = new Index.Builder(body).index(completeIndexName)
+			//		.type(indexType).id(id).build();
+
+			// generates an update for specific values
+			// see https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-update.html
+			JSONObject doc= new JSONObject(body);
+			JSONObject updateQuery= new JSONObject();
+			updateQuery.put("doc", doc);
+			updateQuery.put("doc_as_upsert", true);
+
+			if (LOG.isDebugEnabled())LOG.debug("update query sent:"+updateQuery.toJSONString());
+
+			update= new Update.Builder(updateQuery.toJSONString()).index(completeIndexName)
+					.type(indexType).id(id).build();
+
+		}
+
+		return update;
+	}
+

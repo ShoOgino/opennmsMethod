@@ -2,15 +2,56 @@
     @Transactional
     public void handleMessage(MinionIdentityDTO minionHandle) {
         LOG.info("Received heartbeat for Minion with id: {} at location: {}",
-                minionHandle.getId(), minionHandle.getLocation());
+                 minionHandle.getId(), minionHandle.getLocation());
+
         OnmsMinion minion = minionDao.findById(minionHandle.getId());
         if (minion == null) {
             minion = new OnmsMinion();
             minion.setId(minionHandle.getId());
-            minion.setLocation(minionHandle.getLocation());
+
+            // The real location is filled in below, but we set this to null
+            // for now to detect requisition changes
+            minion.setLocation(null);
         }
-        Date lastUpdated = new Date();
-        minion.setLastUpdated(lastUpdated);
+
+        final String prevLocation = minion.getLocation();
+        final String nextLocation = minionHandle.getLocation();
+
+        minion.setLocation(minionHandle.getLocation());
+
+        // Provision the minions node before we alter the location
+        this.provision(minion,
+                       prevLocation,
+                       nextLocation);
+
+        minion.setLastUpdated(new Date());
         minionDao.saveOrUpdate(minion);
+
+        if (prevLocation == null) {
+            final EventBuilder eventBuilder = new EventBuilder(EventConstants.MONITORING_SYSTEM_ADDED_UEI,
+                    "OpenNMS.Minion.Heartbeat");
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_TYPE, OnmsMonitoringSystem.TYPE_MINION);
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_ID, minionHandle.getId());
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_LOCATION, nextLocation);
+            try {
+                eventProxy.send(eventBuilder.getEvent());
+            } catch (final EventProxyException e) {
+                throw new DataAccessResourceFailureException("Unable to send event", e);
+            }
+        } else if (!prevLocation.equals(nextLocation)) {
+
+            final EventBuilder eventBuilder = new EventBuilder(EventConstants.MONITORING_SYSTEM_LOCATION_CHANGED_UEI,
+                    "OpenNMS.Minion.Heartbeat");
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_TYPE, OnmsMonitoringSystem.TYPE_MINION);
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_ID, minionHandle.getId());
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_PREV_LOCATION, prevLocation);
+            eventBuilder.addParam(EventConstants.PARAM_MONITORING_SYSTEM_LOCATION, nextLocation);
+            try {
+                eventProxy.send(eventBuilder.getEvent());
+            } catch (final EventProxyException e) {
+                throw new DataAccessResourceFailureException("Unable to send event", e);
+            }
+        }
+
     }
 
