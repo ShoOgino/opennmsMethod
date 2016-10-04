@@ -3,11 +3,45 @@
      */
     @Override
     public void execute() throws OnmsUpgradeException {
-        if (userManager == null) return;
+        if (!canRun()) return;
 
+        // Parse read-only attributes
+        final List<String> readOnlyUsers = new ArrayList<String>();
+        try {
+            boolean readOnly = false;
+            for (String line : Files.readAllLines(usersFile.toPath())) {
+                if (line.contains("read-only")) {
+                    Matcher m = Pattern.compile("read-only=\"(.+)\"").matcher(line);
+                    if (m.find()) {
+                        readOnly = Boolean.parseBoolean(m.group(1));
+                    }
+                }
+                if (line.contains("user-id")) {
+                    if (readOnly) {
+                        Matcher m = Pattern.compile("user-id[>](.+)[<][/]user-id").matcher(line);
+                        if (m.find()) {
+                            log("Warning: User %s has read-only flag\n", m.group(1));
+                            readOnlyUsers.add(m.group(1));
+                        }
+                    }
+                    readOnly = false;
+                }
+            }
+            if (!readOnlyUsers.isEmpty()) {
+                log("Removing the read-only flags from users.xml\n");
+                String content = new String(Files.readAllBytes(usersFile.toPath()), StandardCharsets.UTF_8);
+                content = content.replaceAll(" read-only=\".+\"", "");
+                Files.write(usersFile.toPath(), content.getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix configuration because " + e.getMessage(), e);
+        }
 
         log("Moving security roles into users.xml...\n");
         try {
+            UserFactory.init();
+            UserManager userManager = UserFactory.getInstance();
+
             // Retrieve all the currently configured users.
             final List<OnmsUser> users = new ArrayList<OnmsUser>();
             for (final String userName : userManager.getUserNames()) {
@@ -75,6 +109,12 @@
 
             // Update users.xml
             for (final OnmsUser user : users) {
+                if (readOnlyUsers.contains(user.getUsername())) {
+                    addRole(user, Authentication.ROLE_READONLY);
+                    if (!user.getRoles().contains(Authentication.ROLE_USER)) {
+                        addRole(user, Authentication.ROLE_USER);
+                    }
+                }
                 userManager.save(user);
             }
         } catch (Throwable e) {
