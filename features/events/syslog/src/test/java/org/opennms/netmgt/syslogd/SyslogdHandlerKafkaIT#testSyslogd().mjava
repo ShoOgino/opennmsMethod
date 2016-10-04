@@ -1,59 +1,42 @@
 	@Test
 	public void testSyslogd() throws Exception {
 
-		SimpleRegistry registry = new SimpleRegistry();
-		CamelContext syslogd = new DefaultCamelContext(registry);
-		syslogd.addComponent("kafka", new KafkaComponent());
-		syslogd.addRoutes(new RouteBuilder() {
-			@Override
-			public void configure() throws Exception {
+		final MockEndpoint broadcastSyslog = getMockEndpoint("mock:kafka:127.0.0.1:" + kafkaPort, false);
+		broadcastSyslog.setExpectedMessageCount(1);
 
-				from("seda:handleMessage").convertBodyTo(SyslogConnection.class).process(new Processor() {
-					@Override
-					public void process(Exchange exchange) throws Exception {
-						SyslogConnection connection = new SyslogConnection();
-						connection.setSourceAddress(InetAddressUtils.ONE_TWENTY_SEVEN);
-						exchange.getIn().setBody(connection);
-						exchange.getIn().setHeader(KafkaConstants.PARTITION_KEY,simple("${body.hostname}"));
-					}
-				}).log("address:${body.sourceAddress}").log("port: ${body.port}").transform(simple("${body.byteBuffer}")).convertBodyTo(String.class).log(body().toString()).to("kafka:localhost:" + kafkaPort + "?topic=syslog;serializerClass=kafka.serializer.StringEncoder");
+		// Create a mock SyslogdConfig
+		final SyslogConfigBean config = new SyslogConfigBean();
+		config.setSyslogPort(10514);
+		config.setNewSuspectOnMessage(false);
 
-			}
-		});
+		final byte[] messageBytes = "<34>main: 2010-08-19 localhost foo0: load test 0 on tty1\0".getBytes("US-ASCII");
 
-		syslogd.addRoutes(new RouteBuilder(){
-			@Override
-			public void configure() throws Exception {
-				from("kafka:localhost:" + kafkaPort + "?topic=syslog&zookeeperHost=localhost&zookeeperPort=" + zookeeperPort + "&groupId=group1")
-				.process(new Processor() {
-					@Override
-					public void process(Exchange exchange) throws Exception {
-						String messageKey = "";
-						if (exchange.getIn() != null) {
-							Message message = exchange.getIn();
-							Integer partitionId = (Integer) message.getHeader(KafkaConstants.PARTITION);
-							String topicName = (String) message.getHeader(KafkaConstants.TOPIC);
-							if (message.getHeader(KafkaConstants.KEY) != null) {
-								messageKey = (String) message.getHeader(KafkaConstants.KEY);
-							}
-							Object data = message.getBody();
+		final UUID systemId = UUID.randomUUID();
 
-							System.out.println("topicName :: "
-									+ topicName + " partitionId :: "
-									+ partitionId + " messageKey :: "
-									+ messageKey + " message :: "
-									+ data + "\n");
-						}
-					}
-				}).to("log:input");
-			}
-		});
-
-		syslogd.start();
-
-		ProducerTemplate template = syslogd.createProducerTemplate();
-		SyslogConnection connection = new SyslogConnection();
-		connection.setSourceAddress(InetAddressUtils.ONE_TWENTY_SEVEN);
+		//ProducerTemplate template = syslogd.createProducerTemplate();
+		final SyslogConnection connection = new SyslogConnection(
+			InetAddressUtils.ONE_TWENTY_SEVEN,
+			2000,
+			ByteBuffer.wrap(messageBytes),
+			config,
+			systemId.toString(),
+			MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID
+		);
 		template.sendBody( "seda:handleMessage", connection);
+
+		assertMockEndpointsSatisfied();
+
+		// Check that the input for the Kafka endpoint matches
+		// the SyslogConnection that we created
+		final String trapDtoXml = broadcastSyslog.getReceivedExchanges().get(0).getIn().getBody(String.class);
+		assertNotNull(trapDtoXml);
+
+		final SyslogConnection result = SyslogDTOToObjectProcessor.dto2object(
+			JaxbUtils.unmarshal(SyslogDTO.class, trapDtoXml)
+		);
+		assertEquals(InetAddressUtils.ONE_TWENTY_SEVEN, result.getSourceAddress());
+		assertEquals(2000, result.getPort());
+		assertTrue(Arrays.equals(result.getBytes(), messageBytes));
+		assertEquals(systemId.toString(), result.getSystemId());
 	}
 
