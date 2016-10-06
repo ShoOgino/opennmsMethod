@@ -1,0 +1,79 @@
+	/**
+	 *  This method initialises the class by loading the database values
+	 *  either from the config .cfg file or from opennms-datasources.xml
+	 */
+	public void init(){
+
+		if(dataBaseName!=null){
+			LOG.debug("using values supplied in .cfg file for host: "+hostname
+					+ " port: "+port
+					+ " dataBaseName "+ dataBaseName+" userName: "+userName+ "  password :" + passWord);
+		} else {
+
+			try {
+
+				// try loading from file or from classpath
+				InputStream istream=null;
+				if(dsfileUri!=null){
+					File dsFile=new File(dsfileUri);
+					LOG.debug("loading database config from "+dsFile.getAbsolutePath());
+					istream= new FileInputStream(dsFile);
+				}
+
+				if(istream==null){	
+					LOG.debug("loading database config from classpath file"+OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+					istream= this.getClass().getClassLoader().getResourceAsStream(OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+					if(istream==null) throw new RuntimeException("could not load database config from classpath "+OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+				}
+
+				DataSourceConfiguration dsconfig = CastorUtils.unmarshal(DataSourceConfiguration.class, istream);
+				JdbcDataSource[] datasourceArray = dsconfig.getJdbcDataSource();
+				
+				String dataSourceName=null;
+				JdbcDataSource ds=null;
+				int index = 0;
+				
+				while( ( ! OPENNMS_DATA_SOURCE_NAME.equals(dataSourceName) ) && (index<datasourceArray.length) ){
+					ds=datasourceArray[index];
+					dataSourceName= ds.getName();
+					index++;
+				}
+				
+				if ( ! OPENNMS_DATA_SOURCE_NAME.equals(dataSourceName)){
+					throw new RuntimeException("no datasource "+OPENNMS_DATA_SOURCE_NAME
+							+ " found in "+OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+				}
+				
+				userName = ds.getUserName();
+				passWord = ds.getPassword();
+				dataBaseName = ds.getDatabaseName();
+				
+				String urlStr = ds.getUrl();
+
+				// parse out the hostname and port by removing jdbc:postgresql:
+				String baseUrl=	urlStr.replace("jdbc:postgresql:","http:");
+
+				URL url= new URL(baseUrl);
+				String protocol = url.getProtocol();
+				hostname = url.getHost();
+				port = url.getPort();
+
+				LOG.debug("decoded urlStr:"+urlStr +""
+						+ " baseUrl:"+baseUrl
+						+ " protocol:"+protocol
+						+ " host:"+hostname
+						+ " port:"+port);
+
+				LOG.debug("Using jdbc-data-source values supplied for "+OPENNMS_DATA_SOURCE_NAME
+						+ " datasource in "
+						+ OPENNMS_DATASOURCE_CONFIG_FILE_NAME
+						+ " file for host: "+hostname
+						+ " port: "+port
+						+ " dataBaseName "+ dataBaseName+" userName: "+userName+ "  password :" + passWord);
+
+			} catch (Exception e) {
+				throw new RuntimeException("cannot load database values from .cfg or "+OPENNMS_DATASOURCE_CONFIG_FILE_NAME, e);
+			}
+		}
+	}
+

@@ -1,0 +1,82 @@
+	public List<Event> getEvents(Integer limit, Integer offset){
+
+		List<Event> retrievedEvents= new ArrayList<Event>();
+		
+		CloseableHttpClient httpclient=getNewClient();
+
+		String query = "";
+
+		String limitStr= (limit==null) ? null : Integer.toString(limit);
+		String offsetStr= (offset==null) ? null : Integer.toString(offset);
+
+		if(limitStr!=null){
+			query = "?limit="+limitStr;
+			if(offset!=null){
+				query=query+"&offset="+offsetStr;
+			}
+		} else {
+			if(offset!=null) {
+				query="?offset="+offsetStr;
+			}
+		}
+
+		try {
+
+			// importing events generated from opennms-webapp-rest/src/main/java/org/opennms/web/rest/v1/EventRestService.java
+
+			HttpGet getRequest = new HttpGet(onmsUrl+EVENTS_URI+query);
+			getRequest.addHeader("accept", "application/XML");
+			
+
+			LOG.debug("Executing request " + getRequest.getRequestLine());
+
+			CloseableHttpResponse response = httpclient.execute(getRequest);
+
+			if (response.getStatusLine().getStatusCode() != 200) {
+				throw new RuntimeException("Failed : HTTP error code : "
+						+ response.getStatusLine().getStatusCode());
+			}
+			String responseStr=null;
+
+			try {
+				LOG.debug("----------------------------------------");
+				LOG.debug(response.getStatusLine().toString());
+
+				responseStr= EntityUtils.toString(response.getEntity());
+				LOG.debug("response String: "+responseStr);
+				LOG.debug("----------------------------------------");
+			} finally {
+				response.close();
+			}
+
+			StringReader reader = new StringReader(responseStr);
+			
+			OnmsEventCollection eventCollection = JaxbUtils.unmarshal(OnmsEventCollection.class, reader);
+			
+			LOG.debug("received xml OnmsEvent's ----------------------------------------");
+			LOG.debug("eventCollection offset:"+eventCollection.getOffset()
+		 			+ " totalCount:"+eventCollection.getTotalCount()
+			         + " size"+eventCollection.size());
+
+			for(int i=0 ; i< eventCollection.size(); i++){
+				LOG.debug("event:"+eventCollection.get(i));
+			}
+
+			LOG.debug("converting to events ----------------------------------------");
+
+			for(int i=0 ; i< eventCollection.size(); i++){
+			    Event event= toEvent(eventCollection.get(i));
+			    LOG.debug(event.toString());
+			    retrievedEvents.add(event);
+		    }
+			
+		} catch (Exception e){
+			throw new RuntimeException("exception when getting event list",e);
+		} finally {
+			try {
+				httpclient.close();
+			} catch (IOException e) { }
+		}
+		return retrievedEvents;
+	}
+
