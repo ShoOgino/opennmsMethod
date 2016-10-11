@@ -1,5 +1,4 @@
     @Test
-    @Ignore
     public void testNewSuspect() throws Exception {
         final Date startOfTest = new Date();
 
@@ -22,7 +21,7 @@
                .until(DaoUtils.countMatchingCallable(this.daoFactory.getDao(EventDaoHibernate.class),
                                                      new CriteriaBuilder(OnmsEvent.class)
                                                              .eq("eventUei", "uei.opennms.org/vendor/cisco/syslog/SEC-6-IPACCESSLOGP/aclDeniedIPTraffic")
-                                                             .ge("eventTime", startOfTest)
+                                                             .ge("eventCreateTime", startOfTest)
                                                              .toCriteria()),
                       is(1));
 
@@ -37,20 +36,23 @@
                                                              .isNull("node")
                                                              .toCriteria()),
                        notNullValue());
-
         assertThat(event.getDistPoller().getLocation(), is("MINION"));
 
         // Check if the node was detected
-        final OnmsNode node = Iterables.getOnlyElement(this.daoFactory.getDao(NodeDaoHibernate.class)
-                                                                      .findMatching(new CriteriaBuilder(OnmsNode.class)
-                                                                                            .eq("label", "snmpd")
-                                                                                            .toCriteria()));
-        assertThat(node, notNullValue());
+        final OnmsNode node = await()
+                .atMost(1, MINUTES).pollInterval(5, SECONDS)
+                .until(DaoUtils.findMatchingCallable(this.daoFactory.getDao(NodeDaoHibernate.class),
+                                                     new CriteriaBuilder(OnmsNode.class)
+                                                             .eq("label", "snmpd")
+                                                             .toCriteria()),
+                       notNullValue());
         assertThat(node.getLocation().getLocationName(), is("MINION"));
 
-        // Check if the service was decovered
-        final OnmsMonitoredService service = this.daoFactory.getDao(MonitoredServiceDaoHibernate.class).getPrimaryService(node.getId(), "SNMP");
-        assertThat(service, notNullValue());
+        // Check if the service was discovered
+        await().atMost(1, MINUTES).pollInterval(5, SECONDS)
+               .until(() -> this.daoFactory.getDao(MonitoredServiceDaoHibernate.class)
+                                           .getPrimaryService(node.getId(), "SNMP"),
+                      notNullValue());
 
         // Send the second message
         this.sendMessage(sender);
@@ -60,7 +62,7 @@
                .until(DaoUtils.countMatchingCallable(this.daoFactory.getDao(EventDaoHibernate.class),
                                                      new CriteriaBuilder(OnmsEvent.class)
                                                              .eq("eventUei", "uei.opennms.org/vendor/cisco/syslog/SEC-6-IPACCESSLOGP/aclDeniedIPTraffic")
-                                                             .ge("eventTime", startOfTest)
+                                                             .ge("eventCreateTime", startOfTest)
                                                              .eq("node", node)
                                                              .toCriteria()),
                       is(1));
