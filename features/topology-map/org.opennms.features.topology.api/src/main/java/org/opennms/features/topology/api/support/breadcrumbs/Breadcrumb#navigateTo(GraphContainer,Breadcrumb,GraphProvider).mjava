@@ -1,0 +1,48 @@
+    private static void navigateTo(GraphContainer graphContainer, Breadcrumb breadcrumb, GraphProvider targetGraphProvider) {
+        // Get the Breadcrumb (before) navigating, otherwise it is lost
+        BreadcrumbCriteria breadcrumbCriteria = getSingleCriteriaForGraphContainer(graphContainer, BreadcrumbCriteria.class, true);
+
+        // If no breadcrumb is defined yet, add the starting point (<Layer Name> > <Source Vertex Name>)
+        if (breadcrumbCriteria.isEmpty()) {
+            final GraphProvider graphProvider = graphContainer.getBaseTopology();
+            breadcrumbCriteria.setNewRoot(new Breadcrumb(graphProvider.getTopologyProviderInfo().getName(), graphProvider.getVertexNamespace(), null));
+        }
+
+        // Only navigate if namespace is different, otherwise we would switch to the same target,
+        // which does not make any sense
+        if (!graphContainer.getBaseTopology().getVertexNamespace().equals(targetGraphProvider.getVertexNamespace())) {
+            graphContainer.selectTopologyProvider(targetGraphProvider,
+                    Callbacks.clearCriteria(),
+                    Callbacks.applyDefaultSemanticZoomLevel(),
+                    (theGraphContainer, theGraphProvider) -> theGraphContainer.addCriteria(breadcrumbCriteria));
+        }
+
+        // Update Criteria for Breadcrumbs
+        breadcrumbCriteria.setNewRoot(breadcrumb);
+        VertexRef sourceVertex = breadcrumb.getSourceVertex();
+        // If we have a source, add the opposite vertices to focus
+        if (sourceVertex != null) {
+            // Find the vertices in other graphs that this vertex links to
+            final Collection<VertexRef> oppositeVertices = graphContainer.getMetaTopologyProvider().getOppositeVertices(sourceVertex);
+
+            // Filter the vertices for those matching the target namespace
+            final String targetNamespace = targetGraphProvider.getVertexNamespace();
+            final List<VertexRef> targetVertices = oppositeVertices.stream()
+                    .filter(v -> v.getNamespace().matches(targetNamespace))
+                    .collect(Collectors.toList());
+
+            // Add the target vertices to focus
+            targetVertices.stream().forEach(v -> graphContainer.addCriteria(new VertexHopGraphProvider.DefaultVertexHopCriteria(v)));
+
+            // If target vertices are empty, apply default focus
+            if (targetVertices.isEmpty()) {
+                Callbacks.applyDefaultCriteria().callback(graphContainer, targetGraphProvider);
+            }
+        } else {
+            Callbacks.applyDefaultCriteria().callback(graphContainer, targetGraphProvider);
+        }
+
+        // Render
+        graphContainer.redoLayout();
+    }
+
