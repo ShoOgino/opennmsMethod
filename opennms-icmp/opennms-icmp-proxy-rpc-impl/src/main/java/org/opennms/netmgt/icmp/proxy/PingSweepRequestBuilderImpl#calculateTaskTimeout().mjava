@@ -1,0 +1,35 @@
+    public int calculateTaskTimeout() {
+        BigDecimal taskTimeOut = BigDecimal.ZERO;
+        for (final IPRangeDTO range : ranges) {
+            BigInteger size = InetAddressUtils.difference(InetAddressUtils.getInetAddress(range.getEnd().getAddress()),
+                    InetAddressUtils.getInetAddress(range.getBegin().getAddress())).add(BigInteger.ONE);
+            taskTimeOut = taskTimeOut.add(
+                    // Take the number of retries
+                    BigDecimal.valueOf(retries)
+                            // Add 1 for the original request
+                            .add(BigDecimal.ONE, DECIMAL64)
+                            // Multiply by the number of addresses
+                            .multiply(new BigDecimal(size), DECIMAL64)
+                            // Multiply by the timeout per retry
+                            .multiply(BigDecimal.valueOf(timeout), DECIMAL64)
+                            // Multiply by the fudge factor
+                            .multiply(FUDGE_FACTOR, DECIMAL64),
+                    DECIMAL64);
+
+            // Add a delay for the rate limiting done with the
+            // m_packetsPerSecond field
+            taskTimeOut = taskTimeOut.add(
+                    // Take the number of addresses
+                    new BigDecimal(size)
+                            // Divide by the number of packets per second
+                            .divide(BigDecimal.valueOf(packetSize), DECIMAL64)
+                            // 1000 milliseconds
+                            .multiply(BigDecimal.valueOf(1000), DECIMAL64),
+                    DECIMAL64);
+        }
+        // If the timeout is greater than Integer.MAX_VALUE, just return
+        // Integer.MAX_VALUE
+        return taskTimeOut.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) >= 0 ? Integer.MAX_VALUE
+                : taskTimeOut.intValue();
+    }
+
