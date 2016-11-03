@@ -1,0 +1,29 @@
+    private static CheckedOperation getDefaultTopologySelectorOperation(BundleContext bundleContext) {
+        try {
+            // Find all topology selector operations
+            final Collection<ServiceReference<CheckedOperation>> serviceReferences = bundleContext.getServiceReferences(CheckedOperation.class, "(operation.label=*?group=topology)");
+
+            // Filter for linkd
+            final Optional<ServiceReference<CheckedOperation>> linkdTopologySelectorOperationOptional = serviceReferences.stream()
+                    .filter(serviceReference -> {
+                        String label = (String) serviceReference.getProperty("operation.label");
+                        return label.toLowerCase().equalsIgnoreCase("linkd");
+                    })
+                    .findFirst();
+            if (linkdTopologySelectorOperationOptional.isPresent()) {
+                return bundleContext.getService(linkdTopologySelectorOperationOptional.get());
+            }
+
+            // We did not find linkd, we fall back to the first provider (sorted by label) we found, if any
+            final Map<String, CheckedOperation> operationMap = serviceReferences.stream()
+                    .collect(Collectors.toMap(reference -> (String) reference.getProperty("operation.label"), reference -> bundleContext.getService(reference)));
+            final Optional<String> optionalLabel = operationMap.keySet().stream().sorted().findFirst();
+            if (optionalLabel.isPresent()) {
+                return operationMap.get(optionalLabel.get());
+            }
+        } catch (InvalidSyntaxException e) {
+            LOG.error("Could not query BundleContext for services", e);
+        }
+        return null; // nothing found
+    }
+
