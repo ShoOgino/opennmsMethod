@@ -15,37 +15,38 @@
         TimeoutTracker tracker = new TimeoutTracker(parameters, DEFAULT_RETRY, DEFAULT_TIMEOUT);
 
         // Port
-        //
         int port = ParameterMap.getKeyedInteger(parameters, PARAMETER_PORT, DEFAULT_PORT);
         if (port == DEFAULT_PORT) {
             throw new RuntimeException("Required parameter 'port' is not present in supplied properties.");
         }
 
+        // Remaining days
         int validityDays = ParameterMap.getKeyedInteger(parameters, PARAMETER_DAYS, DEFAULT_DAYS);
         if (validityDays <= 0) {
             throw new RuntimeException("Required parameter 'days' must be a positive value.");
         }
 
-        //
-        Calendar calValid = GregorianCalendar.getInstance();
-        Calendar calCurrent = GregorianCalendar.getInstance();
+        // Server name (optional)
+        final String serverName = PropertiesUtils.substitute(ParameterMap.getKeyedString(parameters, PARAMETER_SERVER_NAME, ""),
+                                                             getServiceProperties(svc));
+
+        // Calculate validity range
+        Calendar calValid = this.getCalendarInstance();
+        Calendar calCurrent = this.getCalendarInstance();
         calValid.setTimeInMillis(calCurrent.getTimeInMillis());
         calValid.add(Calendar.DAY_OF_MONTH, validityDays);
 
-        Calendar calBefore = GregorianCalendar.getInstance();
-        Calendar calAfter = GregorianCalendar.getInstance();
+        Calendar calBefore = this.getCalendarInstance();
+        Calendar calAfter = this.getCalendarInstance();
 
-        // Get the address instance.
-        //
+        // Get the address instance
         InetAddress ipAddr = svc.getAddress();
 
         final String hostAddress = InetAddressUtils.str(ipAddr);
-        LOG.debug("poll: address={}, port={}, {}", hostAddress, port, tracker);
+        LOG.debug("poll: address={}, port={}, serverName={}, {}", hostAddress, port, serverName, tracker);
 
         // Give it a whirl
-        //
         PollStatus serviceStatus = PollStatus.unavailable();
-
         for (tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt()) {
             Socket socket = null;
             try {
@@ -55,10 +56,23 @@
                 socket.connect(new InetSocketAddress(ipAddr, port), tracker.getConnectionTimeout());
                 socket.setSoTimeout(tracker.getSoTimeout());
                 LOG.debug("Connected to host: {} on port: {}", ipAddr, port);
-                SSLSocket sslSocket = (SSLSocket) getSocketWrapper().wrapSocket(socket);
+                SSLSocket sslSocket = SocketUtils.wrapSocketInSslContext(socket, null);
 
                 // We're connected, so upgrade status to unresponsive
                 serviceStatus = PollStatus.unresponsive();
+
+                // Use the server name as as SNI host name if available
+                if (!Strings.isNullOrEmpty(serverName)) {
+                    final SSLParameters sslParameters = sslSocket.getSSLParameters();
+                    sslParameters.setServerNames(ImmutableList.of(new SNIHostName(serverName)));
+                    sslSocket.setSSLParameters(sslParameters);
+
+                    // Check certificates host name
+                    if (!new StrictHostnameVerifier().verify(serverName, sslSocket.getSession())) {
+                        serviceStatus = PollStatus.unavailable("Host name verification failed - certificate common name is invalid");
+                        continue;
+                    }
+                }
 
                 Certificate[] certs = sslSocket.getSession().getPeerCertificates();
                 for (int i = 0; i < certs.length && !serviceStatus.isAvailable(); i++) {
@@ -109,7 +123,6 @@
                 serviceStatus = PollStatus.unavailable(reason);
             } finally {
                 try {
-                    // Close the socket
                     if (socket != null) {
                         socket.close();
                     }
@@ -120,9 +133,6 @@
             }
         }
 
-        //
-        // return the status of the service
-        //
         return serviceStatus;
     }
 
