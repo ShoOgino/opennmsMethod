@@ -10,7 +10,7 @@
 	 * value of the parameter number 'num', if present - %parm[##]% is replaced
 	 * by the number of parameters
 	 *
-	 * @param inp
+	 * @param input
 	 *            the input string in which parm values are to be expanded
 	 * @param decode
 	 *            the varbind decode for this
@@ -18,75 +18,21 @@
 	 *         otherwise
 	 * @param event a {@link org.opennms.netmgt.xml.event.Event} object.
 	 */
-	public String expandParms(String inp, Event event, Map<String, Map<String, String>> decode) {
-		int index1 = -1;
-		int index2 = -1;
-
-		if (inp == null) {
+	public String expandParms(String input, Event event, Map<String, Map<String, String>> decode) {
+		if (input == null) {
 			return null;
 		}
-
-		StringBuffer ret = new StringBuffer();
-
-		String tempInp = inp;
-		int inpLen = inp.length();
-
-		// check input string to see if it has any %xxx% substring
-		while ((tempInp != null) && ((index1 = tempInp.indexOf(PERCENT)) != -1)) {
-		        LOG.debug("checking input {}", tempInp);
-			// copy till first %
-			ret.append(tempInp.substring(0, index1));
-			tempInp = tempInp.substring(index1);
-
-			index2 = tempInp.indexOf(PERCENT, 1);
-			if (index2 != -1) {
-				// Get the value between the %s
-				String parm = tempInp.substring(1, index2);
-				LOG.debug("parm: {} found in value", parm);
-
-				// If there's any whitespace in between the % signs, then do not try to 
-				// expand it with a parameter value
-				if (parm.matches(".*\\s(?s).*")) {
-					ret.append(PERCENT);
-					tempInp = tempInp.substring(1);
-		                        LOG.debug("skipping parm: {} because whitespace found in value", parm);
-					continue;
-				}
-
-				String parmVal = getValueOfParm(parm, event);
-				LOG.debug("value of parm: {}", parmVal);
-
-				if (parmVal != null) {
-					if (decode != null && decode.containsKey(parm) && decode.get(parm).containsKey(parmVal)) {
-					ret.append(decode.get(parm).get(parmVal));
-					ret.append("(");
-					ret.append(parmVal);
-					ret.append(")");
-					} else {
-					ret.append(parmVal);
-					}
-				}
-
-				if (index2 < (inpLen - 1)) {
-					tempInp = tempInp.substring(index2 + 1);
-				} else {
-					tempInp = null;
-				}
+		try {
+			final EventTemplate eventTemplate = eventTemplateCache.get(input);
+			Supplier<String> expander = () -> eventTemplate.expand(event, decode);
+			if (eventTemplate.requiresTransaction()) {
+				Objects.requireNonNull(transactionOperations);
+				return transactionOperations.execute(session -> expander.get());
+			} else {
+				return expander.get();
 			}
-			else {
-				break;
-			}
-		}
-
-		if ((index1 == -1 || index2 == -1) && (tempInp != null)) {
-			ret.append(tempInp);
-		}
-
-		String retStr = ret.toString();
-		if (retStr != null && !retStr.equals(inp)) {
-			return retStr;
-		} else {
-			return null;
+		} catch (ExecutionException ex) {
+			throw new RuntimeException(ex);
 		}
 	}
 
