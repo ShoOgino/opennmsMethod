@@ -1,9 +1,30 @@
     @Override
     public void process(Log eventLog) throws EventProcessorException {
-        if (eventLog != null && eventLog.getEvents() != null && eventLog.getEvents().getEvent() != null) {
-            try (Context context = writeTimer.time()) {
-                // Calling a separate method to insert the events allows us to time the transaction
-                processInTransaction(eventLog);
+        if (eventLog != null && eventLog.getEvents() != null) {
+            final Event[] events = eventLog.getEvents().getEvent();
+            if (events != null && events.length > 0) {
+                final AtomicReference<EventProcessorException> exception = new AtomicReference<>();
+
+                // Time the transaction and insertions
+                try (Context context = writeTimer.time()) {
+                    m_transactionManager.execute(new TransactionCallbackWithoutResult() {
+                        @Override
+                        protected void doInTransactionWithoutResult(TransactionStatus status) {
+                            for (Event eachEvent : events) {
+                                try {
+                                    process(eventLog.getHeader(), eachEvent);
+                                } catch (EventProcessorException e) {
+                                    exception.set(e);
+                                    return;
+                                }
+                            }
+                        }
+                    });
+
+                    if (exception.get() != null) {
+                        throw exception.get();
+                    }
+                }
             }
         }
     }
