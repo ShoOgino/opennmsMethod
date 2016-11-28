@@ -1,0 +1,41 @@
+    /**
+     * Convenient method to populate additional fields in the {@link IssueInputBuilder}.
+     * The fields are read from {@link Ticket#getAttributes()}.
+     *
+     * @param ticket The ticket to read the attributes from.
+     * @param builder The builder to set additional fields.
+     */
+    private void populateFields(Ticket ticket, IssueInputBuilder builder) {
+        // Only convert additional attributes to field values, if available
+        if (!ticket.hasAttributes()) {
+            return;
+        }
+        try {
+            final List<String> populatedFields = Lists.newArrayList(); // List of fields already populated
+            final Collection<CimFieldInfo> fields = JiraClientUtils.getFields(fieldInfoCache.get());
+            for (Entry<String, String> eachEntry : ticket.getAttributes().entrySet()) {
+                if (!Strings.isNullOrEmpty(eachEntry.getValue())) { // ignore null or empty values
+                    // Find a field representation in jira
+                    for (CimFieldInfo eachField : fields) {
+                        if (eachEntry.getKey().equals(eachField.getId())) {
+                            final String attributeValue = eachEntry.getValue();
+                            final Object mappedFieldValue = fieldMapFunctionCache.get(eachField).apply(attributeValue);
+                            builder.setFieldValue(eachField.getId(), mappedFieldValue);
+                            populatedFields.add(eachField.getId());
+                            break; // we found a representation, now continue with next attribute
+                        }
+                    }
+                }
+            }
+            if (populatedFields.size() != ticket.getAttributes().size()) {
+                for (String eachKey : ticket.getAttributes().keySet()) {
+                    if (!populatedFields.contains(eachKey)) {
+                        LOG.warn("Ticket attribute '{}' is defined, but was not mapped to a (custom) field in JIRA. Attribute is skipped.", eachKey);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            LOG.error("Could not convert attributes to field values", ex);
+        }
+    }
+
