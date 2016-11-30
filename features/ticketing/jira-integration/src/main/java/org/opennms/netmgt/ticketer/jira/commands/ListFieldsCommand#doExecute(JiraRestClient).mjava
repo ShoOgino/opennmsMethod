@@ -1,0 +1,66 @@
+    @Override
+    protected void doExecute(JiraRestClient jiraRestClient) throws Exception {
+        StringBuilder info = new StringBuilder();
+        info.append("Fetching ");
+        info.append(showAll ? "custom" : "all");
+        info.append(" fields for ");
+        info.append(Strings.isNullOrEmpty(projectKey) ? "all projects" : "project with key '" + projectKey + "'");
+        info.append(Strings.isNullOrEmpty(issueTypeName) ? " and all issue types" : " and issue type with name '" + issueTypeName + "'");
+        info.append(".");
+
+        System.out.println(info.toString());
+        System.out.println();
+
+        // Fetch data
+        final Iterable<CimProject> cimProjects = JiraClientUtils.getIssueMetaData(jiraRestClient, "projects.issuetypes.fields", issueTypeName, projectKey);
+
+        // If we have fields, show them, otherwise bail out
+        final Iterator<CimProject> iterator = cimProjects.iterator();
+        if (!iterator.hasNext()) {
+            System.out.println("No fields found. The user making the ReST call may not have sufficient permissions.");
+            return;
+        }
+
+        // We found fields, so show them
+        final String ISSUE_ROW_FORMAT = "%s fields for issue type %s (id: %s)";
+        final String FIELD_ROW_FORMAT = "%-30s %-20s %-10s %s";
+        while (iterator.hasNext()) {
+            CimProject project = iterator.next();
+            System.out.println("Project " + project.getName() + " (" + project.getKey() + ")");
+            System.out.println(LINE);
+
+            // No types found
+            Iterator<CimIssueType> issueIt = project.getIssueTypes().iterator();
+            if (!issueIt.hasNext()) {
+                System.out.println("No issue types found");
+                continue;
+            }
+
+            // List each issue type
+            while (issueIt.hasNext()) {
+                final CimIssueType issue = issueIt.next();
+                final Map<String, CimFieldInfo> fieldsMap = filter(issue.getFields(), showAll);
+
+                System.out.println();
+                System.out.println(String.format(ISSUE_ROW_FORMAT, showAll ? "All" : "Custom", issue.getName(), issue.getId()));
+                System.out.println(LINE + LINE);
+                if (fieldsMap.isEmpty()) {
+                    System.out.println("No fields found");
+                    continue;
+                }
+
+                // Sort by name
+                final List<CimFieldInfo> fields = fieldsMap.values().stream().sorted(Comparator.comparing(CimFieldInfo::getName)).collect(Collectors.toList());
+                System.out.println(String.format(FIELD_ROW_FORMAT, "Name", "Id", "Custom", "Type"));
+                for (CimFieldInfo eachField : fields) {
+                    System.out.println(
+                            String.format(FIELD_ROW_FORMAT,
+                                eachField.getName(),
+                                eachField.getId(),
+                                isCustom(eachField),
+                                eachField.getSchema().getType()));
+                }
+            }
+        }
+    }
+
