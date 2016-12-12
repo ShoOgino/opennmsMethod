@@ -1,0 +1,56 @@
+	public static TrapInformation dto2object(TrapDTO trapDto) {
+		if ("v1".equalsIgnoreCase(trapDto.getVersion())) {
+			PDUv1 pdu = new PDUv1();
+			pdu.setAgentAddress(new IpAddress(trapDto.getHeader(TrapDTO.SOURCE_ADDRESS)));
+			pdu.setTimestamp(trapDto.getTimestamp());
+
+			// SNMPv1-specific fields
+			pdu.setEnterprise(new OID(trapDto.getEnterpriseId()));
+			pdu.setGenericTrap(trapDto.getGeneric());
+			pdu.setSpecificTrap(trapDto.getSpecific());
+
+			for (SnmpResult snmpResult : trapDto.getResults()) {
+				final int type = snmpResult.getValue().getType();
+				final byte[] value = snmpResult.getValue().getBytes();
+				final OID oid = new OID(snmpResult.getBase().toString());
+				pdu.add(new VariableBinding(oid, ((Snmp4JValue)SnmpUtils.getValueFactory().getValue(type, value)).getVariable()));
+			}
+
+			TrapInformation retval = new Snmp4JTrapNotifier.Snmp4JV1TrapInformation(
+				trapDto.getAgentAddress(),
+				trapDto.getCommunity(),
+				pdu);
+			retval.setCreationTime(trapDto.getCreationTime());
+			retval.setLocation(trapDto.getHeader(MinionDTO.LOCATION));
+			retval.setSystemId(trapDto.getHeader(MinionDTO.SYSTEM_ID));
+			return retval;
+		} else if (
+			"v2".equalsIgnoreCase(trapDto.getVersion()) ||
+			"v3".equalsIgnoreCase(trapDto.getVersion())
+		) {
+			PDU pdu = new PDU();
+			pdu.setType(PDU.NOTIFICATION);
+
+			for (SnmpResult snmpResult : trapDto.getResults()) {
+				final int type = snmpResult.getValue().getType();
+				final byte[] value = snmpResult.getValue().getBytes();
+				final OID oid = new OID(snmpResult.getBase().toString());
+
+				pdu.add(new VariableBinding(oid, ((Snmp4JValue)SnmpUtils.getValueFactory().getValue(type, value)).getVariable()));
+			}
+
+			TrapInformation retval = new Snmp4JTrapNotifier.Snmp4JV2TrapInformation(
+				trapDto.getSourceAddress(),
+				trapDto.getCommunity(),
+				pdu);
+
+			retval.setCreationTime(trapDto.getCreationTime());
+			retval.setLocation(trapDto.getHeader(MinionDTO.LOCATION));
+			retval.setSystemId(trapDto.getHeader(MinionDTO.SYSTEM_ID));
+
+			return retval;
+		} else {
+			throw new IllegalArgumentException("Unrecognized trap version in DTO: " + trapDto.getVersion());
+		}
+	}
+
