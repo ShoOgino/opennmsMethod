@@ -1,0 +1,53 @@
+    @Test
+    public void testConcurrentAndQueuing() throws Exception {
+        final int QUEUE_SIZE = 100;
+        final int NUM_THREADS = 16;
+
+        ThreadLockingDispatcherFactory threadLockingDispatcherFactory = new ThreadLockingDispatcherFactory();
+        AsyncDispatcher<MyMessage> asyncDispatcher = threadLockingDispatcherFactory.createAsyncDispatcher(module, new AsyncPolicy() {
+            @Override
+            public int getQueueSize() {
+                return QUEUE_SIZE;
+            }
+
+            @Override
+            public int getNumThreads() {
+                return NUM_THREADS;
+            }
+        });
+        
+        final AtomicBoolean allThreadsLocked = new AtomicBoolean(false);
+        ThreadLockingSyncDispatcher<MyMessage> threadLockingSyncDispatcher = threadLockingDispatcherFactory.getThreadLockingSyncDispatcher();
+        threadLockingSyncDispatcher.waitForThreads(NUM_THREADS).thenRun(() -> {
+            allThreadsLocked.set(true);
+        });
+
+        for (int i = 0; i < NUM_THREADS; i++) {
+            asyncDispatcher.send(new MyMessage());
+        }
+
+        // All of the dispatcher thread should be locked, and no additional thread should be waiting
+        await().atMost(1, MINUTES).until(() -> allThreadsLocked.get());
+        assertEquals(0, threadLockingSyncDispatcher.getNumExtraThreadsWaiting());
+
+        // The queue should also be empty
+        assertEquals(0, asyncDispatcher.getQueueSize());
+
+        // Now fill up the queue
+        for (int i = 0; i < 10 * QUEUE_SIZE; i++) {
+            asyncDispatcher.send(new MyMessage());
+        }
+        assertEquals(QUEUE_SIZE, asyncDispatcher.getQueueSize());
+
+        // No messages should have been dispatched yet
+        assertEquals(0, threadLockingDispatcherFactory.getNumMessageDispatched());
+
+        // Release the threads!
+        threadLockingSyncDispatcher.release();
+        // Wait for the queue to be drained
+        await().atMost(1, MINUTES).until(() -> asyncDispatcher.getQueueSize(), equalTo(0));
+        await().atMost(1, MINUTES).until(() -> threadLockingDispatcherFactory.getNumMessageDispatched(),
+                greaterThan(QUEUE_SIZE));
+        asyncDispatcher.close();
+    }
+
