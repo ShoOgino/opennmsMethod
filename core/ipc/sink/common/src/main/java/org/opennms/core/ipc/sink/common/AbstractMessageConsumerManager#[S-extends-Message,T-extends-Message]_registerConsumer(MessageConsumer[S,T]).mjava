@@ -1,6 +1,6 @@
     @SuppressWarnings("unchecked")
     @Override
-    public <S extends Message, T extends Message> void registerConsumer(MessageConsumer<S, T> consumer)
+    public synchronized <S extends Message, T extends Message> void registerConsumer(MessageConsumer<S, T> consumer)
             throws Exception {
         if (consumer == null) {
             return;
@@ -9,12 +9,11 @@
         try (MDCCloseable mdc = Logging.withPrefixCloseable(MessageConsumerManager.LOG_PREFIX)) {
             LOG.info("Registering consumer: {}", consumer);
             final SinkModule<?, Message> module = (SinkModule<?, Message>)consumer.getModule();
+            final int numConsumersBefore = consumersByModule.get(module).size();
             consumersByModule.put(module, (MessageConsumer<?, Message>)consumer);
-            if (!routeIdsByModule.containsKey(module)) {
-                LOG.info("Creating route for module: {}", module);
-                final DynamicIpcRouteBuilder routeBuilder = new DynamicIpcRouteBuilder(context, this, (SinkModule<?, Message>)consumer.getModule());
-                context.addRoutes(routeBuilder);
-                routeIdsByModule.put(module, routeBuilder.getRouteId());
+            if (numConsumersBefore < 1) {
+                LOG.info("Starting consuming messages for module: {}", module);
+                startConsumingForModule(module);
             }
         }
     }

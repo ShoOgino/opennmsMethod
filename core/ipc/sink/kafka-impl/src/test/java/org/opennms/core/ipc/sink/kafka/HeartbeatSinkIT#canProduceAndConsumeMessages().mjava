@@ -1,0 +1,33 @@
+    @Test(timeout=30000)
+    public void canProduceAndConsumeMessages() throws Exception {
+        HeartbeatModule module = new HeartbeatModule();
+
+        AtomicInteger heartbeatCount = new AtomicInteger();
+        final MessageConsumer<Heartbeat,Heartbeat> heartbeatConsumer = new MessageConsumer<Heartbeat,Heartbeat>() {
+            @Override
+            public SinkModule<Heartbeat,Heartbeat> getModule() {
+                return module;
+            }
+
+            @Override
+            public void handleMessage(final Heartbeat heartbeat) {
+                heartbeatCount.incrementAndGet();
+            }
+        };
+
+        try {
+            consumerManager.registerConsumer(heartbeatConsumer);
+
+            final SyncDispatcher<Heartbeat> localDispatcher = localMessageDispatcherFactory.createSyncDispatcher(module);
+            localDispatcher.send(new Heartbeat());
+            await().atMost(1, MINUTES).until(() -> heartbeatCount.get(), equalTo(1));
+
+            final SyncDispatcher<Heartbeat> dispatcher = remoteMessageDispatcherFactory.createSyncDispatcher(HeartbeatModule.INSTANCE);
+
+            dispatcher.send(new Heartbeat());
+            await().atMost(1, MINUTES).until(() -> heartbeatCount.get(), equalTo(2));
+        } finally {
+            consumerManager.unregisterConsumer(heartbeatConsumer);
+        }
+    }
+
