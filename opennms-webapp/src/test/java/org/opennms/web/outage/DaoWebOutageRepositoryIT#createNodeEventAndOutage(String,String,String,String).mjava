@@ -1,0 +1,57 @@
+    protected void createNodeEventAndOutage(String location, String label, String ip, String svc) {
+        OnmsMonitoringLocation onmsMonitoringLocation = m_dbPopulator.getMonitoringLocationDao().get(location);
+
+        if (onmsMonitoringLocation == null) {
+            onmsMonitoringLocation = new OnmsMonitoringLocation();
+            onmsMonitoringLocation.setLocationName(location);
+            onmsMonitoringLocation.setLatitude(1.0f);
+            onmsMonitoringLocation.setLongitude(1.0f);
+            onmsMonitoringLocation.setMonitoringArea(location);
+            onmsMonitoringLocation.setPriority(1L);
+            m_dbPopulator.getMonitoringLocationDao().save(onmsMonitoringLocation);
+        }
+
+        List<OnmsNode> nodes = m_dbPopulator.getNodeDao().findByLabel(label);
+        OnmsNode node = (nodes.size() == 1 ? nodes.get(0) : null);
+
+        if (node == null) {
+            node = new OnmsNode(m_dbPopulator.getMonitoringLocationDao().get(location), label);
+            node.setForeignSource(location);
+            node.setForeignId(label);
+            m_dbPopulator.getNodeDao().save(node);
+        }
+
+        int nodeId = m_dbPopulator.getNodeDao().findByForeignId(location, label).getId();
+
+        OnmsIpInterface ipInterface = m_dbPopulator.getIpInterfaceDao().findByNodeIdAndIpAddress(nodeId, ip);
+
+        if (ipInterface == null) {
+            ipInterface = new OnmsIpInterface(addr(ip), node);
+        }
+
+        OnmsMonitoredService monitoredService = ipInterface.getMonitoredServiceByServiceType(svc);
+
+        if (monitoredService == null) {
+            monitoredService = new OnmsMonitoredService(m_dbPopulator.getIpInterfaceDao().findByNodeIdAndIpAddress(nodeId, ip), m_dbPopulator.getServiceTypeDao().findByName(svc));
+            m_dbPopulator.getMonitoredServiceDao().save(monitoredService);
+        }
+
+        OnmsEvent event = new OnmsEvent();
+        event.setDistPoller(m_dbPopulator.getDistPollerDao().whoami());
+        event.setEventUei("uei.opennms.org/" + location + "/" + label);
+        event.setEventTime(new Date());
+        event.setEventSource(location + "/" + label);
+        event.setEventCreateTime(new Date());
+        event.setEventSeverity(OnmsSeverity.CLEARED.getId());
+        event.setEventLog("Y");
+        event.setEventDisplay("N");
+
+        m_dbPopulator.getEventDao().save(event);
+        m_dbPopulator.getEventDao().flush();
+
+        OnmsOutage outage = new OnmsOutage(new Date(), event, monitoredService);
+        outage.setServiceLostEvent(event);
+
+        m_dbPopulator.getOutageDao().save(outage);
+    }
+
