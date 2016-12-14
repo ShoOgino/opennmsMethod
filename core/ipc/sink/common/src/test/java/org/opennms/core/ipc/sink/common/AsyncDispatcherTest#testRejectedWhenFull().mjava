@@ -1,10 +1,6 @@
     @Test(timeout=3*60*1000)
-    public void testConcurrentAndQueuing() throws Exception {
-        final int QUEUE_SIZE = 100;
-        final int NUM_THREADS = 16;
-
-        ThreadLockingDispatcherFactory<MyMessage> threadLockingDispatcherFactory = new ThreadLockingDispatcherFactory<>();
-        AsyncDispatcher<MyMessage> asyncDispatcher = threadLockingDispatcherFactory.createAsyncDispatcher(module, new AsyncPolicy() {
+    public void testRejectedWhenFull() throws Exception {
+        when(module.getAsyncPolicy()).thenReturn(new AsyncPolicy() {
             @Override
             public int getQueueSize() {
                 return QUEUE_SIZE;
@@ -14,33 +10,35 @@
             public int getNumThreads() {
                 return NUM_THREADS;
             }
+
+            @Override
+            public boolean isBlockWhenFull() {
+                return false;
+            }
         });
-        
+        final AsyncDispatcher<MyMessage> asyncDispatcher = threadLockingDispatcherFactory.createAsyncDispatcher(module);
+
         final AtomicBoolean allThreadsLocked = new AtomicBoolean(false);
         ThreadLockingSyncDispatcher<MyMessage> threadLockingSyncDispatcher = threadLockingDispatcherFactory.getThreadLockingSyncDispatcher();
         threadLockingSyncDispatcher.waitForThreads(NUM_THREADS).thenRun(() -> {
             allThreadsLocked.set(true);
         });
 
-        for (int i = 0; i < NUM_THREADS; i++) {
-            asyncDispatcher.send(new MyMessage());
+        final List<CompletableFuture<MyMessage>> futures = new ArrayList<>();
+        for (int i = 0; i < NUM_THREADS + QUEUE_SIZE; i++) {
+            futures.add(asyncDispatcher.send(new MyMessage()));
         }
 
-        // All of the dispatcher thread should be locked, and no additional thread should be waiting
+        // All of the dispatcher thread should be locked, and
         await().atMost(1, MINUTES).until(() -> allThreadsLocked.get());
+        // No additional thread should be waiting
         assertEquals(0, threadLockingSyncDispatcher.getNumExtraThreadsWaiting());
-
-        // The queue should also be empty
-        assertEquals(0, asyncDispatcher.getQueueSize());
-
-        // Now fill up the queue
-        for (int i = 0; i < 10 * QUEUE_SIZE; i++) {
-            asyncDispatcher.send(new MyMessage());
-        }
+        // The queue should be full
         assertEquals(QUEUE_SIZE, asyncDispatcher.getQueueSize());
 
-        // No messages should have been dispatched yet
-        assertEquals(0, threadLockingDispatcherFactory.getNumMessageDispatched());
+        // The next dispatch should return a failed future
+        CompletableFuture<MyMessage> future = asyncDispatcher.send(new MyMessage());
+        assertTrue("future should have failed!", future.isCompletedExceptionally());
 
         // Release the threads!
         threadLockingSyncDispatcher.release();
@@ -48,6 +46,10 @@
         await().atMost(1, MINUTES).until(() -> asyncDispatcher.getQueueSize(), equalTo(0));
         await().atMost(1, MINUTES).until(() -> threadLockingDispatcherFactory.getNumMessageDispatched(),
                 greaterThan(QUEUE_SIZE));
+
+        // All of our futures should be successfully resolved
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[]{}));
+
         asyncDispatcher.close();
     }
 

@@ -3,14 +3,31 @@
         Objects.requireNonNull(asyncPolicy);
         this.syncDispatcher = Objects.requireNonNull(syncDispatcher);
 
-        queue = new LinkedBlockingQueue<Runnable>(asyncPolicy.getQueueSize());
+        final RejectedExecutionHandler rejectedExecutionHandler;
+        if (asyncPolicy.isBlockWhenFull()) {
+            queue = new OfferBlockingQueue<>(asyncPolicy.getQueueSize());
+            rejectedExecutionHandler = new ThreadPoolExecutor.AbortPolicy();
+        } else {
+            queue = new LinkedBlockingQueue<Runnable>(asyncPolicy.getQueueSize());
+            // Reject and increase the dropped counter when the queue is full
+            final Counter droppedCounter = state.getMetrics().counter(MetricRegistry.name(state.getModule().getId(), "dropped"));
+            rejectedExecutionHandler = new RejectedExecutionHandler() {
+                @Override
+                public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
+                    droppedCounter.inc();
+                    throw new RejectedExecutionException("Task " + r.toString() +
+                            " rejected from " +
+                            e.toString());
+                }
+            };
+        }
+
         state.getMetrics().register(MetricRegistry.name(state.getModule().getId(), "queue-size"), new Gauge<Integer>() {
             @Override
             public Integer getValue() {
                 return queue.size();
             }
         });
-        final Counter droppedCounter = state.getMetrics().counter(MetricRegistry.name(state.getModule().getId(), "dropped"));
 
         executor = new ThreadPoolExecutor(
                 asyncPolicy.getNumThreads(),
@@ -19,13 +36,7 @@
                 TimeUnit.MILLISECONDS,
                 queue,
                 new LogPreservingThreadFactory("OpenNMS.Sink.AsyncDispatcher." + state.getModule().getId(), Integer.MAX_VALUE),
-                new RejectedExecutionHandler() {
-                    @Override
-                    public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-                        rateLimittedLogger.warn("Task was rejected. Dropping message for {}.", state.getModule().getId());
-                        droppedCounter.inc();
-                    }
-                }
+                rejectedExecutionHandler
             );
     }
 
