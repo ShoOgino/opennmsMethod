@@ -1,0 +1,37 @@
+    /**
+     * Aggregates the given messages into a bucket and returns
+     * the bucket if it is ready to be dispatched.
+     *
+     * @param message the message to aggregated
+     * @return the bucket if it is ready to be dispatched, or <code>null</code>
+     * if nothing is ready to be dispatched
+     */
+    public T aggregate(S message) {
+        // Compute the key
+        final Object key = aggregationPolicy.key(message);
+        // Lock the bucket
+        final Lock lock = lockStripes.get(key);
+        try {
+            lock.lock();
+            // Obtain the bucket, creating a new one if it doesn't already exist
+            Bucket bucket = buckets.get(key);
+            if (bucket == null) {
+                bucket = new Bucket();
+                buckets.put(key, bucket);
+            }
+
+            // Accumulate into the bucket
+            T accumulator = bucket.accumulate(message);
+            if (accumulator != null) {
+                // The bucket is ready to be dispatched
+                buckets.remove(key);
+                return accumulator;
+            } else {
+                // The bucket is NOT ready to be dispatched
+                return null;
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
