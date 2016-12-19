@@ -1,0 +1,26 @@
+    @Test(timeout=60000)
+    public void canProcessManyRequestsAsynchronously() throws Exception {
+        // Execute a request via a remote location
+        assertNotEquals(REMOTE_LOCATION_NAME, identity.getLocation());
+
+        // Lock the run method in our RPC module, we want to validate
+        // the number of threads that are "running" the module
+        CompletableFuture<Integer> runLockedFuture = lockingRpcModule.getRunLocker().waitForThreads(NTHREADS);
+ 
+        // Fire off NTHREADS request
+        List<CompletableFuture<EchoResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < NTHREADS; i++) {
+            EchoRequest request = new EchoRequest("ping");
+            request.setTimeToLiveMs(30000L);
+            request.setLocation(REMOTE_LOCATION_NAME);
+            futures.add(echoClient.execute(request));
+        }
+
+        // Wait for all the threads calling run() to be locked
+        runLockedFuture.get();
+
+        // Release and verify that all the futures return
+        lockingRpcModule.getRunLocker().release();
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[NTHREADS])).get();
+    }
+
