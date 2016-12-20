@@ -1,0 +1,27 @@
+    public Aggregator(SinkModule<S, T> module, AggregatingMessageProducer<S,T> messageProducer) {
+        Objects.requireNonNull(module);
+        this.messageProducer = Objects.requireNonNull(messageProducer);
+        aggregationPolicy = Objects.requireNonNull(module.getAggregationPolicy());
+        completionSize = aggregationPolicy.getCompletionSize();
+        completionIntervalMs = aggregationPolicy.getCompletionIntervalMs();
+
+        if (aggregationPolicy.getCompletionIntervalMs() > 0) {
+            // Periodically verify the buckets, and flush those that are older than completionIntervalMs
+            flushTimer = new Timer(String.format("SinkAggregatorFlush-%s", module.getId()));
+            flushTimer.scheduleAtFixedRate(new TimerTask() {
+                @Override
+                public void run() {
+                    try {
+                        Aggregator.this.run();
+                    } catch (Throwable t) {
+                        // The timer may abort if we throw, so we catch here to make
+                        // sure that the timer keeps running
+                        LOG.error("An error occurred while flushing one or more aggregates in module '{}'.", module, t);
+                    }
+                }
+            }, completionIntervalMs, completionIntervalMs);
+        } else {
+            flushTimer = null;
+        }
+    }
+
