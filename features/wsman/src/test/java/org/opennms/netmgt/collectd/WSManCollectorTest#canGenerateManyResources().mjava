@@ -1,0 +1,62 @@
+    /**
+     * NMS-8924: Verifies that the generated collection set includes a resource
+     * for every node (XML) in the response.
+     */
+    @Test
+    public void canGenerateManyResources() {
+        // Define our resource type, and create a supplier that returns a new instance on every call
+        NodeLevelResource node = mock(NodeLevelResource.class);
+        ResourceType rt = new ResourceType();
+        rt.setName("wsProcIndex");
+        rt.setLabel("Processor (wsman)");
+        rt.setResourceLabel("Processor (${wmiOSCpuName})");
+        StorageStrategy strategy = new StorageStrategy();
+        strategy.setClazz(SiblingColumnStorageStrategy.class.getCanonicalName());
+        strategy.addParameter(new Parameter("sibling-column-name", "wmiOSCpuName"));
+        rt.setStorageStrategy(strategy);
+        PersistenceSelectorStrategy pstrategy = new PersistenceSelectorStrategy();
+        pstrategy.setClazz(PersistAllSelectorStrategy.class.getCanonicalName());
+        rt.setPersistenceSelectorStrategy(pstrategy);
+        Supplier<Resource> resourceSupplier = () -> new GenericTypeResourceWithoutInstance(node, rt);
+
+        // Define our group
+        Group group = new Group();
+        group.setName("windows-os-wmi-processor");
+        addAttribute(group, "Name", "wmiOSCpuName", "string");
+        addAttribute(group, "InterruptsPersec", "wmiOSCpuIntsPerSec", "Gauge");
+        addAttribute(group, "PercentProcessorTime", "wmiOSCpuPctProcTime", "Gauge");
+        addAttribute(group, "PercentDPCTime", "wmiOSCpuPctDPCTime", "Gauge");
+        addAttribute(group, "PercentInterruptTime", "wmiOSCpuPctIntrTime", "Gauge");
+        addAttribute(group, "PercentUserTime", "wmiOSCpuPctUserTime", "Gauge");
+
+        // Mock the agent
+        CollectionAgent agent = mock(CollectionAgent.class);
+        when(agent.getStorageDir()).thenReturn(new java.io.File(""));
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+
+        // Sample data
+        XMLTag xmlTag = XMLDoc.newDocument(true).addRoot("body")
+                .addTag("Win32_PerfFormattedData_PerfOS_Processor")
+                    .addTag("Name").setText("c0")
+                    .addTag("InterruptsPersec").setText("95")
+                    .gotoRoot()
+                .addTag("Win32_PerfFormattedData_PerfOS_Processor")
+                    .addTag("Name").setText("c1")
+                    .addTag("InterruptsPersec").setText("100");
+
+        List<Node> nodes = xmlTag.gotoRoot().getChildElement().stream()
+            .map(el -> (Node)el)
+            .collect(Collectors.toList());
+
+        // Process the data and generate the collection set
+        WsManCollector.processEnumerationResults(group, builder, resourceSupplier, nodes);
+
+        // Verify the result
+        assertEquals(Arrays.asList(
+                "wsProcIndex/c0/windows-os-wmi-processor/wmiOSCpuName[c0,null]",
+                "wsProcIndex/c0/windows-os-wmi-processor/wmiOSCpuIntsPerSec[null,95.0]",
+                "wsProcIndex/c1/windows-os-wmi-processor/wmiOSCpuName[c1,null]",
+                "wsProcIndex/c1/windows-os-wmi-processor/wmiOSCpuIntsPerSec[null,100.0]"),
+                flatten(builder.build()));
+    }
+
