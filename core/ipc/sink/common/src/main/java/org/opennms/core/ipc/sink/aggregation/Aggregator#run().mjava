@@ -1,0 +1,30 @@
+    @Override
+    public void run() {
+        final List<T> messagesReadyForDispatch = new LinkedList<>();
+        final Set<Object> keys = buckets.keySet();
+        // Lock all the buckets
+        final Iterable<Lock> locks = lockStripes.bulkGet(keys);
+        try {
+            locks.forEach(l -> l.lock());
+            // Determine which buckets are ready to be dispatched
+            // and remove these from the map
+            final long cutOff = System.currentTimeMillis() - completionIntervalMs;
+            final Iterator<Object> iter = keys.iterator();
+            while (iter.hasNext()) {
+                final Object key = iter.next();
+                final Bucket bucket = buckets.get(key);
+                if (bucket != null && bucket.getFirstTimeMillis() != null && bucket.getFirstTimeMillis() <= cutOff) {
+                    messagesReadyForDispatch.add(bucket.getValue());
+                    iter.remove();
+                }
+            }
+        } finally {
+            locks.forEach(l -> l.unlock());
+        }
+
+        // Dispatch!
+        for (T message : messagesReadyForDispatch) {
+            messageProducer.dispatch(message);
+        }
+    }
+
