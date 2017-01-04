@@ -3,22 +3,22 @@
      */
     @Override
     public void run() {
+        // Setup logging and create the dispatcher
+        super.run();
+
         // get the context
         m_context = Thread.currentThread();
 
-        // Get a log instance
-        Logging.putPrefix(Syslogd.LOG4J_CATEGORY);
-
         // Create some metrics
         Meter packetMeter = METRICS.meter(MetricRegistry.name(getClass(), "packets"));
-        Meter connectionMeter = METRICS.meter(MetricRegistry.name(getClass(), "connections"));
         Histogram packetSizeHistogram = METRICS.histogram(MetricRegistry.name(getClass(), "packetSize"));
 
         if (m_stop) {
             LOG.debug("Stop flag set before thread started, exiting");
             return;
-        } else
+        } else {
             LOG.debug("Thread context started");
+        }
 
         // allocate a buffer
         final int length = 0xffff;
@@ -90,26 +90,15 @@
                 }
 
                 m_dgSock.receive(pkt);
-                
+
                 // Increment the packet counter
                 packetMeter.mark();
-                
-                // Create a metric for the syslog packet size
+
+                // Create a metric for the Syslog packet size
                 packetSizeHistogram.update(length);
 
-                SyslogConnection connection = new SyslogConnection(pkt, m_config, m_distPollerDao.whoami().getId(), m_distPollerDao.whoami().getLocation());
-
-                try {
-                    for (SyslogConnectionHandler handler : m_syslogConnectionHandlers) {
-                        connectionMeter.mark();
-                        handler.handleSyslogConnection(connection);
-                    }
-                } catch (Throwable e) {
-                    LOG.error("Handler execution failed in {}", this.getClass().getSimpleName(), e);
-                }
-
-                //SyslogConnection *Must* copy packet data and InetAddress as DatagramPacket is a mutable type
-                //WaterfallExecutor.waterfall(m_executor, new SyslogConnection(pkt, m_config));
+                final SyslogConnection connection = new SyslogConnection(pkt, true);
+                m_dispatcher.send(connection);
 
                 ioInterrupted = false; // reset the flag
             } catch (SocketTimeoutException e) {
@@ -118,14 +107,6 @@
             } catch (InterruptedIOException e) {
                 ioInterrupted = true;
                 continue;
-                /*
-            } catch (ExecutionException e) {
-                LOG.error("Task execution failed in {}", this.getClass().getSimpleName(), e);
-                break;
-            } catch (InterruptedException e) {
-                LOG.error("Task interrupted in {}", this.getClass().getSimpleName(), e);
-                break;
-                */
             } catch (IOException e) {
                 if (m_stop) {
                     // A SocketException can be thrown during normal shutdown so log as debug
@@ -139,6 +120,5 @@
         } // end while status OK
 
         LOG.debug("Thread context exiting");
-
     }
 
