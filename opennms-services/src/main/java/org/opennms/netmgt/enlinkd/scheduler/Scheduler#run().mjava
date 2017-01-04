@@ -54,8 +54,7 @@
                 // get an iterator so that we can cycle
                 // through the queue elements.
                 //
-                Iterator<Long> iter = m_queues.keySet().iterator();
-                while (iter.hasNext()) {
+                for (Entry<Long, BlockingQueue<ReadyRunnable>> entry : m_queues.entrySet()) {
                     // Peak for Runnable objects until
                     // there are no more ready runnables
                     //
@@ -63,7 +62,7 @@
                     // if we didn't add a count then it would
                     // be possible to starve other queues.
                     //
-                    Long key = iter.next();
+                    Long key = entry.getKey();
                     BlockingQueue<ReadyRunnable> in = m_queues.get(key);
                     if (in == null || in.isEmpty()) {
                         continue;
@@ -80,15 +79,25 @@
                                 in.take();
 
                                 if (readyRun.isReady()) {
-                                    LOG.debug("run: found ready runnable {}",
+                                    LOG.debug("run: runnable {}, executing",
                                               readyRun.getInfo());
 
                                     // Add runnable to the execution queue
                                     m_runner.execute(readyRun);
                                     ++runned;
+                                    
+                                    // Increment the execution counter
+                                    ++m_numTasksExecuted;
+
+                                    // Thread Pool Statistics
+                                    if (m_runner instanceof ThreadPoolExecutor) {
+                                        ThreadPoolExecutor e = (ThreadPoolExecutor) m_runner;
+                                        String ratio = String.format("%.3f", e.getTaskCount() > 0 ? new Double(e.getCompletedTaskCount())/new Double(e.getTaskCount()) : 0);
+                                        LOG.debug("thread pool statistics: activeCount={}, taskCount={}, completedTaskCount={}, completedRatio={}, poolSize={}",
+                                            e.getActiveCount(), e.getTaskCount(), e.getCompletedTaskCount(), ratio, e.getPoolSize());
+                                    }
+
                                 } else {
-                                    LOG.debug("run: not ready ready runnable {}",
-                                              readyRun.getInfo());
                                     in.add(readyRun);
                                 }
                             }
