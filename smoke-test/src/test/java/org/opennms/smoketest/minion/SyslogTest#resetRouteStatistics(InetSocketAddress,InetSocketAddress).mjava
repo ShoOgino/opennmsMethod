@@ -1,0 +1,50 @@
+    private static void resetRouteStatistics(InetSocketAddress opennmsSshAddr, InetSocketAddress minionSshAddr) throws Exception {
+        // Reset route statistics on Minion
+        try (final SshClient sshClient = new SshClient(minionSshAddr, "admin", "admin")) {
+            PrintStream pipe = sshClient.openShell();
+
+            // Syslog sender
+            pipe.println("camel:route-reset-stats syslogListen");
+            pipe.println("camel:route-reset-stats syslogMarshal");
+            pipe.println("camel:route-reset-stats syslogSendKafka");
+
+            // Trap sender
+            pipe.println("camel:route-reset-stats trapMarshal");
+            pipe.println("camel:route-reset-stats trapSendKafka");
+
+            pipe.println("logout");
+            try {
+                await().atMost(2, MINUTES).until(sshClient.isShellClosedCallable());
+            } finally {
+                LOG.info("Karaf output:\n{}", sshClient.getStdout());
+            }
+        }
+
+        // Reset route statistics on OpenNMS
+        try (final SshClient sshClient = new SshClient(opennmsSshAddr, "admin", "admin")) {
+            PrintStream pipe = sshClient.openShell();
+
+            // Elasticsearch forwarder
+            pipe.println("camel:route-reset-stats alarmsFromOpennms");
+            pipe.println("camel:route-reset-stats enrichAlarmsAndEvents");
+            pipe.println("camel:route-reset-stats eventsFromOpennms");
+            pipe.println("camel:route-reset-stats toElasticsearch");
+            pipe.println("camel:route-reset-stats updateElastisearchTemplateMappingRunOnlyOnce");
+
+            // Syslog receiver
+            pipe.println("camel:route-reset-stats receiveSyslogConnectionViaKafka");
+            pipe.println("camel:route-reset-stats syslogHandler");
+
+            // Trap receiver
+            pipe.println("camel:route-reset-stats receiveTrapConnectionViaKafka");
+            pipe.println("camel:route-reset-stats trapHandler");
+
+            pipe.println("logout");
+            try {
+                await().atMost(2, MINUTES).until(sshClient.isShellClosedCallable());
+            } finally {
+                LOG.info("Karaf output:\n{}", sshClient.getStdout());
+            }
+        }
+    }
+

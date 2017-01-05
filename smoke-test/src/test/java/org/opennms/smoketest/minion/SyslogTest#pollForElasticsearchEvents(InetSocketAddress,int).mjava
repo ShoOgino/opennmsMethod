@@ -1,0 +1,36 @@
+    private static void pollForElasticsearchEvents(InetSocketAddress esTransportAddr, int numMessages) {
+        Settings settings = ImmutableSettings.settingsBuilder()
+            .put("cluster.name", "opennms").build();
+        TransportClient esClient = new TransportClient(settings).addTransportAddress(new InetSocketTransportAddress(esTransportAddr));
+
+        try {
+            with().pollInterval(15, SECONDS).await().atMost(5, MINUTES).until(() -> {
+                try {
+                    // Refresh all of the OpenNMS indices
+                    RefreshResponse refresh = esClient.admin().indices().prepareRefresh("opennms*").execute().actionGet();
+                    LOG.debug("REFRESH RESPONSE: {}", refresh.toString());
+
+                    // Search for all entries in the index
+                    SearchResponse response = esClient
+                        // Search the index that the event above created
+                        .prepareSearch("opennms*")
+                        .setQuery(QueryBuilders.matchQuery("eventuei", "uei.opennms.org/vendor/cisco/syslog/SEC-6-IPACCESSLOGP/aclDeniedIPTraffic"))
+                        .execute()
+                        .actionGet();
+
+                    LOG.debug("SEARCH RESPONSE: {}", response.toString());
+
+                    assertEquals("ES search hits was not equal to " + numMessages, numMessages, response.getHits().totalHits());
+                    assertEquals("Event UEI did not match", "uei.opennms.org/vendor/cisco/syslog/SEC-6-IPACCESSLOGP/aclDeniedIPTraffic", response.getHits().getAt(0).getSource().get("eventuei"));
+                    //assertEquals("Event IP address did not match", "4.2.2.2", response.getHits().getAt(0).getSource().get("ipaddr"));
+                } catch (Throwable e) {
+                    LOG.warn(e.getMessage(), e);
+                    return false;
+                }
+                return true;
+            });
+        } finally {
+            esClient.close();
+        }
+    }
+
