@@ -1,0 +1,39 @@
+    @Test(timeout=60000)
+    @Ignore("flapping")
+    public void canConsumeMessagesInParallel() throws Exception {
+        final int NUM_CONSUMER_THREADS = 7;
+
+        final HeartbeatModule parallelHeartbeatModule = new HeartbeatModule() {
+            @Override
+            public int getNumConsumerThreads() {
+                return NUM_CONSUMER_THREADS;
+            }
+        };
+
+        final ThreadLockingMessageConsumer<Heartbeat,Heartbeat> consumer = new ThreadLockingMessageConsumer<>(parallelHeartbeatModule);
+
+        final CompletableFuture<Integer> future = consumer.waitForThreads(NUM_CONSUMER_THREADS);
+
+        try {
+            consumerManager.registerConsumer(consumer);
+
+            final SyncDispatcher<Heartbeat> dispatcher = remoteMessageDispatcherFactory.createSyncDispatcher(HeartbeatModule.INSTANCE);
+
+            final HeartbeatGenerator generator = new HeartbeatGenerator(dispatcher, 100.0);
+            generator.start();
+
+            // Wait until we have NUM_CONSUMER_THREADS locked
+            future.get();
+
+            // Take a snooze
+            Thread.sleep(TimeUnit.SECONDS.toMillis(5));
+
+            // Verify that there aren't more than NUM_CONSUMER_THREADS waiting
+            assertEquals(0, consumer.getNumExtraThreadsWaiting());
+
+            generator.stop();
+        } finally {
+            consumerManager.unregisterConsumer(consumer);
+        }
+    }
+
