@@ -1,0 +1,31 @@
+    public void init() throws IOException {
+        try (MDCCloseable mdc = Logging.withPrefixCloseable(MessageConsumerManager.LOG_PREFIX)) {
+            registerJmxReporter();
+
+            // Defaults
+            kafkaConfig.clear();
+            kafkaConfig.put("key.serializer", StringSerializer.class.getCanonicalName());
+            kafkaConfig.put("value.serializer", StringSerializer.class.getCanonicalName());
+
+            // Retrieve all of the properties from org.opennms.core.ipc.sink.kafka.cfg
+            final Dictionary<String, Object> properties = configAdmin.getConfiguration(KafkaSinkConstants.KAFKA_CONFIG_PID).getProperties();
+            if (properties != null) {
+                final Enumeration<String> keys = properties.keys();
+                while (keys.hasMoreElements()) {
+                  final String key = keys.nextElement();
+                  kafkaConfig.put(key, properties.get(key));
+                }
+            }
+
+            LOG.info("KafkaRemoteMessageDispatcherFactory: initializing the Kafka producer with: {}", kafkaConfig);
+            final ClassLoader currentClassLoader = Thread.currentThread().getContextClassLoader();
+            try {
+                // Class-loader hack for accessing the org.apache.kafka.common.serialization.StringSerializer
+                Thread.currentThread().setContextClassLoader(null);
+                producer = new KafkaProducer<>(kafkaConfig);
+            } finally {
+                Thread.currentThread().setContextClassLoader(currentClassLoader);
+            }
+        }
+    }
+
