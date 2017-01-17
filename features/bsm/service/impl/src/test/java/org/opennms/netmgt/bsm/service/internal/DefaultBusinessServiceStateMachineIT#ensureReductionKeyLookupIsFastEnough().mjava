@@ -1,0 +1,65 @@
+    /**
+     * Builds 200 business services.
+     * Each business Services has one parent and two children.
+     * Each children has 12 reduction key edges.
+     * In sum there are:
+     *  - 600 business services
+     *  - 4800 reduction key edges
+     *  - 400 child edges
+     *  - 5200 edges
+     *
+     *  See NMS-8978 for more details.
+     */
+    @Test
+    public void ensureReductionKeyLookupIsFastEnough() {
+        for (int i = 0; i < 200; i++) {
+            BusinessServiceEntity parentEntity = new BusinessServiceEntityBuilder()
+                    .name("Parent " + i)
+                    .reduceFunction(new HighestSeverityEntity())
+                    .toEntity();
+
+            for (int c = 0; c < 2; c++) {
+                BusinessServiceEntityBuilder childBuilder = new BusinessServiceEntityBuilder()
+                        .name("Child " + i + " " + c)
+                        .reduceFunction(new HighestSeverityEntity());
+                for (int a=0; a<12; a++) {
+                    childBuilder.addReductionKey("custom." + i + "." + c + "." + a, new IdentityEntity());
+                }
+                BusinessServiceEntity childEntity = childBuilder.toEntity();
+                parentEntity.addChildServiceEdge(childEntity, new IdentityEntity());
+                businessServiceDao.save(childEntity);
+            }
+            businessServiceDao.save(parentEntity);
+        }
+
+        final Set<String> uniqueReductionKeys = businessServiceDao.findMatching(new CriteriaBuilder(BusinessServiceEntity.class).like("name", "Child%").toCriteria())
+                .stream()
+                .flatMap(service -> service.getReductionKeyEdges().stream())
+                .flatMap(edge -> edge.getReductionKeys().stream())
+                .collect(Collectors.toSet());
+        for (String eachKey : uniqueReductionKeys) {
+            final OnmsAlarm alarm = new OnmsAlarm();
+            alarm.setUei("custom");
+            alarm.setAlarmType(1);
+            alarm.setDescription("dummy");
+            alarm.setLogMsg("dummy");
+            alarm.setSeverity(OnmsSeverity.WARNING);
+            alarm.setReductionKey(eachKey);
+            alarm.setDistPoller(distPollerDao.whoami());
+            alarm.setCounter(1);
+            populator.getAlarmDao().save(alarm);
+        }
+
+        populator.getAlarmDao().flush();
+        businessServiceDao.flush();
+
+        // Simulate lookup of reduction keys
+        final long start = System.currentTimeMillis();
+        final DefaultBusinessServiceStateMachine stateMachine = new DefaultBusinessServiceStateMachine();
+        stateMachine.setAlarmProvider(alarmProvider);
+        stateMachine.setBusinessServices(businessServiceDao.findAll().stream().map(e -> new BusinessServiceImpl(businessServiceManager, e)).collect(Collectors.toList()));
+        long diff = System.currentTimeMillis() - start;
+        LoggerFactory.getLogger(getClass()).info("Took {} ms to initialize state machine", diff);
+        Assert.assertTrue("Reduction Key lookup took much longer than expected. Expected was 1000 ms, but took " + diff + " ms", 1000 >= diff);
+    }
+
