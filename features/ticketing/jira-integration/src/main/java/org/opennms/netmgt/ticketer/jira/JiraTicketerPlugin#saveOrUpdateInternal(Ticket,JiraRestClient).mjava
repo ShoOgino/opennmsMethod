@@ -1,0 +1,75 @@
+    private void saveOrUpdateInternal(Ticket ticket, JiraRestClient jira) throws PluginException {
+        Config config = getConfig();
+        if (ticket.getId() == null || ticket.getId().equals("")) {
+            // If we can't find a ticket with the specified ID then create one.
+            IssueInputBuilder builder = new IssueInputBuilder(
+                    config.getProjectKey(),
+                    config.getIssueTypeId());
+            builder.setReporterName(config.getUsername());
+            builder.setSummary(ticket.getSummary());
+            builder.setDescription(ticket.getDetails());
+
+           populateFields(ticket, builder);
+
+            BasicIssue createdIssue;
+            try {
+                createdIssue = jira.getIssueClient().createIssue(builder.build()).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to create issue.", e);
+            }
+            LOG.info("created ticket " + createdIssue);
+
+            ticket.setId(createdIssue.getKey());
+
+        } else {
+            // Otherwise update the existing ticket
+            LOG.info("Received ticket: {}", ticket.getId());
+
+            Issue issue;
+            try {
+                issue = jira.getIssueClient().getIssue(ticket.getId()).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to get issue with id:" + ticket.getId(), e);
+            }
+
+            Iterable<Transition> transitions;
+            try {
+                transitions = jira.getIssueClient().getTransitions(issue).get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw new PluginException("Failed to get transitions for issue with id:" + issue.getId(), e);
+            }
+
+            if (Ticket.State.CLOSED.equals(ticket.getState())) {
+                Comment comment = Comment.valueOf("Issue resolved by OpenNMS.");
+                for (Transition transition : transitions) {
+                    if (config.getResolveTransitionName().equals(transition.getName())) {
+                        LOG.info("Resolving ticket {}", ticket.getId());
+                        // Resolve the issue
+                        try {
+                            jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment)).get();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new PluginException("Failed to get resolve issue with id:" + issue.getId(), e);
+                        }
+                        return;
+                    }
+                }
+                LOG.warn("Could not resolve ticket {}, no '{}' operation available.", ticket.getId(), getConfig().getResolveTransitionName());
+            } else if (Ticket.State.OPEN.equals(ticket.getState())) {
+                Comment comment = Comment.valueOf("Issue reopened by OpenNMS.");
+                for (Transition transition : transitions) {
+                    if (getConfig().getReopentransitionName().equals(transition.getName())) {
+                        LOG.info("Reopening ticket {}", ticket.getId());
+                        // Resolve the issue
+                        try {
+                            jira.getIssueClient().transition(issue, new TransitionInput(transition.getId(), comment)).get();
+                        } catch (InterruptedException | ExecutionException e) {
+                            throw new PluginException("Failed to reopen issue with id:" + issue.getId(), e);
+                        }
+                        return;
+                    }
+                }
+                LOG.warn("Could not reopen ticket {}, no '{}' operation available.", ticket.getId(), getConfig().getReopentransitionName());
+            }
+        }
+    }
+
