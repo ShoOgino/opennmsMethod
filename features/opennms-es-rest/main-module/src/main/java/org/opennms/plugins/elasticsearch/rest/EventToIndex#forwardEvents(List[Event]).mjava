@@ -1,15 +1,95 @@
 	/**
-	 * TODO: HZN-998: IMPLEMENT ME
-	 * 
 	 * @param events
 	 */
-	public void forwardEvents(List<Event> events) {
-		/*
-		BulkResult bulk = getJestClient().execute(new Bulk.Builder().build());
-		List<BulkResultItem> items = bulk.getFailedItems();
-		for (BulkResultItem item : items) {
-			item.status == 404;
+	public void forwardEvents(final List<Event> events) {
+		final List<BulkableAction<DocumentResult>> actions = convertEventsToEsActions(events);
+		if (actions != null && actions.size() > 0) {
+			// Split the actions up by index
+			for (Map.Entry<String,List<BulkableAction<DocumentResult>>> entry : actions.stream().collect(Collectors.groupingBy(BulkableAction::getIndex)).entrySet()) {
+
+				try {
+					final List<BulkableAction<DocumentResult>> actionList = entry.getValue();
+
+					if (entry.getValue().size() == 1) {
+						// Not bulk
+						final BulkableAction<DocumentResult> action = actionList.get(0);
+						DocumentResult result = getJestClient().execute(action);
+
+						if(result.getResponseCode() == 404){
+							// index doesn't exist for upsert command so create new index and try again
+
+							if(LOG.isDebugEnabled()) {
+								LOG.debug("error while performing " + action.getRestMethodName() + " on index " + action.getIndex()
+								+ "\n   received result: "+result.getJsonString()
+								+ "\n   response code:" +result.getResponseCode() 
+								+ "\n   error message: "+result.getErrorMessage());
+								LOG.debug("index name "+entry.getKey() + " doesn't exist, creating new index");
+							}
+
+							createIndex(entry.getKey(), action.getType());
+
+							result = getJestClient().execute(action);
+						}
+
+						if(result.getResponseCode()!=200){
+							LOG.error("Problem while performing " + action.getRestMethodName() + " on es index:" +entry.getKey()+ " type:"+ action.getType()
+							+ "\n   received search result: "+result.getJsonString()
+							+ "\n   response code:" +result.getResponseCode() 
+							+ "\n   error message: "+result.getErrorMessage());
+						} else if(LOG.isDebugEnabled()) {
+							LOG.debug("Performed " + action.getRestMethodName() + " on es index:" +entry.getKey()+ " type:"+ action.getType()
+							+ "\n   received search result: "+result.getJsonString()
+							+ "\n   response code:" +result.getResponseCode() 
+							+ "\n   error message: "+result.getErrorMessage());
+						}
+					} else {
+						// Bulk
+						for (BulkableAction<DocumentResult> action : entry.getValue()) {
+							// TODO: Use Bulk API
+							/*
+							BulkResult bulk = getJestClient().execute(new Bulk.Builder().build());
+							List<BulkResultItem> items = bulk.getFailedItems();
+							for (BulkResultItem item : items) {
+							}
+							 */
+
+							DocumentResult result = getJestClient().execute(action);
+
+							if(result.getResponseCode() == 404){
+								// index doesn't exist for upsert command so create new index and try again
+
+								if(LOG.isDebugEnabled()) {
+									LOG.debug("error while performing " + action.getRestMethodName() + " on index " + action.getIndex()
+									+ "\n   received result: "+result.getJsonString()
+									+ "\n   response code:" +result.getResponseCode() 
+									+ "\n   error message: "+result.getErrorMessage());
+									LOG.debug("index name "+entry.getKey() + " doesn't exist, creating new index");
+								}
+
+								createIndex(entry.getKey(), action.getType());
+
+								result = getJestClient().execute(action);
+							}
+
+							if(result.getResponseCode()!=200){
+								LOG.error("Problem while performing " + action.getRestMethodName() + " on es index:" +entry.getKey()+ " type:"+ action.getType()
+								+ "\n   received search result: "+result.getJsonString()
+								+ "\n   response code:" +result.getResponseCode() 
+								+ "\n   error message: "+result.getErrorMessage());
+							} else if(LOG.isDebugEnabled()) {
+								LOG.debug("Performed " + action.getRestMethodName() + " on es index:" +entry.getKey()+ " type:"+ action.getType()
+								+ "\n   received search result: "+result.getJsonString()
+								+ "\n   response code:" +result.getResponseCode() 
+								+ "\n   error message: "+result.getErrorMessage());
+							}
+						}
+					}
+				} catch (Throwable ex){
+					LOG.error("Unexpected problem sending event to Elasticsearch",ex);
+					// Shutdown the ES client, it will be recreated as needed
+					close();
+				}
+			}
 		}
-		*/
 	}
 
