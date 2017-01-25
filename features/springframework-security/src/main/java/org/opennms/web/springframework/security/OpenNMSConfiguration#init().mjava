@@ -3,25 +3,27 @@
         new Thread(new Runnable() {
             @Override public void run() {
                 // wait up to 2 minutes for Karaf's JAAS Configuration to become active so we can put a facade on top of it.
-                final long giveUp = System.currentTimeMillis() + Long.getLong("org.opennms.web.springframework.security.jaas-timeout", 120000);
+                final long giveUp = System.currentTimeMillis() + Long.getLong(JAAS_TIMEOUT_SYS_PROP, DEFAULT_JAAS_TIMEOUT_MS);
                 do {
                     final Configuration c = Configuration.getConfiguration();
                     if (c != null) {
-                        LOG.trace("OpenNMSConfiguration found existing configuration: " + c.getClass().getName());
-                        if (c.getClass().getName().contains("OsgiConfiguration")) {
-                            LOG.debug("Found Karaf OSGi JAAS configuration.  Inserting OpenNMS redirector.");
-                            break;
+                        // gather all configurations that are found, until the Karaf implementation is loaded
+                        if (m_delegates.add(c)) {
+                            LOG.trace("OpenNMSConfiguration found existing configuration: " + c.getClass().getName());
+                            if (c.getClass().getName().contains("OsgiConfiguration")) {
+                                LOG.debug("Found Karaf OSGi JAAS configuration.  Inserting OpenNMS redirector.");
+                                break;
+                            }
                         }
                     }
                     LOG.trace("OpenNMSConfiguration still waiting for Karaf OsgiConfiguration to activate...");
                     try {
-                        Thread.sleep(1000);
+                        Thread.sleep(200);
                     } catch (final InterruptedException e) {
                         LOG.warn("Interrupted while waiting for Karaf's OSGi Configuration to initialize.", e);
+                        break;
                     }
                 } while (System.currentTimeMillis() < giveUp);
-
-                m_parentConfiguration = Configuration.getConfiguration();
                 Configuration.setConfiguration(OpenNMSConfiguration.this);
             }
         }).start();
