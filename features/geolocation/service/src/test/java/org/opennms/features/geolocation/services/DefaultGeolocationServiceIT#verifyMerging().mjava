@@ -1,0 +1,33 @@
+    @Test
+    @Transactional
+    public void verifyMerging() {
+        // Set coordinates for all
+        nodeDao.findAll().forEach(n -> {
+            n.getAssetRecord().getGeolocation().setLongitude(coordinates.getLongitude());
+            n.getAssetRecord().getGeolocation().setLatitude(coordinates.getLatitude());
+            nodeDao.saveOrUpdate(n);
+        });
+        // Query
+        GeolocationQuery query = new GeolocationQueryBuilder()
+                .withResolveMissingCoordinatesFromAddressString(false)
+                .withStatusCalculationStrategy(StatusCalculationStrategy.Alarms)
+                .build();
+
+        // We do not have any alarms, therefore all nodes should be "NORMAL"
+        List<GeolocationInfo> locations = geolocationService.getLocations(query);
+        Assert.assertEquals(nodeDao.countAll(), locations.size());
+        locations.forEach(l -> Assert.assertEquals("Normal", l.getSeverityInfo().getLabel()));
+
+        // Add an alarm for one node and try again
+        alarmDao.save(TestUtils.createAlarm(databasePopulator.getNode1(), OnmsSeverity.MAJOR, distPollerDao.whoami()));
+        locations = geolocationService.getLocations(query);
+        Assert.assertEquals(nodeDao.countAll(), locations.size());
+        locations.forEach(l -> {
+            if (l.getNodeInfo().getNodeId() == databasePopulator.getNode1().getId()) {
+                Assert.assertEquals("Major", l.getSeverityInfo().getLabel());
+            } else {
+                Assert.assertEquals("Normal", l.getSeverityInfo().getLabel());
+            }
+        });
+    }
+
