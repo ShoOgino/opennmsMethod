@@ -1,0 +1,56 @@
+    @Test
+    public void canCollectUsingMinionWorkflow() throws CollectionInitializationException, CollectionException {
+        Assume.assumeTrue(runsOnMinion);
+
+        // create the agent
+        OnmsNode node = mock(OnmsNode.class);
+        when(node.getId()).thenReturn(1);
+        OnmsIpInterface iface = mock(OnmsIpInterface.class);
+        when(iface.getNode()).thenReturn(node);
+        when(iface.getIpAddress()).thenReturn(InetAddrUtils.getLocalHostAddress());
+
+        IpInterfaceDao ifaceDao = mock(IpInterfaceDao.class);
+        when(ifaceDao.load(1)).thenReturn(iface);
+        PlatformTransactionManager transMgr = mock(PlatformTransactionManager.class);
+        final SnmpCollectionAgent agent = DefaultCollectionAgent.create(1, ifaceDao, transMgr);
+
+        // init() should execute without any exceptions
+        final ServiceCollector opennmsCollector = getCollector();
+        initialize(opennmsCollector);
+
+        // getEffectiveLocation() should return the original location
+        final String targetLocation = "!" + MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID;
+        assertEquals("Location cannot be altered.", targetLocation, opennmsCollector.getEffectiveLocation(targetLocation));
+
+        // getRuntimeAttributes() should return a valid map
+        final Map<String, Object> requiredParams = getRequiredParameters();
+        final Map<String, Object> runtimeAttrs = opennmsCollector.getRuntimeAttributes(agent, Collections.unmodifiableMap(requiredParams));
+
+        // marshalParameters() should marshal all parameters to strings
+        final Map<String, Object> allParms = new HashMap<>();
+        allParms.putAll(requiredParams);
+        allParms.putAll(runtimeAttrs);
+        final Map<String, String> marshaledParms = opennmsCollector.marshalParameters(Collections.unmodifiableMap(allParms));
+
+        beforeMinion();
+
+        // create a separate instance of the collector
+        final ServiceCollector minionCollector = getNewCollector();
+
+        // unmarshalParameters() should unmarshal all parameters from strings
+        final Map<String, Object> unmarshaledParms = minionCollector.unmarshalParameters(Collections.unmodifiableMap(marshaledParms));
+
+        // collect() should return a valid collection set
+        final CollectionAgentDTO agentDTO = new CollectionAgentDTO(agent);
+        final CollectionSet collectionSet = minionCollector.collect(agentDTO, Collections.unmodifiableMap(unmarshaledParms));
+        assertEquals(CollectionStatus.SUCCEEDED, collectionSet.getStatus());
+
+        afterMinion();
+
+        // the collection set should be marshalable
+        JaxbUtils.marshal(collectionSet);
+
+        // getRrdRepository() should return a valid repository
+        assertNotNull(opennmsCollector.getRrdRepository(getCollectionName()));
+    }
+
