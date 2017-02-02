@@ -1,0 +1,34 @@
+    private static void installFeaturesOnOpenNMS(InetSocketAddress opennmsSshAddr, InetSocketAddress kafkaAddress, InetSocketAddress zookeeperAddress, boolean useEsRest) throws Exception {
+        try (final SshClient sshClient = new SshClient(opennmsSshAddr, "admin", "admin")) {
+            PrintStream pipe = sshClient.openShell();
+
+            if (useEsRest) {
+                // Configure and install the Elasticsearch REST event forwarder
+                pipe.println("config:edit org.opennms.plugin.elasticsearch.rest.forwarder");
+                pipe.println("config:propset logAllEvents true");
+                pipe.println("config:propset batchSize 500");
+                pipe.println("config:propset batchInterval 500");
+                pipe.println("config:update");
+                pipe.println("features:install opennms-es-rest");
+            } else {
+                // Configure and install the Elasticsearch event forwarder
+                pipe.println("config:edit org.opennms.features.elasticsearch.eventforwarder");
+                // Set the IP address for Elasticsearch to the address of the Docker host
+                pipe.println("config:propset elasticsearchIp " + InetAddress.getLocalHost().getHostAddress());
+                pipe.println("config:propset logAllEvents true");
+                pipe.println("config:update");
+                pipe.println("features:install opennms-elasticsearch-event-forwarder");
+            }
+
+            pipe.println("features:list -i");
+            // Set the log level to INFO
+            pipe.println("log:set INFO");
+            pipe.println("logout");
+            try {
+                await().atMost(2, MINUTES).until(sshClient.isShellClosedCallable());
+            } finally {
+                LOG.info("Karaf output:\n{}", sshClient.getStdout());
+            }
+        }
+    }
+
