@@ -1,0 +1,55 @@
+    @Test
+    @Transactional
+    public void verifyCalculateStatus() {
+        final OnmsNode node = databasePopulator.getNode1();
+        final GeolocationQuery query = new GeolocationQueryBuilder().withResolveMissingCoordinatesFromAddressString(false).build();
+        final StatusCalculator statusCalculator = new AlarmStatusCalculator(genericPersistenceAccessor);
+        final Set<Integer> nodeIds = Sets.newHashSet(node.getId());
+
+        // No alarm exists, status should be normal
+        verifyStatus(0, new HashMap<>(), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Create an alarm and verify status
+        OnmsAlarm alarm = createAlarm(node, OnmsSeverity.WARNING);
+        alarmDao.save(alarm);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.WARNING), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Create an alarm for same node and verify
+        OnmsAlarm alarm2 = createAlarm(node, OnmsSeverity.MINOR);
+        alarmDao.save(alarm2);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Create an alarm for another node and verify
+        alarmDao.save(createAlarm(databasePopulator.getNode2(), OnmsSeverity.CRITICAL));
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Acknowledge alarms
+        alarm2.setAlarmAckTime(new Date());
+        alarm2.setAlarmAckUser("ulf");
+        alarmDao.saveOrUpdate(alarm2);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.WARNING), statusCalculator.calculateStatus(query, nodeIds));
+        alarm.setAlarmAckTime(new Date());
+        alarm.setAlarmAckUser("ulf");
+        alarmDao.saveOrUpdate(alarm);
+        verifyStatus(0, new HashMap<>(), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Include acknowledged alarms
+        query.setIncludeAcknowledgedAlarms(true);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+
+        // Apply severity filter
+        query.setSeverity(GeolocationSeverity.Warning);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+        query.setSeverity(GeolocationSeverity.Minor);
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+        query.setSeverity(GeolocationSeverity.Major);
+        verifyStatus(0, new HashMap<>(), statusCalculator.calculateStatus(query, nodeIds));
+
+        // reset severity filter and apply location filter
+        query.setSeverity(null);
+        query.setLocation(distPollerDao.whoami().getLocation());
+        verifyStatus(1, ImmutableMap.of(node.getId(), OnmsSeverity.MINOR), statusCalculator.calculateStatus(query, nodeIds));
+        query.setLocation("XXX");
+        verifyStatus(0, new HashMap<>(), statusCalculator.calculateStatus(query, nodeIds));
+    }
+

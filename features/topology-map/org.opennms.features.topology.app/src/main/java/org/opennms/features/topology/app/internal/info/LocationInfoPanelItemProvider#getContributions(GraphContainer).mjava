@@ -8,24 +8,30 @@
         if (nodeIds.isEmpty()) {
             return Collections.emptyList();
         }
-        final CoordinateResolver.Result result = new CoordinateResolver(geocoderService, nodeDao, resolveCoordinatesFromAddressString).resolve(nodeIds);
-        final List<Marker> markers = vertices.stream()
-                .filter(v -> result.getCoordinates(v.getNodeID()) != null)
-                .map(v -> {
-                    Coordinates coordinates = result.getCoordinates(v.getNodeID());
-                    OnmsGeolocation geolocation = result.getGeoLocation(v.getNodeID());
+        final List<GeolocationInfo> locations = geolocationService.getLocations(new GeolocationQueryBuilder()
+                .withResolveMissingCoordinatesFromAddressString(resolveCoordinatesFromAddressString)
+                .withNodeIds(nodeIds)
+                .withStatusCalculationStrategy(StatusCalculationStrategy.None)
+                .build());
+        final List<Marker> markers = locations.stream()
+                .filter(locationInfo -> locationInfo.getCoordinates() != null)
+                .map(locationInfo -> {
+                    final Vertex vertex = vertices.stream()
+                            .filter(v -> v.getNodeID() != null && locationInfo.getNodeInfo().getNodeId() == v.getNodeID())
+                            .findFirst()
+                            .get();
                     return new Marker(
-                            coordinates,
-                            createTooltip(v, coordinates, geolocation),
-                            container.getSelectionManager().isVertexRefSelected(v));
+                            locationInfo.getCoordinates(),
+                            createTooltip(vertex, locationInfo.getAddressInfo()),
+                            container.getSelectionManager().isVertexRefSelected(vertex));
                 }).collect(Collectors.toList());
 
         if (!markers.isEmpty()) {
             final LocationConfiguration config = new LocationConfiguration()
-                    .withTileLayer(GeocoderConfig.getTileServerUrl())
+                    .withTileLayer(geolocationConfiguration.getTileServerUrl())
                     .withMarker(markers)
                     .withInitialZoom(10)
-                    .withLayerOptions(GeocoderConfig.getOptions());
+                    .withLayerOptions(geolocationConfiguration.getOptions());
 
             final LocationComponent locationComponent = new LocationComponent(config, "mapId-" + getClass().getSimpleName().toLowerCase());
             locationComponent.setWidth(300, Sizeable.Unit.PIXELS);
