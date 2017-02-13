@@ -2,16 +2,35 @@
         Server server = null;
         if (config.https()) {
             server = new Server();
-            final SslContextFactory factory = new SslContextFactory(config.keystore());
-            factory.setKeyStorePath(config.keystore());
-            factory.setKeyStorePassword(config.keystorePassword());
-            factory.setKeyManagerPassword(config.keyPassword());
-            factory.setTrustStore(config.keystore());
-            factory.setTrustStorePassword(config.keystorePassword());
 
-            final SslSocketConnector connector = new SslSocketConnector(factory);
-            connector.setPort(config.port());
-            server.setConnectors(new Connector[] { connector });
+            // SSL context configuration
+            SslContextFactory sslContextFactory = new SslContextFactory();
+            sslContextFactory.setKeyStorePath(config.keystore());
+            sslContextFactory.setKeyStorePassword(config.keystorePassword());
+            sslContextFactory.setKeyManagerPassword(config.keyPassword());
+            sslContextFactory.setTrustStorePath(config.keystore());
+            sslContextFactory.setTrustStorePassword(config.keystorePassword());
+
+            // HTTP Configuration
+            HttpConfiguration http_config = new HttpConfiguration();
+            http_config.setSecureScheme("https");
+            http_config.setSecurePort(config.port());
+            http_config.setOutputBufferSize(32768);
+            http_config.setRequestHeaderSize(8192);
+            http_config.setResponseHeaderSize(8192);
+            http_config.setSendServerVersion(true);
+            http_config.setSendDateHeader(false);
+
+            // SSL HTTP Configuration
+            HttpConfiguration https_config = new HttpConfiguration(http_config);
+            https_config.addCustomizer(new SecureRequestCustomizer());
+
+            // SSL Connector
+            ServerConnector sslConnector = new ServerConnector(server,
+                new SslConnectionFactory(sslContextFactory, HttpVersion.HTTP_1_1.asString()),
+                new HttpConnectionFactory(https_config));
+            sslConnector.setPort(config.port());
+            server.addConnector(sslConnector);
         } else {
             server = new Server(config.port());
         }
@@ -33,7 +52,7 @@
             LOG.debug("configuring basic auth");
 
             final HashLoginService loginService = new HashLoginService("MyRealm", config.basicAuthFile());
-            loginService.setRefreshInterval(300000);
+            loginService.setHotReload(true);
             m_server.addBean(loginService);
 
             final ConstraintSecurityHandler security = new ConstraintSecurityHandler();
@@ -55,7 +74,6 @@
             security.setConstraintMappings(Collections.singletonList(mapping), knownRoles);
             security.setAuthenticator(new BasicAuthenticator());
             security.setLoginService(loginService);
-            security.setStrict(false);
             security.setRealmName("MyRealm");
 
             security.setHandler(context);

@@ -1,0 +1,106 @@
+    /**
+     * Creates the PingWindow to make ping requests.
+     *
+     * @param locations All available locations to ping from. Must not be null.
+     * @param defaultLocation The location to pre-select from the locations. Ensure <code>defaultLocation</code> is also available in the <code>locations</code> list.
+     * @param ipAddresses All available ipAddresses. Must not be null or empty.
+     * @param defaultIp The default ip to pre-select from the ip addresses. Ensure <code>defaultIp</code> is also available in the <code>ipAddresses</code> list.
+     * @param pingClient The LocationAwarePingClient to ping. Must not be null.
+     */
+    public PingWindow(LocationAwarePingClient pingClient, List<String> locations, List<InetAddress> ipAddresses, String defaultLocation, InetAddress defaultIp, String caption) {
+        Objects.requireNonNull(pingClient);
+        Objects.requireNonNull(ipAddresses);
+        Objects.requireNonNull(defaultIp);
+        Objects.requireNonNull(locations);
+        Objects.requireNonNull(defaultLocation);
+        Objects.requireNonNull(caption);
+
+        // Remember initial poll interval, as we poll as soon as we start pinging
+        final int initialPollInterval = UI.getCurrent().getPollInterval();
+
+        // Ping Form
+        pingForm = new PingForm(locations, defaultLocation, ipAddresses, defaultIp);
+
+        // Result
+        final TextArea resultArea = new TextArea();
+        resultArea.setRows(15);
+        resultArea.setSizeFull();
+
+        // Progress Indicator
+        progressIndicator = new ProgressBar();
+        progressIndicator.setIndeterminate(true);
+
+        // Buttons
+        cancelButton = new Button("Cancel");
+        cancelButton.addClickListener((event) -> {
+            cancel(pingFuture);
+            resultArea.setValue(resultArea.getValue() + "\n" + "Ping cancelled by user");
+            getUI().setPollInterval(initialPollInterval);
+            setRunning(false);
+        } );
+        pingButton = new Button("Ping");
+        pingButton.addClickListener((event) -> {
+            try {
+                final PingRequest pingRequest = pingForm.getPingRequest();
+
+                resultArea.setValue(""); // Clear
+                setRunning(true);
+                getUI().setPollInterval(POLL_INTERVAL);
+
+                pingFuture = pingClient.ping(pingRequest.getInetAddress())
+                        .withRetries(pingRequest.getRetries())
+                        .withPacketSize(pingRequest.getPacketSize())
+                        .withTimeout(pingRequest.getTimeout(), TimeUnit.MILLISECONDS)
+                        .withLocation(pingRequest.getLocation())
+                        .withNumberOfRequests(pingRequest.getNumberRequests())
+                        .withProgressCallback((newSequence, summary) -> {
+                                getUI().accessSynchronously(() -> {
+                                    if (pingFuture != null && !pingFuture.isCancelled()) {
+                                    setRunning(!summary.isComplete());
+                                    resultArea.setValue(PingStringUtils.renderAll(summary));
+                                    if (summary.isComplete()) {
+                                        getUI().setPollInterval(initialPollInterval);
+                                    }
+                                }
+                            });
+                        })
+                        .execute();
+            } catch (FieldGroup.CommitException e) {
+                Notification.show("Validation errors", "Please correct them. Make sure all required fields are set.", Notification.Type.ERROR_MESSAGE);
+            }
+        });
+
+        // Button Layout
+        final HorizontalLayout buttonLayout = new HorizontalLayout();
+        buttonLayout.setSpacing(true);
+        buttonLayout.addComponent(pingButton);
+        buttonLayout.addComponent(cancelButton);
+        buttonLayout.addComponent(progressIndicator);
+
+        // Root Layout
+        final VerticalLayout rootLayout = new VerticalLayout();
+        rootLayout.setSpacing(true);
+        rootLayout.setMargin(true);
+        rootLayout.addComponent(pingForm);
+        rootLayout.addComponent(buttonLayout);
+        rootLayout.addComponent(new Label("<b>Results</b>", ContentMode.HTML));
+        rootLayout.addComponent(resultArea);
+        rootLayout.setExpandRatio(resultArea, 1.0f);
+
+        // Window Config
+        setCaption(caption);
+        setResizable(false);
+        setModal(true);
+        setWidth(800, Unit.PIXELS);
+        setHeight(600, Unit.PIXELS);
+        setContent(rootLayout);
+        center();
+        setRunning(false);
+
+        // Set back to default, when closing
+        addCloseListener((CloseListener) e -> {
+            cancel(pingFuture);
+            getUI().setPollInterval(initialPollInterval);
+        });
+    }
+

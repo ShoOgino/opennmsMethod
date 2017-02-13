@@ -1,0 +1,127 @@
+    /* (non-Javadoc)
+     * @see org.opennms.upgrade.api.OnmsUpgrade#execute()
+     */
+    @Override
+    public void execute() throws OnmsUpgradeException {
+        if (!canRun()) {
+            log("Error: ignoring the execution of the task because the file magic-users.properties was not found. Maybe the task was already successfully executed before.\n");
+            return;
+        }
+
+        // Parse read-only attributes
+        final List<String> readOnlyUsers = new ArrayList<String>();
+        try {
+            boolean readOnly = false;
+            for (String line : Files.readAllLines(usersFile.toPath())) {
+                if (line.contains("read-only")) {
+                    Matcher m = Pattern.compile("read-only=\"(.+)\"").matcher(line);
+                    if (m.find()) {
+                        readOnly = Boolean.parseBoolean(m.group(1));
+                    }
+                }
+                if (line.contains("user-id")) {
+                    if (readOnly) {
+                        Matcher m = Pattern.compile("user-id[>](.+)[<][/]user-id").matcher(line);
+                        if (m.find()) {
+                            log("Warning: User %s has read-only flag\n", m.group(1));
+                            readOnlyUsers.add(m.group(1));
+                        }
+                    }
+                    readOnly = false;
+                }
+            }
+            if (!readOnlyUsers.isEmpty()) {
+                log("Removing the read-only flags from users.xml\n");
+                String content = new String(Files.readAllBytes(usersFile.toPath()), StandardCharsets.UTF_8);
+                content = content.replaceAll(" read-only=\".+\"", "");
+                Files.write(usersFile.toPath(), content.getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't fix configuration because " + e.getMessage(), e);
+        }
+
+        log("Moving security roles into users.xml...\n");
+        try {
+            UserFactory.init();
+            UserManager userManager = UserFactory.getInstance();
+
+            // Retrieve all the currently configured users.
+            final List<OnmsUser> users = new ArrayList<OnmsUser>();
+            for (final String userName : userManager.getUserNames()) {
+                log("Loading configured user: %s...\n", userName);
+                users.add(userManager.getOnmsUser(userName));
+            }
+
+            // Parse magic-users.properties
+            Properties properties = new Properties();
+            properties.load(new FileInputStream(magicUsersFile));
+
+            // Look up for custom users and their passwords
+            String[] configuredUsers = BundleLists.parseBundleList(properties.getProperty("users"));
+            for (String user : configuredUsers) {
+                String username = properties.getProperty("user." + user + ".username");
+                String password = properties.getProperty("user." + user + ".password");
+                OnmsUser newUser = new OnmsUser();
+                newUser.setUsername(username);
+                newUser.setFullName(user);
+                newUser.setComments("This is a system user, do not delete");
+                newUser.setPassword(userManager.encryptedPassword(password, true));
+                newUser.setPasswordSalted(true);
+                users.add(0, newUser);
+            }
+
+            // Configure security roles
+            String[] configuredRoles = BundleLists.parseBundleList(properties.getProperty("roles"));
+            for (final String role : configuredRoles) {
+                String userList = properties.getProperty("role." + role + ".users");
+                if (userList == null) {
+                    log("Warning: Role configuration for '%s' does not have 'users' parameter.  Expecting a 'role.%s.users' property. The role will not be usable.\n", role, role);
+                    continue;
+                }
+                String[] authUsers = BundleLists.parseBundleList(userList);
+
+                boolean notInDefaultGroup = "true".equals(properties.getProperty("role." + role + ".notInDefaultGroup"));
+                String securityRole = "ROLE_" + role.toUpperCase();
+
+                List<String> customRoles = new ArrayList<String>();
+                for (final String username : authUsers) {
+                    OnmsUser onmsUser = getUser(users, username);
+                    if (onmsUser == null) {
+                        log("Warning: User %s doesn't exist on users.xml, Ignoring.\n", username);
+                    } else {
+                        addRole(onmsUser, securityRole);
+                        if (!notInDefaultGroup && !securityRole.equals(Authentication.ROLE_ADMIN)) {
+                            addRole(onmsUser, Authentication.ROLE_USER);
+                        }
+                        if (!Authentication.isValidRole(securityRole)) {
+                            log("Warning: %s is a custom role.\n", securityRole);
+                            customRoles.add(role);
+                        }
+                    }
+                }
+
+                if (!customRoles.isEmpty()) {
+                    String roleList = StringUtils.join(customRoles, ',');
+                    log("Creating %s with roles: %s\n", Authentication.ROLE_CONFIGURATION_FILE, roleList);
+                    Properties p = new Properties();
+                    p.put("roles", roleList);
+                    File configFile = new File(ConfigFileConstants.getHome(), "etc" + File.separator + Authentication.ROLE_CONFIGURATION_FILE);
+                    p.store(new FileWriter(configFile), "Custom Roles");
+                }
+            }
+
+            // Update users.xml
+            for (final OnmsUser user : users) {
+                if (readOnlyUsers.contains(user.getUsername())) {
+                    addRole(user, Authentication.ROLE_READONLY);
+                    if (!user.getRoles().contains(Authentication.ROLE_USER)) {
+                        addRole(user, Authentication.ROLE_USER);
+                    }
+                }
+                userManager.save(user);
+            }
+        } catch (Throwable e) {
+            throw new OnmsUpgradeException("Can't fix configuration because " + e.getMessage(), e);
+        }
+    }
+

@@ -1,0 +1,60 @@
+	/**
+	 * @param address
+	 * @param port
+	 * @param community
+	 * @param pdu
+	 * 
+	 * @return Byte array representing the {@link PDU} in either SNMPv1 or SNMPv2 
+	 * format, depending on the type of the {@link PDU} object.
+	 */
+	public static byte[] convertPduToBytes(InetAddress address, int port, String community, PDU pdu) throws Exception {
+
+		final CountDownLatch latch = new CountDownLatch(1);
+		final AtomicReference<byte[]> bytes = new AtomicReference<>();
+
+		// IP address is optional when using the DummyTransport because
+		// all requests are sent to the {@link DummyTransportResponder}
+		final DummyTransport<IpAddress> transport = new DummyTransport<IpAddress>(null);
+
+		final AbstractTransportMapping<IpAddress> responder = transport.getResponder(null);
+
+		// Add a DummyTransportResponder listener that will receive the raw bytes of the PDU
+		responder.addTransportListener(new TransportListener() {
+			@Override
+			public void processMessage(TransportMapping transport, Address address, ByteBuffer byteBuffer, TransportStateReference state) {
+				byteBuffer.rewind();
+				final byte[] byteArray = new byte[byteBuffer.remaining()];
+				byteBuffer.get(byteArray);
+				bytes.set(byteArray);
+				byteBuffer.rewind();
+
+				latch.countDown();
+			}
+		});
+
+		// Create our own MessageDispatcher since we don't need to do all
+		// of the crypto operations necessary to initialize SNMPv3 which is slow
+		MessageDispatcher dispatcher = new MessageDispatcherImpl();
+		dispatcher.addMessageProcessingModel(new MPv1());
+		dispatcher.addMessageProcessingModel(new MPv2c());
+
+		Snmp snmp = new Snmp(dispatcher, responder);
+
+		snmp.listen();
+
+		CommunityTarget target = new CommunityTarget();
+		target.setCommunity(new OctetString(community));
+		if (pdu instanceof PDUv1) {
+			target.setVersion(SnmpConstants.version1);
+		} else {
+			target.setVersion(SnmpConstants.version2c);
+		}
+		target.setAddress(Snmp4JAgentConfig.convertAddress(address, port));
+
+		snmp.send(pdu, target, transport);
+
+		latch.await();
+
+		return bytes.get();
+	}
+

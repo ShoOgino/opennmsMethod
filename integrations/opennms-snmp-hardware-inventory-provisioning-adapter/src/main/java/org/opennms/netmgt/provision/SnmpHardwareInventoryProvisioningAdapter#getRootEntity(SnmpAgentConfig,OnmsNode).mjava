@@ -16,16 +16,16 @@
         final EntityPhysicalTableTracker tracker = new EntityPhysicalTableTracker(m_vendorAttributes, allOids, replacementMap);
         final String trackerName = tracker.getClass().getSimpleName() + '_' + node.getLabel();
 
-        final SnmpWalker walker = SnmpUtils.createWalker(agentConfig, trackerName, tracker);
-        walker.start();
+        final CompletableFuture<EntityPhysicalTableTracker> future = m_locationAwareSnmpClient.walk(agentConfig, tracker)
+            .withDescription(trackerName)
+            .withLocation(node.getLocation() != null ? node.getLocation().getLocationName() : null)
+            .execute();
+
         try {
-            walker.waitFor();
-            if (walker.timedOut()) {
-                throw new SnmpHardwareInventoryException("Aborting entities scan: Agent timed out while scanning the " + trackerName + " table");
-            }  else if (walker.failed()) {
-                LOG.error("Aborting entities scan for " + agentConfig, walker.getErrorThrowable());
-                throw new SnmpHardwareInventoryException("Aborting entities scan: Agent failed while scanning the " + trackerName + " table: " + walker.getErrorMessage());
-            }
+            future.get();
+        } catch (ExecutionException e) {
+            LOG.error("Aborting entities scan for " + agentConfig, e);
+            throw new SnmpHardwareInventoryException("Aborting entities scan: Agent failed while scanning the " + trackerName + " table: " + e.getMessage());
         } catch (final InterruptedException e) {
             throw new SnmpHardwareInventoryException("ENTITY-MIB node collection interrupted, exiting");
         }

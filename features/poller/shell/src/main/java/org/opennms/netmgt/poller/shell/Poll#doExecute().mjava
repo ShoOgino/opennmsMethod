@@ -1,0 +1,42 @@
+    @Override
+    protected Object doExecute() throws Exception {
+        final CompletableFuture<PollerResponse> future = locationAwarePollerClient.poll()
+                .withService(new SimpleMonitoredService(InetAddress.getByName(host), "SVC", location))
+                .withMonitorClassName(className)
+                .withTimeToLive(ttlInMs)
+                .withAttributes(parse(attributes))
+                .execute();
+
+        while (true) {
+            try {
+                try {
+                    PollStatus pollStatus = future.get(1, TimeUnit.SECONDS).getPollStatus();
+                    if (pollStatus.getStatusCode() == PollStatus.SERVICE_AVAILABLE) {
+                        System.out.printf("\nService is %s on %s using %s:\n", pollStatus.getStatusName(), host, className);
+                        final Map<String, Number> properties = pollStatus.getProperties();
+                        if (properties.size() > 0) {
+                            properties.entrySet().stream().forEach(e -> {
+                                System.out.printf("\t%s: %.4f\n", e.getKey(), e.getValue());
+                            });
+                        } else {
+                            System.out.printf("(No properties were returned by the monitor.\n");
+                        }
+                    } else {
+                        System.out.printf("\nService is %s on %s using %s\n", pollStatus.getStatusName(), host, className);
+                        System.out.printf("\tReason: %s\n", pollStatus.getReason());
+                    }
+                } catch (InterruptedException e) {
+                    System.out.println("\nInterrupted.");
+                } catch (ExecutionException e) {
+                    System.out.printf("\nPoll failed with: %s\n", e);
+                }
+                break;
+            } catch (TimeoutException e) {
+                // pass
+            }
+            System.out.print(".");
+            System.out.flush();
+        }
+        return null;
+    }
+

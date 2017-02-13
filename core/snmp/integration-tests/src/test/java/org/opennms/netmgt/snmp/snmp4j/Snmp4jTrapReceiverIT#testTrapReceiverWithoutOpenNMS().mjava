@@ -14,13 +14,16 @@
      */
     @Test
     public void testTrapReceiverWithoutOpenNMS() throws Exception {
+        final Snmp4JStrategy strategy = new Snmp4JStrategy();
         assertEquals(0, m_trapCount);
         LOG.debug("SNMP4J: Register for Traps");
         DefaultUdpTransportMapping transportMapping = null;
         Snmp snmp = null;
 
         try {
-            transportMapping = new DefaultUdpTransportMapping(new UdpAddress(9162));
+            // Set socket option SO_REUSEADDR so that we can bind to the port even if it
+            // has recently been closed by passing 'true' as the second argument here.
+            transportMapping = new DefaultUdpTransportMapping(new UdpAddress(9162), true);
             snmp = new Snmp(transportMapping);
 
             snmp.addCommandResponder(this);
@@ -35,17 +38,9 @@
                 )
             );
 
-            long start = System.currentTimeMillis();
             snmp.listen();
-            sendTraps();
-            long waitUntil = System.currentTimeMillis() + 30000L;
-            do {
-                Thread.sleep(200);
-                System.err.print(".");
-                if (m_trapCount == 2) break;
-            } while (System.currentTimeMillis() < waitUntil);
-            System.err.println("");
-            LOG.debug("waited for {} milliseconds", System.currentTimeMillis() - start);
+            sendTraps(strategy, SnmpConfiguration.AUTH_PRIV);
+            await().atMost(5, SECONDS).until(() -> m_trapCount, equalTo(2));
         } finally {
             LOG.debug("SNMP4J: Unregister for Traps");
             if (snmp != null) {
@@ -66,5 +61,6 @@
 
         LOG.debug("SNMP4J: Checking Trap status");
         assertEquals(2, m_trapCount);
+        snmp.getUSM().removeAllUsers();
     }
 

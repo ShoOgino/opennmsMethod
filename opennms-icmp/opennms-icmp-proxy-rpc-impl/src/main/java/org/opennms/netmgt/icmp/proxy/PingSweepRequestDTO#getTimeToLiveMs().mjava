@@ -1,0 +1,35 @@
+    @Override
+    public Long getTimeToLiveMs() {
+        BigDecimal taskTimeOut = BigDecimal.ZERO;
+        for (final IPRangeDTO range : ipRanges) {
+            BigInteger size = InetAddressUtils.difference(InetAddressUtils.getInetAddress(range.getEnd().getAddress()),
+                    InetAddressUtils.getInetAddress(range.getBegin().getAddress())).add(BigInteger.ONE);
+            taskTimeOut = taskTimeOut.add(
+                    // Take the number of retries
+                    BigDecimal.valueOf(range.getRetries())
+                            // Add 1 for the original request
+                            .add(BigDecimal.ONE, DECIMAL64)
+                            // Multiply by the number of addresses
+                            .multiply(new BigDecimal(size), DECIMAL64)
+                            // Multiply by the timeout per retry
+                            .multiply(BigDecimal.valueOf(range.getTimeout()), DECIMAL64)
+                            // Multiply by the fudge factor
+                            .multiply(FUDGE_FACTOR, DECIMAL64),
+                    DECIMAL64);
+
+            // Add a delay for the rate limiting done with the
+            // packetsPerSecond field
+            taskTimeOut = taskTimeOut.add(
+                    // Take the number of addresses
+                    new BigDecimal(size)
+                            // Divide by the number of packets per second
+                            .divide(BigDecimal.valueOf(getPacketsPerSecond()), DECIMAL64)
+                            // 1000 milliseconds
+                            .multiply(BigDecimal.valueOf(1000), DECIMAL64),
+                    DECIMAL64);
+        }
+        // If the timeout is greater than Long.MAX_VALUE, just return Long.MAX_VALUE
+        return taskTimeOut.compareTo(BigDecimal.valueOf(Long.MAX_VALUE)) >= 0 ? Long.MAX_VALUE
+                : taskTimeOut.longValue();
+    }
+

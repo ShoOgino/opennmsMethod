@@ -1,0 +1,47 @@
+    @Override
+    protected Object doExecute() throws Exception {
+        final InetAddress begin = InetAddress.getByName(m_begin);
+        final InetAddress end = InetAddress.getByName(m_end);
+
+        System.out.printf("Pinging hosts from %s to %s with:\n", begin.getHostAddress(), end.getHostAddress());
+        if (m_location != null) {
+            System.out.printf("\tLocation: %s\n", m_location);
+        }
+        System.out.printf("\tRetries: %d\n", m_retries);
+        System.out.printf("\tTimeout: %d\n", m_timeout);
+        System.out.printf("\tPacket size: %d\n", m_packetsize);
+        System.out.printf("\tPackets per second: %f\n", m_packetsPerSecond);
+
+        final CompletableFuture<PingSweepSummary> future = locationAwarePingClient.sweep()
+                .withLocation(m_location)
+                .withRange(begin, end, m_retries, m_timeout, TimeUnit.MILLISECONDS)
+                .withPacketSize(m_packetsize)
+                .withPacketsPerSecond(m_packetsPerSecond)
+                .execute();
+
+        while (true) {
+            try {
+                try {
+                    PingSweepSummary summary = future.get(1, TimeUnit.SECONDS);
+                    if (summary.getResponses().isEmpty()) {
+                        System.out.printf("\n\nNone of the IP addresses responsed to our pings.\n");
+                    } else {
+                        System.out.printf("\n\nIP Address\tRound-trip time\n");
+                        summary.getResponses().forEach((address, rtt) -> {
+                            System.out.printf("%s\t%.3f ms\n", address.getHostAddress(), rtt);
+                        });
+                    }
+                } catch (InterruptedException e) {
+                    System.out.println("\n\nInterrupted.");
+                } catch (ExecutionException e) {
+                    System.out.printf("\n\nPing Sweep failed with: %s\n", e);
+                }
+                break;
+            } catch (TimeoutException e) {
+                // pass
+            }
+            System.out.print(".");
+        }
+        return null;
+    }
+

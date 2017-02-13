@@ -1,0 +1,30 @@
+    @Override
+    public boolean process(Exchange exchange, AsyncCallback callback) {
+        final RpcRequest request = module.unmarshalRequest(exchange.getIn().getBody(String.class));
+        final CompletableFuture<RpcResponse> future = module.execute(request);
+        future.whenComplete((res, ex) -> {
+            try {
+                final RpcResponse response;
+                if (ex != null) {
+                    // An exception occurred, store the exception in a new response
+                    LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
+                    response = module.createResponseWithException(ex);
+                } else {
+                    // No exception occurred, use the given response
+                    response = res;
+                }
+
+                try {
+                    exchange.getOut().setBody(module.marshalResponse(response), String.class);
+                }  catch (Throwable t) {
+                    LOG.error("Marshalling a response in RPC module {} failed.", module, t);
+                    exchange.setException(t);
+                    exchange.getOut().setFault(true);
+                }
+            } finally {
+                callback.done(false);
+            }
+        });
+        return false;
+    }
+

@@ -1,0 +1,55 @@
+    @Test(timeout=3 * 60 * 1000)
+    public void testParallelismAndQueueing() throws UnknownHostException, InterruptedException, ExecutionException {
+        final int NUM_GENERATORS = 3;
+        final double MESSAGE_RATE_PER_GENERATOR = 1000.0;
+        final int NUM_CONSUMER_THREADS = 8;
+        final int MESSAGE_QUEUE_SIZE = 529;
+
+        ThreadLockingDispatcherFactory<SyslogConnection> threadLockingDispatcherFactory = new ThreadLockingDispatcherFactory<>();
+        ThreadLockingSyncDispatcher<SyslogConnection> syncDispatcher = threadLockingDispatcherFactory.getThreadLockingSyncDispatcher();
+        CompletableFuture<Integer> future = syncDispatcher.waitForThreads(NUM_CONSUMER_THREADS);
+
+        SyslogdConfig syslogdConfig = mock(SyslogdConfig.class);
+        when(syslogdConfig.getSyslogPort()).thenReturn(SyslogClient.PORT);
+        when(syslogdConfig.getNumThreads()).thenReturn(NUM_CONSUMER_THREADS);
+        when(syslogdConfig.getQueueSize()).thenReturn(MESSAGE_QUEUE_SIZE);
+
+        DistPollerDao distPollerDao = mock(DistPollerDao.class, Mockito.RETURNS_DEEP_STUBS);
+        when(distPollerDao.whoami().getId()).thenReturn("");
+        when(distPollerDao.whoami().getLocation()).thenReturn("");
+
+        SyslogReceiverCamelNettyImpl syslogReceiver = new SyslogReceiverCamelNettyImpl(syslogdConfig);
+        syslogReceiver.setMessageDispatcherFactory(threadLockingDispatcherFactory);
+        syslogReceiver.setDistPollerDao(distPollerDao);
+        syslogReceiver.run();
+
+        // Fire up the syslog generators
+        List<SyslogGenerator> generators = new ArrayList<>(NUM_GENERATORS);
+        for (int k = 0; k < NUM_GENERATORS; k++) {
+            SyslogGenerator generator = new SyslogGenerator(addr("127.0.0.1"), k, MESSAGE_RATE_PER_GENERATOR);
+            generator.start();
+            generators.add(generator);
+        }
+
+        // Wait until we have NUM_CONSUMER_THREADS locked
+        future.get();
+
+        // Now all of the threads are locked, and the queue is full
+        // Let's continue generating traffic for a few seconds
+        Thread.sleep(SECONDS.toMillis(10));
+
+        // Verify that there aren't more than NUM_CONSUMER_THREADS waiting
+        assertEquals(0, syncDispatcher.getNumExtraThreadsWaiting());
+
+        // Release the producer threads
+        syncDispatcher.release();
+
+        // Stop the receiver
+        syslogReceiver.stop();
+
+        // Stop the generators
+        for (int k = 0; k < NUM_GENERATORS; k++) {
+            generators.get(k).stop();
+        }
+    }
+

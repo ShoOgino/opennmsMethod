@@ -5,8 +5,22 @@
         if (!checkEventSanityAndDoWeProcess(event)) {
             return null;
         }
-        LOG.debug("process: {}; nodeid: {}; ipaddr: {}; serviceid: {}", event.getUei(), event.getNodeid(), event.getInterface(), event.getService());
 
-        return addOrReduceEventAsAlarm(event);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("process: {}; nodeid: {}; ipaddr: {}; serviceid: {}", event.getUei(), event.getNodeid(), event.getInterface(), event.getService());
+        }
+
+        // Process the alarm inside a transaction
+        OnmsAlarmAndLifecycleEvent alarmAndEvent = m_transactionOperations.execute(new TransactionCallback<OnmsAlarmAndLifecycleEvent>() {
+            @Override
+            public OnmsAlarmAndLifecycleEvent doInTransaction(TransactionStatus arg0) {
+                return addOrReduceEventAsAlarm(event);
+            }
+        });
+
+        // Send the event outside of the database transaction
+        m_eventForwarder.sendNow(alarmAndEvent.getEvent());
+
+        return alarmAndEvent.getAlarm();
     }
 

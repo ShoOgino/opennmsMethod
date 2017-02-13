@@ -1,0 +1,73 @@
+    /** {@inheritDoc} */
+    @Transactional
+    @Override
+    public OnmsNode createUndiscoveredNode(final String ipAddress, final String foreignSource, final String locationString) {
+        final String effectiveForeignSource = foreignSource == null ? FOREIGN_SOURCE_FOR_DISCOVERED_NODES : foreignSource;
+        final String effectiveLocationName = MonitoringLocationUtils.isDefaultLocationName(locationString) ? null : locationString;
+
+        final OnmsNode node = new UpsertTemplate<OnmsNode, NodeDao>(m_transactionManager, m_nodeDao) {
+
+            @Override
+            protected OnmsNode query() {
+                // Find all of the nodes in the target requisition with the given IP address
+                return m_nodeDao.findByForeignSourceAndIpAddress(effectiveForeignSource, ipAddress).stream().filter(n -> {
+                    // Now filter the nodes by location
+                    final String existingLocationName = MonitoringLocationUtils.getLocationNameOrNullIfDefault(n);
+                    return Objects.equals(existingLocationName, effectiveLocationName);
+                }).findFirst().orElse(null);
+            }
+
+            @Override
+            protected OnmsNode doUpdate(OnmsNode existingNode) {
+                // we found an existing node so exit by returning null;
+                return null;
+            }
+
+            @Override
+            protected OnmsNode doInsert() {
+                final Date now = new Date();
+
+                OnmsMonitoringLocation location = createLocationIfNecessary(locationString);
+                // Associate the location with the node
+                final OnmsNode node = new OnmsNode(location);
+
+                final String hostname = getHostnameResolver().getHostname(addr(ipAddress), locationString);
+                if (hostname == null || ipAddress.equals(hostname)) {
+                    node.setLabel(ipAddress);
+                    node.setLabelSource(NodeLabelSource.ADDRESS);
+                } else {
+                    node.setLabel(hostname);
+                    node.setLabelSource(NodeLabelSource.HOSTNAME);
+                }
+
+                node.setForeignSource(effectiveForeignSource);
+                node.setType(NodeType.ACTIVE);
+                node.setLastCapsdPoll(now);
+
+                final OnmsIpInterface iface = new OnmsIpInterface(InetAddressUtils.addr(ipAddress), node);
+                iface.setIsManaged("M");
+                iface.setIpHostName(hostname);
+                iface.setIsSnmpPrimary(PrimaryType.NOT_ELIGIBLE);
+                iface.setIpLastCapsdPoll(now);
+
+                m_nodeDao.save(node);
+                m_nodeDao.flush();
+                return node;
+            }
+        }.execute();
+
+        if (node != null) {
+            if (effectiveForeignSource != null) {
+                node.setForeignId(node.getNodeId());
+                createUpdateRequistion(ipAddress, node, effectiveLocationName, effectiveForeignSource);
+            }
+
+            // we do this here rather than in the doInsert method because
+            // the doInsert may abort
+            node.visit(new AddEventVisitor(m_eventForwarder));
+        }
+
+        return node;
+
+    }
+

@@ -1,0 +1,24 @@
+        @Override
+        public PingSummary call() throws Exception {
+            final PingSummary pingSummary = new PingSummary(requestDTO.toPingRequest(), numberOfRequests);
+            for (int sequenceId = 1; sequenceId <= numberOfRequests; sequenceId++) {
+                if (completableFuture.isCancelled()) {
+                    return pingSummary; // terminate early
+                }
+                reportProgress(null, pingSummary);
+                final CompletableFuture<PingSummary> singlePingFuture = new SinglePingExecutionStrategy(client).execute(requestDTO);
+                try {
+                    final PingSummary singlePingSummary = singlePingFuture.get(requestDTO.getTimeToLiveMs(), TimeUnit.MILLISECONDS);
+                    final PingSequence newSequence = new PingSequence(sequenceId, singlePingSummary.getSequence(0).getResponse());
+                    pingSummary.addSequence(newSequence);
+                    reportProgress(newSequence, pingSummary);
+                } catch (ExecutionException | InterruptedException | TimeoutException e) {
+                    PingSequence newSequence = new PingSequence(sequenceId, e);
+                    pingSummary.addSequence(newSequence);
+                    reportProgress(newSequence, pingSummary);
+                }
+            }
+            completableFuture.complete(pingSummary);
+            return pingSummary;
+        }
+

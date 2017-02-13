@@ -1,0 +1,50 @@
+    @Override
+    public List<GeolocationInfo> getLocations(GeolocationQuery query) {
+        if (query == null) {
+            return new ArrayList<>();
+        }
+
+        final List<OnmsNode> nodes = getNodes(query);
+        final List<GeolocationInfo> nodesWithCoordinates = nodes.stream()
+                .filter(n -> geoLocation(n) != null && geoLocation(n).getLongitude() != null && geoLocation(n).getLatitude() != null)
+                .map(node -> convert(node))
+                .collect(Collectors.toList());
+
+        // Resolve geolocations which do not have a longitude/latitude, but address
+        if (query.isResolveCoordinatesFromAddressString()) {
+            Map<Integer, String> nodesWithoutCoordinates = nodes.stream()
+                    .filter(n -> geoLocation(n) != null && geoLocation(n).getLatitude() == null || geoLocation(n).getLongitude() == null)
+                    .filter(n -> !Strings.isNullOrEmpty(geoLocation(n).asAddressString()))
+                    .collect(Collectors.toMap(n -> n.getId(), n -> geoLocation(n).asAddressString()));
+            if (!nodesWithoutCoordinates.isEmpty()) {
+                final Map<Integer, Coordinates> newCoordinates = resolver.resolve(nodesWithoutCoordinates);
+                newCoordinates.entrySet().stream()
+                        .map(e -> {
+                            Optional<OnmsNode> first = nodes.stream()
+                                    .filter(n -> n.getId().equals(e.getKey()))
+                                    .findFirst();
+                            if (first.isPresent()) {
+                                GeolocationInfo info = convert(first.get());
+                                info.setCoordinates(e.getValue());
+                                return info;
+                            }
+                            return null;
+                        })
+                        .filter(info -> info != null)
+                        .forEach(info -> nodesWithCoordinates.add(info));
+            }
+        }
+
+        if (query.getStatusCalculationStrategy() != null) {
+            applyStatus(query, nodesWithCoordinates);
+        }
+
+        if (query.getSeverity() != null) {
+            OnmsSeverity severity = OnmsSeverity.get(query.getSeverity().getId());
+            return nodesWithCoordinates.stream()
+                    .filter(n -> severity.getId() <= n.getSeverityInfo().getId())
+                    .collect(Collectors.toList());
+        }
+        return nodesWithCoordinates;
+    }
+

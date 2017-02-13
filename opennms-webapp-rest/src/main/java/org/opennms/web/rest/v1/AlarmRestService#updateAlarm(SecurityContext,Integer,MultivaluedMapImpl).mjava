@@ -16,6 +16,7 @@
         writeLock();
 
         try {
+            boolean isProcessAck = true;
             if (alarmId == null) {
                 return getBadRequestResponse("Unable to determine alarm ID to update based on query path.");
             }
@@ -28,7 +29,10 @@
             formProperties.remove("clear");
             final String ackUserValue = formProperties.getFirst("ackUser");
             formProperties.remove("ackUser");
-
+            final String ticketIdValue = formProperties.getFirst("ticketId");
+            formProperties.remove("ticketId");
+            final String ticketStateValue = formProperties.getFirst("ticketState");
+            formProperties.remove("ticketState");
             final OnmsAlarm alarm = m_alarmDao.get(alarmId);
             if (alarm == null) {
                 return getBadRequestResponse("Unable to locate alarm with ID '" + alarmId + "'");
@@ -53,10 +57,20 @@
                 if (Boolean.parseBoolean(clearValue)) {
                     acknowledgement.setAckAction(AckAction.CLEAR);
                 }
+            } else if (StringUtils.isNotBlank(ticketIdValue)) {
+                isProcessAck = false;
+                alarm.setTTicketId(ticketIdValue);
+            } else if (EnumUtils.isValidEnum(TroubleTicketState.class, ticketStateValue)) {
+                isProcessAck = false;
+                alarm.setTTicketState(TroubleTicketState.valueOf(ticketStateValue));
             } else {
                 return getBadRequestResponse("Must supply one of the 'ack', 'escalate', or 'clear' parameters, set to either 'true' or 'false'.");
             }
-            m_ackDao.processAck(acknowledgement);
+            if (isProcessAck) {
+                m_ackDao.processAck(acknowledgement);
+            } else {
+                m_alarmDao.saveOrUpdate(alarm);
+            }
             return Response.noContent().build();
         } finally {
             writeUnlock();

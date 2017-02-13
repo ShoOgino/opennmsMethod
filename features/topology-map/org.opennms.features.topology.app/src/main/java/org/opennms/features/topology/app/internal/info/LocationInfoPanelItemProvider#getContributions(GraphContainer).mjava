@@ -1,0 +1,48 @@
+    @Override
+    public Collection<? extends InfoPanelItem> getContributions(GraphContainer container) {
+        final List<Vertex> vertices = new ArrayList<>(container.getGraph().getDisplayVertices());
+        final Set<Integer> nodeIds = vertices.stream()
+                .filter(v -> v.getNodeID() != null)
+                .map(v -> v.getNodeID())
+                .collect(Collectors.toSet());
+        if (nodeIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<GeolocationInfo> locations = geolocationService.getLocations(new GeolocationQueryBuilder()
+                .withResolveMissingCoordinatesFromAddressString(resolveCoordinatesFromAddressString)
+                .withNodeIds(nodeIds)
+                .withStatusCalculationStrategy(StatusCalculationStrategy.None)
+                .build());
+        final List<Marker> markers = locations.stream()
+                .filter(locationInfo -> locationInfo.getCoordinates() != null)
+                .map(locationInfo -> {
+                    final Vertex vertex = vertices.stream()
+                            .filter(v -> v.getNodeID() != null && locationInfo.getNodeInfo().getNodeId() == v.getNodeID())
+                            .findFirst()
+                            .get();
+                    return new Marker(
+                            locationInfo.getCoordinates(),
+                            createTooltip(vertex, locationInfo.getAddressInfo()),
+                            container.getSelectionManager().isVertexRefSelected(vertex));
+                }).collect(Collectors.toList());
+
+        if (!markers.isEmpty()) {
+            final LocationConfiguration config = new LocationConfiguration()
+                    .withTileLayer(geolocationConfiguration.getTileServerUrl())
+                    .withMarker(markers)
+                    .withInitialZoom(10)
+                    .withLayerOptions(geolocationConfiguration.getOptions());
+
+            final LocationComponent locationComponent = new LocationComponent(config, "mapId-" + getClass().getSimpleName().toLowerCase());
+            locationComponent.setWidth(300, Sizeable.Unit.PIXELS);
+            locationComponent.setHeight(300, Sizeable.Unit.PIXELS);
+
+            return Collections.singleton(
+                    new DefaultInfoPanelItem()
+                        .withTitle(String.format("Geolocation (%d/%d)", markers.size(), vertices.size()))
+                        .withOrder(1)
+                        .withComponent(locationComponent));
+        }
+        return Collections.emptyList();
+    }
+

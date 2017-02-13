@@ -1,0 +1,33 @@
+    @Override
+    public CompletableFuture<Void> handleDiscoveryTask(DiscoveryConfiguration config) {
+        // Use the range chunker to generate a series of jobs, keyed by location
+        final Map<String, List<DiscoveryJob>> jobsByLocation = rangeChunker.chunk(config);
+
+        // Avoid any further processing if there are no ranges to scan
+        if (jobsByLocation.size() == 0) {
+            LOG.info("No IP addresses to discover.");
+            return CompletableFuture.completedFuture(null);
+        }
+
+        // Generate a unique id for this task, used to correlate the log messages
+        final int taskId = taskIdTracker.incrementAndGet();
+
+        // Asynchronously run the jobs at each location:
+        //   Each location will be processed in parallel
+        //   The jobs at each location will be processed in series
+        final List<CompletableFuture<Void>> futures = new ArrayList<>(jobsByLocation.keySet().size());
+
+        // Set the logging context so that our messages always appear in the same log file, even
+        // when we are invoked from the web app or another context
+        Logging.withPrefix(Discovery.getLoggingCategory(), new Runnable() {
+            @Override
+            public void run() {
+                jobsByLocation.entrySet().stream()
+                    .map(e -> triggerJobsAsync(e.getKey(), e.getValue(), taskId))
+                    .forEach(f -> futures.add(f));
+            }
+        });
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]));
+    }
+

@@ -1,41 +1,24 @@
-    /**
-     * Stops a currently running fiber. If the fiber has already been stopped
-     * then the command is silently ignored. If the fiber was never started then
-     * an exception is generated.
-     *
-     * @throws java.lang.IllegalStateException
-     *             Thrown if the fiber was never started.
-     */
-    @Override
     public synchronized void stop() {
-        Logger log = (Logger) m_mgr.lookupBean("log");
 
-        if (m_worker == null) {
-            throw new IllegalStateException("The fiber has never been run");
+        // Shut down the event listener
+        if (m_broadcastEventProcessor != null) {
+            m_broadcastEventProcessor.close();
         }
 
-        if (m_status != STOPPED) {
-            m_status = STOP_PENDING;
-        }
+        m_broadcastEventProcessor = null;
 
-        if (m_worker.isAlive()) {
-            m_worker.interrupt();
-        }
+        // Shut down the thread pool
+        m_executorService.shutdown();
 
-        StopScript[] stopScripts = m_config.getStopScripts();
-
-        notifyAll();
-
-        for (int i = 0; i < stopScripts.length; i++) {
+        // Run all stop scripts
+        for (StopScript stopScript : m_config.getStopScripts()) {
             try {
-                m_mgr.exec(stopScripts[i].getLanguage(), "", 0, 0, stopScripts[i].getContent());
-            }
-
-            catch (BSFException ex) {
-                LOG.error("Stop script[{}] failed.", i, ex);
+                m_scriptManager.exec(stopScript.getLanguage(), "", 0, 0, stopScript.getContent());
+            } catch (BSFException e) {
+                LOG.error("Stop script failed: " + stopScript, e);
             }
         }
 
-        LOG.debug("Stopped");
+        LOG.debug("Scriptd executor stopped");
     }
 
