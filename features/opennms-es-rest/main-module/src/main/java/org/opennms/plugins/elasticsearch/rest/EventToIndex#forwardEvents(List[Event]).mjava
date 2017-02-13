@@ -2,97 +2,20 @@
 	 * @param events
 	 */
 	public void forwardEvents(final List<Event> events) {
-
-		final List<BulkableAction<DocumentResult>> actions = convertEventsToEsActions(events);
-
-		if (actions != null && actions.size() > 0) {
-			// Split the actions up by index
-			for (Map.Entry<String,List<BulkableAction<DocumentResult>>> entry : actions.stream().collect(Collectors.groupingBy(BulkableAction::getIndex)).entrySet()) {
-
-				try {
-					final List<BulkableAction<DocumentResult>> actionList = entry.getValue();
-
-					if (entry.getValue().size() == 1) {
-						// Not bulk
-						final BulkableAction<DocumentResult> action = actionList.get(0);
-						executeSingleAction(getJestClient(), action);
-					} else {
-						// The type will be identical for all events in the same index
-						final String type = actionList.get(0).getType();
-
-						final Bulk.Builder builder = new Bulk.Builder()
-								.defaultIndex(entry.getKey())
-								.defaultType(type);
-
-						// Add all actions to the bulk operation
-						builder.addAction(actionList);
-
-						final Bulk bulk = builder.build();
-
-						BulkResult result = getJestClient().execute(bulk);
-
-						// If the bulk command fails completely...
-						if (!result.isSucceeded()) {
-							logEsError("Bulk API action", entry.getKey(), type, result.getJsonString(), result.getResponseCode(), result.getErrorMessage());
-
-							// Try and issue the bulk actions individually as a fallback
-							for (BulkableAction<DocumentResult> action : entry.getValue()) {
-								executeSingleAction(getJestClient(), action);
-							}
-
-							continue;
-						}
-
-						// Check the return codes of the results
-						List<BulkResultItem> items = result.getItems();
-						boolean all404s = true;
-						for (BulkResultItem item : items) {
-							if (item.status != 404) {
-								all404s = false;
-								break;
-							}
-						}
-
-						if(all404s){
-							// index doesn't exist for upsert command so create new index and try again
-
-							if(LOG.isDebugEnabled()) {
-								LOG.debug("index name "+entry.getKey() + " doesn't exist, creating new index");
-							}
-
-							createIndex(getJestClient(), entry.getKey(), type);
-
-							result = getJestClient().execute(bulk);
-						}
-
-						// If the bulk command fails completely...
-						if (!result.isSucceeded()) {
-							logEsError("Bulk API action", entry.getKey(), type, result.getJsonString(), result.getResponseCode(), result.getErrorMessage());
-
-							// Try and issue the bulk actions individually as a fallback
-							for (BulkableAction<DocumentResult> action : entry.getValue()) {
-								executeSingleAction(getJestClient(), action);
-							}
-
-							continue;
-						}
-
-						// Log any unsuccessful completions as errors
-						for (BulkResultItem item : result.getItems()) {
-							if(item.status != 200){
-								logEsError(item.operation, entry.getKey(), item.type, "none", item.status, item.error);
-							} else if(LOG.isDebugEnabled()) {
-								// If debug is enabled, log all completions
-								logEsDebug(item.operation, entry.getKey(), item.type, "none", item.status, item.error);
-							}
-						}
-					}
-				} catch (Throwable ex){
-					LOG.error("Unexpected problem sending event to Elasticsearch", ex);
-					// Shutdown the ES client, it will be recreated as needed
-					close();
-				}
-			}
-		}
+		CompletableFuture.completedFuture(events)
+			// Convert the events to ES actions
+			.thenApplyAsync(this::convertEventsToEsActions, executor)
+			// Log any uncaught exceptions
+			.exceptionally(e -> {
+				LOG.error("Unexpected exception during task execution: " + e.getMessage(), e);
+				return null;
+			})
+			// Send the events to Elasticsearch
+			.thenAcceptAsync(this::sendEvents, executor)
+			// Log any uncaught exceptions
+			.exceptionally(e -> {
+				LOG.error("Unexpected exception during task completion: " + e.getMessage(), e);
+				return null;
+			});
 	}
 
