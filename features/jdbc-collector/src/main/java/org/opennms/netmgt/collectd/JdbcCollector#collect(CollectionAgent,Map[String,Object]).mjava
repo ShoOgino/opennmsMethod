@@ -1,39 +1,21 @@
     @Override
-    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, Map<String, Object> parameters) throws CollectionException {
-        JdbcAgentState agentState = null;
-        if(parameters == null) {
-            LOG.error("Null parameters is now allowed in JdbcCollector!!");
-        }
+    public CollectionSet collect(CollectionAgent agent, Map<String, Object> parameters) throws CollectionException {
+        final JdbcDataCollection collection = (JdbcDataCollection)parameters.get(JDBC_COLLECTION_KEY);
         
+        JdbcAgentState agentState = null;
         Connection con = null;
         ResultSet results = null;
         Statement stmt = null;
-        
         try {
-            String collectionName = ParameterMap.getKeyedString(parameters, "collection", null);
-            if (collectionName == null) {
-                //Look for the old configuration style:
-                collectionName = ParameterMap.getKeyedString(parameters, "jdbc-collection", null);
-            }
-        
-            JdbcDataCollection collection = m_jdbcCollectionDao.getDataCollectionByName(collectionName);
-        
-            agentState = m_scheduledNodes.get(agent.getNodeId());
+            agentState = createAgentState(agent.getAddress(), parameters);
             agentState.setupDatabaseConnections(parameters);
-        
-            // Load the attribute group types.
-            loadAttributeGroupList(collection);
 
-            // Load the attribute types.
-            loadAttributeTypeList(collection);
-        
             // Create a new collection set.
-            JdbcCollectionSet collectionSet = new JdbcCollectionSet();
-            collectionSet.setCollectionTimestamp(new Date());
+            CollectionSetBuilder builder = new CollectionSetBuilder(agent);
 
             // Creating a single resource object, because all node-level metric must belong to the exact same resource.
-            final JdbcSingleInstanceCollectionResource nodeResource = new JdbcSingleInstanceCollectionResource(agent);
-        
+            final NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+
             // Cycle through all of the queries for this collection
             for(JdbcQuery query : collection.getQueries()) {
                 // Verify if we should check for availability of a query.
@@ -44,7 +26,7 @@
                         continue;
                     }
                 }
-                
+
                 try {
                     // If the query is available, lets collect it.
                     if (agentState.groupIsAvailable(query.getQueryName())) {
@@ -70,33 +52,49 @@
                         results.last();
                         boolean singleInstance = (results.getRow()==1)?true:false;
                         results.beforeFirst();
-                        
+
                         // Iterate through each row.
                         while(results.next() ) {
-                            JdbcCollectionResource resource = null;
-                            
+                            Resource resource = null;
+
                             // Create the appropriate resource container.
                             if(singleInstance) {
                                 resource = nodeResource;
                             } else {
                                 // Retrieve the name of the column to use as the instance key for multi-row queries.
                                 String instance = results.getString(query.getInstanceColumn());
-                                resource = new JdbcMultiInstanceCollectionResource(agent,instance, query.getResourceType());
+                                resource = new DeferredGenericTypeResource(nodeResource, query.getResourceType(), instance);
                             }
-                            
+
                             for(JdbcColumn curColumn : query.getJdbcColumns()) {
+                                final AttributeType type = curColumn.getDataType();
+
                                 String columnName = null;
                                 if(curColumn.getDataSourceName() != null && curColumn.getDataSourceName().length() != 0) {
                                     columnName = curColumn.getDataSourceName();
                                 } else {
                                     columnName = curColumn.getColumnName();
                                 }
-                                
-                                JdbcCollectionAttributeType attribType = m_attribTypeList.get(curColumn.getColumnName());
-                                resource.setAttributeValue(attribType, results.getString(columnName));
-                            }
 
-                            collectionSet.getCollectionResources().add(resource);
+                                String columnValue = results.getString(columnName);
+                                if (columnValue == null) {
+                                    LOG.debug("Skipping column named '{}' with null value.", curColumn.getColumnName());
+                                    continue;
+                                }
+
+                                if (type.isNumeric()) {
+                                    Double numericValue = Double.NaN;
+                                    try {
+                                        numericValue = Double.parseDouble(columnValue);
+                                    } catch (NumberFormatException e) {
+                                        LOG.warn("Value '{}' for column named '{}' cannot be converted to a number. Skipping.", columnValue, curColumn.getColumnName());
+                                        continue;
+                                    }
+                                    builder.withNumericAttribute(resource, query.getQueryName(), curColumn.getAlias(), numericValue, type);
+                                } else {
+                                    builder.withStringAttribute(resource, query.getQueryName(), curColumn.getAlias(), columnValue);
+                                }
+                            }
                         }
                     }
                 } catch(SQLException e) {
@@ -109,15 +107,14 @@
                     agentState.closeConnection(con);
                 }
             }
-            collectionSet.setStatus(CollectionStatus.SUCCEEDED);
-            return collectionSet;
+            builder.withStatus(CollectionStatus.SUCCEEDED);
+            return builder.build();
         } finally {
-            // Make sure that when we're done we close all results, statements and connections.
-            agentState.closeResultSet(results);
-            agentState.closeStmt(stmt);
-            agentState.closeConnection(con);
-            
             if(agentState != null) {
+                // Make sure that when we're done we close all results, statements and connections.
+                agentState.closeResultSet(results);
+                agentState.closeStmt(stmt);
+                agentState.closeConnection(con);
                 //agentState.closeAgentConnection();
             }
         }
