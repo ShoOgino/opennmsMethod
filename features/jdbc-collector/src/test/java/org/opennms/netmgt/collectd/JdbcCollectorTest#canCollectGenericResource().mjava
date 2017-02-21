@@ -1,0 +1,55 @@
+    @Test
+    public void canCollectGenericResource() throws Exception {
+        // Build the query
+        JdbcQuery query = new JdbcQuery();
+        query.setQueryName("pg_tablespace_size");
+        query.setIfType("all");
+        query.setResourceType("pgTableSpace");
+        query.setInstanceColumn("spcname");
+
+        JdbcColumn spcnameColumn = new JdbcColumn();
+        spcnameColumn.setColumnName("spcname");
+        spcnameColumn.setAlias("spcname");
+        spcnameColumn.setDataType(AttributeType.STRING);
+        query.addJdbcColumn(spcnameColumn);
+
+        JdbcColumn tssizeColumn = new JdbcColumn();
+        tssizeColumn.setColumnName("ts_size");
+        tssizeColumn.setAlias("ts_size");
+        tssizeColumn.setDataType(AttributeType.GAUGE);
+        query.addJdbcColumn(tssizeColumn);
+
+        JdbcDataCollection collection = new JdbcDataCollection();
+        collection.addQuery(query);
+
+        // Mock the result set
+        ResultSet resultSet = mock(ResultSet.class);
+        when(resultSet.getRow()).thenReturn(2);
+        when(resultSet.getString("spcname")).thenReturn("some: name");
+        when(resultSet.getString("ts_size")).thenReturn("41").thenReturn("52");
+        when(resultSet.next()).thenReturn(true).thenReturn(true).thenReturn(false);
+
+        // Define the resource type
+        ResourceType resourceType = new ResourceType();
+        resourceType.setName("pgTableSpace");
+        resourceType.setLabel("PostgreSQL Tablespace");
+        resourceType.setResourceLabel("${spcname}");
+        StorageStrategy storageStrategy = new StorageStrategy();
+        storageStrategy.setClazz(IndexStorageStrategy.class.getCanonicalName());
+        resourceType.setStorageStrategy(storageStrategy);
+        PersistenceSelectorStrategy persistenceSelectorStrategy = new PersistenceSelectorStrategy();
+        persistenceSelectorStrategy.setClazz(PersistAllSelectorStrategy.class.getCanonicalName());
+        resourceType.setPersistenceSelectorStrategy(persistenceSelectorStrategy);
+
+        // Collect and verify
+        CollectionSet collectionSet = collect(collection, resultSet, resourceType);
+        assertEquals(CollectionStatus.SUCCEEDED, collectionSet.getStatus());
+        List<String> collectionSetKeys = CollectionSetUtils.flatten(collectionSet);
+
+        assertEquals(Arrays.asList("snmp/1/pgTableSpace/some__name/pg_tablespace_size/spcname[some: name,null]",
+                "snmp/1/pgTableSpace/some__name/pg_tablespace_size/ts_size[null,41.0]",
+                "snmp/1/pgTableSpace/some__name/pg_tablespace_size/spcname[some: name,null]",
+                "snmp/1/pgTableSpace/some__name/pg_tablespace_size/ts_size[null,52.0]"),
+                    collectionSetKeys);
+    }
+
