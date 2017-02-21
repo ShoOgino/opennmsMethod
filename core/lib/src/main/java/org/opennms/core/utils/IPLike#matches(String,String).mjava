@@ -6,56 +6,67 @@
      * @return a boolean.
      */
     public static boolean matches(String address, String pattern) {
-        String[] hostOctets = null;
-        String[] matchOctets = null;
-        RangeMatcher matcher = null;
-        int numberOfOctets = 4;
+        final AddressType addressType = classifyAddress(address);
+        final AddressType patternType = classifyAddress(pattern);
 
-        if (address.indexOf(':') >= 0) {
-            // First try and match the scope identifier
-            final String[] patternAndScope = pattern.split("%");
-            pattern = patternAndScope[0];
-            final String[] addressAndScope = address.split("%");
-            address = addressAndScope[0];
-            if (patternAndScope.length < 2) {
-                // Do nothing; there was no pattern specified for the scope identifier
-            } else if (patternAndScope.length == 2) {
-                if (addressAndScope.length < 2) {
-                    return false;
-                } else if (addressAndScope.length == 2) {
-                    // Assume that scope identifiers are always decimal
-                    if (!matchNumericListOrRange(addressAndScope[1], patternAndScope[1], new DecimalRangeMatcher())) {
-                        return false;
-                    }
-                } else {
-                    throw new IllegalArgumentException("Illegal scope identifier in address: " + address);
-                }
-            } else {
-                throw new IllegalArgumentException("Illegal scope identifier filter: " + pattern);
-            }
-
-            hostOctets = address.split("\\:", 0);
-            matchOctets = pattern.split("\\:", 0);
-            numberOfOctets = 8;
-            matcher = new HexRangeMatcher();
-        } else {
-            hostOctets = address.split("\\.", 0);
-            matchOctets = pattern.split("\\.", 0);
-            numberOfOctets = 4;
-            matcher = new DecimalRangeMatcher();
+        if (addressType != patternType) {
+            // Different address types will never match
+            return false;
         }
 
-        if (hostOctets.length != numberOfOctets) {
+        final String[] addressFields;
+        final String[] patternFields;
+        final int expectedFieldCount;
+        final RangeMatcher matcher;
+        switch (addressType) {
+            case IPv4: {
+                addressFields = parseIPv4Address(address);
+                patternFields = parseIPv4Address(pattern);
+                expectedFieldCount = 4;
+                matcher = new DecimalRangeMatcher();
+                break;
+            }
+
+            case IPv6: {
+                final IPv6Address parsedAddress = parseIPv6Address(address);
+                final IPv6Address parsedPattern = parseIPv6Address(pattern);
+
+                if (parsedPattern.scope != null) {
+                    if (parsedAddress.scope == null) {
+                        // Fail if scope is expected but does not exists
+                        return false;
+                    } else {
+                        // Assume that scope identifiers are always decimal
+                        if (!matchNumericListOrRange(parsedAddress.scope, parsedPattern.scope, new DecimalRangeMatcher())) {
+                            return false;
+                        }
+                    }
+                }
+
+                addressFields = parsedAddress.fields;
+                patternFields = parsedPattern.fields;
+                expectedFieldCount = 8;
+                matcher = new HexRangeMatcher();
+                break;
+            }
+
+            default: throw new IllegalStateException();
+        }
+
+        if (addressFields.length != expectedFieldCount) {
             throw new IllegalArgumentException("Malformatted IP address: " + address);
-        } else if (matchOctets.length != numberOfOctets) {
+        }
+
+        if (patternFields.length != expectedFieldCount) {
             throw new IllegalArgumentException("Malformatted IPLIKE match expression: " + pattern);
         }
 
-        for (int i = 0; i < numberOfOctets; i++) {
-            if (!matchNumericListOrRange(hostOctets[i], matchOctets[i], matcher)) {
+        for (int i = 0; i < expectedFieldCount; i++) {
+            if (!matchNumericListOrRange(addressFields[i], patternFields[i], matcher)) {
                 return false;
             }
         }
+
         return true;
     }
 

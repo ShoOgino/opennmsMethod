@@ -1,0 +1,41 @@
+    /**
+     * NMS-9114: Test concurrency with the timer thread.
+     */
+    @Test
+    public void aggregateWithAggressiveFlushInterval() throws Exception {
+        final int DISPATCHES_PER_SECOND = 5000;
+        final int DISPATCHES_PER_ITERATION = 1000;
+
+        SinkModuleWithAggregateAndAggressiveInterval aggregatingSinkModule = new SinkModuleWithAggregateAndAggressiveInterval();
+        try(SyncDispatcher<UDPPacket> dispatcher = capturingMessageDispatcherFactory.createSyncDispatcher(aggregatingSinkModule)) {
+            // Create a thread that will perform a rate-limited dispatch until interrupted
+            final Thread t = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    final RateLimiter rateLimiter = RateLimiter.create(DISPATCHES_PER_SECOND);
+                    while(true) {
+                        rateLimiter.acquire(DISPATCHES_PER_ITERATION);
+                        for (int i = 0; i < DISPATCHES_PER_ITERATION; i++) {
+                            UDPPacket packet = new UDPPacket(localhost, ByteBuffer.wrap(new byte[]{(byte)42}));
+                            dispatcher.send(packet);
+                        }
+                        if (Thread.interrupted()) {
+                            return;
+                        }
+                    }
+                }
+            });
+            t.start();
+
+            await().atMost(10, SECONDS)
+                .pollDelay(1, SECONDS)
+                .until(() -> dispatchedMessages, hasSize(greaterThan(5 * DISPATCHES_PER_SECOND)));
+            t.interrupt();
+
+            // We successfully dispatched many messages.
+            // The MockLogAppender in this tests tearDown() function will
+            // validate that no errors or warning (i.e. NPEs) we logged
+            // during this time
+        }
+    }
+
