@@ -1,0 +1,48 @@
+    @Override
+    public CompletableFuture<Requisition> execute() {
+        if (provider == null) {
+            throw new IllegalArgumentException("Provider or provider type is required.");
+        }
+
+        final RequisitionRequestDTO request = new RequisitionRequestDTO();
+        request.setType(provider.getType());
+
+        // Use the location from the parameter map if set
+        if (parameters.containsKey(LOCATION_PARAMETER_NAME)) {
+            request.setLocation(parameters.get(LOCATION_PARAMETER_NAME));
+        }
+        // But override it with the given location, if set
+        if (location != null) {
+            request.setLocation(location);
+        }
+
+        // Attempt to use the TTL from the parameter map if set
+        if (parameters.containsKey(TTL_PARAMETER_NAME)) {
+            try {
+                final Long ttlParam = Long.parseLong(parameters.get(TTL_PARAMETER_NAME));
+                request.setTimeToLiveMs(ttlParam);
+            } catch (Throwable t) {
+                LOG.warn("Failed to parse TTL from parameter map: {}", parameters, t);
+            }
+        }
+        // But override it with the given TTL, if set
+        if (ttlInMs != null) {
+            request.setTimeToLiveMs(ttlInMs);
+        }
+
+        // Build the provider specific request
+        final RequisitionRequest providerRequest = provider.getRequest(parameters);
+
+        // Optionally marshal the request if were targeting a remote location
+        if (MonitoringLocationUtils.isDefaultLocationName(location)) {
+            request.setProviderRequest(providerRequest);
+        } else {
+            request.setProviderRequest(provider.marshalRequest(providerRequest));
+        }
+
+        // Execute!
+        return client.getDelegate().execute(request).thenApply(results -> {
+            return results.getRequisition();
+        });
+    }
+
