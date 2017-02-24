@@ -15,11 +15,12 @@
 		AtomicReference<Integer> minute = new AtomicReference<>();
 		AtomicReference<Integer> second = new AtomicReference<>();
 
-		BufferParserFactory grokFactory = GrokParserFactory.parseGrok("<%{INTEGER:facilityPriority}> %{MONTH:month} %{INTEGER:day} %{INTEGER:hour}:%{INTEGER:minute}:%{INTEGER:second} %{STRING:hostname} %{STRING:processName}[%{INTEGER:processId}]: %{STRING:month} %{INTEGER:day} %{STRING:timestamp} %{STRING:timezone} \\%%{STRING:facility}-%{INTEGER:priority}-%{STRING:mnemonic}: %{STRING:message}");
+		List<ParserStage> grokStages = GrokParserStageSequenceBuilder.parseGrok("<%{INTEGER:facilityPriority}> %{MONTH:month} %{INTEGER:day} %{INTEGER:hour}:%{INTEGER:minute}:%{INTEGER:second} %{STRING:hostname} %{STRING:processName}[%{INTEGER:processId}]: %{STRING:month} %{INTEGER:day} %{STRING:timestamp} %{STRING:timezone} \\%%{STRING:facility}-%{INTEGER:priority}-%{STRING:mnemonic}: %{STRING:message}");
 		//BufferParserFactory grokFactory = parseGrok("<%{INTEGER:facilityPriority}> %{MONTH:month} %{INTEGER:day} %{INTEGER:hour}:%{INTEGER:minute}:%{INTEGER:second} %{STRING:hostname} %{STRING:processName}: %{STRING:month} %{INTEGER:day} %{STRING:timestamp} %{STRING:timezone} \\%%{STRING:facility}-%{INTEGER:priority}-%{STRING:mnemonic}: %{STRING:message}");
+		ByteBufferParser<Event> grokParser = new SingleSequenceParser(grokStages);
 
 		// SyslogNG format
-		BufferParserFactory factory = new BufferParserFactory()
+		List<ParserStage> parserStages = new ParserStageSequenceBuilder()
 			.intBetweenDelimiters('<', '>', (s,v) -> { facility.set(SyslogFacility.getFacilityForCode(v)); })
 			.whitespace()
 			.month((s,v) -> month.set(v))
@@ -57,68 +58,103 @@
 			.character(':')
 			.whitespace()
 			.terminal().string((s,v) -> { s.builder.setLogMessage(v); })
+			.getStages()
 			;
+		ByteBufferParser<Event> parser = new SingleSequenceParser(parserStages);
+
+		RadixTreeParser radixParser = new RadixTreeParser();
+		radixParser.teach(grokStages.toArray(new ParserStage[0]));
 
 		int iterations = 100000;
 
-		CompletableFuture<Event> event = null;
-		long start = System.currentTimeMillis();
-		for (int i = 0; i < iterations; i++) {
-			event = factory.parse(incoming.asReadOnlyBuffer(), m_executor);
-			event.whenComplete((e, ex) -> {
-				if (ex == null) {
-					//System.out.println(e.toString());
-				} else {
-					ex.printStackTrace();
-				}
-			});
+		{
+			CompletableFuture<Event> event = null;
+			long start = System.currentTimeMillis();
+			for (int i = 0; i < iterations; i++) {
+				event = radixParser.parse(incoming.asReadOnlyBuffer());
+				event.whenComplete((e, ex) -> {
+					if (ex == null) {
+						//System.out.println(e.toString());
+					} else {
+						ex.printStackTrace();
+					}
+				});
+			}
+			// Wait for the last future to complete
+			try {
+				event.get();
+			} catch (InterruptedException | ExecutionException e) {
+				e.printStackTrace();
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("RADIX: " + (end - start) + "ms");
 		}
-		// Wait for the last future to complete
-		try {
-			event.get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-		}
-		long end = System.currentTimeMillis();
-		System.out.println("NEW: " + (end - start) + "ms");
 
-		start = System.currentTimeMillis();
-		for (int i = 0; i < iterations; i++) {
-			event = grokFactory.parse(incoming.asReadOnlyBuffer(), m_executor);
-			event.whenComplete((e, ex) -> {
-				if (ex == null) {
-					//System.out.println(e.toString());
-				} else {
-					ex.printStackTrace();
-				}
-			});
+		{
+			CompletableFuture<Event> event = null;
+			long start = System.currentTimeMillis();
+			for (int i = 0; i < iterations; i++) {
+				event = parser.parse(incoming.asReadOnlyBuffer());
+				event.whenComplete((e, ex) -> {
+					if (ex == null) {
+						//System.out.println(e.toString());
+					} else {
+						ex.printStackTrace();
+					}
+				});
+			}
+			// Wait for the last future to complete
+			try {
+				event.get();
+			} catch (InterruptedException | ExecutionException e) {
+				e.printStackTrace();
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("NEW: " + (end - start) + "ms");
 		}
-		// Wait for the last future to complete
-		try {
-			event.get();
-		} catch (InterruptedException | ExecutionException e) {
-			e.printStackTrace();
-		}
-		end = System.currentTimeMillis();
-		System.out.println("GROK: " + (end - start) + "ms");
 
-		InputStream stream = ConfigurationTestUtils.getInputStreamForResource(this, "/etc/syslogd-syslogng-configuration.xml");
-		SyslogdConfig config = new SyslogdConfigFactory(stream);
-
-		start = System.currentTimeMillis();
-		for (int i = 0; i < iterations; i++) {
-			ConvertToEvent convertToEvent = new ConvertToEvent(
-				DistPollerDao.DEFAULT_DIST_POLLER_ID,
-				MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
-				InetAddressUtils.ONE_TWENTY_SEVEN,
-				9999,
-				abc, 
-				config
-			);
-			Event convertedEvent = convertToEvent.getEvent();
+		{
+			CompletableFuture<Event> event = null;
+			long start = System.currentTimeMillis();
+			for (int i = 0; i < iterations; i++) {
+				event = grokParser.parse(incoming.asReadOnlyBuffer());
+				event.whenComplete((e, ex) -> {
+					if (ex == null) {
+						//System.out.println(e.toString());
+					} else {
+						ex.printStackTrace();
+					}
+				});
+			}
+			// Wait for the last future to complete
+			try {
+				event.get();
+			} catch (InterruptedException | ExecutionException e) {
+				e.printStackTrace();
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("GROK: " + (end - start) + "ms");
 		}
-		end = System.currentTimeMillis();
-		System.out.println("OLD: " + (end - start) + "ms");
+
+		{
+			InputStream stream = ConfigurationTestUtils.getInputStreamForResource(this, "/etc/syslogd-syslogng-configuration.xml");
+			SyslogdConfig config = new SyslogdConfigFactory(stream);
+
+			long start = System.currentTimeMillis();
+			for (int i = 0; i < iterations; i++) {
+				ConvertToEvent convertToEvent = new ConvertToEvent(
+    				DistPollerDao.DEFAULT_DIST_POLLER_ID,
+    				MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+    				InetAddressUtils.ONE_TWENTY_SEVEN,
+    				9999,
+    				abc, 
+    				config
+				);
+				Event convertedEvent = convertToEvent.getEvent();
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("OLD: " + (end - start) + "ms");
+		}
 
 	}
 
