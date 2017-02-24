@@ -1,63 +1,75 @@
-		public final ParserState apply(ParserState state) {
-			// Reset the accumulator state if necessary
-			if (m_resultConsumer != null) {
-				state.accumulatedValue = new StringBuffer();
-				state.accumulatedSize = new AtomicInteger(0);
-			}
+		public final ParserState apply(final ParserState state) {
+			// Create a new state for the current ParserStage.
+			// Use ByteBuffer.duplicate() to create a buffer with marks
+			// and positions that only this stage will use.
+			ParserStageState stageState = new ParserStageState(state.buffer.duplicate()); 
 
 			while(true) {
-				state.buffer.mark();
+				stageState.buffer.mark();
 
 				char c;
 				try {
-					c = (char)state.buffer.get();
+					c = (char)stageState.buffer.get();
 				} catch (BufferUnderflowException e) {
 					if (m_terminal) {
 						if (m_resultConsumer != null) {
-							m_resultConsumer.accept(state, getValue(state));
+							m_resultConsumer.accept(state, getValue(stageState));
 						}
-						// Reset any local state if necessary
-						reset(state);
-						return state;
+
+//						// Reset any local state if necessary
+//						reset(stageState);
+
+						return new ParserState(stageState.buffer, state.builder);
 					} else if (m_optional) {
-						// TODO: Should we reset the buffer here?
-						state.buffer.reset();
-						// Reset any local state if necessary
-						reset(state);
-						return state;
+//						// TODO: Should we reset the buffer here? It probably
+//						// doesn't matter since we're at the end of the buffer.
+//						stageState.buffer.reset();
+
+//						// Reset any local state if necessary
+//						reset(stageState);
+
+						return new ParserState(stageState.buffer, state.builder);
 					} else {
-						throw new CancellationException(getClass().getSimpleName() + " reached end of buffer, match failed");
+						// Reached end of buffer, match failed
+						return null;
 					}
 				}
 
-				switch (acceptChar(state, c)) {
+				switch (acceptChar(stageState, c)) {
 					case CONTINUE:
 						continue;
 					case COMPLETE_AFTER_CONSUMING:
 						if (m_resultConsumer != null) {
-							m_resultConsumer.accept(state, getValue(state));
+							m_resultConsumer.accept(state, getValue(stageState));
 						}
-						// Reset any local state if necessary
-						reset(state);
-						return state;
+
+//						// Reset any local state if necessary
+//						reset(stageState);
+
+						return new ParserState(stageState.buffer, state.builder);
 					case COMPLETE_WITHOUT_CONSUMING:
-						// Put the char back on the deque
-						//m_incoming.putFirst(c);
-						state.buffer.reset();
 						if (m_resultConsumer != null) {
-							m_resultConsumer.accept(state, getValue(state));
+							m_resultConsumer.accept(state, getValue(stageState));
 						}
+
 						// Reset any local state if necessary
-						reset(state);
-						return state;
+						reset(stageState);
+
+						// Move the mark back before the current character
+						stageState.buffer.reset();
+
+						return new ParserState(stageState.buffer, state.builder);
 					case CANCEL:
 						if (m_optional) {
-							state.buffer.reset();
+							stageState.buffer.reset();
+
 							// Reset any local state if necessary
-							reset(state);
-							return state;
+							reset(stageState);
+
+							return new ParserState(stageState.buffer, state.builder);
 						} else {
-							throw new CancellationException(getClass().getSimpleName() + " match failed");
+							// Match failed
+							return null;
 						}
 				}
 			}
