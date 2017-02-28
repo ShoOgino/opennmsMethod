@@ -1,30 +1,46 @@
+    /**
+     * Checks the message for matches to a {@link UeiMatch}. If the message
+     * matches, then the UEI is updated (or the event is discarded if the discard
+     * UEI is used) and parameters are added to the event.
+     * 
+     * @param message
+     * @param uei
+     * @param bldr
+     * @param discardUei
+     * @return
+     * @throws MessageDiscardedException
+     */
     private static boolean matchRegex(final SyslogMessage message, final UeiMatch uei, final EventBuilder bldr, final String discardUei) throws MessageDiscardedException {
-        boolean traceEnabled = LOG.isTraceEnabled();
+        final boolean traceEnabled = LOG.isTraceEnabled();
         final String expression = uei.getMatch().getExpression();
         final Pattern msgPat = getPattern(expression);
-        final Matcher msgMat;
         if (msgPat == null) {
             LOG.debug("Unable to create pattern for expression '{}'", expression);
             return false;
+        } 
+
+        final String text;
+        if (message.getMatchedMessage() != null) {
+            text = message.getMatchedMessage();
         } else {
-            final String text;
-            if (message.getMatchedMessage() != null) {
-                text = message.getMatchedMessage();
-            } else {
-                text = message.getFullText();
-            }
-            msgMat = msgPat.matcher(text);
+            text = message.getFullText();
         }
+        final Matcher msgMat = msgPat.matcher(text);
+
+        // If the message matches the regex
         if ((msgMat != null) && (msgMat.find())) {
+            // Discard the message if the UEI is set to the discard UEI
             if (discardUei.equals(uei.getUei())) {
-                LOG.debug("Specified UEI '{}' is same as discard-uei, discarding this message.", uei.getUei());
+                if (traceEnabled) LOG.trace("Specified UEI '{}' is same as discard-uei, discarding this message.", uei.getUei());
                 throw new MessageDiscardedException();
+            } else {
+                // Update the UEI to the new value
+                if (traceEnabled) LOG.trace("Changed the UEI of a Syslogd event, based on regex match, to : {}", uei.getUei());
+                bldr.setUei(uei.getUei());
             }
 
-            // We matched a UEI
-            bldr.setUei(uei.getUei());
-            // Removed check of count in both if condition which is redundant
             if (msgMat.groupCount() > 0) {
+                // Perform default parameter mapping
                 if (uei.getMatch().isDefaultParameterMapping()) {
                     if (traceEnabled) LOG.trace("Doing default parameter mappings for this regex match.");
                     for (int groupNum = 1; groupNum <= msgMat.groupCount(); groupNum++) {
@@ -33,6 +49,7 @@
                     }
                 }
 
+                // If there are specific parameter mappings as well, perform those mappings
                 if (uei.getParameterAssignmentCount() > 0) {
                     if (traceEnabled) LOG.trace("Doing user-specified parameter assignments for this regex match.");
                     for (ParameterAssignment assignment : uei.getParameterAssignmentCollection()) {
@@ -46,11 +63,11 @@
                     }
                 }
             }
-            // I think we want to stop processing here so the first
-            // ueiMatch wins, right?
+
             return true;
         }
-        if (traceEnabled) LOG.trace("Message '{}' did not regex-match pattern '{}'", message.getMessage(), expression);
+
+        if (traceEnabled) LOG.trace("Message portion '{}' did not regex-match pattern '{}'", text, expression);
         return false;
     }
 
