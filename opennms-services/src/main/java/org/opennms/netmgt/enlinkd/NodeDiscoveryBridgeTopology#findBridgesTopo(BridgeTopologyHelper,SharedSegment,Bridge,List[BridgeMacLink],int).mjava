@@ -1,12 +1,19 @@
     // here we assume that rbridge exists in topology
     // while xBridge is to be added
-    private void findBridgesTopo(BridgeTopologyHelper rx,SharedSegment topSegment, Bridge xBridge, List<BridgeMacLink> xBFT, int level) {
+    private boolean findBridgesTopo(BridgeTopologyHelper rx,SharedSegment topSegment, Bridge xBridge, List<BridgeMacLink> xBFT, int level) {
         level++;
         if (level == 30) {
-            LOG.warn("calculate: level {}: bridge: {}, too many iteration on topology exiting.....",level,xBridge.getId());
-            return;
+            LOG.warn("calculate: node [{}]: level {}: bridge: [{}], too many iteration on topology exiting.....",
+            		getNodeId(),
+            		level,
+            		xBridge.getId());
+            return false;
         }
-        LOG.info("calculate: level {}: bridge: {}, top segment: designated port {}, designated root {}",level,xBridge.getId(),topSegment.getDesignatedPort(),
+        LOG.debug("calculate: node [{}]: level {}: bridge: [{}], top segment: designated port {}, designated root {}",
+        		getNodeId(),
+        		level,
+        		xBridge.getId(),
+        		topSegment.getDesignatedPort(),
                  topSegment.getDesignatedBridge());
 
         Set<Integer> portsAdded=new HashSet<Integer>();
@@ -22,61 +29,75 @@
             if (yBridgeId.intValue() == topSegment.getDesignatedBridge().intValue()) {
                 continue;
             } 
-            LOG.debug("calculate: level {}: bridge: {}, check simple connection with Bridge Y {} found on topSegment",
-                      level,xBridge.getId(), yBridge.getId());
+            LOG.debug("calculate: node [{}]: level {}: bridge: {}, check simple connection with Bridge [{}] found on topSegment",
+            		getNodeId(),
+                      level,
+                      xBridge.getId(), 
+                      yBridge.getId());
             Integer yrDesignatedPort = yBridge.getRootPort();
-            LOG.info("calculate: level {}: bridge: {}, found Y designated port:  Y bridge: {}, port: {}",
+            LOG.debug("calculate: node [{}]: level {}: bridge: {}, found Y designated port:  Y bridge: {}, port: {}",
+            		getNodeId(),
                      level,xBridge.getId(),yBridgeId,yrDesignatedPort);
             BridgeTopologyHelper   yx = new BridgeTopologyHelper(yBridge,bftSets.get(yBridgeId) ,xBridge, xBFT);
             Integer  xyDesignatedPort = yx.getSecondBridgeConnectionPort();
             Integer  yxDesignatedPort = yx.getFirstBridgeConnectionPort();
-            LOG.info("calculate: level {}: found simple connection:  X bridge {}, port {} <--> Y bridge {}, port {}",
-                     level,xBridge.getId(),xyDesignatedPort,yBridgeId,yxDesignatedPort);
+            LOG.debug("calculate: node [{}]: level {}: found simple connection:  X bridge {}, port {} <--> Y bridge {}, port {}",
+               		getNodeId(),
+               	                     level,xBridge.getId(),xyDesignatedPort,yBridgeId,yxDesignatedPort);
             // X is a leaf of Y then iterate
             if (xyDesignatedPort == rx.getSecondBridgeConnectionPort() && yxDesignatedPort != yrDesignatedPort) {
-                LOG.info("calculate: level {}: X Bridge: {} is a leaf of Y Bridge: {}, going one level down",
-                         level,xBridge.getId(),yBridge.getId());
-                findBridgesTopo(yx,m_domain.getSharedSegment(yBridgeId, yxDesignatedPort), xBridge, xBFT,level);
-                return;
+                LOG.debug("calculate: node [{}]: level {}: Bridge: [{}] is a leaf of Bridge: [{}], going one level down",
+                		getNodeId(),
+                		level,xBridge.getId(),yBridge.getId());
+                if (!findBridgesTopo(yx,m_domain.getSharedSegment(yBridgeId, yxDesignatedPort), xBridge, xBFT,level))
+                	return false;
+                return true;
             }
             // Y is a leaf of X then remove Y from topSegment
             if (yxDesignatedPort == yrDesignatedPort && xyDesignatedPort != rx.getSecondBridgeConnectionPort()) {
                 //create a SharedSegment with root port
-                LOG.info("calculate: level {}: Y bridge: {} is a leaf of X Bridge: {}, creating shared segment for port {}", 
-                         level,yBridge.getId(),xBridge.getId(),xyDesignatedPort);
+                LOG.debug("calculate: node [{}]: level {}: bridge: [{}] is a leaf of Bridge: [{}], creating shared segment for port {}", 
+                		getNodeId(), 
+                		level,yBridge.getId(),xBridge.getId(),xyDesignatedPort);
                 SharedSegment leafSegment = new SharedSegment(m_domain,yx.getSimpleConnection().getDlink());
                 leafSegment.setBridgeMacLinks(yx.getSimpleConnection().getLinks());
                 leafSegment.setDesignatedBridge(xBridge.getId());
                 m_domain.add(leafSegment);
                 portsAdded.add(xyDesignatedPort);
                 
-                LOG.info("calculate: level {}: removing Y through set {} macs from top segment", 
-                         level, yx.getFirstBridgeTroughSet().size());
+                LOG.debug("calculate: node [{}]: level {}: removing through set {} macs from top segment", 
+                		getNodeId(), 
+                         level, yx.getFirstBridgeTroughSet());
                 topSegment.removeMacs(yx.getFirstBridgeTroughSet());
-                LOG.info("calculate: level {}: removing Y Bridge {} from top segment", 
+                LOG.debug("calculate: node [{}]: level {}: removing Bridge {} from top segment", 
+                		getNodeId(), 
                          level,yBridge.getId());
                 topSegment.removeBridge(yBridgeId);
             }            
             // this is a clear violation  of the topology tree rule
             if (xyDesignatedPort != rx.getSecondBridgeConnectionPort() && yxDesignatedPort != yrDesignatedPort) {
-                LOG.error("findBridgesTopo: level {}: topology mismatch. Clearing...topology",level);
-                m_domain.clearTopology();
-                return;
+                LOG.warn("calculate: node [{}]: level {}: topology mismatch. Clearing...topology",
+                		getNodeId(), 
+                		level);
+                return false;
             }            
             throughSets.add(yx.getFirstBridgeTroughSet());
         }
         // if we are here is because X is NOT a leaf of any bridge found
         // on topSegment so X is connected to top Segment by it's root 
         // port or rx is a direct connection
-        LOG.info("calculate: level {}: bridge: {}, removing X through set {} macs from top segment", 
-                 level, xBridge.getId(), rx.getSecondBridgeTroughSet().size());
+        LOG.debug("calculate: node [{}]: level {}: bridge: [{}], removing through set {} macs from top segment", 
+        		getNodeId(), 
+                 level, xBridge.getId(), rx.getSecondBridgeTroughSet());
         topSegment.removeMacs(rx.getSecondBridgeTroughSet());
         topSegment.assign(rx.getSimpleConnection().getLinks(),rx.getSimpleConnection().getDlink());
-        LOG.info("calculate: level {}: bridge: {}, assigning links to top segment: bridge {} port: {}, mac size: {}, bft size: {}",
+        LOG.debug("calculate: node [{}]: level {}: bridge: [{}], assigning links to top segment: bridge {} port: {}, mac : {}, bft: {}",
+        		getNodeId(), 
                  level, xBridge.getId(),topSegment.getDesignatedBridge(),
-                 topSegment.getDesignatedPort(), topSegment.getMacsOnSegment().size(), topSegment.getBridgeMacLinks().size());
-        LOG.info("calculate: level {}: bridge: {}, removing {} Y through sets from top segment", 
-                 level,xBridge.getId(),throughSets.size());
+                 topSegment.getDesignatedPort(), topSegment.getMacsOnSegment(), topSegment.getBridgeMacLinks());
+        LOG.debug("calculate: node [{}]: level {}: bridge: [{}], removing {} through sets from top segment", 
+        		getNodeId(), 
+                 level,xBridge.getId(),throughSets);
         for (Map<Integer, List<BridgeMacLink>> throughSet: throughSets)
             topSegment.removeMacs(throughSet);
         for (Integer xbridgePort : rx.getSecondBridgeTroughSet().keySet()) {
@@ -85,13 +106,15 @@
             SharedSegment xleafSegment = new SharedSegment(m_domain);
             xleafSegment.setBridgeMacLinks(rx.getSecondBridgeTroughSet().get(xbridgePort));
             xleafSegment.setDesignatedBridge(xBridge.getId());  
-            LOG.info("calculate: level {}: adding shared segment to topology: root bridge {} port: {}, mac size: {}, bft size: {}",
+            LOG.debug("calculate: node [{}]: level {}: adding shared segment to topology: root bridge {} port: {}, mac: {}, bft: {}",
+            		getNodeId(), 
                      level,
                      xleafSegment.getDesignatedBridge(),
                      xleafSegment.getDesignatedPort(),
-                     xleafSegment.getMacsOnSegment().size(),
-                     xleafSegment.getBridgeMacLinks().size());
+                     xleafSegment.getMacsOnSegment(),
+                     xleafSegment.getBridgeMacLinks());
             m_domain.add(xleafSegment);
         }
+        return true;
     }
 
