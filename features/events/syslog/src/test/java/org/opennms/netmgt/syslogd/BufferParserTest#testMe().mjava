@@ -32,6 +32,7 @@
 			.character(':')
 			.integer((s,v) -> { s.builder.setSecond(v); })
 			.whitespace()
+			// TODO: This is not correct
 			.stringUntilWhitespace((s,v) -> { s.builder.setHost(v); })
 			.whitespace()
 			.stringUntil("\\s[:", (s,v) -> { s.builder.addParam("processName", v); })
@@ -56,7 +57,11 @@
 			.stringUntilChar(':', (s,v) -> { s.builder.addParam("mnemonic", v); })
 			.character(':')
 			.whitespace()
-			.terminal().string((s,v) -> { s.builder.setLogMessage(v); })
+			.terminal().string((s,v) -> {
+				s.builder.setLogMessage(v);
+				// Using parms provides configurability.
+				s.builder.setParam("syslogmessage", v);
+			 })
 			.getStages()
 			;
 		ByteBufferParser<Event> parser = new SingleSequenceParser(parserStages);
@@ -89,7 +94,7 @@
 		int iterations = 100000;
 
 		{
-			CompletableFuture<Event> event = null;
+			CompletableFuture<EventBuilder> event = null;
 			Event lastEvent = null;
 			long start = System.currentTimeMillis();
 			for (int i = 0; i < iterations; i++) {
@@ -104,7 +109,7 @@
 			}
 			// Wait for the last future to complete
 			try {
-				lastEvent = event.get();
+				lastEvent = event.get().getEvent();
 			} catch (InterruptedException | ExecutionException e) {
 				e.printStackTrace();
 			}
@@ -166,12 +171,12 @@
 			long start = System.currentTimeMillis();
 			for (int i = 0; i < iterations; i++) {
 				ConvertToEvent convertToEvent = new ConvertToEvent(
-    				DistPollerDao.DEFAULT_DIST_POLLER_ID,
-    				MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
-    				InetAddressUtils.ONE_TWENTY_SEVEN,
-    				9999,
-    				abc, 
-    				config
+					DistPollerDao.DEFAULT_DIST_POLLER_ID,
+					MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+					InetAddressUtils.ONE_TWENTY_SEVEN,
+					9999,
+					incoming, 
+					config
 				);
 				Event convertedEvent = convertToEvent.getEvent();
 			}
@@ -179,5 +184,24 @@
 			System.out.println("OLD: " + (end - start) + "ms");
 		}
 
+		{
+			InputStream stream = ConfigurationTestUtils.getInputStreamForResource(this, "/etc/syslogd-radix-configuration.xml");
+			SyslogdConfig config = new SyslogdConfigFactory(stream);
+
+			long start = System.currentTimeMillis();
+			for (int i = 0; i < iterations; i++) {
+				ConvertToEvent convertToEvent = new ConvertToEvent(
+					DistPollerDao.DEFAULT_DIST_POLLER_ID,
+					MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+					InetAddressUtils.ONE_TWENTY_SEVEN,
+					9999,
+					incoming, 
+					config
+				);
+				Event convertedEvent = convertToEvent.getEvent();
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("RADIX CONVERT: " + (end - start) + "ms");
+		}
 	}
 

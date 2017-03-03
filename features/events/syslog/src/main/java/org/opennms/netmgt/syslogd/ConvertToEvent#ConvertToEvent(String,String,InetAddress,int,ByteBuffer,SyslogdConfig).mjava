@@ -1,0 +1,140 @@
+    /**
+     * Constructs a new event encapsulation instance based upon the
+     * information passed to the method. The passed byte array is decoded into
+     * a string using the {@link StandardCharsets#US_ASCII} character encoding.
+     *
+     * @param systemId
+     * @param location
+     * @param addr The remote agent's address.
+     * @param port The remote agent's port
+     * @param incoming The syslog datagram in {@link StandardCharsets#US_ASCII} encoding.
+     * @param config The Syslogd configuration
+     * @throws MessageDiscardedException 
+     */
+    public ConvertToEvent(
+        final String systemId,
+        final String location,
+        final InetAddress addr,
+        final int port,
+        final ByteBuffer incoming,
+        final SyslogdConfig config
+    ) throws MessageDiscardedException {
+
+        if (config == null) {
+            throw new IllegalArgumentException("Config cannot be null");
+        }
+
+        ByteBuffer buffer = trimTrailingNulls(incoming);
+
+        if (LOG.isTraceEnabled()) {
+            LOG.trace("Converting to event: {}", this);
+        }
+
+        SyslogParser parser = SyslogParser.getParserInstance(config, buffer);
+        if (!parser.find()) {
+            throw new MessageDiscardedException(String.format("Message does not match regex: '%s'", SyslogParser.fromByteBuffer(buffer).toString()));
+        }
+        EventBuilder bldr;
+        try {
+            bldr = parser.parseToEventBuilder(systemId, location);
+        } catch (final SyslogParserException ex) {
+            LOG.debug("Unable to parse '{}'", SyslogParser.fromByteBuffer(buffer), ex);
+            throw new MessageDiscardedException(ex);
+        }
+
+        if (bldr == null) {
+            throw new MessageDiscardedException(String.format("Unable to parse message: '%s'", SyslogParser.fromByteBuffer(buffer).toString()));
+        }
+
+        if (LOG.isTraceEnabled()) {
+            LOG.trace("got syslog message {}", SyslogParser.fromByteBuffer(buffer));
+        }
+
+        // TODO: Remove these
+        final String priorityTxt = bldr.getEvent().getParm("severity") == null ? null : bldr.getEvent().getParm("severity").getValue().getContent();
+        final String facilityTxt = bldr.getEvent().getParm("service") == null ? null : bldr.getEvent().getParm("service").getValue().getContent();
+
+        // Post-process the message based on the SyslogdConfig
+
+        // We will also here find out if, the host needs to
+        // be replaced, the message matched to a UEI, and
+        // last if we need to actually hide the message.
+        // this being potentially helpful in avoiding showing
+        // operator a password or other data that should be
+        // confidential.
+
+        /*
+        * We matched on a regexp for host/message pair.
+        * This can be a forwarded message as in BSD Style
+        * or syslog-ng.
+        * We assume that the host is given to us
+        * as an IP/Hostname and that the resolver
+        * on the ONMS host actually can resolve the
+        * node to match against nodeId.
+         */
+
+        // Time to verify UEI matching.
+
+        final List<UeiMatch> ueiMatch = (config.getUeiList() == null ? Collections.emptyList() : config.getUeiList().getUeiMatchCollection());
+        for (final UeiMatch uei : ueiMatch) {
+            final boolean messageMatchesUeiListEntry = containsIgnoreCase(uei.getFacilityCollection(), facilityTxt) &&
+                                              containsIgnoreCase(uei.getSeverityCollection(), priorityTxt) &&
+                                              matchProcess(uei.getProcessMatch(), bldr.getEvent().getParm("process") == null ? null : bldr.getEvent().getParm("process").getValue().getContent()) &&
+                                              matchHostname(uei.getHostnameMatch(), bldr.getEvent().getParm("hostname") == null ? null : bldr.getEvent().getParm("hostname").getValue().getContent()) &&
+                                              matchHostAddr(uei.getHostaddrMatch(), str(bldr.getEvent().getInterfaceAddress()));
+
+            if (messageMatchesUeiListEntry) {
+                if (uei.getMatch().getType().equals("substr")) {
+                    if (matchSubstring(bldr.getEvent().getParm("syslogmessage") == null ? null : bldr.getEvent().getParm("syslogmessage").getValue().getContent(), uei, bldr, config.getDiscardUei())) {
+                        break;
+                    }
+                } else if ((uei.getMatch().getType().startsWith("regex"))) {
+                    if (matchRegex(bldr.getEvent().getParm("syslogmessage") == null ? null : bldr.getEvent().getParm("syslogmessage").getValue().getContent(), uei, bldr, config.getDiscardUei())) {
+                        break;
+                    }
+                }
+            }
+        }
+
+
+        // Time to verify if we need to hide the message
+        final List<HideMatch> hideMatch = (config.getHideMessages() == null ? Collections.emptyList() : config.getHideMessages().getHideMatchCollection());
+        boolean doHide = false;
+        if (hideMatch.size() > 0) {
+            // Match this regex against the full string of the message
+// TODO: FIGURE OUT HOW TO GENERATE THIS VALUE
+//            final String fullText = message.asRfc3164Message();
+            final String fullText = bldr.getEvent().getParm("syslogmessage") == null ? null : bldr.getEvent().getParm("syslogmessage").getValue().getContent();
+
+            for (final HideMatch hide : hideMatch) {
+                if (hide.getMatch().getType().equals("substr")) {
+                    if (fullText.contains(hide.getMatch().getExpression())) {
+                        // We should hide the message based on this match
+                        doHide = true;
+                        break;
+                    }
+                } else if (hide.getMatch().getType().equals("regex")) {
+                    try {
+                        Pattern msgPat = getPattern(hide.getMatch().getExpression());
+                        Matcher msgMat = msgPat.matcher(fullText);
+                        if (msgMat.find()) {
+                            // We should hide the message based on this match
+                            doHide = true;
+                            break;
+                        }
+                    } catch (PatternSyntaxException pse) {
+                        LOG.warn("Failed to compile hide-match regex pattern '{}'", hide.getMatch().getExpression(), pse);
+                    }
+                }
+            }
+        }
+
+        if (doHide) {
+            LOG.debug("Hiding syslog message from Event - May contain sensitive data");
+            bldr.setLogMessage(HIDDEN_MESSAGE);
+            bldr.setParam("syslogmessage", HIDDEN_MESSAGE);
+        }
+
+        m_event = bldr.getEvent();
+    }
+
