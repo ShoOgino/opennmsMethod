@@ -1,26 +1,19 @@
     protected  void calculate() {
+        LOG.debug("calculate: node[{}]: Print Topology {}", 
+        		getNodeId(),
+        		m_domain.printTopology());
         LOG.info("calculate: node: [{}]: start: broadcast domain {} topology calculation.", 
         		getNodeId(),
         		m_domain.getBridgeNodesOnDomain());
 
-        Bridge electedRoot = null;
-        if (m_domain.getBridges().size() == 1) {
-            LOG.debug("calculate: node [{}]: bridge {}. only one bridge in topology: electing to root", 
-            		getNodeId(),
-            		m_domain.getBridgeNodesOnDomain());
-            electedRoot = m_domain.getBridges().iterator().next();
-        } else {
-        	electedRoot = electRootBridge();
-        } 
+        Bridge electedRoot = m_domain.electRootBridge();
         
         if (electedRoot == null && m_domain.hasRootBridge()) {
             LOG.debug("calculate: node [{}]: electRootBridge: mantaining old root bridge: {}", 
                     getNodeId(),
                     m_domain.getRootBridgeId());
-            electedRoot = m_domain.getRootBridge();
-        } 
-
-        if (electedRoot == null) {
+            electedRoot = m_domain.getRootBridge();        	
+        } else if (electedRoot == null) {
 	        // no spanning tree root?
 	        // why I'm here?
 	        // not root bridge defined (this mean no calculation yet done...
@@ -63,7 +56,8 @@
             LOG.debug("calculate: node [{}]: elected root bridge: [{}], old root bridge. no updated bft",
                     getNodeId(), 
             		electedRoot.getId());
-        } else if (m_domain.hasRootBridge() && m_domain.getRootBridge().getId() == electedRoot.getId()) {
+            rootBft = m_domain.calculateRootBFT();
+        } else if (m_domain.hasRootBridge() && m_domain.getRootBridge().getId() == electedRoot.getId() && rootBft != null ) {
             LOG.debug("calculate: node [{}]: elected root bridge: [{}], old root bridge. updated bft",
                     getNodeId(), 
                      electedRoot.getId());
@@ -84,20 +78,24 @@
                 loadFirstLevelSharedSegment(rootBft);
                 electedRoot.setRootBridge(true);
                 electedRoot.setRootPort(null);
-         } else {
-                LOG.debug("calculate: node [{}]: root bridge: [{}]. Old root bridge: [{}]",
-                        getNodeId(), 
-                         electedRoot.getId(),m_domain.getRootBridgeId());
+           } else {
+                m_domain.clearTopologyForBridge(electedRoot.getId());
                 calculate(m_domain.getRootBridge(), m_domain.calculateRootBFT(),
                                 electedRoot, rootBft);
                 m_domain.hierarchySetUp(electedRoot);
            }
         } else {
-            LOG.debug("calculate: node [{}]: elected root bridge: [{}], is new root bridge with old bft",
+           LOG.debug("calculate: node [{}]: elected root bridge: [{}], is new root bridge with old bft",
                     getNodeId(), 
                      electedRoot.getId());
-            m_domain.hierarchySetUp(electedRoot);
+           m_domain.hierarchySetUp(electedRoot);
+           rootBft = m_domain.calculateRootBFT();
         }
+
+        LOG.debug("calculate: node[{}]: Root Bridge [{}] elected. Print Topology {}", 
+        		getNodeId(),
+        		electedRoot.getId(),
+        		m_domain.printTopology());
 
         for (Bridge xBridge: m_notYetParsedBFTMap.keySet()) {
             m_domain.clearTopologyForBridge(xBridge.getId());
@@ -113,7 +111,7 @@
             LOG.info("calculate: node: [{}]: bridge [{}]: calculate topology: start.",
             		getNodeId(),
             		xBridge.getId());
-            calculate(electedRoot, m_domain.calculateRootBFT(), xBridge, new ArrayList<BridgeMacLink>(m_notYetParsedBFTMap.remove(xBridge)));
+            calculate(electedRoot, rootBft, xBridge, new ArrayList<BridgeMacLink>(m_notYetParsedBFTMap.remove(xBridge)));
             LOG.info("calculate: node: [{}]: bridge [{}]: calculate topology: stop.",
             		getNodeId(),
             		xBridge.getId());
@@ -121,5 +119,10 @@
         LOG.info("calculate: node: [{}]: stop: broadcast domain {} topology calculated.", 
         		getNodeId(),
         		m_domain.getBridgeNodesOnDomain());
+        LOG.debug("calculate: node[{}]: Print Topology {}", 
+        		getNodeId(),
+        		m_domain.printTopology());
+
+
     }
 
