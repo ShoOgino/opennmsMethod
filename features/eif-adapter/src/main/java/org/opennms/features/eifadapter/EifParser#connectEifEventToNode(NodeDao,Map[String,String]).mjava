@@ -1,0 +1,63 @@
+    private static long connectEifEventToNode(NodeDao nodeDao, Map<String, String> eifSlotMap) {
+        /*
+         * Available slots for identifying the node:
+         * fqhostname - Fully qualified host name, if available.
+         * hostname - Hostname of the managed system that originated the event, if available.
+         * origin - TCP/IP address of the originating managed system in dotted-decimal notation, if available.
+         */
+        long nodeId = 0;
+        String fqdn = "";
+        if (!"".equals(eifSlotMap.get("fqhostname")) && eifSlotMap.get("fqhostname") != null) {
+            fqdn = eifSlotMap.get("fqhostname");
+        } else if (!"".equals(eifSlotMap.get("hostname")) && eifSlotMap.get("hostname") != null) {
+            String hostname = eifSlotMap.get("hostname");
+            try {
+                fqdn = InetAddress.getByName(hostname).getCanonicalHostName();
+            } catch (UnknownHostException uhe) {
+                LOG.error("UnknownHostException while resolving hostname {}",hostname);
+            }
+        }
+        // if a FQDN can't be found using fqhostname or hostname, fall back to the origin IP address
+        if ("".equals(fqdn) && !"".equals(eifSlotMap.get("origin")) && eifSlotMap.get("origin") != null) {
+            String origin = eifSlotMap.get("origin");
+            if ( InetAddresses.isInetAddress(origin) ) {
+                try {
+                    fqdn = InetAddress.getByAddress(origin.getBytes()).getCanonicalHostName();
+                } catch (UnknownHostException uhe) {
+                    LOG.error("UnknownHostException while resolving origin {}", origin);
+                    fqdn = origin;
+                }
+            }
+        }
+
+        // attempt to look up the nodeId using the FQDN
+        if(!"".equals(fqdn) && !fqdn.equals(null)) {
+            List<OnmsNode> matchingNodes = new ArrayList<>();
+            OnmsNode firstMatch;
+            try {
+                matchingNodes = nodeDao.findByLabel(fqdn);
+            } catch (NullPointerException npe) {
+                LOG.debug("No node located for {}",fqdn);
+            }
+            if ( matchingNodes.size() <= 0 && !InetAddresses.isInetAddress(fqdn) ) {
+                try {
+                    matchingNodes = nodeDao.findByLabel(fqdn.split("\\.")[0]);
+                } catch (NullPointerException npe) {
+                    LOG.debug("No node located for {}",fqdn.split("\\.")[0]);
+                }
+            }
+
+            firstMatch = ( matchingNodes.size() > 0 ? matchingNodes.get(0) : null );
+
+            if(firstMatch != null) {
+                nodeId = Long.valueOf(firstMatch.getNodeId());
+            }
+        }
+
+        if(nodeId == 0) {
+            LOG.debug("connectEifEventToNode : No matching nodes found. Defaulting to nodeId 0.");
+        }
+
+        return nodeId;
+    }
+

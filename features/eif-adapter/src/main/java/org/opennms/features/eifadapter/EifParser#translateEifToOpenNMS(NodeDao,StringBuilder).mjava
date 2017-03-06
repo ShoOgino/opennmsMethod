@@ -1,0 +1,38 @@
+    public static List<Event> translateEifToOpenNMS(NodeDao nodeDao, StringBuilder eifBuff) {
+
+        // Create a list of events to return to the packet processor
+        List<Event> translatedEvents = new ArrayList<>();
+
+        // Loop over the received EIF package until we run out of events
+        while(eifBuff.length() > 0 && eifBuff.indexOf(";END") > 1) {
+            // Extract a single event from the package
+            int eventStart = eifBuff.indexOf("<START>>");
+            int eventEnd = eifBuff.indexOf(";END");
+            String eifEvent = eifBuff.substring(eventStart + eifStartOffset,eventEnd);
+            eifBuff.delete(0,eventEnd+4);
+
+            // Parse the EIF slots into OpenNMS parms, and try to look up the source's nodeId
+            String eifClass = eifEvent.split(";")[0];
+            String eifSlots = eifEvent.substring(eifClass.length()+1,eifEvent.length()).
+                    replaceAll(System.getProperty("line.separator"),"");
+            Map<String, String> eifSlotMap = parseEifSlots(eifSlots);
+            List<Parm> parmList = new ArrayList<>();
+            eifSlotMap.entrySet().forEach(p -> parmList.add(new Parm(p.getKey(),p.getValue())));
+            long nodeId = connectEifEventToNode(nodeDao, eifSlotMap);
+
+            // Add the translated event to the list
+            translatedEvents.add(
+                    new EventBuilder("uei.opennms.org/vendor/IBM/EIF/"+eifClass,"eif").
+                            setNodeid(nodeId).
+                            setSeverity(EifSeverity.valueOf(eifSlotMap.get("severity")).toOnmsSeverity().getLabel()).
+                            setParms(parmList).getEvent());
+
+        }
+
+        if(translatedEvents.isEmpty()) {
+            LOG.error("Received a zero-length list");
+            return null;
+        }
+        return translatedEvents;
+    }
+
