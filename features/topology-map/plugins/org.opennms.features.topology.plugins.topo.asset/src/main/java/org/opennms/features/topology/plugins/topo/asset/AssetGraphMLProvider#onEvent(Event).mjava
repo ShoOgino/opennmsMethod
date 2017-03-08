@@ -1,30 +1,43 @@
-    @Override
-    public void onEvent(Event e) {
-        try {
-            if (CREATE_ASSET_TOPOLOGY.equals(e.getUei())) {
-                if (graphmlRepository.exists("asset")) {
-                    // TODO or log instead
-                    throw new IllegalStateException("Provider already exists");
-                }
-                GraphML graphML = new AssetGraphGenerator(nodeDao).generateGraphs(config);
-                GraphmlType graphmlType = GraphMLWriter.convert(graphML);
-                graphmlRepository.save(config.getProviderId(), config.getLabel(), graphmlType);
-            } else if (REMOVE_ASSET_TOPOLOGY.equals(e.getUei())) {
-                if (!graphmlRepository.exists(config.getProviderId())) {
-                    // TODO or log instead
-                    throw new IllegalStateException("Provider cannot be removed, because it does not exist");
-                }
-                graphmlRepository.delete(config.getProviderId());
-            } else if (CREATE_ASSET_NODE_INFO.equals(e.getUei())) {
-            	NodeInfoRepository nir = new NodeInfoRepository();
-            	nir.setNodeDao(nodeDao);
-            	nir.initialiseNodeInfo(null);
-        		String nodeInfoxml = NodeInfoRepositoryXML.nodeInfoToXML(nir.getNodeInfo());
-        		Utils.writeFileToDisk(nodeInfoxml, ASSET_LIST_XML_FILE, TEMP_FOLDER);
-            }
-        } catch (Exception ex) {
-            // TODO or log instead
-            throw new RuntimeException(ex);
-        }
-    }
+	@Override
+	public void onEvent(Event e) {
+		try {
+			if (CREATE_ASSET_TOPOLOGY.equals(e.getUei())) {
+				LOG.info("creating new asset topology providerid="+config.getProviderId()+" label="+config.getLabel());
+				if (graphmlRepository.exists("asset")) {
+					// TODO or log instead
+					throw new IllegalStateException("Provider already exists");
+				}
+				GraphML graphML = new AssetGraphGenerator(nodeDao,transactionOperations)
+						.generateGraphs(config);
+				GraphmlType graphmlType = GraphMLWriter.convert(graphML);
+				graphmlRepository.save(config.getProviderId(),
+						config.getLabel(), graphmlType);
+			} else if (REMOVE_ASSET_TOPOLOGY.equals(e.getUei())) {
+				LOG.info("removing asset topology providerid="+config.getProviderId());
+				if (!graphmlRepository.exists(config.getProviderId())) {
+					// TODO or log instead
+					throw new IllegalStateException(
+							"Provider cannot be removed, because it does not exist");
+				}
+				graphmlRepository.delete(config.getProviderId());
+			} else if (CREATE_ASSET_NODE_INFO.equals(e.getUei())) {
+				try {
+					LOG.info("creating nodeinfo file=" + ASSET_LIST_XML_FILE
+							+ " in folder=" + TEMP_FOLDER);
+					NodeInfoRepository nodeInfoRepository = new NodeInfoRepository();
+					nodeInfoRepository.setNodeDao(nodeDao);
+					nodeInfoRepository.setTransactionOperations(transactionOperations);
+					nodeInfoRepository.initialiseNodeInfo(null);
+					String nodeInfoxml = NodeInfoRepositoryXML
+							.nodeInfoToXML(nodeInfoRepository.getNodeInfo());
+					Utils.writeFileToDisk(nodeInfoxml, ASSET_LIST_XML_FILE,
+							TEMP_FOLDER);
+				} catch (Exception ex) {
+					LOG.error("problem creating " + ASSET_LIST_XML_FILE, ex);
+				}
+			}
+		} catch (Exception ex) {
+			LOG.error("asset topology provider problem processing event " +e.getUei(), ex);
+		}
+	}
 
