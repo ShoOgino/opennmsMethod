@@ -1,13 +1,103 @@
 	public GraphML generateGraphs(GeneratorConfig config) {
+		final List<LayerMapping.Mapping> layerMappings = new LayerMapping().getMapping(config.getLayerHierarchies());
+		final List<OnmsNode> nodes = dataProvider.getNodes(layerMappings);
 
-		String menuLabelStr= config.getLabel();
-		List<String> layerHierarchy= config.getLayerHierarchies();
-		String preferredLayout = config.getPreferredLayout();
-		boolean generateUnallocated = config.getGenerateUnallocated();
+		// Define Layers
+		final List<LayerDefinition> layerDefinitions = layerMappings.stream().map(mapping -> mapping.getLayerDefinition()).collect(Collectors.toList());
 
-		Map<String, Map<String, String>> onmsNodeInfo =generateNodeInfo(config);
+		// Add last Layer for Nodes
+		layerDefinitions.add(new LayerDefinitionBuilder()
+				.withId("nodes")
+				.withNamespace("nodes")
+				.withItemProvider(node -> node)
+				.withIdGenerator(IdGenerator.SIMPLE)
+				.build()
+		);
 
-		return nodeInfoToTopology(onmsNodeInfo, menuLabelStr, layerHierarchy, preferredLayout, generateUnallocated, config.getProviderId());
+		// Ensure that all elements in the nodes do have values set
+		layerDefinitions.forEach(layerDefinition -> {
+			List<OnmsNode> nodeWithNullValues = nodes.stream().filter(n -> layerDefinition.getItemProvider().getItem(n) == null).collect(Collectors.toList());
+			if (!nodeWithNullValues.isEmpty()) {
+				LOG.debug("Found nodes with null value for layer (id: {}, label: {}). Removing nodes {}",
+						layerDefinition.getId(), layerDefinition.getLabel(),
+						nodeWithNullValues.stream().map(n -> String.format("(id: %s, label: %s)", n.getId(), n.getLabel())).collect(Collectors.toList()));
+				nodes.removeAll(nodeWithNullValues);
+			}
+		});
 
+		// Start generating the hierarchy
+		// Overall graphml object
+		final GraphML graphML = new GraphML();
+		graphML.setProperty(GraphMLProperties.LABEL, config.getLabel());
+		graphML.setProperty(GraphMLProperties.BREADCRUMB_STRATEGY, config.getBreadcrumbStrategy());
+
+		// Build each Graph
+		int index = 0;
+		for (LayerDefinition layerDefinition : layerDefinitions) {
+			GraphMLGraph layerGraph = new GraphMLGraph();
+			layerGraph.setId(config.getProviderId() + ":" + layerDefinition.getId());
+			layerGraph.setProperty(GraphMLProperties.NAMESPACE, config.getProviderId() + ":" + layerDefinition.getNamespace());
+			layerGraph.setProperty(GraphMLProperties.PREFERRED_LAYOUT, config.getPreferredLayout());
+//            layerGraph.setProperty(GraphMLProperties.DESCRIPTION, layerDefinition.getDescription());
+			layerGraph.setProperty(GraphMLProperties.DESCRIPTION, "");
+			layerGraph.setProperty(GraphMLProperties.FOCUS_STRATEGY, "ALL");
+			layerGraph.setProperty(GraphMLProperties.SEMANTIC_ZOOM_LEVEL, index);
+			layerGraph.setProperty(GraphMLProperties.VERTEX_STATUS_PROVIDER, true);
+
+			// Build layer for nodes
+			for (OnmsNode eachNode : nodes) {
+				final Object eachItem = layerDefinition.getItemProvider().getItem(eachNode);
+				if (eachItem != null) {
+					List<LayerDefinition> processedLayers = layerDefinitions.subList(0, index);
+					String id = layerDefinition.getIdGenerator().generateId(processedLayers, eachNode, layerDefinition.getNodeDecorator().getId(eachItem));
+					if (layerGraph.getNodeById(id) == null) {
+						GraphMLNode node = new GraphMLNode();
+						node.setId(id);
+						layerDefinition.getNodeDecorator().decorate(node, eachItem);
+						layerGraph.addNode(node);
+					}
+				}
+			}
+			graphML.addGraph(layerGraph);
+			index++;
+		}
+
+		// Now link all nodes, but only if there are at least 2 layers
+		if (graphML.getGraphs().size() > 1) {
+			nodes.forEach(n -> {
+				List<GraphMLNode> path = getPath(n, graphML.getGraphs(), layerDefinitions);
+				if (path.size() != graphML.getGraphs().size() ) {
+					throw new IllegalStateException("TODO MVR");
+				}
+				for (int i=0; i<path.size() - 1; i++) {
+					GraphMLNode sourceNode = path.get(i);
+					GraphMLNode targetNode = path.get(i+1);
+					GraphMLGraph sourceGraph = graphML.getGraphs().get(i);
+					String edgeId = String.format("%s_%s", sourceNode.getId(), targetNode.getId());
+					if (sourceGraph.getEdgeById(edgeId) == null) {
+						GraphMLEdge edge = new GraphMLEdge();
+						edge.setId(edgeId);
+						edge.setSource(sourceNode);
+						edge.setTarget(targetNode);
+						sourceGraph.addEdge(edge);
+					}
+				}
+			});
+		}
+
+		// Add nodes for unallocated elements
+		if (!config.getLayerHierarchies().isEmpty() && config.getGenerateUnallocated()) {
+			GraphMLGraph layerGraph = new GraphMLGraph();
+			layerGraph.setId(config.getProviderId() + ":unallocated_Nodes");
+			layerGraph.setProperty(GraphMLProperties.NAMESPACE, layerGraph.getId());
+			layerGraph.setProperty(GraphMLProperties.PREFERRED_LAYOUT, config.getPreferredLayout());
+			layerGraph.setProperty(GraphMLProperties.DESCRIPTION, "A graph containing all nodes which cannot be placed in topology hierarchy");
+			layerGraph.setProperty(GraphMLProperties.FOCUS_STRATEGY, "ALL");
+			layerGraph.setProperty(GraphMLProperties.SEMANTIC_ZOOM_LEVEL, 0);
+			layerGraph.setProperty(GraphMLProperties.VERTEX_STATUS_PROVIDER, true);
+			graphML.addGraph(layerGraph);
+		}
+
+		return graphML;
 	}
 
