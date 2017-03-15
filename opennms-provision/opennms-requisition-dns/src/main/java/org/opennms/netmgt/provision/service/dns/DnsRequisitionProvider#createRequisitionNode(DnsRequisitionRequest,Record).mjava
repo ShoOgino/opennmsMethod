@@ -1,0 +1,64 @@
+    /**
+     * Creates an instance of the JaxB annotated RequisionNode class.
+     * 
+     * @param rec
+     * @return a populated RequisitionNode based on defaults and data from the A
+     *         record returned from a DNS zone transfer query.
+     */
+    private RequisitionNode createRequisitionNode(DnsRequisitionRequest request, Record rec) {
+        String addr = null;
+        if ("A".equals(Type.string(rec.getType()))) {
+            final ARecord arec = (ARecord) rec;
+            addr = StringUtils.stripStart(arec.getAddress().toString(), "/");
+        } else if ("AAAA".equals(Type.string(rec.getType()))) {
+            final AAAARecord aaaarec = (AAAARecord) rec;
+            addr = aaaarec.rdataToString();
+        } else {
+            throw new IllegalArgumentException(
+                    "Invalid record type " + Type.string(rec.getType()) + ". A or AAAA expected.");
+        }
+
+        final RequisitionNode n = new RequisitionNode();
+
+        final String host = rec.getName().toString();
+        final String nodeLabel = StringUtils.stripEnd(StringUtils.stripStart(host, "."), ".");
+
+        n.setBuilding(request.getForeignSource());
+
+        switch (request.getForeignIdHashSource()) {
+        case 1:
+            n.setForeignId(computeHashCode(nodeLabel));
+            LOG.debug("Generating foreignId from hash of nodelabel {}", nodeLabel);
+            break;
+        case 2:
+            n.setForeignId(computeHashCode(addr));
+            LOG.debug("Generating foreignId from hash of ipAddress {}", addr);
+            break;
+        case 3:
+            n.setForeignId(computeHashCode(nodeLabel + addr));
+            LOG.debug("Generating foreignId from hash of nodelabel+ipAddress {}{}", nodeLabel, addr);
+            break;
+        default:
+            n.setForeignId(computeHashCode(nodeLabel));
+            LOG.debug("Default case: Generating foreignId from hash of nodelabel {}", nodeLabel);
+            break;
+        }
+        n.setNodeLabel(nodeLabel);
+
+        final RequisitionInterface i = new RequisitionInterface();
+        i.setDescr("DNS-" + Type.string(rec.getType()));
+        i.setIpAddr(addr);
+        i.setSnmpPrimary(PrimaryType.PRIMARY);
+        i.setManaged(Boolean.TRUE);
+        i.setStatus(Integer.valueOf(1));
+
+        for (String service : request.getServices()) {
+            service = service.trim();
+            i.insertMonitoredService(new RequisitionMonitoredService(service));
+            LOG.debug("Adding provisioned service {}", service);
+        }
+
+        n.putInterface(i);
+        return n;
+    }
+
