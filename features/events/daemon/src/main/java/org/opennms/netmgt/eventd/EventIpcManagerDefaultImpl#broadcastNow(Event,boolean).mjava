@@ -1,9 +1,5 @@
-    /* (non-Javadoc)
-     * @see org.opennms.netmgt.eventd.EventIpcBroadcaster#broadcastNow(org.opennms.netmgt.xml.event.Event)
-     */
-    /** {@inheritDoc} */
     @Override
-    public void broadcastNow(Event event) {
+    public void broadcastNow(Event event, boolean synchronous) {
         if (LOG.isDebugEnabled()) {
             LOG.debug("Event ID {} to be broadcasted: {}", event.getDbid(), event.getUei());
         }
@@ -12,9 +8,11 @@
             LOG.debug("No listeners interested in all events");
         }
 
+        List<CompletableFuture<Void>> listenerFutures = new ArrayList<>();
+
         // Send to listeners interested in receiving all events
         for (EventListener listener : m_listeners) {
-            queueEventToListener(event, listener);
+            listenerFutures.add(queueEventToListener(event, listener));
         }
 
         if (event.getUei() == null) {
@@ -33,7 +31,7 @@
             if (m_ueiListeners.containsKey(uei)) {
                 for (EventListener listener : m_ueiListeners.get(uei)) {
                     if (!sentToListeners.contains(listener)) {
-                        queueEventToListener(event, listener);
+                        listenerFutures.add(queueEventToListener(event, listener));
                         sentToListeners.add(listener);
                     }
                 }
@@ -54,6 +52,12 @@
             if (LOG.isDebugEnabled()) {
                 LOG.debug("No listener interested in event ID {}: {}", event.getDbid(), event.getUei());
             }
+        }
+
+        // If synchronous...
+        if (synchronous) {
+            // Wait for all of the listeners to complete before returning
+            CompletableFuture.allOf(listenerFutures.toArray(new CompletableFuture[0])).join();
         }
     }
 
