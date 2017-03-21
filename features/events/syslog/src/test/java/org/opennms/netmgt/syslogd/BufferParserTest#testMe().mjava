@@ -9,35 +9,33 @@
 
 		List<ParserStage> grokStages = GrokParserStageSequenceBuilder.parseGrok("<%{INT:facilityPriority}> %{MONTH:month} %{INT:day} %{INT:hour}:%{INT:minute}:%{INT:second} %{STRING:hostname} %{NOSPACE:processName}[%{INT:processId}]: %{MONTH:month} %{INT:day} %{STRING:timestamp} %{STRING:timezone} \\%%{STRING:facility}-%{INT:priority}-%{STRING:mnemonic}: %{STRING:message}");
 		//BufferParserFactory grokFactory = parseGrok("<%{INT:facilityPriority}> %{MONTH:month} %{INT:day} %{INT:hour}:%{INT:minute}:%{INT:second} %{STRING:hostname} %{NOSPACE:processName}: %{MONTH:month} %{INT:day} %{STRING:timestamp} %{STRING:timezone} \\%%{STRING:facility}-%{INT:priority}-%{STRING:mnemonic}: %{STRING:message}");
-		ByteBufferParser<EventBuilder> grokParser = new SingleSequenceParser(grokStages);
+		ByteBufferParser<SyslogMessage> grokParser = new SingleSequenceParser(grokStages);
 
 		// SyslogNG format
 		List<ParserStage> parserStages = new ParserStageSequenceBuilder()
 			.intBetweenDelimiters('<', '>', (s,v) -> {
-				String facilityTxt = SyslogFacility.getFacilityForCode(v).toString();
-				String priorityTxt = SyslogSeverity.getSeverityForCode(v).toString();
+				SyslogFacility facility = SyslogFacility.getFacilityForCode(v);
+				SyslogSeverity priority = SyslogSeverity.getSeverityForCode(v);
 
-				s.builder.setParam("service", facilityTxt);
-				s.builder.setParam("severity", priorityTxt);
-				s.builder.setUei("uei.opennms.org/syslogd/" + facilityTxt + "/" + priorityTxt);
+				s.message.setFacility(facility);
+				s.message.setSeverity(priority);
 			})
 			.whitespace()
-			.monthString((s,v) -> { s.builder.setMonth(v); })
+			.monthString((s,v) -> { s.message.setMonth(v); })
 			.whitespace()
-			.integer((s,v) -> { s.builder.setDayOfMonth(v); })
+			.integer((s,v) -> { s.message.setDayOfMonth(v); })
 			.whitespace()
-			.integer((s,v) -> { s.builder.setHourOfDay(v); })
+			.integer((s,v) -> { s.message.setHourOfDay(v); })
 			.character(':')
-			.integer((s,v) -> { s.builder.setMinute(v); })
+			.integer((s,v) -> { s.message.setMinute(v); })
 			.character(':')
-			.integer((s,v) -> { s.builder.setSecond(v); })
+			.integer((s,v) -> { s.message.setSecond(v); })
 			.whitespace()
-			// TODO: This is not correct
-			.stringUntilWhitespace((s,v) -> { s.builder.setHost(v); })
+			.stringUntilWhitespace((s,v) -> { s.message.setHostName(v); })
 			.whitespace()
-			.stringUntil("\\s[:", (s,v) -> { s.builder.addParam("processName", v); })
+			.stringUntil("\\s[:", (s,v) -> { s.message.setProcessName(v); })
 			.optional().character('[')
-			.optional().integer((s,v) -> { s.builder.addParam("processId", v); })
+			.optional().integer((s,v) -> { s.message.setProcessId(String.valueOf(v)); })
 			.optional().character(']')
 			.optional().character(':')
 			.whitespace()
@@ -50,21 +48,19 @@
 			.stringUntilWhitespace(null) // Original time zone
 			.whitespace()
 			.character('%')
-			.stringUntilChar('-', (s,v) -> { s.builder.addParam("facility", v); })
+			.stringUntilChar('-', (s,v) -> { s.message.setParam("facility", v); })
 			.character('-')
-			.stringUntilChar('-', (s,v) -> { s.builder.addParam("severity", v); })
+			.stringUntilChar('-', (s,v) -> { s.message.setParam("severity", v); })
 			.character('-')
-			.stringUntilChar(':', (s,v) -> { s.builder.addParam("mnemonic", v); })
+			.stringUntilChar(':', (s,v) -> { s.message.setParam("mnemonic", v); })
 			.character(':')
 			.whitespace()
 			.terminal().string((s,v) -> {
-				s.builder.setLogMessage(v);
-				// Using parms provides configurability.
-				s.builder.setParam("syslogmessage", v);
+				s.message.setMessage(v);
 			 })
 			.getStages()
 			;
-		ByteBufferParser<EventBuilder> parser = new SingleSequenceParser(parserStages);
+		ByteBufferParser<SyslogMessage> parser = new SingleSequenceParser(parserStages);
 
 		RadixTreeParser radixParser = new RadixTreeParser();
 		//radixParser.teach(grokStages.toArray(new ParserStage[0]));
@@ -94,7 +90,7 @@
 		int iterations = 100000;
 
 		{
-			CompletableFuture<EventBuilder> event = null;
+			CompletableFuture<SyslogMessage> event = null;
 			Event lastEvent = null;
 			long start = System.currentTimeMillis();
 			for (int i = 0; i < iterations; i++) {
@@ -109,17 +105,17 @@
 			}
 			// Wait for the last future to complete
 			try {
-				lastEvent = event.get().getEvent();
+				event.get();
 			} catch (InterruptedException | ExecutionException e) {
 				e.printStackTrace();
 			}
 			long end = System.currentTimeMillis();
 			System.out.println("RADIX: " + (end - start) + "ms");
-			System.out.println(lastEvent.toString());
+//			System.out.println(lastEvent.toString());
 		}
 
 		{
-			CompletableFuture<EventBuilder> event = null;
+			CompletableFuture<SyslogMessage> event = null;
 			long start = System.currentTimeMillis();
 			for (int i = 0; i < iterations; i++) {
 				event = parser.parse(incoming.asReadOnlyBuffer());
@@ -142,7 +138,7 @@
 		}
 
 		{
-			CompletableFuture<EventBuilder> event = null;
+			CompletableFuture<SyslogMessage> event = null;
 			long start = System.currentTimeMillis();
 			for (int i = 0; i < iterations; i++) {
 				event = grokParser.parse(incoming.asReadOnlyBuffer());
