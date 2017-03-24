@@ -1,0 +1,69 @@
+    /**
+     * Process single files.
+     *
+     * @param resourceDir the resource directory
+     * @param isRrdtool the is RRDtool enabled
+     * @throws Exception the exception
+     */
+    private void processSingleFiles(File resourceDir, boolean isRrdtool) throws Exception {
+        // META
+        final String metaExt = ".meta";
+        File[] metaFiles = getFiles(resourceDir, metaExt);
+        if (metaFiles == null) {
+            log("Warning: there are no %s files on %s\n", metaExt, resourceDir);
+        } else {
+            for (final File metaFile : metaFiles)  {
+                log("Processing META %s\n", metaFile);
+                String dsName = metaFile.getName().replaceFirst(metaExt, "");
+                String newName = getFixedDsName(dsName);
+                if (!dsName.equals(newName)) {
+                    Properties meta = new Properties();
+                    Properties newMeta = new Properties();
+                    try (FileReader fr = new FileReader(metaFile);) {
+                        meta.load(fr);
+                        for (Object k : meta.keySet()) {
+                            String key = (String) k;
+                            String newKey = key.replaceAll(dsName, newName);
+                            newMeta.put(newKey, newName);
+                        }
+                        File newFile = new File(metaFile.getParentFile(), newName + metaExt);
+                        log("Re-creating META into %s\n", newFile);
+                        try (FileWriter fw = new FileWriter(newFile);) {
+                            newMeta.store(fw, null);
+                        }
+                        if (!metaFile.equals(newFile)) {
+                            if (!metaFile.delete()) {
+                        	LOG.warn("Could not delete file {}", metaFile.getPath());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // JRBs
+        final String rrdExt = getRrdExtension();
+        File[] jrbFiles = getFiles(resourceDir, rrdExt);
+        if (jrbFiles == null) {
+            log("Warning: there are no %s files on %s\n", rrdExt, resourceDir);
+        } else {
+            for (final File jrbFile : jrbFiles) {
+                log("Processing %s %s\n", rrdExt.toUpperCase(), jrbFile);
+                String dsName = jrbFile.getName().replaceFirst(rrdExt, "");
+                String newName = getFixedDsName(dsName);
+                File newFile = new File(jrbFile.getParentFile(), newName + rrdExt);
+                if (!dsName.equals(newName)) {
+                    try {
+                        log("Renaming %s to %s\n", rrdExt.toUpperCase(), newFile);
+                        FileUtils.moveFile(jrbFile, newFile);
+                    } catch (Exception e) {
+                        log("Warning: Can't move file because: %s", e.getMessage());
+                        continue;
+                    }
+                }
+                if (!isRrdtool) { // Only the JRBs may contain invalid DS inside
+                    updateJrb(newFile);
+                }
+            }
+        }
+    }
+
