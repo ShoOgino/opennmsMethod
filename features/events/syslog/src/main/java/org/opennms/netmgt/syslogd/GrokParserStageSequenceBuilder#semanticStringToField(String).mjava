@@ -1,0 +1,91 @@
+	/**
+	 * This function maps {@link SyslogSemanticType} values of type String to fields in the parser
+	 * state.
+	 * 
+	 * @param semanticString
+	 * @return
+	 */
+	private static BiConsumer<ParserState,String> semanticStringToField(String semanticString) {
+		SyslogSemanticType semanticType = null;
+		try {
+			semanticType = SyslogSemanticType.valueOf(semanticString);
+		} catch (IllegalArgumentException e) {
+			// Leave semanticType == null
+		}
+
+		if (semanticType == null) {
+			return (s,v) -> {
+				s.message.setParam(semanticString, v);
+			};
+		} else {
+			switch(semanticType) {
+			case hostname:
+				return (s,v) -> {
+					s.message.setHostName(v);
+				};
+			case message:
+				return (s,v) -> {
+					// Trim the message to match behavior of legacy parsers
+					s.message.setMessage(v == null ? null : v.trim());
+				};
+			case messageId:
+				// Unique to this parser
+				return (s,v) -> {
+					if ("-".equals(v.trim())) {
+						// Ignore
+					} else {
+						s.message.setMessageID(v);
+					}
+				};
+			case processId:
+				// processId can be an integer or string
+				return (s,v) -> {
+					if ("-".equals(v.trim())) {
+						// Ignore
+					} else {
+						s.message.setProcessId(v);
+					}
+				};
+			case processName:
+				return (s,v) -> {
+					if ("-".equals(v.trim())) {
+						// Ignore
+					} else {
+						s.message.setProcessName(v);
+					}
+				};
+			case secondFraction:
+				return (s,v) -> {
+					// Convert the fraction value into a millisecond value since that
+					// is the best resolution that EventBuilder can handle
+					switch(v.length()) {
+					case 1:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v) * 100);
+						break;
+					case 2:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v) * 10);
+						break;
+					case 3:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v));
+						break;
+					case 4:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v) / 10);
+						break;
+					case 5:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v) / 100);
+						break;
+					case 6:
+						s.message.setMillisecond(MatchInteger.trimAndConvert(v) / 1000);
+						break;
+					}
+				};
+			case timezone:
+				return (s,v) -> {
+					s.message.setZoneId(ZonedDateTimeBuilder.parseZoneId(v));
+				};
+			default:
+				throw new IllegalArgumentException(String.format("Semantic type %s does not have a string value", semanticString));
+			}
+		}
+	}
+

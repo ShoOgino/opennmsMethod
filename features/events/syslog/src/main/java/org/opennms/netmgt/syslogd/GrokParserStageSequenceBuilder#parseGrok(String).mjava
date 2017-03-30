@@ -1,0 +1,179 @@
+	public static List<ParserStage> parseGrok(String grok) {
+		GrokState state = GrokState.TEXT;
+		ParserStageSequenceBuilder factory = new ParserStageSequenceBuilder();
+
+		StringBuffer pattern = new StringBuffer();
+		StringBuffer semantic = new StringBuffer();
+
+		for (char c : grok.toCharArray()) {
+			switch(state) {
+			case TEXT:
+				switch(c) {
+				case '%':
+					state = GrokState.START_PATTERN;
+					continue;
+				case '\\':
+					state = GrokState.ESCAPE_PATTERN;
+					continue;
+				case ' ':
+					factory = factory.whitespace();
+					continue;
+				default:
+					factory = factory.character(c);
+					continue;
+				}
+			case ESCAPE_PATTERN:
+				switch(c) {
+				default:
+					factory = factory.character(c);
+					state = GrokState.TEXT;
+					continue;
+				}
+			case START_PATTERN:
+				switch(c) {
+				case '{':
+					state = GrokState.PATTERN;
+					continue;
+				default:
+					throw new IllegalStateException("Illegal character to start pattern");
+				}
+			case PATTERN:
+				switch(c) {
+				case ':':
+					state = GrokState.SEMANTIC;
+					continue;
+				default:
+					pattern.append(c);
+					continue;
+				}
+			case SEMANTIC:
+				switch(c) {
+				case '}':
+					state = GrokState.END_PATTERN;
+					continue;
+				default:
+					semantic.append(c);
+					continue;
+				}
+			case END_PATTERN:
+				final String patternString = pattern.toString();
+				final String semanticString = semantic.toString();
+
+				GrokPattern patternType = GrokPattern.valueOf(patternString);
+
+				switch(c) {
+				case '\\':
+					switch(patternType) {
+					case NOSPACE:
+						// TODO: We need to peek forward to the escaped character and then do the same as the default case
+						// factory.stringUntil(MatchUntil.WHITESPACE + c, semanticStringToEventBuilder(semanticString));
+						// factory.character(c);
+						// break;
+						throw new UnsupportedOperationException("Cannot support escape sequence directly after a NOSPACE pattern yet");
+					case STRING:
+						// TODO: We need to peek forward to the escaped character and then do the same as the default case
+						// factory.stringUntil(String.valueOf(c), semanticStringToEventBuilder(semanticString));
+						// factory.character(c);
+						// break;
+						throw new UnsupportedOperationException("Cannot support escape sequence directly after a STRING pattern yet");
+					case INT:
+						factory.integer(semanticIntegerToField(semanticString));
+						break;
+					case MONTH:
+						factory.monthString(semanticIntegerToField(semanticString));
+						break;
+					}
+					pattern = new StringBuffer();
+					semantic = new StringBuffer();
+					state = GrokState.ESCAPE_PATTERN;
+					continue;
+				case '%':
+					switch(patternType) {
+					case NOSPACE:
+						// This is probably not an intended behavior
+						LOG.warn("NOSPACE pattern followed immediately by another pattern will greedily consume until whitespace is encountered");
+						factory.stringUntilWhitespace(semanticStringToField(semanticString));
+						factory.whitespace();
+						break;
+					case STRING:
+						// TODO: Can we handle this case?
+						throw new IllegalArgumentException(String.format("Invalid pattern: %s:%s does not have a trailing delimiter, cannot determine end of string", patternString, semanticString));
+					case INT:
+						factory.integer(semanticIntegerToField(semanticString));
+						break;
+					case MONTH:
+						factory.monthString(semanticIntegerToField(semanticString));
+						break;
+					}
+					pattern = new StringBuffer();
+					semantic = new StringBuffer();
+					state = GrokState.START_PATTERN;
+					continue;
+				case ' ':
+					switch(patternType) {
+					case NOSPACE:
+					case STRING:
+						factory.stringUntilWhitespace(semanticStringToField(semanticString));
+						factory.whitespace();
+						break;
+					case INT:
+						factory.intUntilWhitespace(semanticIntegerToField(semanticString));
+						factory.whitespace();
+						break;
+					case MONTH:
+						factory.monthString(semanticIntegerToField(semanticString));
+						factory.whitespace();
+						break;
+					}
+					break;
+				default:
+					switch(patternType) {
+					case NOSPACE:
+						factory.stringUntil(MatchUntil.WHITESPACE + c, semanticStringToField(semanticString));
+						factory.character(c);
+						break;
+					case STRING:
+						factory.stringUntil(String.valueOf(c), semanticStringToField(semanticString));
+						factory.character(c);
+						break;
+					case INT:
+						factory.integer(semanticIntegerToField(semanticString));
+						factory.character(c);
+						break;
+					case MONTH:
+						factory.monthString(semanticIntegerToField(semanticString));
+						factory.character(c);
+						break;
+					}
+				}
+				pattern = new StringBuffer();
+				semantic = new StringBuffer();
+				state = GrokState.TEXT;
+				continue;
+			}
+		}
+
+		// If we are in the process of ending a pattern, then tie it up with a bow
+		if (state == GrokState.END_PATTERN) {
+			final String patternString = pattern.toString();
+			final String semanticString = semantic.toString();
+
+			GrokPattern patternType = GrokPattern.valueOf(patternString);
+
+			switch(patternType) {
+			case NOSPACE:
+			case STRING:
+				factory.terminal().string(semanticStringToField(semanticString));
+				break;
+			case INT:
+				factory.terminal().integer(semanticIntegerToField(semanticString));
+				break;
+			case MONTH:
+				factory.terminal().monthString(semanticIntegerToField(semanticString));
+				break;
+			}
+		}
+
+		return factory.getStages();
+	}
+
