@@ -2,29 +2,24 @@
      * @see org.opennms.protocols.xml.collector.XmlCollectionHandler#collect(org.opennms.netmgt.collectd.CollectionAgent, org.opennms.protocols.xml.config.XmlDataCollection, java.util.Map)
      */
     @Override
-    public XmlCollectionSet collect(CollectionAgent agent, XmlDataCollection collection, Map<String, Object> parameters) throws CollectionException {
-        XmlCollectionSet collectionSet = new XmlCollectionSet();
-        collectionSet.setCollectionTimestamp(new Date());
-        collectionSet.setStatus(CollectionStatus.UNKNOWN);
+    public CollectionSet collect(CollectionAgent agent, XmlDataCollection collection, Map<String, Object> parameters) throws CollectionException {
+        String status = "finished";
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent);
         DateTime startTime = new DateTime();
         try {
             LOG.debug("collect: looping sources for collection {}", collection.getName());
             for (XmlSource source : collection.getXmlSources()) {
-                LOG.debug("collect: starting source url '{}' collection", source.getUrl());
-                String urlStr = parseUrl(source.getUrl(), agent, collection.getXmlRrd().getStep());
-                LOG.debug("collect: parsed url for source url '{}'", urlStr);
-                Request request = parseRequest(source.getRequest(), agent, collection.getXmlRrd().getStep());
-                LOG.debug("collect: parsed request for source url '{}' : {}", urlStr, request);
-                fillCollectionSet(urlStr, request, agent, collectionSet, source);
-                LOG.debug("collect: finished source url '{}' collection with {} resources", urlStr, collectionSet.getCollectionResources().size());
+                final String urlStr = source.getUrl();
+                final Request request = source.getRequest();
+                LOG.debug("collect: starting source url '{}' collection with request: {}", urlStr, request);
+                fillCollectionSet(urlStr, request, agent, builder, source);
+                LOG.debug("collect: finished source url '{}' collection with {} resources", urlStr, builder.getNumResources());
             }
-            collectionSet.setStatus(CollectionStatus.SUCCEEDED);
-            return collectionSet;
+            return builder.build();
         } catch (Exception e) {
-            collectionSet.setStatus(CollectionStatus.FAILED);
+            status = "failed";
             throw new CollectionException(e.getMessage(), e);
         } finally {
-            String status = CollectionStatus.SUCCEEDED.equals(collectionSet) ? "finished" : "failed";
             DateTime endTime = new DateTime();
             LOG.debug("collect: {} collection {}: duration: {} ms", status, collection.getName(), endTime.getMillis()-startTime.getMillis());
         }
