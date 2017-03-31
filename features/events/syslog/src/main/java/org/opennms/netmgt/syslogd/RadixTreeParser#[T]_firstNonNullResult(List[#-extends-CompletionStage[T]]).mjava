@@ -1,0 +1,37 @@
+	private static <T> CompletableFuture<T> firstNonNullResult(List<? extends CompletionStage<T>> futures) {
+
+		CompletableFuture<T> parent = new CompletableFuture<>();
+
+		CompletableFuture.allOf(
+			futures.stream().map(
+				s -> s.thenAccept(t -> {
+//					System.out.println("VALUE " + t);
+					// After each stage completes, if its result is non-null
+					// then complete the parent future
+					if (t != null) {
+						if (!parent.complete(t)) {
+							LOG.trace("More than one future completed with a non-null result");
+						} else {
+							LOG.trace("Non-null result returned");
+						}
+					}
+				})
+			).toArray(
+				CompletableFuture<?>[]::new
+			)
+		).exceptionally(ex -> {
+			// If all futures complete exceptionally, mark this future as exceptional as well
+//			parent.completeExceptionally(ex);
+			parent.complete(null);
+			return null;
+		}).thenAccept(v -> {
+			// If the parent isn't complete yet, then all children returned null so just
+			// complete with null
+			if (parent.complete(null)) {
+				LOG.debug("All futures completed with a null result");
+			}
+		});
+
+		return parent;
+	}
+
