@@ -1,0 +1,59 @@
+	@Test
+	public void testCustomSyslogParser() throws Exception {
+
+		SyslogConfigBean config = new SyslogConfigBean();
+		config.setParser("org.opennms.netmgt.syslogd.CustomSyslogParser");
+		config.setForwardingRegexp("^.*\\s(19|20)\\d\\d([-/.])(0[1-9]|1[012])\\2(0[1-9]|[12][0-9]|3[01])(\\s+)(\\S+)(\\s)(\\S.+)");
+		config.setMatchingGroupHost(6);
+		config.setMatchingGroupMessage(8);
+		config.setDiscardUei("DISCARD-MATCHING-MESSAGES");
+
+		ByteBuffer example1 = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost this is [my] message");
+		ByteBuffer example2 = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost [37183]: this is [my] message");
+		ByteBuffer example3 = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost procname: this is [my] message");
+		ByteBuffer example4 = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost procname[37183]: this is [my] message");
+
+		for (ByteBuffer incoming : new ByteBuffer[] { example1, example2, example3, example4 }) {
+			try {
+				ConvertToEvent convertToEvent = new ConvertToEvent(
+					DistPollerDao.DEFAULT_DIST_POLLER_ID,
+					MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+					InetAddressUtils.ONE_TWENTY_SEVEN,
+					514,
+					incoming,
+					config
+				);
+				assertEquals("this is [my] message", convertToEvent.getEvent().getLogmsg().getContent());
+			} catch (MessageDiscardedException e) {
+				fail("Message parsing failed: " + e.getMessage());
+			}
+		}
+
+
+		{
+			ByteBuffer colonNoSpace = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost procname:this is [my] message");
+			ConvertToEvent convertToEvent = new ConvertToEvent(
+				DistPollerDao.DEFAULT_DIST_POLLER_ID,
+				MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+				InetAddressUtils.ONE_TWENTY_SEVEN,
+				514,
+				colonNoSpace,
+				config
+			);
+			assertEquals("procname:this is [my] message", convertToEvent.getEvent().getLogmsg().getContent());
+		}
+
+		{
+			ByteBuffer spaceBeforeColon = SyslogdTestUtils.toByteBuffer("<14> 2001-01-01 localhost proc name: this is [my] message");
+			ConvertToEvent convertToEvent = new ConvertToEvent(
+				DistPollerDao.DEFAULT_DIST_POLLER_ID,
+				MonitoringLocationDao.DEFAULT_MONITORING_LOCATION_ID,
+				InetAddressUtils.ONE_TWENTY_SEVEN,
+				514,
+				spaceBeforeColon,
+				config
+			);
+			assertEquals("proc name: this is [my] message", convertToEvent.getEvent().getLogmsg().getContent());
+		}
+	}
+
