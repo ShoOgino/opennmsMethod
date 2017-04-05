@@ -10,7 +10,6 @@
         pduBuilder.setMaxRepetitions(getMaxRepetitions());
         
         ResponseProcessor rp = new ResponseProcessor() {
-
             @Override
             public void processResponse(SnmpObjId responseObjId, SnmpValue val) {
                 if (val.isEndOfMib()) {
@@ -36,7 +35,8 @@
 
             @Override
             public boolean processErrors(int errorStatus, int errorIndex) {
-                //LOG.trace("processErrors: errorStatus={}, errorIndex={}", errorStatus, errorIndex);;
+                if (m_retries == null) m_retries = getMaxRetries();
+                //LOG.trace("processErrors: errorStatus={}, errorIndex={}, retries={}", errorStatus, errorIndex, m_retries);
 
                 final ErrorStatus status = ErrorStatus.fromStatus(errorStatus);
                 if (status == ErrorStatus.TOO_BIG) {
@@ -55,9 +55,20 @@
                     throw ex;
                 } else if (status != ErrorStatus.NO_ERROR) {
                     reportNonFatalErr(status);
-                    return status.retry();
                 }
-                return false;
+
+                if (status.retry()) {
+                    if (m_retries-- <= 0) {
+                        final ErrorStatusException ex = new ErrorStatusException(status, "Non-fatal error met maximum number of retries. Aborting!");
+                        reportFatalErr(ex);
+                        throw ex;
+                    }
+                } else {
+                    // On success, reset the retries
+                    m_retries = getMaxRetries();
+                }
+
+                return status.retry();
             }
         };
         
