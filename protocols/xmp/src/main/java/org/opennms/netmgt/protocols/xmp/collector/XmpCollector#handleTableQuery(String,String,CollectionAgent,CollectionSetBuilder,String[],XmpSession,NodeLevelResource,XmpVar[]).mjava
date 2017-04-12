@@ -2,10 +2,12 @@
     // collection resource
     private boolean handleTableQuery(String groupName, 
             String resourceType,
-            XmpCollectionSet collectionSet,
+            CollectionAgent agent,
+            CollectionSetBuilder collectionSetBuilder,
             String[] tableInfo,
-            XmpSession session, 
-            XmpVar[] queryVars)
+            XmpSession session,
+            NodeLevelResource nodeLevelResource,
+            XmpVar[] queryVars) throws CollectionException
     {
         int numColumns,numRows;
         XmpMessage reply;
@@ -34,7 +36,7 @@
         reply = session.queryTableVars(tableInfo,0,queryVars);
 
         if (reply == null) {
-            LOG.warn("collect: query to {} failed, {}", collectionSet.getCollectionAgent(), Xmp.errorStatusToString(session.getErrorStatus()));
+            LOG.warn("collect: query to {} failed, {}", agent, Xmp.errorStatusToString(session.getErrorStatus()));
             return false;
         }
 
@@ -53,10 +55,6 @@
         LOG.info("query returned valid table data for {} numRows={} numColumns={}", groupName, numRows, numColumns);
 
         for (i=0; i<numRows; i++) {
-
-            XmpCollectionResource rowResource;
-            AttributeGroup ag;
-            AttributeGroupType agt;
             String rowInstance;
 
             // determine instance for this row
@@ -72,33 +70,26 @@
             // instead of using '*' for the nodeTypeName, use the
             // table name so that the proper rrd file is spec'd
 
-            if (targetInstance != null)
-                rowResource = new XmpCollectionResource(collectionSet.getCollectionAgent(),resourceType, tableInfo[1],targetInstance);
-            else 
-                rowResource = new XmpCollectionResource(collectionSet.getCollectionAgent(),resourceType, tableInfo[1],rowInstance);
+            final String instanceName;
+            if (targetInstance != null) {
+                instanceName = targetInstance;
+            } else {
+                instanceName = rowInstance;
+            }
 
-            agt = new AttributeGroupType(groupName, AttributeGroupType.IF_TYPE_ALL);
-            ag = new AttributeGroup(rowResource,agt);
+            // node type can be "node" for scalars or
+            // "if" for network interface resources and
+            // "*" for all other resource types
+            final String nodeTypeName = tableInfo[1];
+
+            final Resource resource = getResource(nodeLevelResource, nodeTypeName, resourceType, instanceName);
 
             LOG.debug("queryTable instance={}", rowInstance);
 
             for (j=0; j<numColumns; j++) {
-
-                XmpCollectionAttributeType attribType = new XmpCollectionAttributeType(vars[i*numColumns+j],agt);
-
-                XmpCollectionAttribute aVar = 
-                    new XmpCollectionAttribute(rowResource,
-                                               attribType,
-                                               vars[i*numColumns+j]);
-
-                ag.addAttribute(aVar);
-
+                final XmpVar var = vars[i*numColumns+j];
+                collectionSetBuilder.withAttribute(resource, groupName, var.getObjName(), var.getValue(), getType(var));
             } /* for each column */
-
-            rowResource.addAttributeGroup(ag);
-            collectionSet.addResource(rowResource);
-            LOG.info("query table data adding row resource {}", rowResource);
-
         } /* for each row returned */
 
         return true;

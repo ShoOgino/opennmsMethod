@@ -8,17 +8,17 @@
      *       collection succeeds.  Collect is called once per agent per
      *       collection cycle.  Parameters are a map of String Key/String
      *       Value passed in.  Keys come from collectd config
+     * @throws CollectionException
      */
     @Override
-    public CollectionSet collect(CollectionAgent agent, EventProxy eproxy, 
-            Map<String, Object> parameters)
+    public CollectionSet collect(CollectionAgent agent, 
+            Map<String, Object> parameters) throws CollectionException
     {
-        XmpCollectionSet collectionSet;
+        CollectionSetBuilder collectionSetBuilder;
         XmpSession session;
         long oldUptime;
         int i;
         XmpCollection collection;
-        XmpCollectionResource scalarResource;
 
         LOG.debug("collect agent {}",agent);
 
@@ -65,14 +65,12 @@
         LOG.debug("XmpCollector: collect {} from {}", collectionName, agent);
 
         // get/create our collections set
-        collectionSet = new XmpCollectionSet(agent);
-        collectionSet.setCollectionTimestamp(new Date());
-        collectionSet.setStatusFailed(); // default
-        collectionSet.ignorePersistTrue(); // default not to persist
+        collectionSetBuilder = new CollectionSetBuilder(agent)
+                .withStatus(CollectionStatus.FAILED) // default to failed
+                .disableCounterPersistence(true); // don't persist counters by default
 
         // default collection resource for putting scalars in
-        scalarResource = new XmpCollectionResource(agent,null,"node",null);
-        collectionSet.addResource(scalarResource);
+        final NodeLevelResource nodeLevelResource = new NodeLevelResource(agent.getNodeId());
 
         // get the collection, again, from the data config file factory
         // because it could have changed; its not necessarily re-parsed,
@@ -82,7 +80,12 @@
         collection = XmpCollectionFactory.getInstance().getXmpCollection(collectionName);
         if (collection == null) {
             LOG.warn("collect found no matching collection for {}", agent);
-            return collectionSet;
+            return collectionSetBuilder.build();
+        }
+
+        if (collection.getGroups().getGroup().length < 1) {
+            LOG.info("No groups to collect.");
+            return collectionSetBuilder.withStatus(CollectionStatus.SUCCEEDED).build();
         }
 
         oldUptime = agent.getSavedSysUpTime();
@@ -98,7 +101,7 @@
 
         if (session.isClosed()) {
             LOG.warn("collect unable to open XMP session with {}", agent);
-            return collectionSet;
+            return collectionSetBuilder.build();
         }
 
         LOG.debug("collect: successfully opened XMP session with{}", agent);
@@ -137,24 +140,27 @@
                 // tabular query               
                 if (handleTableQuery(group.getName(),
                                      group.getResourceType(),
-                                     collectionSet,
+                                     agent,
+                                     collectionSetBuilder,
                                      tableInfo,
                                      session,
+                                     nodeLevelResource,
                                      vars) == false) {
                     session.closeSession();
-                    return collectionSet;
+                    return collectionSetBuilder.build();
                 }
             }
             else {
                 // scalar query
                 if (handleScalarQuery(group.getName(),
-                                      collectionSet,
+                                      agent,
+                                      collectionSetBuilder,
                                       oldUptime,
                                       session,
-                                      scalarResource,
+                                      nodeLevelResource,
                                       vars) == false) {
                     session.closeSession();
-                    return collectionSet;
+                    return collectionSetBuilder.build();
                 }
             }
 
@@ -171,10 +177,10 @@
         // WARNING, EACH COLLECTION SHOULD HAVE A SCALAR QUERY THAT
         // INCLUDES Core.sysUpTime 
 
-        collectionSet.setStatus(CollectionStatus.SUCCEEDED);
+        collectionSetBuilder.withStatus(CollectionStatus.SUCCEEDED);
 
         LOG.debug("XMP collect finished for {}, uptime for {} is {}", collectionName, agent, agent.getSavedSysUpTime());
 
-        return collectionSet;
+        return collectionSetBuilder.build();
     }
 
