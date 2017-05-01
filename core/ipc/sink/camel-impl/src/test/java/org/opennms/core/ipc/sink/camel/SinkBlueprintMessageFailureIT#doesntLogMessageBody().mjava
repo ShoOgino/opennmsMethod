@@ -1,0 +1,36 @@
+    @Test(timeout=60000)
+    public void doesntLogMessageBody() throws Exception {
+        HeartbeatModule module = new HeartbeatModule();
+
+        final CountDownLatch consumed = new CountDownLatch(1);
+        // Create a consumer that just throws exceptions during the exchange
+        MessageConsumer<Heartbeat, Heartbeat> consumer = new MessageConsumer<Heartbeat, Heartbeat>() {
+            @Override
+            public SinkModule<Heartbeat, Heartbeat> getModule() {
+                return module;
+            }
+
+            @Override
+            public void handleMessage(Heartbeat heartbeat) {
+                consumed.countDown();
+                throw new IllegalStateException();
+            }
+        };
+        consumerManager.registerConsumer(consumer);
+
+        // Fetch the remote dispatcher from the blueprint context
+        MessageDispatcherFactory remoteMessageDispatcherFactory = context.getRegistry().lookupByNameAndType("camelRemoteMessageDispatcherFactory", MessageDispatcherFactory.class);
+        SyncDispatcher<Heartbeat> dispatcher = remoteMessageDispatcherFactory.createSyncDispatcher(HeartbeatModule.INSTANCE);
+
+        dispatcher.send(new Heartbeat());
+        consumed.await();
+
+        // Sleep slightly longer to allow the body to be logged on the sink consumer listener thread
+        Thread.sleep(2000);
+
+        // Verify that the message body was suppressed
+        MockLogAppender.assertLogMatched(Level.DEBUG, "[Body is not logged]");
+
+        consumerManager.unregisterConsumer(consumer);
+    }
+
