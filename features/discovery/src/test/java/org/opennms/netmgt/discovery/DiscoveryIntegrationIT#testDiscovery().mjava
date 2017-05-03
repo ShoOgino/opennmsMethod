@@ -1,7 +1,52 @@
     @Test
     public void testDiscovery() throws Exception {
-        m_discovery.init();
+        // Add a range of localhost IP addresses to ping
+        IncludeRange range = new IncludeRange();
+        range.setBegin("127.0.5.1");
+        range.setEnd("127.0.5.254");
+        range.setTimeout(5000l);
+        range.setRetries(0);
+        range.setLocation(CUSTOM_LOCATION);
+
+        DiscoveryConfiguration config = m_discoveryConfig.getConfiguration();
+        // Start immediately
+        config.setInitialSleepTime(0l);
+
+        // Discover 255 address ~= 10 seconds
+        config.setPacketsPerSecond(25.5);
+
+        // Add a discovery range to the config
+        config.clearIncludeRanges();
+        config.addIncludeRange(range);
+
+        // Don't actually save the config or we'll overwrite the 
+        // opennms-base-assembly XML file
+        //m_discoveryConfig.saveConfiguration(config);
+        //m_discoveryConfig.reload();
+
+        // Anticipate newSuspect events for all of the addresses
+        EventAnticipator anticipator = m_eventIpcManager.getEventAnticipator();
+        StreamSupport.stream(m_discoveryConfig.getConfiguredAddresses().spliterator(), false).forEach(addr -> {
+            System.out.println("ANTICIPATING: " + str(addr.getAddress()));
+            Event event = new Event();
+            event.setUei(EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI);
+            event.setInterfaceAddress(addr.getAddress());
+            anticipator.anticipateEvent(event);
+        });
+
+        // Don't re-init Discovery or it will reload the 
+        // DiscoveryConfigFactory and erase our changes to 
+        // the config
+        //m_discovery.init();
         m_discovery.start();
+
+        anticipator.waitForAnticipated(120000);
+        anticipator.verifyAnticipated();
+        anticipator.getAnticipatedEventsReceived().stream().forEach(eachEvent -> {
+            Assert.assertNotNull(eachEvent.getParm("location"));
+            Assert.assertEquals(CUSTOM_LOCATION, eachEvent.getParm("location").getValue().getContent());
+        });
+
         m_discovery.stop();
     }
 

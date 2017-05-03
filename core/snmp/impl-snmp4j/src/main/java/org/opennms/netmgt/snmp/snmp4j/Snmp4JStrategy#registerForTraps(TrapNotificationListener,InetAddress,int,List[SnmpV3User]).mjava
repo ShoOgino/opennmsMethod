@@ -1,0 +1,61 @@
+    @Override
+    public void registerForTraps(final TrapNotificationListener listener, InetAddress address, int snmpTrapPort, List<SnmpV3User> snmpUsers) throws IOException {
+    	final RegistrationInfo info = new RegistrationInfo(listener, address, snmpTrapPort);
+        
+    	final Snmp4JTrapNotifier trapNotifier = new Snmp4JTrapNotifier(listener);
+        info.setHandler(trapNotifier);
+
+        final UdpAddress udpAddress;
+        if (address == null) {
+        	udpAddress = new UdpAddress(snmpTrapPort);
+        } else {
+        	udpAddress = new UdpAddress(address, snmpTrapPort);
+        }
+
+        // Set socket option SO_REUSEADDR so that we can bind to the port even if it
+        // has recently been closed by passing 'true' as the second argument here.
+        final DefaultUdpTransportMapping transport = new DefaultUdpTransportMapping(udpAddress, true);
+        // Increase the receive buffer for the socket
+        LOG.debug("Attempting to set receive buffer size to {}", Integer.MAX_VALUE);
+        transport.setReceiveBufferSize(Integer.MAX_VALUE);
+        LOG.debug("Actual receive buffer size is {}", transport.getReceiveBufferSize());
+
+        info.setTransportMapping(transport);
+        Snmp snmp = new Snmp(transport);
+        snmp.addCommandResponder(trapNotifier);
+
+        if (snmpUsers != null) {
+            for (SnmpV3User user : snmpUsers) {
+                SnmpAgentConfig config = new SnmpAgentConfig();
+                config.setVersion(SnmpConfiguration.VERSION3);
+                config.setSecurityName(user.getSecurityName());
+                config.setAuthProtocol(user.getAuthProtocol());
+                config.setAuthPassPhrase(user.getAuthPassPhrase());
+                config.setPrivProtocol(user.getPrivProtocol());
+                config.setPrivPassPhrase(user.getPrivPassPhrase());
+                Snmp4JAgentConfig agentConfig = new Snmp4JAgentConfig(config);
+                UsmUser usmUser = new UsmUser(
+                        agentConfig.getSecurityName(),
+                        agentConfig.getAuthProtocol(),
+                        agentConfig.getAuthPassPhrase(),
+                        agentConfig.getPrivProtocol(),
+                        agentConfig.getPrivPassPhrase()
+                );
+                /* This doesn't work as expected. Basically SNMP4J is ignoring the engineId
+                if (user.getEngineId() == null) {
+                    snmp.getUSM().addUser(agentConfig.getSecurityName(), usmUser);
+                } else {
+                    snmp.getUSM().addUser(agentConfig.getSecurityName(), new OctetString(user.getEngineId()), usmUser);
+                }
+                */
+                snmp.getUSM().addUser(agentConfig.getSecurityName(), usmUser);
+            }
+        }
+
+        info.setSession(snmp);
+        
+        s_registrations.put(listener, info);
+        
+        snmp.listen();
+    }
+

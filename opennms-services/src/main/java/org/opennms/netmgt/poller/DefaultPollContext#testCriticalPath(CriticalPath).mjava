@@ -1,0 +1,45 @@
+    private boolean testCriticalPath(CriticalPath criticalPath) {
+        if (!"ICMP".equalsIgnoreCase(criticalPath.getServiceName())) {
+            LOG.warn("Critical paths using services other than ICMP are not currently supported."
+                    + " ICMP will be used for testing {}.", criticalPath);
+        }
+
+        final InetAddress ipAddress = criticalPath.getIpAddress();
+        final int retries = OpennmsServerConfigFactory.getInstance().getDefaultCriticalPathRetries();
+        final int timeout = OpennmsServerConfigFactory.getInstance().getDefaultCriticalPathTimeout();
+
+        boolean available = false;
+        try {
+            final PingSummary pingSummary = m_locationAwarePingClient.ping(ipAddress)
+                    .withLocation(criticalPath.getLocationName())
+                    .withTimeout(timeout, TimeUnit.MILLISECONDS)
+                    .withRetries(retries)
+                    .execute()
+                    .get();
+
+            // We consider the path to be available if any of the requests were successful
+            available = pingSummary.getSequences().stream()
+                            .filter(s -> s.isSuccess())
+                            .count() > 0;
+        } catch (InterruptedException e) {
+            LOG.warn("Interrupted while testing {}. Marking the path as available.", criticalPath);
+            available = true;
+        } catch (Throwable e) {
+            final Throwable cause = e.getCause();
+            if (cause != null && cause instanceof RequestTimedOutException) {
+                LOG.warn("No response was received when remotely testing {}."
+                        + " Marking the path as available.", criticalPath);
+                available = true;
+            } else if (cause != null && cause instanceof RequestRejectedException) {
+                LOG.warn("Request was rejected when attemtping to test the remote path {}."
+                        + " Marking the path as available.", criticalPath);
+                available = true;
+            }
+            LOG.warn("An unknown error occured while testing the critical path: {}."
+                    + " Marking the path as unavailable.", criticalPath, e);
+            available = false;
+        }
+        LOG.debug("testCriticalPath: checking {}@{}, available ? {}", criticalPath.getServiceName(), ipAddress, available);
+        return available;
+    }
+

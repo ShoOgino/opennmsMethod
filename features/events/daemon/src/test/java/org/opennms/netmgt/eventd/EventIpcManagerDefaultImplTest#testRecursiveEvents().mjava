@@ -1,0 +1,85 @@
+    /**
+     * This test creates two event listeners that both create events as they
+     * handle events. This test can be used to detect deadlocks between the
+     * listeners.
+     * 
+     * @throws InterruptedException
+     */
+    public void testRecursiveEvents() throws InterruptedException {
+        final int numberOfEvents = 20;
+        CountDownLatch fooCounter = new CountDownLatch(numberOfEvents);
+        CountDownLatch barCounter = new CountDownLatch(numberOfEvents);
+        CountDownLatch kiwiCounter = new CountDownLatch(numberOfEvents);
+        CountDownLatch ulfCounter = new CountDownLatch(numberOfEvents);
+
+        final EventIpcManagerDefaultImpl manager = new EventIpcManagerDefaultImpl(m_registry);
+        manager.setHandlerPoolSize(1);
+        //manager.setHandlerQueueLength(5);
+        DefaultEventHandlerImpl handler = new DefaultEventHandlerImpl(m_registry);
+        manager.setEventHandler(handler);
+        manager.afterPropertiesSet();
+
+        EventListener slowFooBarListener = new EventListener() {
+            @Override
+            public String getName() {
+                return "slowFooBarListener";
+            }
+
+            @Override
+            public void onEvent(Event event) {
+                if ("uei.opennms.org/foo".equals(event.getUei())) {
+                    EventBuilder bldr = new EventBuilder("uei.opennms.org/bar", "testRecursiveEvents");
+                    Event e = bldr.getEvent();
+                    manager.broadcastNow(e, false);
+                    fooCounter.countDown();
+                } else {
+                    try {
+                        Thread.sleep(SLOW_EVENT_OPERATION_DELAY);
+                    } catch (InterruptedException e) {
+                    }
+                    barCounter.countDown();
+                }
+            }
+        };
+
+        EventListener slowKiwiUlfListener = new EventListener() {
+            @Override
+            public String getName() {
+                return "slowKiwiUlfListener";
+            }
+
+            @Override
+            public void onEvent(Event event) {
+                if ("uei.opennms.org/foo".equals(event.getUei())) {
+                    EventBuilder bldr = new EventBuilder("uei.opennms.org/ulf", "testRecursiveEvents");
+                    Event e = bldr.getEvent();
+                    manager.broadcastNow(e, false);
+                    kiwiCounter.countDown();
+                } else {
+                    try {
+                        Thread.sleep(SLOW_EVENT_OPERATION_DELAY);
+                    } catch (InterruptedException e) {
+                    }
+                    ulfCounter.countDown();
+                }
+            }
+        };
+
+        manager.addEventListener(slowFooBarListener);
+        manager.addEventListener(slowKiwiUlfListener);
+
+        // Send ${numberOfEvents} "foo" events. This will trigger a cascade of "bar"
+        // and "ulf" events.
+        //
+        for (int i = 0; i < numberOfEvents; i++) {
+            EventBuilder bldr = new EventBuilder("uei.opennms.org/foo", "testRecursiveEvents");
+            Event e = bldr.getEvent();
+            manager.broadcastNow(e, false);
+        }
+
+        assertTrue("foo counter not satisfied: " + fooCounter.getCount(), fooCounter.await(100, TimeUnit.SECONDS));
+        assertTrue("bar counter not satisfied: " + barCounter.getCount(), barCounter.await(100, TimeUnit.SECONDS));
+        assertTrue("kiwi counter not satisfied: " + kiwiCounter.getCount(), kiwiCounter.await(100, TimeUnit.SECONDS));
+        assertTrue("ulf counter not satisfied: " + ulfCounter.getCount(), ulfCounter.await(100, TimeUnit.SECONDS));
+    }
+

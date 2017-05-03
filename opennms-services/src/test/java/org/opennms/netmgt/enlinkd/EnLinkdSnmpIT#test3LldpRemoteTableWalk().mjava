@@ -1,0 +1,48 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=SWITCH2_IP, port=161, resource="classpath:/linkd/nms17216/switch2-walk.txt")
+    })
+    public void test3LldpRemoteTableWalk() throws Exception {
+
+        SnmpAgentConfig  config = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName(SWITCH2_IP));
+        final List<LldpLink> links = new ArrayList<LldpLink>();
+                
+        LldpRemTableTracker lldpRemTable = new LldpRemTableTracker() {
+
+            public void processLldpRemRow(final LldpRemRow row) {
+                    links.add(row.getLldpLink());
+            }
+        };
+        try {
+            m_client.walk(config,
+                          lldpRemTable)
+                          .withDescription("lldpRemTable")
+                          .withLocation(null)
+                          .execute()
+                          .get();
+        } catch (ExecutionException e) {
+            // pass
+            LOG.error("run: collection failed, exiting",e);
+            return;
+        } catch (final InterruptedException e) {
+            LOG.error("run: collection interrupted, exiting",e);
+            return;
+        }
+        final LldpLocPortGetter lldpLocPort = new LldpLocPortGetter(config,
+                                                                    m_client,
+                                                                    null);
+
+        for (LldpLink link : links) {
+            assertNotNull(link);
+            assertNotNull(link.getLldpLocalPortNum());
+            assertNull(link.getLldpPortId());
+            assertNull(link.getLldpPortIdSubType());
+            assertNull(link.getLldpPortDescr());
+            
+            LldpLink updated = lldpLocPort.getLldpLink(link);
+            assertNotNull(updated.getLldpPortId());
+            assertEquals(5, updated.getLldpPortIdSubType().getValue().intValue());
+            assertNotNull(updated.getLldpPortDescr());
+        }
+    }
+

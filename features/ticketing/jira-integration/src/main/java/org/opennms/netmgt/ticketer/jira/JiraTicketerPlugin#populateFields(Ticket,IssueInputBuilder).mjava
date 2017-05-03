@@ -1,0 +1,49 @@
+    /**
+     * Convenient method to populate additional fields in the {@link IssueInputBuilder}.
+     * The fields are read from {@link Ticket#getAttributes()}.
+     *
+     * @param ticket The ticket to read the attributes from.
+     * @param builder The builder to set additional fields.
+     */
+    private void populateFields(Ticket ticket, IssueInputBuilder builder) {
+        // Only convert additional attributes to field values, if available
+        if (!ticket.hasAttributes()) {
+            return;
+        }
+        final List<String> populatedFields = Lists.newArrayList(); // List of fields already populated
+        final Collection<CimFieldInfo> fields = getFields();
+        for (Entry<String, String> eachEntry : ticket.getAttributes().entrySet()) {
+            if (!Strings.isNullOrEmpty(eachEntry.getValue())) { // ignore null or empty values
+                // Find a field representation in jira
+                for (CimFieldInfo eachField : fields) {
+                    if (eachEntry.getKey().equals(eachField.getId())) {
+                        try {
+                            final String attributeValue = eachEntry.getValue();
+                            final Object mappedFieldValue = fieldMapFunctionCache.get(eachField.getSchema()).mapToFieldValue(eachField.getId(), eachField.getSchema(), attributeValue);
+                            builder.setFieldValue(eachField.getId(), mappedFieldValue);
+                            populatedFields.add(eachField.getId());
+                            break; // we found a representation, now continue with next attribute
+                        } catch (Exception ex) {
+                            LOG.error("Could not convert attribute (id={}, value={}) to jira field value. Ignoring attribute.", eachField.getId(), eachEntry.getValue(), ex);
+                        }
+                    }
+                }
+            }
+        }
+        // Inform about not found attributes
+        if (populatedFields.size() != ticket.getAttributes().size()) {
+            for (String eachKey : ticket.getAttributes().keySet()) {
+                if (!populatedFields.contains(eachKey)) {
+                    LOG.warn("Ticket attribute '{}' is defined, but was not mapped to a (custom) field in JIRA. Attribute is skipped.", eachKey);
+                }
+            }
+        }
+
+        // Inform if required attribute has not been set
+        final List<CimFieldInfo> requiredFieldsNotSet = fields.stream().filter(f -> f.isRequired()).filter(f -> !populatedFields.contains(f)).collect(Collectors.toList());
+        if (!requiredFieldsNotSet.isEmpty()) {
+            final String missingFields = requiredFieldsNotSet.stream().map(f -> String.format("id: %s, name: %s", f.getId(), f.getName())).collect(Collectors.joining(", "));
+            LOG.warn("Not all required (custom) jira fields have been set. The following are unset: %s", missingFields);
+        }
+    }
+

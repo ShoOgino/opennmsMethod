@@ -1,0 +1,51 @@
+    @Override
+    protected Void doExecute() {
+        final ServiceCollector collector = serviceCollectorRegistry.getCollectorByClassName(className);
+        if (collector == null) {
+            System.out.printf("No collector found with class name '%s'. Aborting.\n", className);
+            return null;
+        }
+
+        try {
+            // The collector may not have been initialized - initialize it
+            collector.initialize();
+        } catch (CollectionInitializationException e) {
+            System.out.println("Failed to initialize the collector. Aborting.");
+            e.printStackTrace();
+            return null;
+        }
+
+        final CollectionAgent agent = getCollectionAgent();
+        final CompletableFuture<CollectionSet> future = locationAwareCollectorClient.collect()
+                .withAgent(agent)
+                .withCollector(collector)
+                .withTimeToLive(ttlInMs)
+                .withAttributes(parse(attributes))
+                .execute();
+
+        while (true) {
+            try {
+                try {
+                    CollectionSet collectionSet = future.get(1, TimeUnit.SECONDS);
+                    if (CollectionStatus.SUCCEEDED.equals(collectionSet.getStatus())) {
+                        printCollectionSet(collectionSet);
+                    } else {
+                        System.out.printf("\nThe collector returned a collection set with status: %s\n", collectionSet.getStatus());
+                    }
+                } catch (InterruptedException e) {
+                    System.out.println("\nInterrupted.");
+                } catch (ExecutionException e) {
+                    System.out.printf("\nCollect failed with:", e);
+                    e.printStackTrace();
+                    System.out.println();
+                }
+                break;
+            } catch (TimeoutException e) {
+                // pass
+            }
+            System.out.print(".");
+            System.out.flush();
+        }
+        return null;
+    }
+

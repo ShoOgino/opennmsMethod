@@ -1,0 +1,34 @@
+    /**
+     * Refreshes table entries.
+     */
+    public void refresh() {
+        final com.google.common.collect.Table<Long, Optional<Long>, Boolean> expandState = getCurrentExpandState();
+        final BusinessServiceContainer newContainer = new BusinessServiceContainer();
+
+        if (!Strings.isNullOrEmpty(businessServiceNameFilter)) {
+            newContainer.addContainerFilter(new BusinessServiceFilter(newContainer, businessServiceNameFilter));
+        }
+
+        // Build a graph using all of the business services stored in the database
+        // We don't use the existing graph, since it only contains the services know by the state machine
+        List<BusinessService> allBusinessServices = businessServiceManager.getAllBusinessServices();
+        final BusinessServiceGraph graph = businessServiceManager.getGraph(allBusinessServices);
+
+        // Recursively generate the table rows, starting with the roots
+        graph.getVerticesByLevel(0).stream()
+                .filter(v -> v.getBusinessService() != null)
+                .sorted((v1, v2) -> v1.getBusinessService().getName().compareTo(v2.getBusinessService().getName()))
+                .forEach(v -> newContainer.addRow(graph, v));
+
+        // Make it hierarchical
+        Hierarchical hierarchicalContainer = createHierarchicalContainer(newContainer);
+
+        // Update datasource
+        setContainerDataSource(hierarchicalContainer);
+        setVisibleColumns("name", "links", "edit / delete"); // reset visible columns
+
+        // Restore the previous collapsed state
+        List<BusinessServiceRow> rows = getItemIds().stream().map(itemId -> getItem(itemId).getBean()).collect(Collectors.toList());
+        applyExpandState(expandState, rows);
+    }
+

@@ -1,90 +1,34 @@
     private void addVirtualMachine(OnmsNode virtualMachine) {
-        // getting data for nodes
-
         String vmwareManagementServer = virtualMachine.getAssetRecord().getVmwareManagementServer().trim();
         String vmwareManagedObjectId = virtualMachine.getAssetRecord().getVmwareManagedObjectId().trim();
-        String vmwareTopologyInfo = virtualMachine.getAssetRecord().getVmwareTopologyInfo().trim();
         String vmwareState = virtualMachine.getAssetRecord().getVmwareState().trim();
-
-        String datacenterMoId = null;
-        String datacenterName = "Datacenter (" + vmwareManagementServer + ")";
-
-        String vmwareHostSystemId = null;
-
-        ArrayList<String> networks = new ArrayList<String>();
-        ArrayList<String> datastores = new ArrayList<String>();
-
-        HashMap<String, String> moIdToName = new HashMap<String, String>();
-
-        String[] entities = vmwareTopologyInfo.split(SPLIT_REGEXP);
-
-        for (String entityAndName : entities) {
-            String[] splitBySlash = entityAndName.split("/");
-            String entityId = splitBySlash[0];
-
-            String entityName = "unknown";
-
-            if (splitBySlash.length > 1) {
-                try {
-                    entityName = new String(URLDecoder.decode(splitBySlash[1], "UTF-8"));
-                } catch (UnsupportedEncodingException e) {
-                    LOG.error(e.getMessage(), e);
-                }
-            }
-
-            String entityType = entityId.split("-")[0];
-
-            if ("network".equals(entityType)) {
-                networks.add(entityId);
-            }
-
-            if ("datastore".equals(entityType)) {
-                datastores.add(entityId);
-            }
-
-            if ("datacenter".equals(entityType)) {
-                datacenterMoId = entityId;
-            }
-
-            if ("host".equals(entityType)) {
-                vmwareHostSystemId = entityId;
-            }
-
-            moIdToName.put(entityId, entityName);
-        }
-
-        if (datacenterMoId != null) {
-            datacenterName = moIdToName.get(datacenterMoId) + " (" + vmwareManagementServer + ")";
-        }
-
-        if (vmwareHostSystemId == null) {
-            LOG.warn("Cannot find host system id for virtual machine {}/{}", vmwareManagementServer, vmwareManagedObjectId);
-        }
-
-        AbstractVertex datacenterVertex = addDatacenterGroup(vmwareManagementServer, datacenterName);
-
         String primaryInterface = "unknown";
-
-        // get the primary interface ip address
-
         OnmsIpInterface ipInterface = m_ipInterfaceDao.findPrimaryInterfaceByNodeId(virtualMachine.getId());
 
         if (ipInterface != null) {
             primaryInterface = ipInterface.getIpHostName();
         }
 
-        // add a vertex for the virtual machine
-        AbstractVertex virtualMachineVertex = addVirtualMachineVertex(vmwareManagementServer + "/" + vmwareManagedObjectId, virtualMachine.getLabel(), primaryInterface, virtualMachine.getId(), vmwareState);
+        Map<String, ParsedEntity> parsedEntities = parseNodeAssets(virtualMachine);
 
-        if (containsVertexId(vmwareManagementServer + "/" + vmwareHostSystemId)) {
-            // and set the parent vertex
-            // virtualMachineVertex.setParent(datacenterVertex);
-            if (!virtualMachineVertex.equals(datacenterVertex)) setParent(virtualMachineVertex, datacenterVertex);
-        } else {
-            addHostSystemVertex(vmwareManagementServer + "/" + vmwareHostSystemId, moIdToName.get(vmwareHostSystemId) + " (not in database)", "", -1, "unknown");
+        String vmwareHostSystemId = parsedEntities.values().stream().filter(e -> "host".equals(e.getEntityType())).findFirst().map(e -> e.getEntityId()).orElse(null);
+
+        if (vmwareHostSystemId == null) {
+            LOG.warn("Cannot find host system id for virtual machine {}/{}", vmwareManagementServer, vmwareManagedObjectId);
         }
 
-        // connect the virtual machine to the host system
-        connectVertices(vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + vmwareManagementServer + "/" + vmwareHostSystemId, virtualMachineVertex, getVertex(getVertexNamespace(), vmwareManagementServer + "/" + vmwareHostSystemId), getEdgeNamespace());
+        AbstractVertex virtualMachineVertex = createVirtualMachineVertex(vmwareManagementServer + "/" + vmwareManagedObjectId, virtualMachine.getLabel(), primaryInterface, virtualMachine.getId(), vmwareState);
+        addVertices(virtualMachineVertex);
+
+        if (!containsVertexId(vmwareManagementServer + "/" + vmwareHostSystemId)) {
+            LOG.warn("Cannot find associated vertex for host system {}/{}", vmwareManagementServer, vmwareHostSystemId);
+        }
+
+        connectVertices(
+                vmwareManagementServer + "/" + vmwareManagedObjectId + "->" + vmwareManagementServer + "/" + vmwareHostSystemId,
+                virtualMachineVertex,
+                getVertex(getNamespace(), vmwareManagementServer + "/" + vmwareHostSystemId),
+                getNamespace()
+        );
     }
 

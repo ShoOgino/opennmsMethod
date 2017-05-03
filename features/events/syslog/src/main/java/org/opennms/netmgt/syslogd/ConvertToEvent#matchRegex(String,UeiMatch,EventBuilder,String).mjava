@@ -1,0 +1,67 @@
+    /**
+     * Checks the message for matches to a {@link UeiMatch}. If the message
+     * matches, then the UEI is updated (or the event is discarded if the discard
+     * UEI is used) and parameters are added to the event.
+     * 
+     * @param message
+     * @param uei
+     * @param bldr
+     * @param discardUei
+     * @return
+     * @throws MessageDiscardedException
+     */
+    private static boolean matchRegex(final String message, final UeiMatch uei, final EventBuilder bldr, final String discardUei) throws MessageDiscardedException {
+        final boolean traceEnabled = LOG.isTraceEnabled();
+        final String expression = uei.getMatch().getExpression();
+        final Pattern msgPat = getPattern(expression);
+        if (msgPat == null) {
+            LOG.debug("Unable to create pattern for expression '{}'", expression);
+            return false;
+        } 
+
+        final Matcher msgMat = msgPat.matcher(message);
+
+        // If the message matches the regex
+        if ((msgMat != null) && (msgMat.find())) {
+            // Discard the message if the UEI is set to the discard UEI
+            if (discardUei.equals(uei.getUei())) {
+                if (traceEnabled) LOG.trace("Specified UEI '{}' is same as discard-uei, discarding this message.", uei.getUei());
+                throw new MessageDiscardedException();
+            } else {
+                // Update the UEI to the new value
+                if (traceEnabled) LOG.trace("Changed the UEI of a Syslogd event, based on regex match, to : {}", uei.getUei());
+                bldr.setUei(uei.getUei());
+            }
+
+            if (msgMat.groupCount() > 0) {
+                // Perform default parameter mapping
+                if (uei.getMatch().isDefaultParameterMapping()) {
+                    if (traceEnabled) LOG.trace("Doing default parameter mappings for this regex match.");
+                    for (int groupNum = 1; groupNum <= msgMat.groupCount(); groupNum++) {
+                        if (traceEnabled) LOG.trace("Added parm 'group{}' with value '{}' to Syslogd event based on regex match group", groupNum, msgMat.group(groupNum));
+                        bldr.addParam("group"+groupNum, msgMat.group(groupNum));
+                    }
+                }
+
+                // If there are specific parameter mappings as well, perform those mappings
+                if (uei.getParameterAssignmentCount() > 0) {
+                    if (traceEnabled) LOG.trace("Doing user-specified parameter assignments for this regex match.");
+                    for (ParameterAssignment assignment : uei.getParameterAssignmentCollection()) {
+                        String parmName = assignment.getParameterName();
+                        String parmValue = msgMat.group(assignment.getMatchingGroup());
+                        parmValue = parmValue == null ? "" : parmValue;
+                        bldr.addParam(parmName, parmValue);
+                        if (traceEnabled) {
+                            LOG.trace("Added parm '{}' with value '{}' to Syslogd event based on user-specified parameter assignment", parmName, parmValue);
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        if (traceEnabled) LOG.trace("Message portion '{}' did not regex-match pattern '{}'", message, expression);
+        return false;
+    }
+

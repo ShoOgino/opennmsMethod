@@ -1,13 +1,18 @@
     private void collectGroupUsing(Group group, CollectionAgent agent, WSManClient client, int retries, CollectionSetBuilder builder) throws CollectionException {
         // Determine the appropriate resource type
         final NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+        final AtomicInteger instanceId = new AtomicInteger();
         Supplier<Resource> resourceSupplier = () -> nodeResource;
         if (!"node".equalsIgnoreCase(group.getResourceType())) {
-            final ResourceType resourceType = m_resourceTypesDao.getResourceTypeByName(group.getResourceType());
-            if (resourceType == null) {
-                throw new CollectionException("No resource type found with name '" + group.getResourceType() + "'.");
-            }
-            resourceSupplier = () -> new GenericTypeResourceWithoutInstance(nodeResource, resourceType);
+            resourceSupplier = () -> {
+                // Generate a unique instance for each node in each group to ensure
+                // that the attributes are grouped together properly.
+                // Since these instances have no real meaning, a storage strategy
+                // similar to the SiblingColumnStorageStrategy should be used instead
+                // of the IndexStorageStrategy.
+                final String instance = String.format("%s%d", group.getName(), instanceId.getAndIncrement());
+                return new DeferredGenericTypeResource(nodeResource, group.getResourceType(), instance);
+            };
         }
         if (LOG.isDebugEnabled()) {
             LOG.debug("Using resource {} for group named {}", resourceSupplier.get(), group.getName());

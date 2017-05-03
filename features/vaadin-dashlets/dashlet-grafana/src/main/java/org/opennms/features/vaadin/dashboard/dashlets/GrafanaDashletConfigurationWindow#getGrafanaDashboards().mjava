@@ -1,0 +1,65 @@
+    private Map<String, String> getGrafanaDashboards() throws GrafanaDashletException {
+        /**
+         * Loading the required properties...
+         */
+        final String grafanaApiKey = System.getProperty("org.opennms.grafanaBox.apiKey", "");
+        final String grafanaProtocol = System.getProperty("org.opennms.grafanaBox.protocol", "http");
+        final String grafanaHostname = System.getProperty("org.opennms.grafanaBox.hostname", "localhost");
+        final int grafanaPort = Integer.parseInt(System.getProperty("org.opennms.grafanaBox.port", "3000"));
+        final int grafanaConnectionTimeout = Integer.parseInt(System.getProperty("org.opennms.grafanaBox.connectionTimeout", "500"));
+        final int grafanaSoTimeout = Integer.parseInt(System.getProperty("org.opennms.grafanaBox.soTimeout", "500"));
+
+        if (!"".equals(grafanaApiKey)
+                && !"".equals(grafanaHostname)
+                && !"".equals(grafanaProtocol)
+                && ("http".equals(grafanaProtocol) || "https".equals(grafanaProtocol))) {
+            try (CloseableHttpClient httpClient = HttpClients.createDefault();) {
+                final RequestConfig requestConfig = RequestConfig.custom()
+                        .setConnectTimeout(grafanaConnectionTimeout)
+                        .setSocketTimeout(grafanaSoTimeout)
+                        .build();
+                final URI uri = new URIBuilder()
+                        .setScheme(grafanaProtocol)
+                        .setHost(grafanaHostname)
+                        .setPort(grafanaPort)
+                        .setPath("/api/search/")
+                        .build();
+
+                final HttpGet httpGet = new HttpGet(uri);
+                httpGet.setConfig(requestConfig);
+
+                /**
+                 * Adding the API key...
+                 */
+                httpGet.setHeader("Authorization", "Bearer " + grafanaApiKey);
+
+                final Map<String, String> resultSet = new TreeMap<>();
+
+                try (CloseableHttpResponse httpResponse = httpClient.execute(httpGet);) {
+                    HttpEntity httpEntity = httpResponse.getEntity();
+                    if (httpEntity != null) {
+                        /**
+                         * Fill the result set...
+                         */
+                        final String responseString = IOUtils.toString(httpEntity.getContent(), StandardCharsets.UTF_8.name());
+                        if (!Strings.isNullOrEmpty(responseString)) {
+                            try {
+                                final JSONArray arr = new JSONObject("{dashboards:" + responseString + "}").getJSONArray("dashboards");
+                                for (int i = 0; i < arr.length(); i++) {
+                                    resultSet.put(arr.getJSONObject(i).getString("title"), arr.getJSONObject(i).getString("uri"));
+                                }
+                            } catch (JSONException e) {
+                                throw new GrafanaDashletException(e.getMessage());
+                            }
+                        }
+                    }
+                }
+                return resultSet;
+            } catch (Exception e) {
+                throw new GrafanaDashletException(e.getMessage());
+            }
+        } else {
+            throw new GrafanaDashletException("Invalid configuration");
+        }
+    }
+

@@ -1,0 +1,66 @@
+    /**
+     * Iterates through the host systems and adds them to the requisition object.
+     *
+     * @param vmwareViJavaAccess the access/connection to use
+     * @throws RemoteException
+     */
+    private void iterateHostSystems(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) throws RemoteException {
+        ManagedEntity[] hostSystems;
+
+        // search for host systems (esx hosts)
+        logger.debug("Starting to iterate host systems on VMware host {} ...", request.getHostname());
+        hostSystems = vmwareViJavaAccess.searchManagedEntities("HostSystem");
+
+        if (hostSystems != null) {
+
+            for (ManagedEntity managedEntity : hostSystems) {
+                HostSystem hostSystem = (HostSystem) managedEntity;
+                logger.debug("Iterating host systems on VMware management server {} : {} (ID: {})", request.getHostname(), hostSystem.getName(), hostSystem.getMOR().getVal());
+
+                m_hostSystemMap.put(hostSystem.getMOR().getVal(), hostSystem.getName());
+
+                // check for correct key/value-pair
+                if (checkHostPowerState(hostSystem) && checkForAttribute(hostSystem)) {
+                    logger.debug("Adding Host System '{}' (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+
+                    // iterate over all service console networks and add interface Ip addresses
+                    TreeSet<String> ipAddresses = vmwareViJavaAccess.getHostSystemIpAddresses(hostSystem);
+
+                    // create the new node...
+                    RequisitionNode node = createRequisitionNode(ipAddresses, hostSystem, apiVersion, vmwareViJavaAccess);
+
+                    // add cpu
+                    try {
+                        node.putAsset(new RequisitionAsset("cpu", hostSystem.getHardware().getCpuInfo().getNumCpuCores() + " cores"));
+                    } catch (Exception e) {
+                        logger.debug("Can't find CPU information for {} (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+                    }
+
+                    // add memory
+                    try {
+                        node.putAsset(new RequisitionAsset("ram", Math.round(hostSystem.getHardware().getMemorySize()/1000000f) + " MB"));
+                    } catch (Exception e) {
+                        logger.debug("Can't find Memory information for {} (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+                    }
+
+                    // add vendor
+                    /*
+                    try {
+                        node.putAsset(new RequisitionAsset("vendor", hostSystem.getHardware().getSystemInfo().getVendor()));
+                    } catch (Exception e) {
+                        logger.debug("Can't find vendor information for {}", hostSystem.getName());
+                    }
+                    */
+
+                    // set the location
+                    node.setLocation(request.getLocation());
+
+                    // ...and add it to the requisition
+                    if (node != null && request.isPersistHosts()) {
+                        m_requisition.insertNode(node);
+                    }
+                }
+            }
+        }
+    }
+

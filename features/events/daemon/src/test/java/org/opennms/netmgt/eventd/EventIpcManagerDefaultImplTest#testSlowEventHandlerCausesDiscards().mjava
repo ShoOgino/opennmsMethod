@@ -1,0 +1,50 @@
+    public void testSlowEventHandlerCausesDiscards() throws InterruptedException {
+        AtomicInteger counter = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+
+        EventHandler handler = new EventHandler() {
+            @Override
+            public Runnable createRunnable(Log eventLog, boolean synchronous) {
+                return createRunnable(eventLog);
+            }
+
+            @Override
+            public Runnable createRunnable(Log eventLog) {
+                return new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(SLOW_EVENT_OPERATION_DELAY);
+                        } catch (InterruptedException e) {
+                        }
+                        counter.incrementAndGet();
+                    }
+                };
+            }
+        };
+
+        EventIpcManagerDefaultImpl manager = new EventIpcManagerDefaultImpl(m_registry);
+        manager.setEventHandler(handler);
+        manager.setHandlerPoolSize(1);
+        manager.setHandlerQueueLength(5);
+        manager.afterPropertiesSet();
+
+        // Send 10 events. The first one will be executed on the handler thread,
+        // the next 5 will be enqueued, then the last 4 will be discarded because
+        // the queue is full. After the time has expired, the first 6 events will 
+        // have passed through the handler.
+        //
+        for (int i = 0; i < 10; i++) {
+            EventBuilder bldr = new EventBuilder("uei.opennms.org/foo/" + i, "testDiscardWhenFullWithSlowEventListener");
+            Event event = bldr.getEvent();
+            try {
+                manager.sendNow(event);
+            } catch (RejectedExecutionException e) {
+                rejected.incrementAndGet();
+            }
+        }
+
+        await().pollInterval(1, TimeUnit.SECONDS).untilAtomic(counter, is(equalTo(6)));
+        await().pollInterval(1, TimeUnit.SECONDS).untilAtomic(rejected, is(equalTo(4)));
+    }
+

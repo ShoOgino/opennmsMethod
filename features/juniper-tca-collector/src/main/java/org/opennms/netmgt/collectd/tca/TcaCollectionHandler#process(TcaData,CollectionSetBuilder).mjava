@@ -1,0 +1,62 @@
+	/**
+	 * Process.
+	 * 
+	 * <p>A sample TCA Data looks like the following:</p>
+	 * <ul>
+	 * <li>OID=.1.3.6.1.4.1.27091.3.1.6.1.1.172.19.37.60.1, Type=OctetString, Value=172.19.37.60 </li>
+	 * <li>OID=.1.3.6.1.4.1.27091.3.1.6.1.2.172.19.37.60.1, Type=OctetString, Value=
+	 * |25|1327451762,11,0,11,0,1|1327451763,11,0,11,0,1|1327451764,11,0,11,0,1|1327451765,11,0,11,0,1|1327451766,11,0,11,0,1|
+	 * 1327451767,11,0,11,0,1|1327451768,11,0,11,0,1|1327451769,11,0,11,0,1|1327451770,11,0,11,0,1|1327451771,11,0,11,0,1|
+	 * 1327451772,11,0,11,0,1|1327451773,11,0,11,0,1|1327451774,11,0,11,0,1|1327451775,11,0,11,0,1|1327451776,11,0,11,0,1|
+	 * 1327451777,11,0,11,0,1|1327451778,11,0,11,0,1|1327451779,11,0,11,0,1|1327451780,11,0,11,0,1|1327451781,11,0,11,0,1|
+	 * 1327451782,11,0,11,0,1|1327451783,11,0,11,0,1|1327451784,11,0,11,0,1|1327451785,11,0,11,0,1|1327451786,11,0,11,0,1|</li>
+	 * </ul>
+	 * 
+	 * <ul>
+	 * <li>timestamp (epoch)</li>
+	 * <li>delay local-remote ~ current inbound-delay</li>
+	 * <li>jitter local-remote ~ current inbound-jitter</li>
+	 * <li>delay remote-local ~ current outbound-delay</li>
+	 * <li>jitter remote-local ~ current outbound-jitter-</li>
+	 * <li>timesync status (1 = good, time is synced, 0 = bad, out-of sync)</li>
+	 * </ul>
+	 *
+	 * @param tracker the tracker
+	 * @throws Exception the exception
+	 */
+	private void process(TcaData tracker, CollectionSetBuilder builder) {
+		LOG.debug("process: processing raw TCA data for {} peers.", tracker.size());
+
+		final NodeLevelResource nodeResource = new NodeLevelResource(m_agent.getNodeId());
+
+		long timestamp = 0;
+		for (TcaDataEntry entry : tracker.getEntries()) {
+			GenericTypeResource resource = new GenericTypeResource(nodeResource, m_resourceType, entry.getPeerAddress());
+			CollectionResource collectionResource = CollectionSetBuilder.toCollectionResource(resource, m_agent);
+
+			long lastTimestamp = getLastTimestamp(collectionResource);
+			String[] rawData = entry.getRawData().split("\\|");
+			int samples = Integer.parseInt(rawData[1]);
+			SnmpObjId entryObjId = SnmpObjId.get(".1.3.6.1.4.1.27091.3.1.6.1.2", entry.getInstance().toString());
+			String identifierPrefix = String.format("TCA_%s_", entryObjId);
+
+			for (int i=0; i<samples; i++) {
+				LOG.debug("process: processing row {}: {}", i, rawData[2 + i]);
+				String[] rawEntry = rawData[2 + i].split(",");
+				timestamp = Long.parseLong(rawEntry[0]);
+				if (timestamp > lastTimestamp) {
+					resource = new GenericTypeResource(nodeResource, m_resourceType, entry.getPeerAddress());
+					resource.setTimestamp(new Date(timestamp * 1000));
+					builder.withIdentifiedNumericAttribute(resource, RESOURCE_TYPE_NAME, INBOUND_DELAY, Double.parseDouble(rawEntry[1]), AttributeType.GAUGE, identifierPrefix + INBOUND_DELAY);
+					builder.withIdentifiedNumericAttribute(resource, RESOURCE_TYPE_NAME, INBOUND_JITTER, Double.parseDouble(rawEntry[2]), AttributeType.GAUGE, identifierPrefix + INBOUND_JITTER);
+					builder.withIdentifiedNumericAttribute(resource, RESOURCE_TYPE_NAME, OUTBOUND_DELAY, Double.parseDouble(rawEntry[3]), AttributeType.GAUGE, identifierPrefix + OUTBOUND_DELAY);
+					builder.withIdentifiedNumericAttribute(resource, RESOURCE_TYPE_NAME, OUTBOUND_JITTER, Double.parseDouble(rawEntry[4]), AttributeType.GAUGE, identifierPrefix + OUTBOUND_JITTER);
+					builder.withIdentifiedNumericAttribute(resource, RESOURCE_TYPE_NAME, TIMESYNC_STATUS, Double.parseDouble(rawEntry[5]), AttributeType.GAUGE, identifierPrefix + TIMESYNC_STATUS);
+				} else {
+					LOG.debug("process: skipping row {} {} because it was already processed.", i, rawData[2+i]);
+				}
+			}
+			setLastTimestamp(collectionResource, timestamp);
+		}
+	}
+

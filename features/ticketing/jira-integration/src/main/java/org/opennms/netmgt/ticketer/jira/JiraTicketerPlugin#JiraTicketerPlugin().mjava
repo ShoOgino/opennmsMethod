@@ -1,0 +1,30 @@
+    public JiraTicketerPlugin() {
+        Long cacheReloadTime = getConfig().getCacheReloadTime();
+        if (cacheReloadTime == null || cacheReloadTime < 0) {
+            LOG.warn("Cache Reload time was set to {} ms. Negative or null values are not supported. Setting to 5 minutes.", cacheReloadTime);
+            cacheReloadTime = TimeUnit.MILLISECONDS.convert(5, TimeUnit.MINUTES);
+        }
+        fieldMapFunctionCache = CacheBuilder.newBuilder()
+                .maximumSize(100)
+                .expireAfterWrite(cacheReloadTime, TimeUnit.MILLISECONDS)
+                .build(new CacheLoader<FieldSchema, FieldMapper>() {
+                    @Override
+                    public FieldMapper load(FieldSchema schema) throws Exception {
+                        final FieldMapperRegistry fieldMapperRegistry = new FieldMapperRegistry(getConfig().getProperties());
+                        return fieldMapperRegistry.lookup(schema);
+                    }
+                });
+        fieldInfoCache = new Cache<>(
+                () -> {
+                    try (JiraRestClient client = getConnection()) {
+                        return JiraClientUtils.getIssueMetaData(
+                                client,
+                                "projects.issuetypes.fields",
+                                getConfig().getIssueTypeId(),
+                                getConfig().getProjectKey());
+                    }
+                },
+                new TimeoutRefreshPolicy(cacheReloadTime, TimeUnit.NANOSECONDS)
+        );
+    }
+

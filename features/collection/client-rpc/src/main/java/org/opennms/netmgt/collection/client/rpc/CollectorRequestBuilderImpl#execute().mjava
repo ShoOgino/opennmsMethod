@@ -1,0 +1,43 @@
+    @Override
+    public CompletableFuture<CollectionSet> execute() {
+        if (serviceCollector == null) {
+            throw new IllegalArgumentException("Collector or collector class name is required.");
+        } else if (agent == null) {
+            throw new IllegalArgumentException("Agent is required.");
+        }
+
+        CollectorRequestDTO request = new CollectorRequestDTO();
+        request.setLocation(serviceCollector.getEffectiveLocation(agent.getLocationName()));
+        request.setClassName(serviceCollector.getClass().getCanonicalName());
+        request.setTimeToLiveMs(ttlInMs);
+
+        // Retrieve the runtime attributes, which may include attributes
+        // such as the agent details and other state related attributes
+        // which should be included in the request
+        final Map<String, Object> runtimeAttributes = serviceCollector.getRuntimeAttributes(agent, attributes);
+        final Map<String, Object> allAttributes = new HashMap<>();
+        allAttributes.putAll(attributes);
+        allAttributes.putAll(runtimeAttributes);
+
+        // The runtime attributes may include objects which need to be marshaled.
+        // Only marshal these if the request is being executed at another location.
+        if (MonitoringLocationUtils.isDefaultLocationName(request.getLocation())) {
+            // As-is
+            request.setAgent(agent);
+            request.addAttributes(allAttributes);
+        } else {
+            // Marshal
+            request.setAgent(new CollectionAgentDTO(agent));
+            final Map<String, String> marshaledParms = serviceCollector.marshalParameters(allAttributes);
+            marshaledParms.forEach((k,v) -> {
+                request.addAttribute(k, v);
+            });
+            request.setAttributesNeedUnmarshaling(true);
+        }
+
+        // Execute the request
+        return client.getDelegate().execute(request).thenApply(results -> {
+            return results.getCollectionSet();
+        });
+    }
+

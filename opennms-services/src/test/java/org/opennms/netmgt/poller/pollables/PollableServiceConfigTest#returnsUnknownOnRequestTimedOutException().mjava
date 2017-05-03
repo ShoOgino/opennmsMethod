@@ -1,0 +1,53 @@
+    /**
+     * Verifies that <b>PollStatus.unknown()</b> is returned when the
+     * {@link LocationAwarePollerClient} fails with a {@link RequestTimedOutException}.
+     *
+     * This can happen when no Minions at the given location are available to process
+     * the request, or the request was not completed in time, in which case we cannot
+     * ascertain that the service is UP or DOWN.
+     */
+    @Test
+    public void returnsUnknownOnRequestTimedOutException() throws Exception {
+        // Create a future that fails with a RequestTimedOutException
+        CompletableFuture<PollerResponse> future = new CompletableFuture<>();
+        future.completeExceptionally(new RequestTimedOutException(new Exception("Test")));
+
+        // Now mock the client to always return the future we created above
+        LocationAwarePollerClient client = mock(LocationAwarePollerClient.class, Mockito.RETURNS_DEEP_STUBS);
+        Mockito.when(
+                client.poll()
+                    .withService(any())
+                    .withMonitor(any())
+                    .withTimeToLive(any())
+                    .withAttributes(any())
+                    .withAdaptor(any())
+                    .withAdaptor(any())
+                    .execute()
+        ).thenReturn(future);
+
+        // Mock all of the required objects required to successfully initialize the PollableServiceConfig
+        PollableService pollableSvc = mock(PollableService.class);
+        when(pollableSvc.getSvcName()).thenReturn("SVC");
+
+        Service configuredSvc = new Service();
+        configuredSvc.setName("SVC");
+        Package pkg = mock(Package.class);
+        when(pkg.getServices()).thenReturn(Lists.newArrayList(configuredSvc));
+
+        PollerConfig pollerConfig = mock(PollerConfig.class);
+        PollOutagesConfig pollOutagesConfig = mock(PollOutagesConfig.class);
+        Timer timer = mock(Timer.class);
+        PersisterFactory persisterFactory = mock(PersisterFactory.class);
+        ResourceStorageDao resourceStorageDao = mock(ResourceStorageDao.class);
+
+        final PollableServiceConfig psc = new PollableServiceConfig(pollableSvc, pollerConfig,
+                pollOutagesConfig, pkg, timer,
+                persisterFactory, resourceStorageDao, client);
+
+        // Trigger the poll
+        PollStatus pollStatus = psc.poll();
+
+        // Verify
+        assertThat(pollStatus.isUnknown(), is(true));
+    }
+

@@ -1,5 +1,7 @@
     @Override
     public void beforeTestClass(final TestContext testContext) throws Exception {
+        TemporaryDatabasePostgreSQL.failIfUnitTest();
+
         // Fire up a thread pool for each CPU to create test databases
         ExecutorService pool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 
@@ -7,7 +9,7 @@
 
         final Future<TemporaryDatabase> classDs;
         if (classJtd != null) {
-            classDs = pool.submit(new CreateNewDatabaseCallable(classJtd));
+            classDs = pool.submit(new CreateNewDatabaseCallable(classJtd, testContext.getTestClass().getName(), null));
             if (classJtd.reuseDatabase() == false) {
                 m_createNewDatabases = true;
             }
@@ -16,7 +18,7 @@
         }
 
         List<Future<TemporaryDatabase>> futures = new ArrayList<Future<TemporaryDatabase>>();
-        for (Method method : testContext.getTestClass().getMethods()) {
+        for (Method method : getOrderedTestMethods(testContext.getTestClass())) {
             if (method != null) {
                 final JUnitTemporaryDatabase methodJtd = method.getAnnotation(JUnitTemporaryDatabase.class);
                 boolean methodHasTest = method.getAnnotation(Test.class) != null;
@@ -24,13 +26,13 @@
                     // If there is a method-specific annotation, use it to create the temporary database
                     if (methodJtd != null) {
                         // Create a new database based on the method-specific annotation
-                        Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(methodJtd));
+                        Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(methodJtd, testContext.getTestClass().getName(), method.getName()));
                         Assert.notNull(submit, "pool.submit(new CreateNewDatabaseCallable(methodJtd = " + methodJtd + ")");
                         futures.add(submit);
                     } else if (classJtd != null) {
                         if (m_createNewDatabases) {
                             // Create a new database based on the test class' annotation
-                            Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(classJtd));
+                            Future<TemporaryDatabase> submit = pool.submit(new CreateNewDatabaseCallable(classJtd, testContext.getTestClass().getName(), method.getName()));
                             Assert.notNull(submit, "pool.submit(new CreateNewDatabaseCallable(classJtd = " + classJtd + ")");
                             futures.add(submit);
                         } else {

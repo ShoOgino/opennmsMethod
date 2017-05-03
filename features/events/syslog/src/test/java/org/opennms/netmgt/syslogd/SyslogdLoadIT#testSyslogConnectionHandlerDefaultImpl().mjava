@@ -1,0 +1,42 @@
+    @Test
+    @Transactional
+    public void testSyslogConnectionHandlerDefaultImpl() throws Exception {
+
+        final int eventCount = 100;
+
+        List<Integer> foos = new ArrayList<Integer>();
+
+        for (int i = 0; i < eventCount; i++) {
+            int eventNum = Double.valueOf(Math.random() * 10000).intValue();
+            foos.add(eventNum);
+        }
+
+        m_eventCounter.setAnticipated(eventCount);
+
+        String testPduFormat = "2010-08-19 localhost foo%d: load test %d on tty1";
+        SyslogClient sc = new SyslogClient(null, 10, SyslogClient.LOG_USER, addr("127.0.0.1"));
+
+        // Test by directly invoking the SyslogConnection task
+        System.err.println("Starting to send packets");
+        final long start = System.currentTimeMillis();
+        for (int i = 0; i < eventCount; i++) {
+            int foo = foos.get(i);
+            DatagramPacket pkt = sc.getPacket(SyslogClient.LOG_DEBUG, String.format(testPduFormat, foo, foo));
+            SyslogMessageLogDTO messageLog = m_syslogSinkModule.toMessageLog(new SyslogConnection(pkt, false));
+            m_syslogSinkConsumer.handleMessage(messageLog);
+        }
+
+        long mid = System.currentTimeMillis();
+        System.err.println(String.format("Sent %d packets in %d milliseconds", eventCount, mid - start));
+
+        m_eventCounter.waitForFinish(60000);
+        long end = System.currentTimeMillis();
+
+        System.err.println(String.format("Events expected: %d, events received: %d", eventCount, m_eventCounter.getCount()));
+        final long total = (end - start);
+        final double eventsPerSecond = (eventCount * 1000.0 / total);
+        System.err.println(String.format("total time: %d, wait time: %d, events per second: %8.4f", total, (end - mid), eventsPerSecond));
+
+        assertEquals(eventCount, m_eventCounter.getCount());
+    }
+

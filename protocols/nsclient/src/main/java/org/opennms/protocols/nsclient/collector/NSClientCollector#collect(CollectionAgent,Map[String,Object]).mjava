@@ -1,0 +1,82 @@
+    /** {@inheritDoc} */
+    @Override
+    public CollectionSet collect(CollectionAgent agent, Map<String, Object> parameters) {
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+        builder.withStatus(CollectionStatus.FAILED);
+
+        // Find attributes to collect - check groups in configuration. For each,
+        // check scheduled nodes to see if that group should be collected
+        NsclientCollection collection = (NsclientCollection)parameters.get(NSCLIENT_COLLECTION_KEY);
+        NSClientAgentConfig agentConfig = (NSClientAgentConfig)parameters.get(NSCLIENT_AGENT_CONFIG_KEY);
+        NSClientAgentState agentState = new NSClientAgentState(agent.getAddress(), parameters, agentConfig);
+
+        if (collection.getWpms().getWpm().size() < 1) {
+            LOG.info("No groups to collect.");
+            builder.withStatus(CollectionStatus.SUCCEEDED);
+            return builder.build();
+        }
+
+        // All node resources for NSClient; nothing of interface or "indexed resource" type
+        NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+        for (Wpm wpm : collection.getWpms().getWpm()) {
+            // A wpm consists of a list of attributes, identified by name
+            if (agentState.shouldCheckAvailability(wpm.getName(), wpm.getRecheckInterval())) {
+                LOG.debug("Checking availability of group {}", wpm.getName());
+                NsclientManager manager = null;
+                try {
+                    manager = agentState.getManager();
+                    manager.init();
+                    NsclientCheckParams params = new NsclientCheckParams(wpm.getKeyvalue());
+                    NsclientPacket result = manager.processCheckCommand(NsclientManager.CHECK_COUNTER, params);
+                    manager.close();
+                    boolean isAvailable = (result.getResultCode() == NsclientPacket.RES_STATE_OK);
+                    agentState.setGroupIsAvailable(wpm.getName(), isAvailable);
+                    LOG.debug("Group {} is {}available ", wpm.getName(), (isAvailable?"":"not"));
+                } catch (NsclientException e) {
+                    LOG.error("Error checking group ({}) availability", wpm.getName(), e);
+                    agentState.setGroupIsAvailable(wpm.getName(), false);
+                } finally {
+                    if (manager != null) {
+                        manager.close();
+                    }
+                }
+            }
+
+            if (agentState.groupIsAvailable(wpm.getName())) {
+                // Collect the data
+                try {
+                    NsclientManager manager = agentState.getManager();
+                    manager.init(); // Open the connection, then do each
+                                    // attribute
+
+                    for (Attrib attrib : wpm.getAttrib()) {
+                        NsclientPacket result = null;
+
+                        try {
+                            NsclientCheckParams params = new NsclientCheckParams(attrib.getName());
+                            result = manager.processCheckCommand(NsclientManager.CHECK_COUNTER, params);
+                        } catch (NsclientException e) {
+                            LOG.info("unable to collect params for attribute '{}'", attrib.getName(), e);
+                        }
+
+                        if (result != null) {
+                            if (result.getResultCode() != NsclientPacket.RES_STATE_OK) {
+                                LOG.info("not writing parameters for attribute '{}', state is not 'OK'", attrib.getName());
+                            } else {
+                                // Only numeric data comes back from NSClient in data collection
+                                builder.withNumericAttribute(nodeResource, wpm.getName(), attrib.getAlias(), NumericAttributeUtils.parseNumericValue(result.getResponse()), attrib.getType());
+                            }
+                        }
+                    }
+                    builder.withStatus(CollectionStatus.SUCCEEDED);
+                    manager.close(); // Only close once all the attribs have
+                                        // been done (optimizing as much as
+                                        // possible with NSClient)
+                } catch (NsclientException e) {
+                    LOG.error("Error collecting data", e);
+                }
+            }
+        }
+        return builder.build();
+    }
+

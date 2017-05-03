@@ -1,0 +1,105 @@
+    /** {@inheritDoc} */
+    @Override
+    public CollectionSet collect(final CollectionAgent agent, final Map<String, Object> parameters) {
+        // Find attributes to collect - check groups in configuration. For each,
+        // check scheduled nodes to see if that group should be collected
+        final WmiCollection collection = (WmiCollection)parameters.get(WMI_COLLECTION_KEY);
+        final WmiAgentConfig agentConfig = (WmiAgentConfig)parameters.get(WMI_AGENT_CONFIG_KEY);
+        final WmiAgentState agentState = new WmiAgentState(agent.getAddress(), agentConfig, parameters);
+
+        // Create a new collection set.
+        CollectionSetBuilder builder = new CollectionSetBuilder(agent)
+                .withStatus(CollectionStatus.FAILED);
+
+        if (collection.getWpms().getWpm().size() < 1) {
+            LOG.info("No groups to collect.");
+            return builder.withStatus(CollectionStatus.SUCCEEDED).build();
+        }
+
+        final NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+
+        // Iterate through the WMI collection groups.
+        for (final Wpm wpm : collection.getWpms().getWpm()) {
+            // A wpm consists of a list of attributes, identified by name
+            if (agentState.shouldCheckAvailability(wpm.getName(), wpm.getRecheckInterval())) {
+                if (!isGroupAvailable(agentState, wpm)) {
+                    continue;
+                }
+            }
+
+            if (agentState.groupIsAvailable(wpm.getName())) {
+                WmiClient client = null;
+                // Collect the data
+                try {
+                    // Tell the agent to connect
+                    agentState.connect(wpm.getWmiNamespace());
+
+                    // And retrieve the client object for working.
+                    client = (WmiClient) agentState.getWmiClient();
+
+                    // Retrieve the WbemObjectSet from the class defined on the group.
+                    final OnmsWbemObjectSet wOS = client.performInstanceOf(wpm.getWmiClass());
+
+                    // If we received a WbemObjectSet result, lets go through it and collect it.
+                    if (wOS != null) {
+                        //  Go through each object (class instance) in the object set.
+                        for (int i = 0; i < wOS.count(); i++) {
+                            // Create a new collection resource.
+                            Resource resource = null;
+
+                            // Fetch our WBEM Object
+                            final OnmsWbemObject obj = wOS.get(i);
+
+                            // If this is multi-instance, fetch the instance name and store it.
+                            if(wOS.count()>1) {
+                                // Fetch the value of the key value. e.g. Name.
+                                final OnmsWbemProperty prop = obj.getWmiProperties().getByName(wpm.getKeyvalue());
+                                final Object propVal = prop.getWmiValue();
+                                String instance = null;
+                                if(propVal instanceof String) {
+                                    instance = (String)propVal;
+                                } else {
+                                    instance = propVal.toString();
+                                }
+                                resource = getWmiResource(agent, wpm.getResourceType(), nodeResource, instance);
+                            } else {
+                                resource = nodeResource;
+                            }
+
+                            for (final Attrib attrib : wpm.getAttrib()) {
+                                final OnmsWbemProperty prop = obj.getWmiProperties().getByName(attrib.getWmiObject());
+                                final AttributeType type = attrib.getType();
+                                final String stringValue = prop.getWmiValue().toString();
+                                if (type.isNumeric()) {
+                                    Double numericValue = Double.NaN;
+                                    try {
+                                        numericValue = Double.parseDouble(stringValue);
+                                    } catch (NumberFormatException e) {
+                                        LOG.warn("Value '{}' for attribute named '{}' cannot be converted to a number. Skipping.",
+                                                prop.getWmiValue(), attrib.getName());
+                                        continue;
+                                    }
+                                    builder.withNumericAttribute(resource, wpm.getName(), attrib.getAlias(), numericValue, type);
+                                } else {
+                                    builder.withStringAttribute(resource, wpm.getName(), attrib.getAlias(), stringValue);
+                                }
+                            }
+                        }
+                    }
+                    builder.withStatus(CollectionStatus.SUCCEEDED);
+                } catch (final WmiException e) {
+                    LOG.info("unable to collect params for wpm '{}'", wpm.getName(), e);
+                } finally {
+                    if (client != null) {
+                        try {
+                            client.disconnect();
+                        } catch (final WmiException e) {
+                            LOG.warn("An error occurred disconnecting while collecting from WMI.", e);
+                        }
+                    }
+                }
+            }
+        }
+        return builder.build();
+    }
+

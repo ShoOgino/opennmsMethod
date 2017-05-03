@@ -1,0 +1,86 @@
+    public void init() throws InterruptedException {
+        Objects.requireNonNull(m_configurationAdmin, "configurationAdmin");
+        Objects.requireNonNull(m_mavenResolver, "mavenResolver");
+        Objects.requireNonNull(m_featuresService, "featuresService");
+
+        List<Repository> repositories;
+        try {
+            repositories = getRepositories();
+        } catch (IOException e) {
+            LOG.error("Failed to retrieve the list of repositories. Aborting.", e);
+            return;
+        }
+
+        // Prepend the featuresBoot from the repository definitions
+        List<Feature> featuresBoot = repositories.stream()
+                .flatMap(r -> r.getFeaturesBoot().stream())
+                .collect(Collectors.toList());
+        try {
+            featuresBoot.addAll(getFeaturesBoot());
+        } catch (IOException e) {
+            LOG.error("Failed to retrieve the list of features to boot. Aborting.", e);
+            return;
+        }
+
+        // Filter the list of features
+        filterFeatures(featuresBoot);
+
+        // Build a comma separated list of our Maven repositories
+        StringBuilder mavenReposSb = new StringBuilder();
+        for (Repository repository : repositories) {
+            if (mavenReposSb.length() != 0) {
+                mavenReposSb.append(",");
+            }
+            mavenReposSb.append(repository.toMavenUri());
+        }
+
+        LOG.info("Updating Maven repositories to include: {}", mavenReposSb);
+        try {
+            final Configuration config = m_configurationAdmin.getConfiguration(PAX_MVN_PID);
+            if (config == null) {
+                throw new IOException("The OSGi configuration (admin) registry was found for pid " + PAX_MVN_PID +
+                        ", but a configuration could not be located/generated.  This shouldn't happen.");
+            }
+            final Dictionary<String, Object> props = config.getProperties();
+            props.put(PAX_MVN_REPOSITORIES, mavenReposSb.toString());
+            config.update(props);
+        } catch (IOException e) {
+            LOG.error("Failed to update the list of Maven repositories to '{}'. Aborting.",
+                    mavenReposSb, e);
+            return;
+        }
+
+        // The configuration update is async, we need to wait for the feature URLs to be resolvable before we use them
+        LOG.info("Waiting up-to 30 seconds for the Maven repositories to be updated...");
+        // Attempting to resolve a missing features writes an exception to the log
+        // We sleep fix a fixed amount of time before our first try in order to help minimize the logged
+        // exceptions, even if we catch them
+        Thread.sleep(2000);
+        for (int i = 28; i > 0 && !canResolveAllFeatureUris(repositories); i--) {
+            Thread.sleep(1000);
+        }
+
+        for (Repository repository : repositories) {
+            for (URI featureUri : repository.getFeatureUris()) {
+                try {
+                    LOG.info("Adding feature repository: {}", featureUri);
+                    m_featuresService.addRepository(featureUri);
+                    m_featuresService.refreshRepository(featureUri);
+                } catch (Exception e) {
+                    LOG.error("Failed to add feature repository '{}'. Skipping.", featureUri, e);
+                }
+            }
+        }
+
+        final Set<String> featuresToInstall = featuresBoot.stream()
+            .map(f -> f.getVersion() != null ? f.getName() + "/" + f.getVersion() : f.getName())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        try {
+            LOG.info("Installing features: {}", featuresToInstall);
+            m_featuresService.installFeatures(featuresToInstall, EnumSet.noneOf(Option.class));
+        } catch (Exception e) {
+            LOG.error("Failed to install one or more features.", e);
+        }
+    }
+

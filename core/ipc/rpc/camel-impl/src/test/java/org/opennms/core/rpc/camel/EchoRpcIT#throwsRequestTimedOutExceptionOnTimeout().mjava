@@ -1,0 +1,32 @@
+    @Test(timeout=CamelRpcClientPreProcessor.CAMEL_JMS_REQUEST_TIMEOUT_DEFAULT * 4)
+    public void throwsRequestTimedOutExceptionOnTimeout() throws Exception {
+        assertNotEquals(REMOTE_LOCATION_NAME, identity.getLocation());
+        EchoRpcModule echoRpcModule = new EchoRpcModule();
+
+        SimpleRegistry registry = new SimpleRegistry();
+        CamelContext context = new DefaultCamelContext(registry);
+        context.getShutdownStrategy().setTimeout(5);
+        context.getShutdownStrategy().setTimeUnit(TimeUnit.SECONDS);
+        context.addComponent("queuingservice", queuingservice);
+
+        CamelRpcServerRouteManager routeManager = new CamelRpcServerRouteManager(context,
+                new MockMinionIdentity(REMOTE_LOCATION_NAME));
+        routeManager.bind(echoRpcModule);
+
+        EchoRequest request = new EchoRequest("HELLO!!!");
+        request.setLocation(REMOTE_LOCATION_NAME);
+        request.setDelay(CamelRpcClientPreProcessor.CAMEL_JMS_REQUEST_TIMEOUT_DEFAULT * 2);
+
+        try {
+            echoClient.execute(request).get();
+            fail("Did not get ExecutionException");
+        } catch (ExecutionException e) {
+            assertTrue("Cause is not of type RequestTimedOutException: " + ExceptionUtils.getStackTrace(e), e.getCause() instanceof RequestTimedOutException);
+            // Verify that the message body was suppressed
+            MockLogAppender.assertLogMatched(Level.DEBUG, "[Body is not logged]");
+        }
+
+        routeManager.unbind(echoRpcModule);
+        context.stop();
+    }
+

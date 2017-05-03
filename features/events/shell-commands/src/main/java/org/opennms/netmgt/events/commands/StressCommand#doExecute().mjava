@@ -1,0 +1,74 @@
+    @Override
+    protected Object doExecute() {
+        // Apply sane lower bounds to all of the configurable options
+        eventsPerSecondPerThread = Math.max(1, eventsPerSecondPerThread);
+        numberOfThreads = Math.max(1, numberOfThreads);
+        numSeconds = Math.max(1, numSeconds);
+        reportIntervalInSeconds = Math.max(1, reportIntervalInSeconds);
+        batchSize = Math.max(1, batchSize);
+        boolean useJexl = jexlExpressions != null && jexlExpressions.size() > 0;
+
+        // Display the effective settings and rates
+        double eventsPerSecond = eventsPerSecondPerThread * numberOfThreads;
+        System.out.printf("Generating %d events per second accross %d threads for %d seconds\n",
+                eventsPerSecondPerThread, numberOfThreads, numSeconds);
+        System.out.printf("\t with UEI: %s\n", eventUei);
+        System.out.printf("\t with batch size: %d\n", batchSize);
+        System.out.printf("\t with synchronous calls: %s\n", isSynchronous);
+        System.out.printf("Which will yield an effective\n");
+        System.out.printf("\t %.2f events per second\n", eventsPerSecond);
+        System.out.printf("\t %.2f total events\n", eventsPerSecond * numSeconds);
+        if (useJexl) {
+            System.out.printf("Using JEXL expressions:\n");
+            for (String jexlExpression : jexlExpressions) {
+                System.out.printf("\t%s\n", jexlExpression);
+            }
+        }
+
+        // Setup the reporter
+        ConsoleReporter reporter = ConsoleReporter.forRegistry(metrics)
+                .convertRatesTo(TimeUnit.SECONDS)
+                .convertDurationsTo(TimeUnit.MILLISECONDS)
+                .build();
+
+        // Setup the executor
+        final ThreadFactory threadFactory = new ThreadFactoryBuilder()
+            .setNameFormat("Event Generator #%d")
+            .build();
+        final ExecutorService executor = Executors.newFixedThreadPool(numberOfThreads, threadFactory);
+
+        System.out.println("Starting.");
+        try {
+            reporter.start(reportIntervalInSeconds, TimeUnit.SECONDS);
+            for (int i = 0; i < numberOfThreads; i++) {
+                final EventGenerator eventGenerator = useJexl ?
+                        new JexlEventGenerator(jexlExpressions) : new EventGenerator();
+                executor.execute(eventGenerator);
+            }
+            System.out.println("Started.");
+
+            // Wait until we timeout or get interrupted
+            try {
+                Thread.sleep(SECONDS.toMillis(numSeconds));
+            } catch (InterruptedException e) { }
+
+            // Stop!
+            try {
+                System.out.println("Stopping.");
+                executor.shutdownNow();
+                if (!executor.awaitTermination(2, TimeUnit.MINUTES)) {
+                    System.err.println("The threads did not stop in time.");
+                } else {
+                    System.out.println("Stopped.");
+                }
+            } catch (InterruptedException e) { }
+        } finally {
+            // Make sure we always stop the reporter
+            reporter.stop();
+        }
+
+        // And display one last report...
+        reporter.report();
+        return null;
+    }
+

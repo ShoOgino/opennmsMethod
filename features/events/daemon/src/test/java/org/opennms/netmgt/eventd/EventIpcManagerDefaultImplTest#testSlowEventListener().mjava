@@ -1,0 +1,43 @@
+    public void testSlowEventListener() throws InterruptedException {
+        AtomicInteger counter = new AtomicInteger();
+
+        EventListener slowListener = new EventListener() {
+            @Override
+            public String getName() {
+                return "testSlowEventListener";
+            }
+
+            @Override
+            public void onEvent(Event event) {
+                LOG.info("Hello, here is event: " + event.getUei());
+                try {
+                    Thread.sleep(SLOW_EVENT_OPERATION_DELAY);
+                } catch (InterruptedException e) {
+                }
+                counter.incrementAndGet();
+            }
+        };
+
+        EventIpcManagerDefaultImpl manager = new EventIpcManagerDefaultImpl(m_registry);
+        manager.setHandlerPoolSize(1);
+        manager.setHandlerQueueLength(5);
+        DefaultEventHandlerImpl handler = new DefaultEventHandlerImpl(m_registry);
+        manager.setEventHandler(handler);
+        manager.afterPropertiesSet();
+
+        manager.addEventListener(slowListener);
+
+        // Send 10 events. The first one will be executed on the listener thread,
+        // the next 5 will be enqueued, then the last 4 will be discarded because
+        // the queue is full. After the time has expired, the first 6 events will 
+        // have passed through the listener.
+        //
+        for (int i = 0; i < 10; i++) {
+            EventBuilder bldr = new EventBuilder("uei.opennms.org/foo/" + i, "testSlowEventListener");
+            Event e = bldr.getEvent();
+            manager.broadcastNow(e, false);
+        }
+
+        await().pollInterval(1, TimeUnit.SECONDS).untilAtomic(counter, is(equalTo(6)));
+    }
+

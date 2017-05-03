@@ -1,64 +1,74 @@
     protected void runCollection() {
-        LOG.info("run: start discovery operations for node: [{}]",
-                 getNodeId());
         final Date now = new Date();
 
-        Map<Integer, String> vlanmap = getVtpVlanMap(getPeer());
-        if (vlanmap.isEmpty())
-            vlanmap.put(null, null);
-
+        SnmpAgentConfig peer = m_linkd.getSnmpAgentConfig(getPrimaryIpAddress(), getLocation());
+        String community = peer.getReadCommunity();
+        Map<Integer, String> vlanmap = getVtpVlanMap(peer);
+        Map<Integer,SnmpAgentConfig> vlanSnmpAgentConfigMap = new HashMap<Integer, SnmpAgentConfig>();
+        for (Integer vlanId: vlanmap.keySet()) {
+            LOG.debug("run: node [{}], support cisco vtp: setting peer community for vlan: {}, vlanname: {}",
+           		 getNodeId(),vlanId,vlanmap.get(vlanId));
+            
+            SnmpAgentConfig vlanpeer = m_linkd.getSnmpAgentConfig(getPrimaryIpAddress(), getLocation());
+        	if (vlanpeer.isVersion3()) {
+        		vlanpeer.setContextName("vlan-"+vlanId);
+        	} else {
+                vlanpeer.setReadCommunity(community + "@" + vlanId);
+        	}
+        	vlanSnmpAgentConfigMap.put(vlanId, vlanpeer);        	
+        }
+        
+        if (vlanmap.isEmpty()) {
+        	vlanSnmpAgentConfigMap.put(null, peer);
+        	vlanmap.put(null, null);
+        }
+        
         List<BridgeMacLink> bft = new ArrayList<BridgeMacLink>();
         Map<Integer, Integer> bridgeifindex = new HashMap<Integer, Integer>();
 
-        String community = getPeer().getReadCommunity();
-        for (Entry<Integer, String> entry : vlanmap.entrySet()) {
-            LOG.debug("run: node [{}] cisco vtp: setting peer community for VLAN {}",
-            		 getNodeId(),
-                      entry.getValue());
-            SnmpAgentConfig peer = getPeer();
-            if (entry.getKey() != null)
-                peer.setReadCommunity(community + "@" + entry.getKey());
-            LOG.debug("run: walking dot1d basedata on node [{}}, vlan [{}], vlanname {}.",
-                      getNodeId(), entry.getKey(), entry.getValue());
+        for (Entry<Integer, SnmpAgentConfig> entry : vlanSnmpAgentConfigMap.entrySet()) {
+            Map<Integer,Integer> vlanbridgetoifindex = walkDot1dBasePortTable(entry.getValue());
+            LOG.debug("run: node: [{}], vlan: {}, bridge ifindex map {}",
+                      getNodeId(), vlanmap.get(entry.getKey()), vlanbridgetoifindex);
+            bridgeifindex.putAll(vlanbridgetoifindex);
+        }
 
-            BridgeElement bridge = getDot1dBridgeBase(peer);
+        for (Entry<Integer, String> entry : vlanmap.entrySet()) {
+            
+            BridgeElement bridge = getDot1dBridgeBase(vlanSnmpAgentConfigMap.get(entry.getKey()));
             if (bridge != null) {
                 bridge.setVlan(entry.getKey());
-                bridge.setVlanname(entry.getValue());
+                bridge.setVlanname(vlanmap.get(entry.getKey()));
                 m_linkd.getQueryManager().store(getNodeId(), bridge);
             } else {
-                LOG.debug("run: no dot1d data found on node [{}], vlan [{}], vlanname {}. skipping other operations",
-                          getNodeId(), entry.getKey(), entry.getValue());
+                LOG.debug("run: node: [{}], vlan {}. no dot1d bridge data found. skipping other operations",
+                          getNodeId(), entry.getValue());
                 continue;
             }
 
-            Map<Integer,Integer> vlanbridgetoifindex = walkDot1dBasePortTable(peer);
-            LOG.debug("run: found on node: [{}] vlan: [{}], bridge ifindex map {}",
-                      getNodeId(), entry.getValue(), vlanbridgetoifindex);
             if (!isValidStpBridgeId(bridge.getStpDesignatedRoot())) {
-                LOG.info("run: node [{}]: invalid designated root: spanning tree not supported.",
-                         getNodeId());
+                LOG.info("run: node: [{}], vlan {}. invalid designated root: spanning tree not supported.",
+                         getNodeId(),entry.getValue());
             } else if (bridge.getBaseBridgeAddress().equals(getBridgeAddressFromStpBridgeId(bridge.getStpDesignatedRoot()))) {
-                LOG.info("run: node [{}]: designated root {} is itself. Skipping store.",
+                LOG.info("run: node [{}]: vlan {}. designated root {} is itself. Skipping store.",
                 		 getNodeId(),
+                		 entry.getValue(),
                          bridge.getStpDesignatedRoot());
             } else {
-                for (BridgeStpLink stplink: walkSpanningTree(peer,
+                for (BridgeStpLink stplink: walkSpanningTree(vlanSnmpAgentConfigMap.get(entry.getKey()),
                                  bridge.getBaseBridgeAddress())) {
                     stplink.setVlan(entry.getKey());
-                    stplink.setStpPortIfIndex(vlanbridgetoifindex.get(stplink.getStpPort()));
+                    stplink.setStpPortIfIndex(bridgeifindex.get(stplink.getStpPort()));
                     m_linkd.getQueryManager().store(getNodeId(), stplink);
 
                 }
             }
-
-            bridgeifindex.putAll(vlanbridgetoifindex);
-            bft = walkDot1dTpFdp(entry.getKey(), bridgeifindex, bft, peer);
+            bft = walkDot1dTpFdp(entry.getValue(),entry.getKey(), bridgeifindex, bft, vlanSnmpAgentConfigMap.get(entry.getKey()));
         }
 		
         LOG.debug("run: node [{}]: bridge ifindex map {}",
                   getNodeId(), bridgeifindex);
-        bft = walkDot1qTpFdb(getPeer(),bridgeifindex, bft);
+        bft = walkDot1qTpFdb(peer,bridgeifindex, bft);
         LOG.debug("run: node [{}]: bft size:{}", getNodeId(), bft.size());
 
         if (bft.size() > 0) {
@@ -69,7 +79,5 @@
         LOG.debug("run: node [{}]: deleting older the time {}", getNodeId(), now);
         m_linkd.collectedBft(getNodeId());
         m_linkd.getQueryManager().reconcileBridge(getNodeId(), now);
-        LOG.info("run: end: node discovery operations for bridge: '{}'",
-                 getNodeId());
     }
 

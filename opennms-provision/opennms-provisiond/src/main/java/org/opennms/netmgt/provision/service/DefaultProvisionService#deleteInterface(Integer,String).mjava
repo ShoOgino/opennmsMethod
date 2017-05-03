@@ -2,12 +2,28 @@
     @Transactional
     @Override
     public void deleteInterface(final Integer nodeId, final String ipAddr) {
+        LOG.debug("deleteInterface: nodeId={}, addr={}", nodeId, ipAddr);
+
         final OnmsIpInterface iface = m_ipInterfaceDao.findByNodeIdAndIpAddress(nodeId, ipAddr);
-        if (iface != null && shouldDelete(iface)) {
+        if (iface != null) {
+
+            final OnmsNode node = iface.getNode();
+
+            final boolean lastInterface = (node.getIpInterfaces().size() == 1);
+
+            final DeleteEventVisitor visitor = new DeleteEventVisitor(m_eventForwarder);
+
             m_ipInterfaceDao.delete(iface);
             m_ipInterfaceDao.flush();
-            iface.visit(new DeleteEventVisitor(m_eventForwarder));
-        }
+            iface.visit(visitor);
 
+            if (lastInterface) {
+                LOG.debug("Deleting node {}", nodeId);
+
+                m_nodeDao.delete(node);
+                m_nodeDao.flush();
+                node.visit(visitor);
+            }
+        }
     }
 

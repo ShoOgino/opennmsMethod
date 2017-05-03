@@ -1,0 +1,53 @@
+	@Override
+	public void updated(String pid, @SuppressWarnings("rawtypes") Dictionary properties) throws ConfigurationException {
+		LOG.debug("updated(String, Dictionary) invoked");
+		String location = (String)properties.get(TOPOLOGY_LOCATION);
+		if (!m_serviceRegistration.containsKey(pid)) {
+			LOG.debug("Service with pid '{}' is new. Register {}", pid, GraphMLMetaTopologyProvider.class.getSimpleName());
+			final Dictionary<String,Object> metaData = new Hashtable<>();
+			metaData.put(Constants.SERVICE_PID, pid);
+			if (properties.get(LABEL) != null) {
+				metaData.put(LABEL, properties.get(LABEL));
+			}
+
+			// Expose the MetaTopologyProvider
+			final GraphMLMetaTopologyProvider metaTopologyProvider = new GraphMLMetaTopologyProvider(m_serviceAccessor);
+			metaTopologyProvider.setTopologyLocation(location);
+			metaTopologyProvider.reload();
+			registerService(pid, MetaTopologyProvider.class, metaTopologyProvider, metaData);
+
+			// Create and register additional services
+			final Set<String> iconKeys = metaTopologyProvider.getGraphProviders().stream()
+					.map(eachProvider -> eachProvider.getNamespace())
+					.flatMap(eachNamespace -> metaTopologyProvider.getRawTopologyProvider(eachNamespace).getVertices().stream())
+					.map(eachVertex -> eachVertex.getIconKey())
+					.filter(eachIconKey -> eachIconKey != null)
+					.collect(Collectors.toSet());
+			registerService(pid, IconRepository.class, new GraphMLIconRepository(iconKeys));
+
+			// Create an OSGi aware script engine manager
+			final ScriptEngineManager scriptEngineManager = new OSGiScriptEngineManager(m_bundleContext);
+			metaTopologyProvider.getGraphProviders().forEach(it -> {
+				// Find Topology Provider
+				final GraphMLTopologyProvider rawTopologyProvider = metaTopologyProvider.getRawTopologyProvider(it.getNamespace());
+
+				// EdgeStatusProvider
+				registerService(pid, EdgeStatusProvider.class, new GraphMLEdgeStatusProvider(rawTopologyProvider, scriptEngineManager, m_serviceAccessor));
+
+				// SearchProvider
+				registerService(pid, SearchProvider.class, new GraphMLSearchProvider(rawTopologyProvider));
+
+				// Vertex Status Provider
+				// Only add status provider if explicitly set in GraphML document
+				if (rawTopologyProvider.requiresStatusProvider()) {
+					GraphMLVertexStatusProvider statusProvider = new GraphMLVertexStatusProvider(
+							rawTopologyProvider.getNamespace(),
+							(nodeIds) -> m_serviceAccessor.getAlarmDao().getNodeAlarmSummariesIncludeAcknowledgedOnes(nodeIds));
+					registerService(pid, StatusProvider.class, statusProvider);
+				}
+			});
+		} else {
+			LOG.warn("Service with pid '{}' updated. Updating is not supported. Ignoring...");
+		}
+	}
+

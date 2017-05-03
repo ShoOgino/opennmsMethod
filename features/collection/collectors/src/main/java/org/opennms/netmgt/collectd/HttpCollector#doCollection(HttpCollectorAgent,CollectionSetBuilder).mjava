@@ -1,0 +1,69 @@
+    /**
+     * Performs HTTP collection.
+     * 
+     * Couple of notes to make the implementation of this client library
+     * less obtuse:
+     * 
+     *   - HostConfiguration class is not created here because the library
+     *     builds it when a URI is defined.
+     *     
+     * @param collectorAgent
+     * @throws HttpCollectorException
+     */
+    private static void doCollection(final HttpCollectorAgent collectorAgent, final CollectionSetBuilder collectionSetBuilder) throws HttpCollectorException {
+        HttpRequestBase method = null;
+        HttpClientWrapper clientWrapper = null;
+        try {
+            final HttpVersion httpVersion = computeVersion(collectorAgent.getUriDef());
+
+            clientWrapper = HttpClientWrapper.create()
+                    .setConnectionTimeout(ParameterMap.getKeyedInteger(collectorAgent.getParameters(), ParameterName.TIMEOUT.toString(), DEFAULT_SO_TIMEOUT))
+                    .setSocketTimeout(ParameterMap.getKeyedInteger(collectorAgent.getParameters(), ParameterName.TIMEOUT.toString(), DEFAULT_SO_TIMEOUT))
+                    .useBrowserCompatibleCookies();
+
+            if ("https".equals(collectorAgent.getUriDef().getUrl().getScheme())) {
+                clientWrapper.useRelaxedSSL("https");
+            }
+
+            String key = ParameterName.RETRY.toString();
+            if (collectorAgent.getParameters().containsKey(ParameterName.RETRIES.toString())) {
+                key = ParameterName.RETRIES.toString();
+            }
+            Integer retryCount = ParameterMap.getKeyedInteger(collectorAgent.getParameters(), key, DEFAULT_RETRY_COUNT);
+            clientWrapper.setRetries(retryCount);
+
+            method = buildHttpMethod(collectorAgent);
+            method.setProtocolVersion(httpVersion);
+            final String userAgent = determineUserAgent(collectorAgent);
+            if (userAgent != null && !userAgent.trim().isEmpty()) {
+                clientWrapper.setUserAgent(userAgent);
+            }
+            final HttpClientWrapper wrapper = clientWrapper;
+
+            if (collectorAgent.getUriDef().getUrl().getUserInfo() != null) {
+                final String userInfo = collectorAgent.getUriDef().getUrl().getUserInfo();
+                final String[] streetCred = userInfo.split(":", 2);
+                if (streetCred.length == 2) {
+                    wrapper.addBasicCredentials(streetCred[0], streetCred[1]);
+                } else { 
+                    LOG.warn("Illegal value found for username/password HTTP credentials: {}", userInfo);
+                }
+            }
+
+            LOG.info("doCollection: collecting using method: {}", method);
+            final CloseableHttpResponse response = clientWrapper.execute(method);
+            //Not really a persist as such; it just stores data in collectionSet for later retrieval
+            persistResponse(collectorAgent, collectionSetBuilder, response);
+        } catch (URISyntaxException e) {
+            throw new HttpCollectorException("Error building HttpClient URI", e);
+        } catch (IOException e) {
+            throw new HttpCollectorException("IO Error retrieving page", e);
+        } catch (PatternSyntaxException e) {
+            throw new HttpCollectorException("Invalid regex specified in HTTP collection configuration", e);
+        } catch (Throwable e) {
+            throw new HttpCollectorException("Unexpected exception caught during HTTP collection", e);
+        } finally {
+            IOUtils.closeQuietly(clientWrapper);
+        }
+    }
+

@@ -1,0 +1,39 @@
+    @Test(timeout=60000)
+    public void canConsumeMessagesInParallel() throws Exception {
+        final int NUM_CONSUMER_THREADS = 7;
+
+        final HeartbeatModule parallelHeartbeatModule = new HeartbeatModule() {
+            @Override
+            public int getNumConsumerThreads() {
+                return NUM_CONSUMER_THREADS;
+            }
+        };
+
+        ThreadLockingMessageConsumer<Heartbeat, Heartbeat> consumer =
+                new ThreadLockingMessageConsumer<>(parallelHeartbeatModule);
+
+        CompletableFuture<Integer> future = consumer.waitForThreads(NUM_CONSUMER_THREADS);
+        consumerManager.registerConsumer(consumer);
+
+        MessageDispatcherFactory remoteMessageDispatcherFactory = context.getRegistry().lookupByNameAndType("camelRemoteMessageDispatcherFactory", MessageDispatcherFactory.class);
+        SyncDispatcher<Heartbeat> dispatcher = remoteMessageDispatcherFactory.createSyncDispatcher(HeartbeatModule.INSTANCE);
+
+        HeartbeatGenerator generator = new HeartbeatGenerator(dispatcher, 100.0);
+        generator.start();
+
+        // Wait until we have NUM_CONSUMER_THREADS locked
+        future.get();
+
+        // Take a snooze
+        Thread.sleep(TimeUnit.SECONDS.toMillis(5));
+
+        // Verify that there aren't more than NUM_CONSUMER_THREADS waiting
+        assertEquals(0, consumer.getNumExtraThreadsWaiting());
+
+        generator.stop();
+
+        // This doesn't work because the consumer seems to leave NUM_CONSUMER_THREADS
+        // messages in-flight if it's unregistered before the context shuts down
+        // consumerManager.unregisterConsumer(consumer);
+    }
+
