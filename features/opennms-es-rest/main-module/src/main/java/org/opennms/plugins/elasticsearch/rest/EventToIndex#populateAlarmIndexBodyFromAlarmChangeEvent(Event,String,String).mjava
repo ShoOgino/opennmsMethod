@@ -19,8 +19,8 @@
 			parmsMap.put( parm.getParmName(), parm.getValue().getContent());
 		}
 
-		String oldValuesStr=parmsMap.get(OLD_ALARM_VALUES);
-		String newValuesStr=parmsMap.get(NEW_ALARM_VALUES);
+		String oldValuesStr=parmsMap.get(OLD_ALARM_VALUES_PARAM);
+		String newValuesStr=parmsMap.get(NEW_ALARM_VALUES_PARAM);
 
 		if (LOG.isDebugEnabled()) LOG.debug("AlarmChangeEvent from eventid "+event.getDbid()
 				+ "\n  newValuesStr="+newValuesStr
@@ -50,7 +50,7 @@
 						+ "\n  oldValuesStr="+oldValuesStr);
 				return null;
 			} else {
-				try{
+				try {
 					Object obj = parser.parse(oldValuesStr);
 					oldAlarmValues = (JSONObject) obj;
 				} catch (ParseException e1) {
@@ -80,10 +80,12 @@
 				for(Parm parm : params) {
 					body.put("p_" + parm.getParmName(), parm.getValue().getContent());
 				}
-			} else if((SEVERITY.equals(key) && value!=null)){ 
+			} else if((ALARM_SEVERITY_PARAM.equals(key) && value!=null)){ 
 				try{
 					int id= Integer.parseInt(value);
 					String label = OnmsSeverity.get(id).getLabel();
+					// note alarm index uses severity even though alarm severity param is p_alarmseverity
+					body.put(SEVERITY,value);
 					body.put(SEVERITY_TEXT,label);
 				}
 				catch (Exception e){
@@ -106,31 +108,56 @@
 			Calendar alarmClearCal=Calendar.getInstance();
 			alarmClearCal.setTime(event.getTime());
 			body.put(ALARM_CLEAR_TIME, DatatypeConverter.printDateTime(alarmClearCal));
+			// duration time from alarm raise to clear
+			try{
+				Date alarmclearDate = event.getTime();
+				String alarmCreationTime = alarmValues.get(FIRST_EVENT_TIME).toString();
+				Calendar alarmCreationCal = DatatypeConverter.parseDateTime(alarmCreationTime);
+				Date alarmCreationDate=alarmCreationCal.getTime();
+				//duration in milliseconds
+				Long duration = alarmclearDate.getTime() - alarmCreationDate.getTime();
+				body.put(ALARM_CLEAR_DURATION, duration.toString());
+			} catch (Exception e){
+				LOG.error("problem calculating alarm clear duration for event "+event.getDbid(), e);
+			}
 		}
 
-		// set alarm deleted time if an alarm clear event
+		// set alarm deleted time if an alarm delete event
 		if(ALARM_DELETED_EVENT.equals(event.getUei())){
 			Calendar alarmDeletionCal=Calendar.getInstance();
 			alarmDeletionCal.setTime(event.getTime());
-			body.put(ALARM_DELETED_TIME, DatatypeConverter.printDateTime(alarmDeletionCal));
+			body.put(ALARM_DELETED_TIME, DatatypeConverter.printDateTime(alarmDeletionCal));			
+		}
+		
+		//  calculate duration from alarm raise to acknowledge
+		if(ALARM_ACKNOWLEDGED_EVENT.equals(event.getUei())){
+			try{
+				Date alarmAckDate = event.getTime();
+				String alarmCreationTime = alarmValues.get(FIRST_EVENT_TIME).toString();
+				Calendar alarmCreationCal = DatatypeConverter.parseDateTime(alarmCreationTime);
+				Date alarmCreationDate=alarmCreationCal.getTime();
+				//duration in milliseconds
+				Long duration = alarmAckDate.getTime() - alarmCreationDate.getTime();
+				body.put(ALARM_ACK_DURATION, duration.toString());
+			} catch (Exception e){
+				LOG.error("problem calculating alarm acknowledge duration for event "+event.getDbid(), e);
+			}
 		}
 
-
 		// remove ack if not in parameters i,e alarm not acknowleged
-		if(parmsMap.get(ALARM_ACK_TIME)==null || "".equals(parmsMap.get(ALARM_ACK_TIME)) ){
-			body.put(ALARM_ACK_TIME, null);
-			body.put(ALARM_ACK_USER, null);
+		if(parmsMap.get(ALARM_ACK_TIME_PARAM)==null || "".equals(parmsMap.get(ALARM_ACK_TIME_PARAM)) ){
+			body.put(ALARM_ACK_TIME_PARAM, null);
+			body.put(ALARM_ACK_USER_PARAM, null);
 		}
 
 		// add "initialseverity"
-		if(parmsMap.get(INITIAL_SEVERITY)!=null){
-			String severityId = parmsMap.get(INITIAL_SEVERITY);
-			body.put(INITIAL_SEVERITY,severityId);
-
+		if(parmsMap.get(INITIAL_SEVERITY_PARAM)!=null){
 			try{
+				String severityId = parmsMap.get(INITIAL_SEVERITY_PARAM);
 				int id= Integer.parseInt(severityId);
 				String label = OnmsSeverity.get(id).getLabel();
-				body.put(INITIAL_SEVERITY_TEXT,label);
+				body.put(INITIAL_SEVERITY_PARAM,severityId);
+				body.put(INITIAL_SEVERITY_PARAM_TEXT,label);
 			}
 			catch (Exception e){
 				LOG.error("cannot parse initial severity for alarm change event id"+event.getDbid());
@@ -138,8 +165,8 @@
 		}
 
 		// if the event contains nodelabel parameter then do not use node cache
-		if (parmsMap.get(NODE_LABEL)!=null){
-			body.put(NODE_LABEL, parmsMap.get(NODE_LABEL));
+		if (parmsMap.get(NODE_LABEL_PARAM)!=null){
+			body.put(NODE_LABEL_PARAM, parmsMap.get(NODE_LABEL_PARAM));
 		} else {
 			// add node details from cache
 			if (nodeCache!=null && event.getNodeid()!=null){
@@ -167,7 +194,7 @@
 
 			// try to parse firsteventtime but if not able then use current date
 			try{
-				alarmCreationTime = alarmValues.get("firsteventtime").toString();
+				alarmCreationTime = alarmValues.get(FIRST_EVENT_TIME).toString();
 				alarmCreationCal = DatatypeConverter.parseDateTime(alarmCreationTime);
 			} catch (Exception e){
 				LOG.error("using current Date() for @timestamp because problem creating date from alarmchange event "+event.getDbid()

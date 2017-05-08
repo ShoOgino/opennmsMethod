@@ -1,0 +1,63 @@
+    @Override
+    public void broadcastNow(Event event, boolean synchronous) {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Event ID {} to be broadcasted: {}", event.getDbid(), event.getUei());
+        }
+
+        if (LOG.isDebugEnabled() && m_listeners.isEmpty()) {
+            LOG.debug("No listeners interested in all events");
+        }
+
+        List<CompletableFuture<Void>> listenerFutures = new ArrayList<>();
+
+        // Send to listeners interested in receiving all events
+        for (EventListener listener : m_listeners) {
+            listenerFutures.add(queueEventToListener(event, listener));
+        }
+
+        if (event.getUei() == null) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Event ID {} does not have a UEI, so skipping UEI matching", event.getDbid());
+            }
+            return;
+        }
+
+        /*
+         * Send to listeners who are interested in this event UEI.
+         * Loop to attempt partial wild card "directory" matches.
+         */
+        Set<EventListener> sentToListeners = new HashSet<EventListener>();
+        for (String uei = event.getUei(); uei.length() > 0; ) {
+            if (m_ueiListeners.containsKey(uei)) {
+                for (EventListener listener : m_ueiListeners.get(uei)) {
+                    if (!sentToListeners.contains(listener)) {
+                        listenerFutures.add(queueEventToListener(event, listener));
+                        sentToListeners.add(listener);
+                    }
+                }
+            }
+            
+            // Try wild cards: Find / before last character
+            int i = uei.lastIndexOf("/", uei.length() - 2);
+            if (i > 0) {
+                // Split at "/", including the /
+                uei = uei.substring (0, i + 1);
+            } else {
+                // No more wild cards to match
+                break;
+            }
+        }
+        
+        if (sentToListeners.isEmpty()) {
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("No listener interested in event ID {}: {}", event.getDbid(), event.getUei());
+            }
+        }
+
+        // If synchronous...
+        if (synchronous) {
+            // Wait for all of the listeners to complete before returning
+            CompletableFuture.allOf(listenerFutures.toArray(new CompletableFuture[0])).join();
+        }
+    }
+

@@ -1,0 +1,38 @@
+    public void apply(GraphContainer graphContainer, Collection<HistoryOperation> operations, ServiceLocator serviceLocator) {
+        LOG.debug("Applying " + toString());
+
+        graphContainer.clearCriteria();
+
+        // Apply the history for each registered HistoryOperation
+        for (HistoryOperation operation : operations) {
+            try {
+                operation.applyHistory(graphContainer, m_settings);
+            } catch (Throwable e) {
+                LOG.warn("Failed to perform applyHistory() operation", e);
+            }
+        }
+
+        // Browse through all available search providers that have a "history" functionality
+        List<SearchProvider> searchProviders = serviceLocator.findServices(SearchProvider.class,null);
+        for (SearchProvider searchProvider : searchProviders) {
+            if (searchProvider instanceof HistoryAwareSearchProvider) {
+                // For each of these search providers generate Criteria for all search queries from history
+                // Add resulting Criteria to the graph container
+                for (SearchResult searchQuery : m_searchQueries) {
+                    if (searchProvider.getSearchProviderNamespace().equals(searchQuery.getNamespace()) || searchProvider.contributesTo(searchQuery.getNamespace())) {
+                        Criteria searchCriteria = ((HistoryAwareSearchProvider)searchProvider).buildCriteriaFromQuery(searchQuery);
+                        graphContainer.addCriteria(searchCriteria);
+                    }
+                }
+            }
+        }
+
+        // Set Vertices in Focus after all other operations are applied, otherwise the topology provider may have changed
+        // which results in a graphContainer.clearCriteria()
+        applyVerticesInFocus(m_focusVertices, graphContainer);
+        applySavedLocations(m_locations, graphContainer.getGraph().getLayout());
+        graphContainer.setSemanticZoomLevel(getSemanticZoomLevel());
+        graphContainer.getSelectionManager().setSelectedVertexRefs(m_selectedVertices); // Apply the selected vertices
+        graphContainer.getMapViewManager().setBoundingBox(getBoundingBox());
+    }
+

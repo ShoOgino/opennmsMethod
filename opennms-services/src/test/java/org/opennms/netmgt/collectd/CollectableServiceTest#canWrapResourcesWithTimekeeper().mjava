@@ -1,0 +1,45 @@
+    /**
+     * Validates that we can successfully wrap collection sets with a custom time-keeper,
+     * allowing us to override the timestamp of the attributes within the collection set.
+     */
+    @Test
+    public void canWrapResourcesWithTimekeeper() throws CollectionInitializationException, CollectionException, IOException, RrdException {
+        System.setProperty(CollectableService.USE_COLLECTION_START_TIME_SYS_PROP, Boolean.TRUE.toString());
+        createCollectableService();
+
+        long collectionDelayInSecs = 2;
+        when(spec.collect(any())).then(new Answer<CollectionSet>() {
+            @Override
+            public CollectionSet answer(InvocationOnMock invocation) throws InterruptedException {
+                Thread.sleep(collectionDelayInSecs * 1000);
+                CollectionAgent agent = (CollectionAgent)invocation.getArguments()[0];
+                NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+                return new CollectionSetBuilder(agent)
+                    .withNumericAttribute(nodeResource, "mibGroup", "myCounter", 1000, AttributeType.COUNTER)
+                    .build();
+            }
+        });
+
+        File nodeDir = fileAnticipator.expecting(getSnmpRrdDirectory(), "1");
+        File jrbFile = fileAnticipator.expecting(nodeDir, "myCounter" + rrdStrategy.getDefaultFileExtension());
+        fileAnticipator.expecting(nodeDir, "myCounter" + ".meta");
+
+        long beforeInMs = System.currentTimeMillis();
+        service.run();
+        long afterInMs = System.currentTimeMillis();
+        // Quick sanity check
+        assertTrue(String.format("Delay was not succesfully applied (delay was %d).",
+                beforeInMs - afterInMs), afterInMs - beforeInMs >= collectionDelayInSecs * 1000);
+
+        // Verify the last update time match the start of the collection time
+        RrdDb rrdDb = new RrdDb(jrbFile);
+        long lastUpdateTimeInSecs = rrdDb.getLastUpdateTime();
+        long beforeInSecs = Math.floorDiv(beforeInMs, 1000);
+        long afterInSecs = Math.floorDiv(afterInMs, 1000) + 1;
+
+        assertTrue("Last update was before the collector was invoked!",
+                lastUpdateTimeInSecs >= beforeInSecs);
+        assertTrue("Last update was too long after the collector was invoked!",
+                lastUpdateTimeInSecs < (afterInSecs - (collectionDelayInSecs / 2d)));
+    }
+
