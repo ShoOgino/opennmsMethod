@@ -6,6 +6,9 @@
      */
     public void send(MimeMessage message) throws JavaMailerException {
         Transport t = null;
+        if (m_config.getSendmailProtocol() == null || m_config.getSendmailHost() == null) {
+            throw new JavaMailerException("sendmail-protocol or sendmail-host are not configured!");
+        }
         try {
             SendmailProtocol protoConfig = m_config.getSendmailProtocol();
             t = m_session.getTransport(protoConfig.getTransport());
@@ -14,15 +17,19 @@
             LoggingTransportListener listener = new LoggingTransportListener();
             t.addTransportListener(listener);
 
-            if (t.getURLName().getProtocol().equals("mta")) {
+            if ("mta".equals(t.getURLName().getProtocol())) {
                 // JMTA throws an AuthenticationFailedException if we call connect()
                 LOG.debug("transport is 'mta', not trying to connect()");
-            } else if (m_config.isUseAuthentication()) {
-                LOG.debug("authenticating to {}", m_config.getSendmailHost().getHost());
-                t.connect(m_config.getSendmailHost().getHost(), m_config.getSendmailHost().getPort(), m_config.getUserAuth().getUserName(), m_config.getUserAuth().getPassword());
             } else {
-                LOG.debug("not authenticating to {}", m_config.getSendmailHost().getHost());
-                t.connect(m_config.getSendmailHost().getHost(), m_config.getSendmailHost().getPort(), null, null);
+                final SendmailHost sendmailHost = m_config.getSendmailHost();
+                if (m_config.isUseAuthentication() && m_config.getUserAuth() != null) {
+                    LOG.debug("authenticating to {}", sendmailHost.getHost());
+                    final UserAuth userAuth = m_config.getUserAuth();
+                    t.connect(sendmailHost.getHost(), sendmailHost.getPort(), userAuth.getUserName(), userAuth.getPassword());
+                } else {
+                    LOG.debug("not authenticating to {}", sendmailHost.getHost());
+                    t.connect(sendmailHost.getHost(), sendmailHost.getPort(), null, null);
+                }
             }
 
             t.sendMessage(message, message.getAllRecipients());
