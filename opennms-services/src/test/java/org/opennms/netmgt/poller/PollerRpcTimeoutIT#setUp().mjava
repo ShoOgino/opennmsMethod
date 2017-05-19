@@ -1,0 +1,61 @@
+    @Before
+    public void setUp() throws Exception {
+
+        MockUtil.println("------------ Begin Test  --------------------------");
+        MockLogAppender.setupLogging();
+
+        m_network = new MockNetwork();
+        m_network.setCriticalService("ICMP");
+        m_network.addNode(1, "Router");
+        m_network.addInterface(str(InetAddressUtils.UNPINGABLE_ADDRESS));
+        m_network.addService("ICMP");
+        m_network.addService("HTTP");
+
+        m_db.populate(m_network);
+        DataSourceFactory.setInstance(m_db);
+
+        // Add a location that no systems are monitoring
+        OnmsMonitoringLocation location = new OnmsMonitoringLocation(NONEXISTENT_LOCATION, "Nullsville");
+        m_monitoringLocationDao.save(location);
+
+        // Update all of the nodes to have the nonexistent location
+        for (OnmsNode node : m_nodeDao.findAll()) {
+            node.setLocation(location);
+            m_nodeDao.save(node);
+        }
+
+        InputStream is = new FileInputStream(new File("src/test/resources/etc/rpctimeout-poller-configuration.xml"));
+        PollerConfigFactory factory = new PollerConfigFactory(0, is, "localhost", false);
+        PollerConfigFactory.setInstance(factory);
+        IOUtils.closeQuietly(is);
+
+        // Sanity check the config
+        ServiceMonitor monitor = PollerConfigFactory.getInstance().getServiceMonitor("HTTP");
+        Assert.assertNotNull(monitor);
+        Package pkg = PollerConfigFactory.getInstance().getPackage("PollerRpcTimeoutIT");
+        Assert.assertNotNull(pkg);
+        Service svc = pkg.getServices().iterator().next();
+        Assert.assertEquals("HTTP", svc.getName());
+
+        DefaultPollContext pollContext = new DefaultPollContext();
+        pollContext.setEventManager(m_eventMgr);
+        pollContext.setLocalHostName("localhost");
+        pollContext.setName("Test.DefaultPollContext");
+        pollContext.setPollerConfig(factory);
+        pollContext.setQueryManager(m_queryManager);
+        pollContext.setLocationAwarePingClient(m_locationAwarePingClient);
+
+        PollableNetwork network = new PollableNetwork(pollContext);
+
+        m_poller = new Poller();
+        m_poller.setMonitoredServiceDao(m_monitoredServiceDao);
+        m_poller.setOutageDao(m_outageDao);
+        m_poller.setTransactionTemplate(m_transactionTemplate);
+        m_poller.setEventIpcManager(m_eventMgr);
+        m_poller.setNetwork(network);
+        m_poller.setQueryManager(m_queryManager);
+        m_poller.setPollerConfig(factory);
+        m_poller.setPollOutagesConfig(m_pollOutagesConfig);
+        m_poller.setLocationAwarePollerClient(m_locationAwarePollerClient);
+    }
+
