@@ -11,41 +11,45 @@
 			}
 
 			// Expose the MetaTopologyProvider
-			final GraphMLMetaTopologyProvider metaTopologyProvider = new GraphMLMetaTopologyProvider(m_serviceAccessor);
-			metaTopologyProvider.setTopologyLocation(location);
-			metaTopologyProvider.reload();
-			registerService(pid, MetaTopologyProvider.class, metaTopologyProvider, metaData);
+			try {
+				final GraphMLMetaTopologyProvider metaTopologyProvider = new GraphMLMetaTopologyProvider(m_serviceAccessor);
+				metaTopologyProvider.setTopologyLocation(location);
+				metaTopologyProvider.reload();
+				registerService(pid, MetaTopologyProvider.class, metaTopologyProvider, metaData);
 
-			// Create and register additional services
-			final Set<String> iconKeys = metaTopologyProvider.getGraphProviders().stream()
-					.map(eachProvider -> eachProvider.getNamespace())
-					.flatMap(eachNamespace -> metaTopologyProvider.getRawTopologyProvider(eachNamespace).getVertices().stream())
-					.map(eachVertex -> eachVertex.getIconKey())
-					.filter(eachIconKey -> eachIconKey != null)
-					.collect(Collectors.toSet());
-			registerService(pid, IconRepository.class, new GraphMLIconRepository(iconKeys));
+				// Create and register additional services
+				final Set<String> iconKeys = metaTopologyProvider.getGraphProviders().stream()
+						.map(eachProvider -> eachProvider.getNamespace())
+						.flatMap(eachNamespace -> metaTopologyProvider.getRawTopologyProvider(eachNamespace).getVertices().stream())
+						.map(eachVertex -> eachVertex.getIconKey())
+						.filter(eachIconKey -> eachIconKey != null)
+						.collect(Collectors.toSet());
+				registerService(pid, IconRepository.class, new GraphMLIconRepository(iconKeys));
 
-			// Create an OSGi aware script engine manager
-			final ScriptEngineManager scriptEngineManager = new OSGiScriptEngineManager(m_bundleContext);
-			metaTopologyProvider.getGraphProviders().forEach(it -> {
-				// Find Topology Provider
-				final GraphMLTopologyProvider rawTopologyProvider = metaTopologyProvider.getRawTopologyProvider(it.getNamespace());
+				// Create an OSGi aware script engine manager
+				final ScriptEngineManager scriptEngineManager = new OSGiScriptEngineManager(m_bundleContext);
+				metaTopologyProvider.getGraphProviders().forEach(it -> {
+					// Find Topology Provider
+					final GraphMLTopologyProvider rawTopologyProvider = metaTopologyProvider.getRawTopologyProvider(it.getNamespace());
 
-				// EdgeStatusProvider
-				registerService(pid, EdgeStatusProvider.class, new GraphMLEdgeStatusProvider(rawTopologyProvider, scriptEngineManager, m_serviceAccessor));
+					// EdgeStatusProvider
+					registerService(pid, EdgeStatusProvider.class, new GraphMLEdgeStatusProvider(rawTopologyProvider, scriptEngineManager, m_serviceAccessor));
 
-				// SearchProvider
-				registerService(pid, SearchProvider.class, new GraphMLSearchProvider(rawTopologyProvider));
+					// SearchProvider
+					registerService(pid, SearchProvider.class, new GraphMLSearchProvider(rawTopologyProvider));
 
-				// Vertex Status Provider
-				// Only add status provider if explicitly set in GraphML document
-				if (rawTopologyProvider.requiresStatusProvider()) {
-					GraphMLVertexStatusProvider statusProvider = new GraphMLVertexStatusProvider(
-							rawTopologyProvider.getNamespace(),
-							(nodeIds) -> m_serviceAccessor.getAlarmDao().getNodeAlarmSummariesIncludeAcknowledgedOnes(nodeIds));
-					registerService(pid, StatusProvider.class, statusProvider);
-				}
-			});
+					// Vertex Status Provider
+					// Only add status provider if explicitly set in GraphML document
+					if (rawTopologyProvider.requiresStatusProvider()) {
+						GraphMLVertexStatusProvider statusProvider = new GraphMLVertexStatusProvider(
+								rawTopologyProvider.getNamespace(),
+								(nodeIds) -> m_serviceAccessor.getAlarmDao().getNodeAlarmSummariesIncludeAcknowledgedOnes(nodeIds));
+						registerService(pid, StatusProvider.class, statusProvider);
+					}
+				});
+			} catch (InvalidGraphException | IOException e) {
+				LOG.error("An error occurred while loading GraphMLTopology from file {}. Ignoring...", location, e);
+			}
 		} else {
 			LOG.warn("Service with pid '{}' updated. Updating is not supported. Ignoring...");
 		}
