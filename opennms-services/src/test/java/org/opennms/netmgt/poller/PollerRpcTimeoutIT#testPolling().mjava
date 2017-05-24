@@ -1,0 +1,59 @@
+    @Test
+    public void testPolling() throws Exception {
+
+        String queueName = new JmsQueueNameFactory("RPC", "Poller", NONEXISTENT_LOCATION).getName();
+
+        try {
+            ManagementFactory.getPlatformMBeanServer().getObjectInstance(
+                ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=ActiveMQ.DLQ")
+            );
+            fail("DLQ was unexpected found in the PlatformMBeanServer");
+        } catch (InstanceNotFoundException e) {
+            // Expected: the queue hasn't been created yet
+        }
+
+        try {
+            ManagementFactory.getPlatformMBeanServer().getObjectInstance(
+                ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=" + queueName)
+            );
+            fail(queueName + " queue was unexpected found in the PlatformMBeanServer");
+        } catch (InstanceNotFoundException e) {
+            // Expected: the queue hasn't been created yet
+        }
+
+        // Start the poller: polls will timeout because there is no consumer for the location
+        startDaemons();
+
+        // Sleep long enough so that messages would be flushed to the DLQ
+        Thread.sleep(60000);
+
+        // Stop the poller daemon
+        stopDaemons();
+
+        try {
+            ManagementFactory.getPlatformMBeanServer().getObjectInstance(
+                ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=ActiveMQ.DLQ") 
+            );
+            fail("DLQ was unexpected found in the PlatformMBeanServer");
+        } catch (InstanceNotFoundException e) {
+            // Expected: the DLQ still should be absent
+        }
+
+        Long dequeueCount = (Long)ManagementFactory.getPlatformMBeanServer().getAttribute(
+            ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=" + queueName), 
+            "DequeueCount"
+        );
+        Long expiredCount = (Long)ManagementFactory.getPlatformMBeanServer().getAttribute(
+            ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=" + queueName), 
+            "ExpiredCount"
+        );
+        Long dispatchCount = (Long)ManagementFactory.getPlatformMBeanServer().getAttribute(
+            ObjectName.getInstance("org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=" + queueName), 
+            "DispatchCount"
+        );
+
+        assertTrue("No expired messages were present", expiredCount > 0L);
+        assertEquals("Dequeued messages do not equal expired messages", expiredCount, dequeueCount);
+        assertEquals("Dispatched message count was not zero", 0, dispatchCount.intValue());
+    }
+
