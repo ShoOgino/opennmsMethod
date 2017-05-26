@@ -1,0 +1,54 @@
+    @Test
+    public void canGenerateAlarmDeletedLifecycleEvents() {
+        // Expect an alarmCreated event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        // Send a nodeDown
+        sendNodeDownEvent(1);
+
+        // Wait until we've received the alarmCreated event
+        await().until(allAnticipatedEventsWereReceived());
+
+        // Expect an alarmCreated and a alarmCleared event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CLEARED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        // Send a nodeUp
+        sendNodeUpEvent(1);
+
+        // Wait until we've received the alarmCreated and alarmCleared events
+        // We need to wait for the cosmicClear automation, which currently runs every 30 seconds
+        await().atMost(1, MINUTES).until(allAnticipatedEventsWereReceived());
+
+        // Expect an alarmDeleted event
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_DELETED_EVENT_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        // We need to wait for the cleanUp automation, which currently runs every 60 seconds
+        // but it will only trigger then 'lastautomationtime' and 'lasteventtime' < "5 minutes ago"
+        // so we cheat a little and update the timestamps ourselves instead of waiting
+        transactionTemplate.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus status) {
+                Criteria criteria = new Criteria(OnmsAlarm.class);
+                criteria.addRestriction(new EqRestriction("node.id", 1));
+                criteria.addRestriction(new EqRestriction("uei", EventConstants.NODE_DOWN_EVENT_UEI));
+                for (OnmsAlarm alarm : m_alarmDao.findMatching(criteria)) {
+                    LocalDateTime tenMinutesAgo = LocalDateTime.now().minusMinutes(10);
+                    Date then = Date.from(tenMinutesAgo.toInstant(ZoneOffset.UTC));
+                    alarm.setLastAutomationTime(then);
+                    alarm.setLastEventTime(then);
+                    m_alarmDao.save(alarm);
+                }
+                m_alarmDao.flush();
+            }
+        });
+
+        // Wait until we've received the alarmDeleted event
+        await().atMost(2, MINUTES).until(allAnticipatedEventsWereReceived());
+    }
+
