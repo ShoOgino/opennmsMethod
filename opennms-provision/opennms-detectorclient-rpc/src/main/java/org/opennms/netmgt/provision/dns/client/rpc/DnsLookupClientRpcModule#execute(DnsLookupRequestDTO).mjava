@@ -8,7 +8,22 @@
             if (queryType.equals(QueryType.LOOKUP)) {
                 dto.setHostResponse(addr.getHostAddress());
             } else if (queryType.equals(QueryType.REVERSE_LOOKUP)) {
-                dto.setHostResponse(addr.getCanonicalHostName());
+                // Attempt to retrieve the fully qualified domain name for this IP address
+                String hostName = addr.getCanonicalHostName();
+                if (InetAddressUtils.str(addr).equals(hostName)) {
+                    // The given host name matches the textual representation of
+                    // the IP address, which means that the reverse lookup failed
+                    // NMS-9356: InetAddress#getCanonicalHostName requires PTR records
+                    // to have a corresponding A record in order to succeed, so we
+                    // try using dnsjava's implementation to work around this
+                    try {
+                        hostName = Address.getHostName(addr);
+                    } catch (UnknownHostException e) {
+                        LOG.warn("Failed to retrieve the fully qualified domain name for {}. "
+                                + "Using the textual representation of the IP address.", addr);
+                    }
+                }
+                dto.setHostResponse(hostName);
             }
             future.complete(dto);
         } catch (Exception e) {
