@@ -1,0 +1,34 @@
+    @Override
+    public PollStatus poll(final MonitoredService svc, final Map<String, Object> parameters) {
+        Long ttlInMs = ParameterMap.getKeyedLong(parameters, "ttl", DEFAULT_TTL_IN_MS);
+        if (ttlInMs < 1) {
+            // Use the global default
+            ttlInMs = null;
+        }
+
+        int messageSize = ParameterMap.getKeyedInteger(parameters, "message-size", DEFAULT_MESSAGE_SIZE);
+        if (messageSize < 0) {
+            messageSize = 0;
+        }
+
+        // Create the client
+        final RpcClient<EchoRequest, EchoResponse> client = rpcClientFactory.get().getClient(EchoRpcModule.INSTANCE);
+
+        // Build the request
+        final OnmsNode node = nodeDao.get().get(svc.getNodeId());
+        final EchoRequest request = new EchoRequest();
+        request.setId(System.currentTimeMillis());
+        request.setMessage(Strings.repeat("*", messageSize));
+        request.setLocation(node.getLocation().getLocationName());
+        request.setSystemId(node.getForeignId());
+        request.setTimeToLiveMs(ttlInMs);
+
+        try {
+            final EchoResponse response = client.execute(request).get();
+            final Long responseTime = System.currentTimeMillis() - response.getId();
+            return PollStatus.available(responseTime.doubleValue());
+        } catch (InterruptedException|ExecutionException t) {
+            return RpcExceptionUtils.handleException(t, this);
+        }
+    }
+
