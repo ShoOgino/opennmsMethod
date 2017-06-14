@@ -1,0 +1,39 @@
+    /**
+     * NMS-9413: Verifies that collectd does not schedule interfaces when the
+     * {@link ServiceCollector} throws a {@link CollectionInitializationException}
+     * while validating the agent.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testInterfaceIsNotScheduledWhenValidationFails() throws Exception {
+        ServiceCollector svcCollector = m_easyMockUtils.createMock(ServiceCollector.class);
+        svcCollector.initialize();
+        svcCollector.validateAgent(isA(CollectionAgent.class), isA(Map.class));
+        expectLastCall().andThrow(new CollectionInitializationException("No!")).once();
+        setupCollector("SNMP", svcCollector);
+
+        OnmsIpInterface iface = getInterface();
+
+        setupInterface(iface);
+        setupTransactionManager();
+
+        expect(m_collectdConfig.getPackages()).andReturn(Collections.singletonList(getCollectionPackageThatMatchesSNMP()));
+        expect(m_collectdConfigFactory.interfaceInPackage(iface, getCollectionPackageThatMatchesSNMP())).andReturn(true);
+
+        m_easyMockUtils.replayAll();
+
+        assertEquals("scheduler entry count", 0, m_scheduler.getEntryCount());
+
+        m_collectd.afterPropertiesSet();
+
+        m_collectd.start();
+
+        m_scheduler.next();
+
+        assertEquals("scheduler entry count", 0, m_scheduler.getEntryCount());
+
+        m_collectd.stop();
+
+        m_easyMockUtils.verifyAll();
+    }
+
