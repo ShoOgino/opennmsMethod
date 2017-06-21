@@ -1,15 +1,15 @@
     protected  void calculate() {
-        LOG.debug("calculate: node[{}]: Print Topology {}", 
+        LOG.info("calculate: node: [{}], start: broadcast domain {} topology calculation.", 
+                 getNodeId(),
+                 m_domain.getBridgeNodesOnDomain());
+        LOG.debug("calculate: node: [{}], Print Topology {}", 
         		getNodeId(),
         		m_domain.printTopology());
-        LOG.info("calculate: node: [{}]: start: broadcast domain {} topology calculation.", 
-        		getNodeId(),
-        		m_domain.getBridgeNodesOnDomain());
 
         Bridge electedRoot = m_domain.electRootBridge();
         
         if (electedRoot == null && m_domain.hasRootBridge()) {
-            LOG.debug("calculate: node [{}]: electRootBridge: mantaining old root bridge: {}", 
+            LOG.debug("calculate: node: [{}], electRootBridge: mantaining old root bridge: {}", 
                     getNodeId(),
                     m_domain.getRootBridgeId());
             electedRoot = m_domain.getRootBridge();        	
@@ -22,7 +22,7 @@
 	        
 	        Bridge rootBridge = null;
 	        for (Bridge bridge:  m_notYetParsedBFTMap.keySet()) {
-	            LOG.debug("calculate: node [{}]: bridge [{}]: max bft size \"{}\" in topology",
+	            LOG.debug("calculate: node: [{}], bridge [{}]: max bft size \"{}\" in topology",
 	                    getNodeId(),
 	                    bridge.getId(), 
 	                    m_notYetParsedBFTMap.get(bridge).size());
@@ -32,7 +32,7 @@
 	            }
 	        }
 	        if (rootBridge != null ) {
-	            LOG.debug("calculate: node [{}]: bridge [{}]: elected root with max bft size \"{}\" in topology",
+	            LOG.debug("calculate: node: [{}], bridge [{}]: elected root with max bft size \"{}\" in topology",
 	                    getNodeId(),
 	                    rootBridge.getId(), 
 	                    size);
@@ -42,92 +42,75 @@
         
         if (electedRoot == null ) {
         	electedRoot = m_domain.getBridges().iterator().next();
-    	   LOG.debug("calculate: node [{}]: electRootBridge: first root bridge: {}", 
+    	   LOG.debug("calculate: node: [{}], electRootBridge: first root bridge: {}", 
                        getNodeId(),
                        electedRoot.getId());
         }
 
         if (electedRoot == null || electedRoot.getId() == null) {
-            LOG.error("calculate: [{}]: electedRootBridge should not be null",
+            LOG.error("calculate: node: [{}], electedRootBridge should not be null",
                     getNodeId()
             		);
             return;
         }
-
+        
         List<BridgeMacLink> rootBft = m_notYetParsedBFTMap.remove(electedRoot);
-
+        
         if (m_domain.hasRootBridge() && m_domain.getRootBridge().getId() == electedRoot.getId() && rootBft == null) {
-            LOG.debug("calculate: node [{}]: elected root bridge: [{}], old root bridge. no updated bft",
+            LOG.debug("calculate: node: [{}], elected root bridge: [{}], old root bridge. no updated bft",
                     getNodeId(), 
             		electedRoot.getId());
             rootBft = m_domain.calculateRootBFT();
-        } else if (m_domain.hasRootBridge() && m_domain.getRootBridge().getId() == electedRoot.getId() && rootBft != null ) {
-            LOG.debug("calculate: node [{}]: elected root bridge: [{}], old root bridge. updated bft",
+        } else if ( rootBft != null ) {
+            LOG.debug("calculate: node: [{}], elected root bridge: [{}], has updated bft",
                     getNodeId(), 
                      electedRoot.getId());
+            m_domain.clearTopologyForBridge(electedRoot.getId());
+            LOG.debug("calculate: node: [{}], cleared topology: domain root bridge: [{}]",
+                      getNodeId(), 
+                       m_domain.getRootBridgeId());
             if (m_domain.getTopology().isEmpty()) {
-                LOG.debug("calculate: node [{}]: elected root bridge: [{}], clean topology found. Adding root shared segments",
-                        getNodeId(), 
-                         electedRoot.getId());
-                loadFirstLevelSharedSegment(rootBft);
-            }
-         } else if ( rootBft != null ) {
-            LOG.debug("calculate: node [{}]: elected root bridge: [{}], new root. updated bft",
-                    getNodeId(), 
-                     electedRoot.getId());
-           if (m_domain.getTopology().isEmpty()) {
-               LOG.debug("calculate: node [{}]: new elected root bridge: [{}], is the first bridge in topology. Adding root shared segments",
+               LOG.debug("calculate: node: [{}], new elected root bridge: [{}], is the first bridge in topology. Adding root shared segments",
                        getNodeId(), 
                         electedRoot.getId());
                 loadFirstLevelSharedSegment(rootBft);
                 electedRoot.setRootBridge(true);
                 electedRoot.setRootPort(null);
            } else {
-                m_domain.clearTopologyForBridge(electedRoot.getId());
                 calculate(m_domain.getRootBridge(), m_domain.calculateRootBFT(),
                                 electedRoot, rootBft);
+                addForwarding(m_domain, rootBft);
                 m_domain.hierarchySetUp(electedRoot);
            }
         } else {
-           LOG.debug("calculate: node [{}]: elected root bridge: [{}], is new root bridge with old bft",
+           LOG.debug("calculate: node: [{}], elected root bridge: [{}], is new, without updated bft",
                     getNodeId(), 
                      electedRoot.getId());
            m_domain.hierarchySetUp(electedRoot);
            rootBft = m_domain.calculateRootBFT();
         }
 
-        LOG.debug("calculate: node[{}]: Root Bridge [{}] elected.", 
-        		getNodeId(),
-        		electedRoot.getId(),
-        		m_domain.printTopology());
-
-        for (Bridge xBridge: m_notYetParsedBFTMap.keySet()) {
-            m_domain.clearTopologyForBridge(xBridge.getId());
-            LOG.debug("calculate: node[{}]: Removed bridge: [{}].", 
-            		getNodeId(),
-            		xBridge.getId());
-       }
-
-        LOG.debug("calculate: node[{}]: Print Topology {}", 
-        		getNodeId(),
-        		m_domain.printTopology());
-
+        if (!m_notYetParsedBFTMap.isEmpty()) {
+            for (Bridge xBridge: m_notYetParsedBFTMap.keySet()) {
+                m_domain.clearTopologyForBridge(xBridge.getId());
+                LOG.debug("calculate: node: [{}], Removed bridge: [{}].", 
+                		getNodeId(),
+                		xBridge.getId());
+            }
+        }
+        
         Set<Bridge> nodetobeparsed = new HashSet<Bridge>(m_notYetParsedBFTMap.keySet());
         for (Bridge xBridge: nodetobeparsed) {
-            LOG.info("calculate: node: [{}]: bridge [{}]: calculate topology: start.",
-            		getNodeId(),
-            		xBridge.getId());
-            calculate(electedRoot, rootBft, xBridge, new ArrayList<BridgeMacLink>(m_notYetParsedBFTMap.remove(xBridge)));
-            LOG.info("calculate: node: [{}]: bridge [{}]: calculate topology: stop.",
-            		getNodeId(),
-            		xBridge.getId());
+            List<BridgeMacLink> xBft = new ArrayList<BridgeMacLink>(m_notYetParsedBFTMap.remove(xBridge));
+            calculate(electedRoot, rootBft, xBridge, xBft);            
         }
-        LOG.info("calculate: node: [{}]: stop: broadcast domain {} topology calculated.", 
-        		getNodeId(),
-        		m_domain.getBridgeNodesOnDomain());
-        LOG.debug("calculate: node[{}]: Print Topology {}", 
+        m_domain.cleanForwarders(m_domain.getMacsOnDomain());
+        LOG.debug("calculate: node: [{}], Print Topology {}", 
         		getNodeId(),
         		m_domain.printTopology());
+        LOG.info("calculate: node: [{}], stop: broadcast domain {} topology calculated.", 
+                 getNodeId(),
+                 m_domain.getBridgeNodesOnDomain());
 
 
     }
