@@ -4,7 +4,7 @@
             Map<String,BridgeMacLink> ymactoport = new HashMap<String, BridgeMacLink>();
             Set<String> xmacs = new HashSet<String>();
             Set<String> ymacs = new HashSet<String>();             		
-            LOG.debug("BridgeTopologyHelper: nodes [{}, {}]: search simple connection.\n xbft\n{}\n ybft\n{}",
+            LOG.debug("simple connection [{} <--> {}]: searching.\n xbft\n{}\n ybft\n{}",
                     xBridge.getId(),
                     yBridge.getId(),
                     BroadcastDomain.printTopologyBFT(xBFT),
@@ -25,7 +25,7 @@
                     ymacs.add(ylink.getMacAddress());
             }
             if (m_domain.getBridgeMacAddresses(xBridge.getId()) != null)
-             xmacs.addAll(m_domain.getBridgeMacAddresses(xBridge.getId()));
+                xmacs.addAll(m_domain.getBridgeMacAddresses(xBridge.getId()));
             if (m_domain.getBridgeMacAddresses(yBridge.getId()) != null)
                 ymacs.addAll(m_domain.getBridgeMacAddresses(yBridge.getId()));
 
@@ -33,65 +33,87 @@
             Integer xy = condition1(ymacs, xmactoport);
             if (xy != null) {
             	m_xy=xy;
+                LOG.debug("simple connection: [{} port: {} --> {}].",
+                          xBridge.getId(),
+                          m_xy,
+                          yBridge.getId());
             }
 
             // there is a mac of X found on Y BFT
             Integer yx = condition1(xmacs, ymactoport);
             if (yx != null) {
             	m_yx=yx;
+                LOG.debug("simple connection: [{} <-- {} port: {}].",
+                          xBridge.getId(),
+                          yBridge.getId(),
+                          m_yx);
             }
             	            
             if (m_xy == null || m_yx == null) {
                 Set<String> commonlearnedmacs = new HashSet<String>(xmactoport.keySet()); 
                 commonlearnedmacs.retainAll(new HashSet<String>(ymactoport.keySet()));
-                LOG.debug("BridgeTopologyHelper: bridges [{},{}] common (learned mac): {}",
+                LOG.debug("simple connection: [{} <--> {}] common (learned mac): {}",
                 		xBridge.getId(),
                 		yBridge.getId(),
                 		commonlearnedmacs);
-                if (m_yx != null && m_xy == null) 
+                if (m_yx != null && m_xy == null) { 
                     m_xy = condition2(commonlearnedmacs,m_yx,ymactoport,xmactoport);
-                if (m_yx == null && m_xy != null)
+                } else if (m_yx == null && m_xy != null) {
                     m_yx = condition2(commonlearnedmacs,m_xy,xmactoport,ymactoport);
-                if (m_yx == null || m_xy == null) {
+                } else {
                     List<Integer> ports = condition3(commonlearnedmacs,xmactoport,ymactoport);
-                    m_xy = ports.get(0);
-                    m_yx= ports.get(1);
+                    if (ports.size() == 2) {
+                        m_xy = ports.get(0);
+                        m_yx= ports.get(1);
+                    }
                 }
-                if (m_xy == null || m_xy == null)
-                    return;
             }    
-            LOG.debug("BridgeTopologyHelper: simple connection: [nodeid {}, port {}] <--> [nodeid {}, port {}]", 
-            		xBridge.getId(), 
-            		m_xy,
-            		yBridge.getId()
-            		, m_yx);
+            if (m_xy == null || m_xy == null) {
+                LOG.warn("simple connection: [{}, port {}] <--> [{}, port {}]. Not found. exiting", 
+                          xBridge.getId(), 
+                          m_xy,
+                          yBridge.getId()
+                          , m_yx);
+                return;
+            }
             
             BridgeMacLink xylink = null;
             BridgeMacLink yxlink = null;
-            Set<String> macsOnSegment=new HashSet<String>();
             for (BridgeMacLink xlink: xBFT) {
                 if (xlink.getBridgePort() == m_xy && xlink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) {
                     if (ymactoport.get(xlink.getMacAddress()) != null 
                     		&& m_yx == ymactoport.get(xlink.getMacAddress()).getBridgePort()) {
-                    	macsOnSegment.add(xlink.getMacAddress());
-                        LOG.debug("BridgeTopologyHelper: simple connection: link added: [bridge:[{}],port:{},mac:{}].", 
-                        		xlink.getNode().getId(),
-                        		xlink.getBridgePort(),
-                        		xlink.getMacAddress());
-                    } else {
-                    	m_xythrowsetmacs.add(xlink.getMacAddress());
-                        LOG.debug("BridgeTopologyHelper: simple connection: throghset: mac added: [bridge:[{}],port:{},mac:{}].", 
-                        		xlink.getNode().getId(),
-                        		xlink.getBridgePort(),
-                        		xlink.getMacAddress());
+                    	m_macsOnSegment.add(xlink.getMacAddress());
+                        LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], forward set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                                  xBridge.getId(), 
+                                  m_xy,
+                                  yBridge.getId()
+                                  , m_yx,
+                                  xlink.getNode().getId(),
+                    		xlink.getBridgePort(),
+                    		xlink.getMacAddress());
+                    } else if (ymactoport.get(xlink.getMacAddress()) == null){
+                        m_forwardersX.add(xlink);
+                        LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], through set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                                  xBridge.getId(), 
+                                  m_xy,
+                                  yBridge.getId()
+                                  , m_yx,
+                                  xlink.getNode().getId(),
+                                xlink.getBridgePort(),
+                                xlink.getMacAddress());
                     }
                     if (xylink == null)
                         xylink = xlink;
                 } else if (xlink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) {
-                    LOG.debug("BridgeTopologyHelper: throgh set: link added: [bridge:[{}],port:{},mac:{}].", 
-                    		xlink.getNode().getId(),
-                    		xlink.getBridgePort(),
-                    		xlink.getMacAddress());
+                    LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], through set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                              xBridge.getId(), 
+                              m_xy,
+                              yBridge.getId()
+                              , m_yx,
+                              xlink.getNode().getId(),
+                            xlink.getBridgePort(),
+                            xlink.getMacAddress());
                     if (!m_throughSetX.containsKey(xlink.getBridgePort()))
                     	m_throughSetX.put(xlink.getBridgePort(), new ArrayList<BridgeMacLink>());
                     m_throughSetX.get(xlink.getBridgePort()).add(xlink);
@@ -102,50 +124,70 @@
                 if (ylink.getBridgePort() == m_yx && ylink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) {
                     if ( xmactoport.get(ylink.getMacAddress()) != null &&
                     		m_xy == xmactoport.get(ylink.getMacAddress()).getBridgePort()) {
-                    	macsOnSegment.add(ylink.getMacAddress());
-                        LOG.debug("BridgeTopologyHelper: simple connection: link added: [bridge:[{}],port:{},mac:{}].", 
-                        		ylink.getNode().getId(),
-                        		ylink.getBridgePort(),
-                        		ylink.getMacAddress());
-                    } else {
-                    	m_xythrowsetmacs.add(ylink.getMacAddress());
-                        LOG.debug("BridgeTopologyHelper: simple connection: throghset: mac added: [bridge:[{}],port:{},mac:{}].", 
-                        		ylink.getNode().getId(),
-                        		ylink.getBridgePort(),
-                        		ylink.getMacAddress());
+                    	m_macsOnSegment.add(ylink.getMacAddress());
+                        LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], forward set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                                  xBridge.getId(), 
+                                  m_xy,
+                                  yBridge.getId()
+                                  , m_yx,
+                                  ylink.getNode().getId(),
+                                ylink.getBridgePort(),
+                                ylink.getMacAddress());
+                    } else if (xmactoport.get(ylink.getMacAddress()) == null){
+                        m_forwardersY.add(ylink);
+                        LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], through set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                                  xBridge.getId(), 
+                                  m_xy,
+                                  yBridge.getId()
+                                  , m_yx,
+                                  ylink.getNode().getId(),
+                                ylink.getBridgePort(),
+                                ylink.getMacAddress());
                     }
                     if (yxlink == null)
                         yxlink = ylink;
                 } else if (ylink.getBridgeDot1qTpFdbStatus() == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED) {
-                    LOG.debug("BridgeTopologyHelper: throgh set: link added: [bridge:[{}],port:{},mac:{}].", 
-                    		ylink.getNode().getId(),
-                    		ylink.getBridgePort(),
-                    		ylink.getMacAddress());
+                    LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], through set: mac added: [bridge:[{}],port:{},mac:{}].", 
+                              xBridge.getId(), 
+                              m_xy,
+                              yBridge.getId()
+                              , m_yx,
+                              ylink.getNode().getId(),
+                            ylink.getBridgePort(),
+                            ylink.getMacAddress());
                     if (!m_throughSetY.containsKey(ylink.getBridgePort()))
                     	m_throughSetY.put(ylink.getBridgePort(), new ArrayList<BridgeMacLink>());
                     m_throughSetY.get(ylink.getBridgePort()).add(ylink);
                 }
             }
-            LOG.debug("BridgeTopologyHelper: links:{}, found on simple connection.", 
-            		macsOnSegment.size());
+            LOG.debug("simple connection: [{}, port {}] <--> [{}, port {}], found macs:{}.",
+                      xBridge.getId(), 
+                      m_xy,
+                      yBridge.getId()
+                      , m_yx,
+            		m_macsOnSegment.size());
     
-            BridgeBridgeLink blink = new BridgeBridgeLink();
-            if (xylink != null && yxlink != null ) {
+            if (yxlink != null ) {
 
-                blink.setNode(yxlink.getNode());
-                blink.setBridgePort(yxlink.getBridgePort());
-                blink.setBridgePortIfIndex(yxlink.getBridgePortIfIndex());
-                blink.setBridgePortIfName(yxlink.getBridgePortIfName());
-                blink.setVlan(yxlink.getVlan());
-                
-                blink.setDesignatedNode(xylink.getNode());
-                blink.setDesignatedPort(xylink.getBridgePort());
-                blink.setDesignatedPortIfIndex(xylink.getBridgePortIfIndex());
-                blink.setDesignatedPortIfName(xylink.getBridgePortIfName());
-                blink.setDesignatedVlan(xylink.getVlan());
+                m_yxPort = new BridgePort();
+                m_yxPort.setNode(yxlink.getNode());
+                m_yxPort.setBridgePort(yxlink.getBridgePort());
+                m_yxPort.setBridgePortIfIndex(yxlink.getBridgePortIfIndex());
+                m_yxPort.setBridgePortIfName(yxlink.getBridgePortIfName());
+                m_yxPort.setVlan(yxlink.getVlan());
+                m_yxPort.setCreateTime(yxlink.getBridgeMacLinkCreateTime());
+            }
+            
+            if (xylink != null) {
 
+                m_xyPort = new BridgePort();
+                m_xyPort.setNode(xylink.getNode());
+                m_xyPort.setBridgePort(xylink.getBridgePort());
+                m_xyPort.setBridgePortIfIndex(xylink.getBridgePortIfIndex());
+                m_xyPort.setBridgePortIfName(xylink.getBridgePortIfName());
+                m_xyPort.setVlan(xylink.getVlan());
+                m_xyPort.setCreateTime(xylink.getBridgeMacLinkCreateTime());
 
             }
-            m_simpleconnection = new SimpleConnection(macsOnSegment, blink);
         }
 
