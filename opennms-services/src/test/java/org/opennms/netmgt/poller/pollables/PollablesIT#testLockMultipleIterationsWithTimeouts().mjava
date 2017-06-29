@@ -1,0 +1,55 @@
+    /**
+     * This test uses 5 threads that each contend over the same lock.
+     * When a thread acquires the lock, it will recursively increment a
+     * global counter and sleep a small amount 4 times, relocking the 
+     * lock each time an increment is performed. After these invocations 
+     * unwind, another thread will acquire the lock and increment the 
+     * counter and sleep 4 times. This continues until the global counter
+     * reaches a limit value.
+     * 
+     * The contending threads try to acquire the lock with a short timeout
+     * so they will time out many times before eventually acquiring the
+     * lock.
+     * 
+     * @throws Exception
+     */
+    @Test
+    public void testLockMultipleIterationsWithTimeouts() throws Exception {
+
+        AtomicBoolean failed = new AtomicBoolean(false);
+
+        AtomicInteger globalCounter = new AtomicInteger(0);
+        AtomicInteger[] threadInvocations = new AtomicInteger[] {
+            new AtomicInteger(0),
+            new AtomicInteger(0),
+            new AtomicInteger(0),
+            new AtomicInteger(0),
+            new AtomicInteger(0)
+        };
+
+        CountingRunnable[] runnables = new CountingRunnable[5];
+        Thread[] threads = new Thread[5];
+        for(int i = 0; i < 5; i++) {
+            // Recursively increment the counter and sleep 4 times
+            runnables[i] = new CountingRunnable(pNode1, globalCounter, threadInvocations[i], 4);
+            threads[i] = new Thread(runnables[i]);
+            threads[i].setUncaughtExceptionHandler(new UncaughtExceptionHandler() {
+                @Override
+                public void uncaughtException(Thread t, Throwable e) {
+                    LOG.error("Unexpected exception caught during test", e);
+                    failed.set(true);
+                }
+            });
+            threads[i].start();
+        }
+
+        for(int i = 0; i < 5; i++) {
+            threads[i].join();
+            LOG.info("Thread {} incremented the counter {} times", i, runnables[i].getInvocations());
+        }
+
+        if (failed.get()) {
+            fail("Unexpected exception caught during test");
+        }
+    }
+
