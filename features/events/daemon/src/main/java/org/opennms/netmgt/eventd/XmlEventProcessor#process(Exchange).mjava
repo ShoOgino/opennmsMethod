@@ -1,0 +1,99 @@
+    @Override
+    public void process(Exchange exchange) {
+
+        final InputStream stream = exchange.getIn().getBody(InputStream.class);
+
+        // Unmarshal the XML document
+        Log eventLog = null;
+        try {
+            eventLog = JaxbUtils.unmarshal(Log.class, new InputSource(stream));
+            LOG.debug("Event record converted");
+        } catch (final Throwable e) {
+            LOG.error("Could not unmarshal the XML record", e);
+            throw e;
+        }
+
+        // Now that we have a list of events, process them
+        final Event[] events = eventLog.getEvents().getEvent();
+
+        // process the events
+        if (events != null && events.length != 0) {
+            // sort the events by time
+            Arrays.sort(events, new Comparator<Event>() {
+                @Override
+                public int compare(final Event e1, final Event e2) {
+                    final boolean e1t = (e1.getTime() != null);
+                    final boolean e2t = (e2.getTime() != null);
+                    if (e1t && !e2t) {
+                        return 1;
+                    } else if (!e1t && e2t) {
+                        return -1;
+                    } else if (!e1t && !e2t) {
+                        return 0;
+                    }
+
+                    Date de1 = e1.getTime();
+                    Date de2 = e2.getTime();
+
+                    if (de1 != null && de2 != null) {
+                        return (int) (de1.getTime() - de2.getTime());
+                    } else if (de1 == null && de2 != null) {
+                        return -1;
+                    } else if (de1 != null && de2 == null) {
+                        return 1;
+                    } else {
+                        return 0;
+                    }
+                }
+            });
+
+            final List<Event> okEvents = new ArrayList<Event>(events.length);
+
+            /*
+             * Get the handler and then have it process all
+             * the events in the document before moving to the
+             * next event handler.
+             */
+            for (final Event event : events) {
+                /*
+                 * Process the event and log any errors,
+                 * but don't die on these errors
+                 */
+                try {
+                    LOG.debug("handling event: {}", event);
+
+                    m_eventForwarder.sendNow(event);
+                    if (!okEvents.contains(event)) {
+                        okEvents.add(event);
+                    }
+                } catch (final Throwable t) {
+                    LOG.warn("An exception occured while processing an event.", t);
+                }
+            }
+
+            // Now process the good events and send a receipt message
+            boolean hasReceipt = false;
+            final EventReceipt receipt = new EventReceipt();
+            
+            for (final Event event : okEvents) {
+                if (event.getUuid() != null) {
+                    receipt.addUuid(event.getUuid());
+                    hasReceipt = true;
+                }
+            }
+
+            if (hasReceipt) {
+                // Transform it to XML and send it to the socket in one call
+                final StringWriter writer = new StringWriter();
+                JaxbUtils.marshal(receipt, writer);
+                writer.flush();
+                String writerOutput = writer.toString();
+                exchange.getOut().setBody(writerOutput);
+
+                LOG.debug("Sent Event Receipt: {}", writerOutput);
+            }
+        } else {
+            LOG.debug("The agent sent an empty event stream.");
+        }
+    }
+
