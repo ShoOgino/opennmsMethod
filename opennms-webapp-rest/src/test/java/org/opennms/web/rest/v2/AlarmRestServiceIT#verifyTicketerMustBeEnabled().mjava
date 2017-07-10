@@ -1,0 +1,29 @@
+    @Test
+    public void verifyTicketerMustBeEnabled() throws Exception {
+        final OnmsAlarm alarm = m_databasePopulator.getAlarmDao().findAll().stream()
+                .filter(a -> a.getSeverity().isGreaterThanOrEqual(OnmsSeverity.NORMAL) && a.getAlarmAckTime() == null)
+                .findFirst().orElseThrow(() -> new IllegalStateException("No unacknowledged alarm with severity >= Normal found"));
+        String url = "/alarms/";
+
+        // TroubleTicketerPlugin is disabled, therefore it should fail
+        sendPost(url + alarm.getId() + "/ticket/create", "", 501);
+        sendPost(url + alarm.getId() + "/ticket/update", "", 501);
+        sendPost(url + alarm.getId() + "/ticket/close", "", 501);
+
+        // enable TroubleTicketeRPlugin and try again
+        System.setProperty("opennms.alarmTroubleTicketEnabled", "true");
+        verifyAnticipatedEvents();
+
+        anticipateEvent(createEventBuilder(EventConstants.TROUBLETICKET_CREATE_UEI, alarm, ImmutableMap.of("user", "ulf")));
+        sendPost(url + alarm.getId() + "/ticket/create", "", 202);
+        verifyAnticipatedEvents();
+
+        anticipateEvent(createEventBuilder(EventConstants.TROUBLETICKET_UPDATE_UEI, alarm, null));
+        sendPost(url + alarm.getId() + "/ticket/update", "", 202);
+        verifyAnticipatedEvents();
+
+        anticipateEvent(createEventBuilder(EventConstants.TROUBLETICKET_CLOSE_UEI, alarm, null));
+        sendPost(url + alarm.getId() + "/ticket/close", "", 202);
+        verifyAnticipatedEvents();
+    }
+
