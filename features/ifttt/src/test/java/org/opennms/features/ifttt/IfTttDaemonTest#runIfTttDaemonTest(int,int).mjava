@@ -1,0 +1,46 @@
+    public Map<String, List<ResultEntry>> runIfTttDaemonTest(int timeout, int entryCount) throws Exception {
+        final AlarmDao alarmDao = mock(AlarmDao.class);
+        when(alarmDao.findMatching((Criteria) Matchers.anyObject())).thenReturn(alarmMap.values().stream().collect(Collectors.toList()));
+
+        final TransactionOperations transactionOperations = mock(TransactionOperations.class);
+        when(transactionOperations.execute(Matchers.anyObject())).thenAnswer(new Answer<Void>() {
+            @Override
+            public Void answer(InvocationOnMock invocationOnMock) throws Throwable {
+                TransactionCallbackWithoutResult transactionCallbackWithoutResult = invocationOnMock.getArgumentAt(0, TransactionCallbackWithoutResult.class);
+                transactionCallbackWithoutResult.doInTransaction(null);
+                return null;
+            }
+        });
+
+        //final List<ResultEntry> receivedEntries = new ArrayList<>();
+        final Map<String, List<ResultEntry>> receivedEntries = new HashMap<>();
+
+        final IfTttDaemon ifTttDaemon = new IfTttDaemon(alarmDao, transactionOperations, new File("src/test/resources/etc/ifttt-config.xml")) {
+            @Override
+            protected void fireIfTttTriggerSet(IfTttConfig ifTttConfig, String categoryFilter, String name, VariableNameExpansion variableNameExpansion) {
+                if (!receivedEntries.containsKey(categoryFilter)) {
+                    receivedEntries.put(categoryFilter, new ArrayList<>());
+                }
+                receivedEntries.get(categoryFilter).add(new ResultEntry(name, variableNameExpansion));
+            }
+        };
+
+        ifTttDaemon.start();
+
+        await().atMost(timeout, SECONDS).until(() -> allEntrySizesMatch(receivedEntries, entryCount - 2));
+        LOG.debug("#1: {}", receivedEntries);
+
+        addAlarm(12, 4, OnmsSeverity.MAJOR);
+        when(alarmDao.findMatching((Criteria) Matchers.anyObject())).thenReturn(alarmMap.values().stream().collect(Collectors.toList()));
+
+        await().atMost(timeout, SECONDS).until(() -> allEntrySizesMatch(receivedEntries, entryCount - 1));
+        LOG.debug("#2: {}", receivedEntries);
+
+        ifTttDaemon.stop();
+
+        await().atMost(timeout, SECONDS).until(() -> allEntrySizesMatch(receivedEntries, entryCount));
+        LOG.debug("#3: {}", receivedEntries);
+
+        return receivedEntries;
+    }
+
