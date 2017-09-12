@@ -2,62 +2,71 @@
      * Iterates through the host systems and adds them to the requisition object.
      *
      * @param vmwareViJavaAccess the access/connection to use
-     * @throws RemoteException
      */
-    private void iterateHostSystems(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) throws RemoteException {
-        ManagedEntity[] hostSystems;
+    private void iterateHostSystems(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) {
+        ManagedEntity[] managedEntities = null;
 
-        // search for host systems (esx hosts)
-        logger.debug("Starting to iterate host systems on VMware host {} ...", m_hostname);
-        hostSystems = vmwareViJavaAccess.searchManagedEntities("HostSystem");
+        logger.debug("Starting to iterate Host Systems on VMware host {} ...", m_hostname);
 
-        if (hostSystems != null) {
+        try {
+            managedEntities = vmwareViJavaAccess.searchManagedEntities("HostSystem");
+        } catch (RemoteException e) {
+            logger.error("Error iterating Host Systems on VMware host {}", m_hostname);
+            logger.error("Exception thrown while iterating for Host Systems: ", e);
+        }
 
-            for (ManagedEntity managedEntity : hostSystems) {
-                HostSystem hostSystem = (HostSystem) managedEntity;
-                logger.debug("Iterating host systems on VMware management server {} : {} (ID: {})", m_hostname, hostSystem.getName(), hostSystem.getMOR().getVal());
+        if (managedEntities != null) {
 
-                m_hostSystemMap.put(hostSystem.getMOR().getVal(), hostSystem.getName());
+            Arrays.stream(managedEntities)
+                    .map(m -> (HostSystem) m)
+                    .forEach(hostSystem -> {
+                                synchronized (m_hostSystemMap) {
+                                    m_hostSystemMap.put(hostSystem.getMOR().getVal(), hostSystem.getName());
+                                }
+                            }
+                    );
 
-                // check for correct key/value-pair
-                if (checkHostPowerState(hostSystem) && checkForAttribute(hostSystem)) {
-                    logger.debug("Adding Host System '{}' (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+            final ExecutorService executor = Executors.newFixedThreadPool(Math.min(managedEntities.length, 10));
 
-                    // iterate over all service console networks and add interface Ip addresses
-                    TreeSet<String> ipAddresses = vmwareViJavaAccess.getHostSystemIpAddresses(hostSystem);
+            final List<CompletableFuture<Optional<RequisitionNode>>> completableFutures = Arrays.stream(managedEntities)
+                    .map(managedEntity -> (HostSystem) managedEntity)
+                    .filter(hostSystem -> checkHostPowerState(hostSystem))
+                    .filter(hostSystem -> checkForAttribute(hostSystem))
+                    .map(hostSystem -> CompletableFuture.supplyAsync(() -> {
+                        logger.debug("Adding Host System '{}' (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
 
-                    // create the new node...
-                    RequisitionNode node = createRequisitionNode(ipAddresses, hostSystem, apiVersion, vmwareViJavaAccess);
+                        TreeSet<String> ipAddresses = vmwareViJavaAccess.getHostSystemIpAddresses(hostSystem);
+                        logger.debug("Found {} IP addresses for Host System '{}' (ID: {}): {}", ipAddresses.size(), hostSystem.getName(), hostSystem.getMOR().getVal(), ipAddresses);
 
-                    // add cpu
-                    try {
-                        node.putAsset(new RequisitionAsset("cpu", hostSystem.getHardware().getCpuInfo().getNumCpuCores() + " cores"));
-                    } catch (Exception e) {
-                        logger.debug("Can't find CPU information for {} (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
-                    }
+                        RequisitionNode node = createRequisitionNode(ipAddresses, hostSystem, apiVersion, vmwareViJavaAccess);
 
-                    // add memory
-                    try {
-                        node.putAsset(new RequisitionAsset("ram", Math.round(hostSystem.getHardware().getMemorySize()/1000000f) + " MB"));
-                    } catch (Exception e) {
-                        logger.debug("Can't find Memory information for {} (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
-                    }
+                        try {
+                            node.putAsset(new RequisitionAsset("cpu", hostSystem.getHardware().getCpuInfo().getNumCpuCores() + " cores"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find CPU information for '{}' (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+                        }
 
-                    // add vendor
-                    /*
-                    try {
-                        node.putAsset(new RequisitionAsset("vendor", hostSystem.getHardware().getSystemInfo().getVendor()));
-                    } catch (Exception e) {
-                        logger.debug("Can't find vendor information for {}", hostSystem.getName());
-                    }
-                    */
+                        try {
+                            node.putAsset(new RequisitionAsset("ram", Math.round(hostSystem.getHardware().getMemorySize() / 1000000f) + " MB"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find Memory information for '{}' (ID: {})", hostSystem.getName(), hostSystem.getMOR().getVal());
+                        }
 
-                    // ...and add it to the requisition
-                    if (node != null && m_persistHosts) {
-                        m_requisition.insertNode(node);
-                    }
-                }
-            }
+                        return m_persistHosts ? Optional.of(node) : Optional.<RequisitionNode>empty();
+
+                    }, executor))
+                    .collect(Collectors.toList());
+
+            completableFutures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(Optional::isPresent)
+                    .forEach(m -> {
+                        synchronized (m_requisition) {
+                            m_requisition.insertNode(m.get());
+                        }
+                    });
+
+            executor.shutdown();
         }
     }
 
