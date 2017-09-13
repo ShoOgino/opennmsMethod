@@ -1,0 +1,48 @@
+    @Override
+    protected Response doUpdateProperties(SecurityContext securityContext, UriInfo uriInfo, OnmsAlarm alarm, MultivaluedMapImpl params) {
+        boolean isProcessAck = true;
+
+        final String ackValue = params.getFirst("ack");
+        final String escalateValue = params.getFirst("escalate");
+        final String clearValue = params.getFirst("clear");
+        final String ackUserValue = params.getFirst("ackUser");
+        final String ticketIdValue = params.getFirst("ticketId");
+        final String ticketStateValue = params.getFirst("ticketState");
+
+        final String ackUser = ackUserValue == null ? securityContext.getUserPrincipal().getName() : ackUserValue;
+        SecurityHelper.assertUserEditCredentials(securityContext, ackUser);
+
+        final OnmsAcknowledgment acknowledgement = new OnmsAcknowledgment(alarm, ackUser);
+        acknowledgement.setAckAction(AckAction.UNSPECIFIED);
+        if (ackValue != null) {
+            if (Boolean.parseBoolean(ackValue)) {
+                acknowledgement.setAckAction(AckAction.ACKNOWLEDGE);
+            } else {
+                acknowledgement.setAckAction(AckAction.UNACKNOWLEDGE);
+            }
+        } else if (escalateValue != null) {
+            if (Boolean.parseBoolean(escalateValue)) {
+                acknowledgement.setAckAction(AckAction.ESCALATE);
+            }
+        } else if (clearValue != null) {
+            if (Boolean.parseBoolean(clearValue)) {
+                acknowledgement.setAckAction(AckAction.CLEAR);
+            }
+        } else if (StringUtils.isNotBlank(ticketIdValue)) {
+            isProcessAck = false;
+            alarm.setTTicketId(ticketIdValue);
+        } else if (EnumUtils.isValidEnum(TroubleTicketState.class, ticketStateValue)) {
+            isProcessAck = false;
+            alarm.setTTicketState(TroubleTicketState.valueOf(ticketStateValue));
+        } else {
+            throw getException(Status.BAD_REQUEST, "Must supply one of the 'ack', 'escalate', or 'clear' parameters, set to either 'true' or 'false'.");
+        }
+        if (isProcessAck) {
+            m_ackDao.processAck(acknowledgement);
+        } else {
+            getDao().saveOrUpdate(alarm);
+        }
+
+        return Response.noContent().build();
+    }
+

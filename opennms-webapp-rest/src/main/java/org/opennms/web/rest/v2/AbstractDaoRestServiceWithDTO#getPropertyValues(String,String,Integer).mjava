@@ -1,0 +1,72 @@
+    @GET
+    @Path("properties/{propertyId}")
+    @Produces({MediaType.APPLICATION_JSON, MediaType.APPLICATION_XML})
+    public Response getPropertyValues(@PathParam("propertyId") final String propertyId, @QueryParam("q") final String query, @QueryParam("limit") final Integer limit) {
+        Set<SearchProperty> props = getQueryProperties();
+        // Find the property with the matching ID
+        Optional<SearchProperty> prop = props.stream().filter(p -> p.getId().equals(propertyId)).findAny();
+        if (prop.isPresent()) {
+            SearchProperty property = prop.get();
+            if (property.values != null && property.values.size() > 0) {
+                final Set<String> validValues;
+                if (query != null && query.length() > 0) {
+                    validValues = property.values.keySet().stream().filter(v -> v.contains(query)).collect(Collectors.toSet());
+                } else {
+                    validValues = property.values.keySet();
+                }
+
+                switch(property.type) {
+                case FLOAT:
+                    return Response.ok(new FloatCollection(validValues.stream().map(Float::parseFloat).collect(Collectors.toList()))).build();
+                case INTEGER:
+                    return Response.ok(new IntegerCollection(validValues.stream().map(Integer::parseInt).collect(Collectors.toList()))).build();
+                case LONG:
+                    return Response.ok(new LongCollection(validValues.stream().map(Long::parseLong).collect(Collectors.toList()))).build();
+                case IP_ADDRESS:
+                case STRING:
+                    return Response.ok(new StringCollection(validValues)).build();
+                case TIMESTAMP:
+                    return Response.ok(new DateCollection(validValues.stream().map(v -> {
+                        try {
+                            return ISO8601DateEditor.stringToDate(v);
+                        } catch (final IllegalArgumentException|UnsupportedOperationException e) {
+                            LOG.error("Invalid date in value list: " + v, e);
+                            return null;
+                        }
+                    })
+                    // Filter out invalid null values
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList()))).build();
+                default:
+                    return Response.noContent().build();
+                }
+            }
+
+            switch(property.type) {
+            case FLOAT:
+                List<Float> floats = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<Float>(property, query, limit));
+                return Response.ok(new FloatCollection(floats)).build();
+            case INTEGER:
+                List<Integer> ints = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<Integer>(property, query, limit));
+                return Response.ok(new IntegerCollection(ints)).build();
+            case LONG:
+                List<Long> longs = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<Long>(property, query, limit));
+                return Response.ok(new LongCollection(longs)).build();
+            case IP_ADDRESS:
+                List<InetAddress> addresses = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<InetAddress>(property, query, limit));
+                return Response.ok(new StringCollection(addresses.stream().map(InetAddressUtils::str).collect(Collectors.toList()))).build();
+            case STRING:
+                List<String> strings = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<String>(property, query, limit));
+                return Response.ok(new StringCollection(strings)).build();
+            case TIMESTAMP:
+                List<Date> dates = new HibernateTemplate(m_sessionFactory).execute(new HibernateListCallback<Date>(property, query, limit));
+                return Response.ok(new DateCollection(dates)).build();
+            default:
+                return Response.noContent().build();
+            }
+        } else {
+            // 404
+            return Response.status(Status.NOT_FOUND).build();
+        }
+    }
+
