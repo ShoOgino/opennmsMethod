@@ -1,0 +1,38 @@
+    @GET
+    @Path("/nodes/{type}")
+    public Response getNodes(@Context final UriInfo uriInfo, @PathParam("type") String type) {
+        final NodeStatusCalculationStrategy strategy = NodeStatusCalculationStrategy.createFrom(type);
+        if (strategy == null) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("Strategy '" + type + "' not supported. Supported values are:" + Arrays.toString(NodeStatusCalculationStrategy.values()))
+                    .build();
+        }
+
+        final QueryParameters queryParameters = QueryParametersBuilder.buildFrom(uriInfo);
+        final SeverityFilter severityFilter = getSeverityFilter(uriInfo);
+        final NodeQuery query = new NodeQuery(queryParameters, severityFilter);
+        query.setStatusCalculationStrategy(strategy);
+
+        // Adjust order parameters
+        if (query.getParameters().getOrder() != null && query.getParameters().getOrder().getColumn().equals("label")) {
+            query.getParameters().setOrder(new QueryParameters.Order("node.nodelabel", query.getParameters().getOrder().isDesc()));
+        }
+
+        final List<StatusEntity<OnmsNode>> nodes = nodeStatusService.getStatus(query);
+        final int totalCount = nodeStatusService.count(query);
+        final int offset = queryParameters.getOffset();
+
+        final List<NodeDTO> statusEntities = nodes.stream().map(node -> {
+            NodeDTO nodeDTO = new NodeDTO();
+            nodeDTO.setId(node.getEntity().getId());
+            nodeDTO.setName(node.getEntity().getLabel());
+            nodeDTO.setSeverity(node.getStatus());
+            return nodeDTO;
+        }).collect(Collectors.toList());
+        final NodeDTOList list = new NodeDTOList(statusEntities);
+        list.setOffset(queryParameters.getOffset());
+        list.setTotalCount(totalCount);
+
+        return createResponse(list, offset, totalCount);
+    }
+

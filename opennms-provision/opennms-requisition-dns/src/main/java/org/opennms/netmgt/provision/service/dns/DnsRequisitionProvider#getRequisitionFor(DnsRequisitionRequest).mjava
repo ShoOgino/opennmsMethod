@@ -1,0 +1,35 @@
+    @Override
+    public Requisition getRequisitionFor(DnsRequisitionRequest request) {
+        ZoneTransferIn xfer = null;
+        List<Record> records = null;
+
+        LOG.debug("connecting to host {}:{}", request.getHost(), request.getPort());
+        try {
+            try {
+                xfer = ZoneTransferIn.newIXFR(new Name(request.getZone()), request.getSerial(),
+                        request.getFallback(), request.getHost(), request.getPort(), null);
+                records = getRecords(xfer);
+            } catch (ZoneTransferException e) {
+                // Fallback to AXFR
+                String message = "IXFR not supported trying AXFR: " + e;
+                LOG.warn(message, e);
+                xfer = ZoneTransferIn.newAXFR(new Name(request.getZone()), request.getHost(), null);
+                records = getRecords(xfer);
+            }
+        } catch (IOException | ZoneTransferException e) {
+            throw new RuntimeException(e);
+        }
+
+        if (records.size() > 0) {
+            // for now, set the foreign source to the specified dns zone
+            final Requisition r = new Requisition(request.getForeignSource());
+            for (Record rec : records) {
+                if (matchingRecord(request, rec)) {
+                    r.insertNode(createRequisitionNode(request, rec));
+                }
+            }
+            return r;
+        }
+        return null;
+    }
+

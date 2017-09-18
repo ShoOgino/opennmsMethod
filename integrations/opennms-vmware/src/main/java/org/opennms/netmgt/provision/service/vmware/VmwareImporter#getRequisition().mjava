@@ -1,0 +1,58 @@
+    public Requisition getRequisition() {
+        logger.debug("Getting existing requisition (if any) for VMware management server {}", request.getHostname());
+        Requisition curReq = request.getExistingRequisition();
+        logger.debug("Building new requisition for VMware management server {}", request.getHostname());
+        Requisition newReq = buildVMwareRequisition();
+        logger.debug("Finished building new requisition for VMware management server {}", request.getHostname());
+        if (curReq == null) {
+            if (newReq == null) {
+                // FIXME Is this correct ? This is the old behavior
+                newReq = new Requisition(request.getForeignSource());
+            }
+        } else {
+            if (newReq == null) {
+                // If there is a requisition and the vCenter is not responding for some reason, it is better to use the old requisition,
+                // instead of returning an empty one, which can cause the lost of all the nodes from the DB.
+                newReq = curReq;
+            } else {
+                // If there is already a requisition, retrieve the custom assets and categories from the old one, and put them on the new one.
+                // The VMWare related assets and categories will be preserved.
+                for (RequisitionNode newNode : newReq.getNodes()) {
+                    for (RequisitionNode curNode : curReq.getNodes()) {
+                        if (newNode.getForeignId().equals(curNode.getForeignId())) {
+                            // Add existing custom assets
+                            for (RequisitionAsset asset : curNode.getAssets()) {
+                                if (!asset.getName().startsWith("vmware")) {
+                                    newNode.putAsset(asset);
+                                }
+                            }
+                            // Add existing custom categories
+                            for (RequisitionCategory cat : curNode.getCategories()) {
+                                if (!cat.getName().startsWith("VMWare")) {
+                                    newNode.putCategory(cat);
+                                }
+                            }
+                            // Add existing custom services
+                            /*
+                             * For each interface on the new requisition,
+                             * - Retrieve the list of custom services from the corresponding interface on the existing requisition,
+                             *   matching the interface by the IP address
+                             * - If the list of services is not empty, add them to the new interface
+                             */
+                            for (RequisitionInterface intf : curNode.getInterfaces()) {
+                                List<RequisitionMonitoredService> services = getManualyConfiguredServices(intf);
+                                if (!services.isEmpty()) {
+                                    RequisitionInterface newIntf = getRequisitionInterface(newNode, intf.getIpAddr());
+                                    if (newIntf != null) {
+                                        newIntf.getMonitoredServices().addAll(services);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return newReq;
+    }
+

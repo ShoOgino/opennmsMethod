@@ -9,19 +9,41 @@
         try (
             final ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
             final PrintStream printStream = new PrintStream(byteArrayOutputStream);
+            final PrintStream errStream = new PrintStream(byteArrayOutputStream);
         ) {
+            final ExecutorService executor = Executors.newCachedThreadPool();
+
             Subject subject = new Subject();
             subject.getPrincipals().add(new RolePrincipal("admin"));
             return Subject.doAs(subject, new PrivilegedExceptionAction<String>() {
                 @Override
                 public String run() throws Exception {
-                    final CommandProcessor commandProcessor = getOsgiService(CommandProcessor.class);
-                    final CommandSession commandSession = commandProcessor.createSession(System.in, printStream, System.err);
-                    LOG.info("{}", command);
-                    Object response = commandSession.execute(command);
-                    LOG.info("Response: {}", response);
-                    printStream.flush();
-                    return byteArrayOutputStream.toString();
+                    final Session session = sessionFactory.create(System.in, printStream, errStream);
+
+                    LOG.info("Command: {}", command);
+
+                    FutureTask<String> commandFuture = new FutureTask<String>(new Callable<String>() {
+                        public String call() {
+                            try {
+                                session.execute(command);
+                            } catch (Exception e) {
+                                e.printStackTrace(System.err);
+                            }
+                            printStream.flush();
+                            errStream.flush();
+                            return byteArrayOutputStream.toString();
+                        }
+                    });
+
+                    try {
+                        executor.submit(commandFuture);
+                        String response = commandFuture.get(10, TimeUnit.SECONDS);
+                        LOG.info("Response: {}", response);
+                        return response;
+                    } catch (Exception e) {
+                        e.printStackTrace(System.err);
+                        return "SHELL COMMAND TIMED OUT: " + command;
+                    }
                 }
             });
         } catch (Exception e) {

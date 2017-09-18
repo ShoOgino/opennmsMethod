@@ -1,0 +1,89 @@
+	@Test
+	/**
+	 * This method tests if the {@link PathOutageStatusProvider} retrieves alarm data correctly
+	 */
+	public void verify() throws UnknownHostException {
+		this.pathOutageStatusProvider = new PathOutageStatusProvider(this.genericPersistenceAccessor);
+		this.pathOutageProvider = new PathOutageProvider(this.nodeDao, this.pathOutageStatusProvider);
+		this.pathOutageProvider.refresh();
+
+		// Very basic test - check that PathOutageStatusProvider finds a Status for each vertex
+		// and that all these statuses are at the moment NORMAL
+		Map<VertexRef, Status> stats = this.calculateStatuses();
+		for (VertexRef vertex : stats.keySet()) {
+			Assert.assertNotNull(stats.get(vertex));
+			Assert.assertEquals(OnmsSeverity.NORMAL.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+		}
+
+		// Also check that the PathOutageProvider calculates the default focus strategy correctly
+		// the list of criteria should always contain exactly 1 vertex (with the worst status)
+		List<Criteria> criteria = this.pathOutageProvider.getDefaults().getCriteria();
+		Assert.assertNotNull(criteria);
+		Assert.assertEquals(1, criteria.size());
+
+		// Adding a single path outage with MINOR severity.
+		// PathOutageStatusProvider should be able to find this outage + all other nodes should have a state NORMAL
+		this.outageDao.save(createOutage(EventConstants.NODE_DOWN_EVENT_UEI, address_1, this.nodeDao.get(1), OnmsSeverity.MINOR));
+		stats = this.calculateStatuses();
+		for (VertexRef vertex : stats.keySet()) {
+			Assert.assertNotNull(stats.get(vertex));
+			if (vertex.getId().equalsIgnoreCase("1")) {
+				Assert.assertEquals(OnmsSeverity.MINOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			} else {
+				Assert.assertEquals(OnmsSeverity.NORMAL.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			}
+		}
+
+		// List of criteria should contain exactly 1 vertex (with the worst status, meaning that its id should be 1)
+		criteria = this.pathOutageProvider.getDefaults().getCriteria();
+		Assert.assertNotNull(criteria);
+		Assert.assertEquals(1, criteria.size());
+		VertexHopGraphProvider.DefaultVertexHopCriteria criterion = (VertexHopGraphProvider.DefaultVertexHopCriteria) criteria.get(0);
+		Assert.assertEquals("1", criterion.getId());
+
+		// Adding a MAJOR path outage to the same node.
+		// PathOutageStatusProvider should display the alarm with a MAJOR severity level
+		this.outageDao.save(createOutage(EventConstants.NODE_DOWN_EVENT_UEI, address_1, this.nodeDao.get(1), OnmsSeverity.MAJOR));
+		stats = this.calculateStatuses();
+		for (VertexRef vertex : stats.keySet()) {
+			Assert.assertNotNull(stats.get(vertex));
+			if (vertex.getId().equalsIgnoreCase("1")) {
+				Assert.assertEquals(OnmsSeverity.MAJOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+				break;
+			}
+		}
+
+		// List of criteria should contain exactly 1 vertex (with the worst status, meaning that its id should still be 1)
+		criteria = this.pathOutageProvider.getDefaults().getCriteria();
+		Assert.assertNotNull(criteria);
+		Assert.assertEquals(1, criteria.size());
+		criterion = (VertexHopGraphProvider.DefaultVertexHopCriteria) criteria.get(0);
+		Assert.assertEquals("1", criterion.getId());
+
+		// Adding several more path outages of different types
+		// PathOutageStatusProvider should display them all, plus the one from the previous test
+		this.outageDao.save(createOutage(EventConstants.NODE_LOST_SERVICE_EVENT_UEI, address_2, this.nodeDao.get(2), OnmsSeverity.MINOR));
+		this.outageDao.save(createOutage(EventConstants.INTERFACE_DOWN_EVENT_UEI, address_3 , this.nodeDao.get(3), OnmsSeverity.MINOR));
+		this.outageDao.save(createOutage(EventConstants.PATH_OUTAGE_EVENT_UEI,address_4, this.nodeDao.get(4), OnmsSeverity.MAJOR));
+		stats = this.calculateStatuses();
+		for (VertexRef vertex : stats.keySet()) {
+			Assert.assertNotNull(stats.get(vertex));
+			if (vertex.getId().equalsIgnoreCase("1")) {
+				Assert.assertEquals(OnmsSeverity.MAJOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			} else if (vertex.getId().equalsIgnoreCase("2")) {
+				Assert.assertEquals(OnmsSeverity.MINOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			} else if (vertex.getId().equalsIgnoreCase("3")) {
+				Assert.assertEquals(OnmsSeverity.MINOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			} else if (vertex.getId().equalsIgnoreCase("4")) {
+				Assert.assertEquals(OnmsSeverity.MAJOR.getLabel().toLowerCase(), stats.get(vertex).computeStatus().toLowerCase());
+			}
+		}
+
+		// List of criteria should contain exactly 1 vertex (with the worst status, meaning that its id should be either 1 or 4)
+		criteria = this.pathOutageProvider.getDefaults().getCriteria();
+		Assert.assertNotNull(criteria);
+		Assert.assertEquals(1, criteria.size());
+		criterion = (VertexHopGraphProvider.DefaultVertexHopCriteria) criteria.get(0);
+		Assert.assertTrue(criterion.getId().equalsIgnoreCase("1") || criterion.getId().equalsIgnoreCase("4"));
+	}
+

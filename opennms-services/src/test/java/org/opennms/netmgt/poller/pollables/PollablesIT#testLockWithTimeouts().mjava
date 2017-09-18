@@ -1,0 +1,46 @@
+    @Test
+    public void testLockWithTimeouts() throws Exception {
+        AtomicBoolean failed = new AtomicBoolean(false);
+
+        Callable<Boolean> call = new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                LOG.debug("Got lock! Sleeping for 800ms...");
+                try { Thread.sleep(800); } catch (InterruptedException e) {}
+                LOG.debug("Returning true");
+                return true;
+            }
+        };
+
+        final Runnable locker = new Runnable() {
+            @Override
+            public void run() {
+                boolean called = false;
+                while (!called) {
+                    try {
+                        called = pNode1.withTreeLock(call, 200);
+                    } catch (LockUnavailable e) {
+                        //LOG.debug(e.getMessage());
+                    } catch (Throwable e) {
+                        LOG.error("Unexpected exception caught during test", e);
+                        failed.set(true);
+                    }
+                }
+            }
+        };
+
+        Thread[] threads = new Thread[5];
+        for(int i = 0; i < 5; i++) {
+            threads[i] = new Thread(locker);
+            threads[i].start();
+        }
+
+        for(int i = 0; i < 5; i++) {
+            threads[i].join();
+        }
+
+        if (failed.get()) {
+            fail("Unexpected exception caught during test");
+        }
+    }
+

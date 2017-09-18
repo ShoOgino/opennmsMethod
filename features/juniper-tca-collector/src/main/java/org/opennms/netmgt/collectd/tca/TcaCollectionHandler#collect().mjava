@@ -1,0 +1,37 @@
+	/**
+	 * Collect.
+	 *
+	 * @throws CollectionException the collection exception
+	 */
+	protected CollectionSet collect() throws CollectionException {
+		try {
+			CollectionSetBuilder builder = new CollectionSetBuilder(m_agent);
+			TcaData tracker = new TcaData(m_agent.getAddress());
+            CompletableFuture<TcaData> future = m_locationAwareSnmpClient.walk(m_agent.getAgentConfig(), tracker)
+                    .withDescription("TcaCollector for " + m_agent.getHostAddress())
+                    .withLocation(m_agent.getLocationName())
+                    .execute();
+            LOG.debug("collect: successfully instantiated TCA Collector for {}", m_agent.getHostAddress());
+            future.get();
+            LOG.info("collect: node TCA query for address {} complete.", m_agent.getHostAddress());
+			process(tracker, builder);
+			return builder.build();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new CollectionUnknown("Collection of node TCA data for interface " + m_agent.getHostAddress() + " interrupted: " + e, e);
+		} catch (ExecutionException e) {
+            final Throwable cause = e.getCause();
+            if (cause != null && cause instanceof RequestTimedOutException) {
+                throw new CollectionUnknown(String.format("No response received when remotely collecting TCA data"
+                        + " for interface %s at location %s interrupted.",
+                        m_agent.getHostAddress(), m_agent.getLocationName()), e);
+            } else if (cause != null && cause instanceof RequestRejectedException) {
+                throw new CollectionUnknown(String.format("The request to remotely collect TCA data"
+                        + " for interface %s at location %s was rejected.",
+                        m_agent.getHostAddress(), m_agent.getLocationName()), e);
+            }
+            throw new CollectionException(String.format("Unexpected exception when collecting TCA data for interface %s at location %s.",
+                    m_agent.getHostAddress(), m_agent.getLocationName()), e);
+        }
+	}
+

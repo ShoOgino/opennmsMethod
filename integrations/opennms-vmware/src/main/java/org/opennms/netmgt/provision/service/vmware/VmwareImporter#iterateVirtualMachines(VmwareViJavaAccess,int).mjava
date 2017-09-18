@@ -1,0 +1,66 @@
+    /**
+     * Iterates through the virtual machines and adds them to the requisition object.
+     *
+     * @param vmwareViJavaAccess the access/connection to use
+     */
+    private void iterateVirtualMachines(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) {
+        ManagedEntity[] managedEntities = null;
+
+        logger.debug("Starting to iterate Virtual Machines on VMware host {} ...", request.getHostname());
+
+        try {
+            managedEntities = vmwareViJavaAccess.searchManagedEntities("VirtualMachine");
+        } catch (RemoteException e) {
+            logger.error("Error iterating Virtual Machines on VMware host {}", request.getHostname());
+            logger.error("Exception thrown while iterating for Virtual Machines: ", e);
+        }
+
+        if (managedEntities != null) {
+            final ExecutorService executor = Executors.newFixedThreadPool(Math.min(managedEntities.length, 10));
+
+            final List<CompletableFuture<Optional<RequisitionNode>>> completableFutures = Arrays.stream(managedEntities)
+                    .map(managedEntity -> (VirtualMachine) managedEntity)
+                    .filter(virtualMachine -> checkVMPowerState(virtualMachine))
+                    .filter(virtualMachine -> checkForAttribute(virtualMachine))
+                    .map(virtualMachine -> CompletableFuture.supplyAsync(() -> {
+                        logger.debug("Adding Virtual Machine '{}' (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+
+                        TreeSet<String> ipAddresses = vmwareViJavaAccess.getVirtualMachineIpAddresses(virtualMachine);
+                        logger.debug("Found {} IP addresses for Virtual Machine '{}' (ID: {}): {}", ipAddresses.size(), virtualMachine.getName(), virtualMachine.getMOR().getVal(), ipAddresses);
+
+                        RequisitionNode node = createRequisitionNode(ipAddresses, virtualMachine, apiVersion, vmwareViJavaAccess);
+
+                        if (virtualMachine.getGuest().getGuestFullName() != null) {
+                            node.putAsset(new RequisitionAsset("operatingSystem", virtualMachine.getGuest().getGuestFullName()));
+                        }
+
+                        try {
+                            node.putAsset(new RequisitionAsset("cpu", virtualMachine.getConfig().getHardware().getNumCPU() + " vCPU"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find CPU information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+                        }
+
+                        try {
+                            node.putAsset(new RequisitionAsset("ram", virtualMachine.getConfig().getHardware().getMemoryMB() + " MB"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find Memory information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+                        }
+
+                        return request.isPersistVMs() ? Optional.of(node) : Optional.<RequisitionNode>empty();
+
+                    }, executor))
+                    .collect(Collectors.toList());
+
+            completableFutures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(Optional::isPresent)
+                    .forEach(m -> {
+                        synchronized (m_requisition) {
+                            m_requisition.insertNode(m.get());
+                        }
+                    });
+
+            executor.shutdown();
+        }
+    }
+

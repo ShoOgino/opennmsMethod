@@ -1,0 +1,122 @@
+    @Override
+    public CollectionSet collect(CollectionAgent agent, Map<String, Object> parameters) throws CollectionException {
+        final JdbcDataCollection collection = (JdbcDataCollection)parameters.get(JDBC_COLLECTION_KEY);
+        
+        JdbcAgentState agentState = null;
+        Connection con = null;
+        ResultSet results = null;
+        Statement stmt = null;
+        try {
+            agentState = createAgentState(agent.getAddress(), parameters);
+            agentState.setupDatabaseConnections(parameters);
+
+            // Create a new collection set.
+            CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+
+            // Creating a single resource object, because all node-level metric must belong to the exact same resource.
+            final NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
+
+            // Cycle through all of the queries for this collection
+            for(JdbcQuery query : collection.getQueries()) {
+                // Verify if we should check for availability of a query.
+                if (agentState.shouldCheckAvailability(query.getQueryName(), query.getRecheckInterval())) {
+                    // Check to see if the query is available.
+                    if (!isGroupAvailable(agentState, query)) {
+                        LOG.warn("Group is not available.");
+                        continue;
+                    }
+                }
+
+                try {
+                    // If the query is available, lets collect it.
+                    if (agentState.groupIsAvailable(query.getQueryName())) {
+                        if(agentState.getUseDataSourceName()) {
+                            initDatabaseConnectionFactory(agentState.getDataSourceName());
+                            con = DataSourceFactory.getInstance(agentState.getDataSourceName()).getConnection();
+                        } else {
+                            con = agentState.getJdbcConnection();
+                        }
+                        stmt = agentState.createStatement(con);
+                        results = agentState.executeJdbcQuery(stmt, query);
+                    
+                        // Determine if there were any results for this query to                    
+                        if (results.isBeforeFirst() && results.isAfterLast()) {
+                            LOG.warn("Query '{}' returned no results.", query.getQueryName());
+                            // Close the statement, but retain the connection.
+                            agentState.closeResultSet(results);
+                            agentState.closeStmt(stmt);
+                            continue;
+                        }
+                        
+                        // Determine if there are results and how many.
+                        results.last();
+                        boolean singleInstance = (results.getRow()==1)?true:false;
+                        results.beforeFirst();
+
+                        // Iterate through each row.
+                        while(results.next() ) {
+                            Resource resource = null;
+
+                            // Create the appropriate resource container.
+                            if(singleInstance) {
+                                resource = nodeResource;
+                            } else {
+                                // Retrieve the name of the column to use as the instance key for multi-row queries.
+                                String instance = results.getString(query.getInstanceColumn());
+                                resource = new DeferredGenericTypeResource(nodeResource, query.getResourceType(), instance);
+                            }
+
+                            for(JdbcColumn curColumn : query.getJdbcColumns()) {
+                                final AttributeType type = curColumn.getDataType();
+
+                                String columnName = null;
+                                if(curColumn.getDataSourceName() != null && curColumn.getDataSourceName().length() != 0) {
+                                    columnName = curColumn.getDataSourceName();
+                                } else {
+                                    columnName = curColumn.getColumnName();
+                                }
+
+                                String columnValue = results.getString(columnName);
+                                if (columnValue == null) {
+                                    LOG.debug("Skipping column named '{}' with null value.", curColumn.getColumnName());
+                                    continue;
+                                }
+
+                                if (type.isNumeric()) {
+                                    Double numericValue = Double.NaN;
+                                    try {
+                                        numericValue = Double.parseDouble(columnValue);
+                                    } catch (NumberFormatException e) {
+                                        LOG.warn("Value '{}' for column named '{}' cannot be converted to a number. Skipping.", columnValue, curColumn.getColumnName());
+                                        continue;
+                                    }
+                                    builder.withNumericAttribute(resource, query.getQueryName(), curColumn.getAlias(), numericValue, type);
+                                } else {
+                                    builder.withStringAttribute(resource, query.getQueryName(), curColumn.getAlias(), columnValue);
+                                }
+                            }
+                        }
+                    }
+                } catch(SQLException e) {
+                    // Close the statement but retain the connection, log the exception and continue to the next query.
+                    LOG.warn("There was a problem executing query '{}' Please review the query or configuration. Reason: {}", query.getQueryName(), e.getMessage());
+                    continue;
+                } finally {
+                    agentState.closeResultSet(results);
+                    agentState.closeStmt(stmt);
+                    agentState.closeConnection(con);
+                }
+            }
+            builder.withStatus(CollectionStatus.SUCCEEDED);
+            return builder.build();
+        } finally {
+            if(agentState != null) {
+                // Make sure that when we're done we close all results, statements and connections.
+                agentState.closeResultSet(results);
+                agentState.closeStmt(stmt);
+                agentState.closeConnection(con);
+                //agentState.closeAgentConnection();
+            }
+        }
+    }
+
