@@ -1,0 +1,40 @@
+	@Override
+	public List<ApplicationStatus> getApplicationStatus(List<OnmsApplication> applications) {
+		// Applications do not have a alarm mapping, so we grab all nodeDown, interfaceDown and serviceLost alarms
+		// for all monitored services of each application to calculate the maximum severity (-> status)
+		final List<ApplicationStatus> statusList = new ArrayList<>();
+		for (OnmsApplication application : applications) {
+			final Set<String> reductionKeys = new HashSet<>();
+			for (OnmsMonitoredService eachService : application.getMonitoredServices()) {
+				reductionKeys.addAll(ReductionKeyHelper.getReductionKeys(eachService));
+			}
+
+			if (!reductionKeys.isEmpty()) {
+				final CriteriaBuilder builder = new CriteriaBuilder(OnmsAlarm.class);
+				builder.in("reductionKey", reductionKeys);
+
+				// findMatching would exepct OnmsApplications, but we need OnmsAlarms, so hack it
+				HibernateCallback<List<OnmsAlarm>> callback = buildHibernateCallback(builder.toCriteria());
+				List<OnmsAlarm> alarms = getHibernateTemplate().execute(callback);
+
+				// All alarms for the current application have been determined, now get the max severity
+				final Optional<OnmsAlarm> maxSeverity = alarms.stream().reduce((leftAlarm, rightAlarm) -> {
+					if (leftAlarm.getSeverity().isGreaterThan(rightAlarm.getSeverity())) {
+						return leftAlarm;
+					}
+					return rightAlarm;
+				});
+				if (maxSeverity.isPresent()) {
+					statusList.add(new ApplicationStatus(application, maxSeverity.get().getSeverity()));
+				} else {
+					// ensure that each application has a status
+					statusList.add(new ApplicationStatus(application, OnmsSeverity.NORMAL));
+				}
+			} else {
+				// ensure that each application has a status
+				statusList.add(new ApplicationStatus(application, OnmsSeverity.NORMAL));
+			}
+		}
+		return statusList;
+	}
+

@@ -1,0 +1,39 @@
+    @Test
+    public void testPropagateStatusProvider() throws Exception {
+        final File graphXml = this.tempFolder.newFile();
+        Resources.asByteSource(Resources.getResource("test-graph.xml")).copyTo(Files.asByteSink(graphXml));
+
+        final GraphMLMetaTopologyProvider metaTopoProvider = new GraphMLMetaTopologyProvider(new GraphMLServiceAccessor());
+        metaTopoProvider.setTopologyLocation(graphXml.getAbsolutePath());
+        metaTopoProvider.reload();
+
+        final GraphMLTopologyProvider childTopologyProvider = metaTopoProvider.getRawTopologyProvider("acme:markets");
+        final GraphMLDefaultVertexStatusProvider childStatusProvider = new GraphMLDefaultVertexStatusProvider(childTopologyProvider.getNamespace(),
+                                                                                                         this.alarmSummaryWrapper);
+
+        final ServiceReference<StatusProvider> statusProviderReference = EasyMock.niceMock(ServiceReference.class);
+
+        final BundleContext bundleContext = EasyMock.niceMock(BundleContext.class);
+        EasyMock.expect(bundleContext.getServiceReferences(StatusProvider.class, null)).andReturn(ImmutableList.of(statusProviderReference)).anyTimes();
+        EasyMock.expect(bundleContext.getService(statusProviderReference)).andReturn(childStatusProvider);
+        EasyMock.replay(statusProviderReference, bundleContext);
+
+        final GraphMLTopologyProvider topologyProvider = metaTopoProvider.getRawTopologyProvider("acme:regions");
+        final GraphMLPropagateVertexStatusProvider statusProvider = new GraphMLPropagateVertexStatusProvider(topologyProvider.getNamespace(),
+                                                                                                             metaTopoProvider,
+                                                                                                             bundleContext);
+
+        List<VertexRef> vertices = topologyProvider.getVertices().stream().map(eachVertex -> (VertexRef) eachVertex).collect(Collectors.toList());
+        Assert.assertEquals(4, vertices.size());
+        Assert.assertEquals(topologyProvider.getNamespace(), statusProvider.getNamespace());
+        Assert.assertTrue(statusProvider.contributesTo(topologyProvider.getNamespace()));
+
+        Map<? extends VertexRef, ? extends Status> statusForVertices = statusProvider.getStatusForVertices(topologyProvider, vertices, new Criteria[0]);
+        Assert.assertEquals(4, statusForVertices.size());
+        Assert.assertEquals(ImmutableMap.of(
+                createVertexRef(topologyProvider.getNamespace(), "north"), createStatus(OnmsSeverity.NORMAL, 0),
+                createVertexRef(topologyProvider.getNamespace(), "west"), createStatus(OnmsSeverity.MAJOR, 4),
+                createVertexRef(topologyProvider.getNamespace(), "south"), createStatus(OnmsSeverity.NORMAL, 0),
+                createVertexRef(topologyProvider.getNamespace(), "east"), createStatus(OnmsSeverity.CRITICAL, 11)), statusForVertices);
+    }
+

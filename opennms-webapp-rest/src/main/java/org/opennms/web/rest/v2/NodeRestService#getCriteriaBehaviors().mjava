@@ -2,18 +2,53 @@
     protected Map<String,CriteriaBehavior<?>> getCriteriaBehaviors() {
         Map<String,CriteriaBehavior<?>> map = new HashMap<>();
 
+        // Root alias
+        map.putAll(CriteriaBehaviors.NODE_BEHAVIORS);
+
         // 1st level JOINs
-        map.putAll(CriteriaBehaviors.ASSET_RECORD_BEHAVIORS);
-        map.putAll(CriteriaBehaviors.NODE_CATEGORY_BEHAVIORS);
-        map.putAll(CriteriaBehaviors.IP_INTERFACE_BEHAVIORS);
-        map.putAll(CriteriaBehaviors.MONITORING_LOCATION_BEHAVIORS);
-        map.putAll(CriteriaBehaviors.SNMP_INTERFACE_BEHAVIORS);
+        map.putAll(CriteriaBehaviors.withAliasPrefix(Aliases.assetRecord, CriteriaBehaviors.ASSET_RECORD_BEHAVIORS));
+        map.putAll(CriteriaBehaviors.withAliasPrefix(Aliases.category, CriteriaBehaviors.NODE_CATEGORY_BEHAVIORS));
 
-        // 2nd level JOINs
-        map.putAll(CriteriaBehaviors.MONITORED_SERVICE_BEHAVIORS);
+        // Use join conditions for one-to-many aliases
+        for (Map.Entry<String,CriteriaBehavior<?>> entry : CriteriaBehaviors.IP_INTERFACE_BEHAVIORS.entrySet()) {
+            map.put(Aliases.ipInterface.prop(entry.getKey()), new CriteriaBehavior(entry.getValue().getPropertyName(), entry.getValue().getConverter(), (b,v,c,w)-> {
+                b.alias(
+                    "ipInterfaces",
+                    Aliases.ipInterface.toString(),
+                    JoinType.LEFT_JOIN,
+                    Restrictions.or(Restrictions.eq(Aliases.ipInterface.prop(entry.getKey()), v), Restrictions.isNull(Aliases.ipInterface.prop(entry.getKey())))
+                );
+            }));
+        }
+        // Also add behaviors for the String properties (which is not normally necessary
+        // but is necessary here because they add BeforeVisit operations to add JOINs)
+        for (String prop : new String[] { "ipHostName", "isManaged" } ) {
+            map.put(Aliases.ipInterface.prop(prop), new CriteriaBehavior<>((String)null, String::new, (b,v,c,w)-> {
+                b.alias(
+                    "ipInterfaces",
+                    Aliases.ipInterface.toString(),
+                    JoinType.LEFT_JOIN,
+                    Restrictions.or(Restrictions.eq(Aliases.ipInterface.prop(prop), v), Restrictions.isNull(Aliases.ipInterface.prop(prop)))
+                );
+            }));
+        }
 
-        // 3rd level JOINs
-        map.putAll(CriteriaBehaviors.SERVICE_TYPE_BEHAVIORS);
+        map.putAll(CriteriaBehaviors.withAliasPrefix(Aliases.location, CriteriaBehaviors.MONITORING_LOCATION_BEHAVIORS));
+
+        // Use join conditions for one-to-many aliases
+        for (Map.Entry<String,CriteriaBehavior<?>> entry : CriteriaBehaviors.SNMP_INTERFACE_BEHAVIORS.entrySet()) {
+            map.put(Aliases.snmpInterface.prop(entry.getKey()), new CriteriaBehavior(entry.getValue().getPropertyName(), entry.getValue().getConverter(), (b,v,c,w)-> {
+                b.alias(
+                    "snmpInterfaces",
+                    Aliases.snmpInterface.toString(),
+                    JoinType.LEFT_JOIN,
+                    Restrictions.or(Restrictions.eq(Aliases.snmpInterface.prop(entry.getKey()), v), Restrictions.isNull(Aliases.snmpInterface.prop(entry.getKey())))
+                );
+            }));
+        }
+        // There are no extra String properties on node.snmpInterfaces 
+
+        // TODO: Figure out if it makes sense to search/orderBy on 2nd-level and greater JOINed properties
 
         return map;
     }

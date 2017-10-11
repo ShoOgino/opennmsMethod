@@ -2,59 +2,65 @@
      * Iterates through the virtual machines and adds them to the requisition object.
      *
      * @param vmwareViJavaAccess the access/connection to use
-     * @throws RemoteException
      */
-    private void iterateVirtualMachines(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) throws RemoteException {
-        ManagedEntity[] virtualMachines;
+    private void iterateVirtualMachines(VmwareViJavaAccess vmwareViJavaAccess, int apiVersion) {
+        ManagedEntity[] managedEntities = null;
 
-        // search for all virtual machines
-        virtualMachines = vmwareViJavaAccess.searchManagedEntities("VirtualMachine");
+        logger.debug("Starting to iterate Virtual Machines on VMware host {} ...", request.getHostname());
 
-        if (virtualMachines != null) {
+        try {
+            managedEntities = vmwareViJavaAccess.searchManagedEntities("VirtualMachine");
+        } catch (RemoteException e) {
+            logger.error("Error iterating Virtual Machines on VMware host {}", request.getHostname());
+            logger.error("Exception thrown while iterating for Virtual Machines: ", e);
+        }
 
-            // check for correct key/value-pair
-            for (ManagedEntity managedEntity : virtualMachines) {
-                VirtualMachine virtualMachine = (VirtualMachine) managedEntity;
-                logger.debug("Iterating host systems on VMware management server {} : {} (ID: {})", request.getHostname(), virtualMachine.getName(), virtualMachine.getMOR().getVal());
+        if (managedEntities != null) {
+            final ExecutorService executor = Executors.newFixedThreadPool(Math.min(managedEntities.length, 10));
 
-                // import only when the specified attributes is set
-                if (checkVMPowerState(virtualMachine) && checkForAttribute(virtualMachine)) {
-                    logger.debug("Adding Virtual Machine '{}' (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+            final List<CompletableFuture<Optional<RequisitionNode>>> completableFutures = Arrays.stream(managedEntities)
+                    .map(managedEntity -> (VirtualMachine) managedEntity)
+                    .filter(virtualMachine -> checkVMPowerState(virtualMachine))
+                    .filter(virtualMachine -> checkForAttribute(virtualMachine))
+                    .map(virtualMachine -> CompletableFuture.supplyAsync(() -> {
+                        logger.debug("Adding Virtual Machine '{}' (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
 
-                    // iterate over all interfaces
-                    TreeSet<String> ipAddresses = vmwareViJavaAccess.getVirtualMachineIpAddresses(virtualMachine);
+                        TreeSet<String> ipAddresses = vmwareViJavaAccess.getVirtualMachineIpAddresses(virtualMachine);
+                        logger.debug("Found {} IP addresses for Virtual Machine '{}' (ID: {}): {}", ipAddresses.size(), virtualMachine.getName(), virtualMachine.getMOR().getVal(), ipAddresses);
 
-                    // create the new node...
-                    RequisitionNode node = createRequisitionNode(ipAddresses, virtualMachine, apiVersion, vmwareViJavaAccess);
+                        RequisitionNode node = createRequisitionNode(ipAddresses, virtualMachine, apiVersion, vmwareViJavaAccess);
 
-                    // add the operating system
-                    if (virtualMachine.getGuest().getGuestFullName() != null) {
-                        node.putAsset(new RequisitionAsset("operatingSystem", virtualMachine.getGuest().getGuestFullName()));
-                    }
+                        if (virtualMachine.getGuest().getGuestFullName() != null) {
+                            node.putAsset(new RequisitionAsset("operatingSystem", virtualMachine.getGuest().getGuestFullName()));
+                        }
 
-                    // add cpu
-                    try {
-                        node.putAsset(new RequisitionAsset("cpu", virtualMachine.getConfig().getHardware().getNumCPU() + " vCPU"));
-                    } catch (Exception e) {
-                        logger.debug("Can't find CPU information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
-                    }
+                        try {
+                            node.putAsset(new RequisitionAsset("cpu", virtualMachine.getConfig().getHardware().getNumCPU() + " vCPU"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find CPU information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+                        }
 
-                    // add memory
-                    try {
-                        node.putAsset(new RequisitionAsset("ram", virtualMachine.getConfig().getHardware().getMemoryMB() + " MB"));
-                    } catch (Exception e) {
-                        logger.debug("Can't find Memory information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
-                    }
+                        try {
+                            node.putAsset(new RequisitionAsset("ram", virtualMachine.getConfig().getHardware().getMemoryMB() + " MB"));
+                        } catch (Exception e) {
+                            logger.debug("Can't find Memory information for {} (ID: {})", virtualMachine.getName(), virtualMachine.getMOR().getVal());
+                        }
 
-                    // set the location
-                    node.setLocation(request.getLocation());
+                        return request.isPersistVMs() ? Optional.of(node) : Optional.<RequisitionNode>empty();
 
-                    // ...and add it to the requisition
-                    if (node != null && request.isPersistVMs()) {
-                        m_requisition.insertNode(node);
-                    }
-                }
-            }
+                    }, executor))
+                    .collect(Collectors.toList());
+
+            completableFutures.stream()
+                    .map(CompletableFuture::join)
+                    .filter(Optional::isPresent)
+                    .forEach(m -> {
+                        synchronized (m_requisition) {
+                            m_requisition.insertNode(m.get());
+                        }
+                    });
+
+            executor.shutdown();
         }
     }
 

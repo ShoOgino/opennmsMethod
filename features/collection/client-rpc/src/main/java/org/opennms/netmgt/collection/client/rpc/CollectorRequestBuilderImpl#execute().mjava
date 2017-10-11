@@ -6,8 +6,17 @@
             throw new IllegalArgumentException("Agent is required.");
         }
 
+        final RpcTarget target = client.getRpcTargetHelper().target()
+                .withNodeId(agent.getNodeId())
+                .withLocation(agent.getLocationName())
+                .withSystemId(systemId)
+                .withServiceAttributes(attributes)
+                .withLocationOverride((s) -> serviceCollector.getEffectiveLocation(s))
+                .build();
+
         CollectorRequestDTO request = new CollectorRequestDTO();
-        request.setLocation(serviceCollector.getEffectiveLocation(agent.getLocationName()));
+        request.setLocation(target.getLocation());
+        request.setSystemId(target.getSystemId());
         request.setClassName(serviceCollector.getClass().getCanonicalName());
         request.setTimeToLiveMs(ttlInMs);
 
@@ -29,15 +38,11 @@
             // Marshal
             request.setAgent(new CollectionAgentDTO(agent));
             final Map<String, String> marshaledParms = serviceCollector.marshalParameters(allAttributes);
-            marshaledParms.forEach((k,v) -> {
-                request.addAttribute(k, v);
-            });
+            marshaledParms.forEach(request::addAttribute);
             request.setAttributesNeedUnmarshaling(true);
         }
 
         // Execute the request
-        return client.getDelegate().execute(request).thenApply(results -> {
-            return results.getCollectionSet();
-        });
+        return client.getDelegate().execute(request).thenApply(CollectorResponseDTO::getCollectionSet);
     }
 
