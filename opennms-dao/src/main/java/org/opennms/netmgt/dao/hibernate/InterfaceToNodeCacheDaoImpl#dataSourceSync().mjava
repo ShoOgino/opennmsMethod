@@ -4,9 +4,8 @@
      * the method opens a new connection to the database, loads the address,
      * and then closes it's connection.
      *
-     * @throws java.sql.SQLException
-     *             Thrown if the connection cannot be created or a database
-     *             error occurs.
+     * @throws java.sql.SQLException Thrown if the connection cannot be created or a database
+     *                               error occurs.
      */
     @Override
     @Transactional
@@ -16,22 +15,25 @@
          * if something goes wrong with the DB we won't lose whatever was already
          * in there
          */
-        Map<LocationIpAddressKey,Integer> newAlreadyDiscovered = new HashMap<>();
+        final SortedSetMultimap<Key, Value> newAlreadyDiscovered = Multimaps.newSortedSetMultimap(Maps.newHashMap(), TreeSet::new);
+
         // Fetch all non-deleted nodes
-        CriteriaBuilder builder = new CriteriaBuilder(OnmsNode.class);
+        final CriteriaBuilder builder = new CriteriaBuilder(OnmsNode.class);
         builder.ne("type", String.valueOf(NodeType.DELETED.value()));
+
         for (OnmsNode node : m_nodeDao.findMatching(builder.toCriteria())) {
-            for (OnmsIpInterface iface : node.getIpInterfaces()) {
+            for (final OnmsIpInterface iface : node.getIpInterfaces()) {
                 // Skip deleted interfaces
                 // TODO: Refactor the 'D' value with an enumeration
                 if ("D".equals(iface.getIsManaged())) {
                     continue;
                 }
                 LOG.debug("Adding entry: {}:{} -> {}", node.getLocation().getLocationName(), iface.getIpAddress(), node.getId());
-                newAlreadyDiscovered.put(new LocationIpAddressKey(node.getLocation().getLocationName(), iface.getIpAddress()), node.getId());
+                newAlreadyDiscovered.put(new Key(node.getLocation().getLocationName(), iface.getIpAddress()), new Value(node.getId(), iface.getIsSnmpPrimary()));
             }
         }
-        m_knownips.setManagedAddresses(newAlreadyDiscovered);
-        LOG.info("dataSourceSync: initialized list of managed IP addresses with {} members", m_knownips.size());
+        m_managedAddresses.clear();
+        m_managedAddresses.putAll(newAlreadyDiscovered);
+        LOG.info("dataSourceSync: initialized list of managed IP addresses with {} members", m_managedAddresses.size());
     }
 
