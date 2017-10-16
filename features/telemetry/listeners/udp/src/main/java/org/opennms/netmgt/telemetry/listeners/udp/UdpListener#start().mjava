@@ -1,0 +1,32 @@
+    public void start() throws InterruptedException {
+        bossGroup = new NioEventLoopGroup();
+        final Bootstrap b = new Bootstrap()
+                .group(bossGroup)
+                .channel(NioDatagramChannel.class)
+                .option(ChannelOption.SO_REUSEADDR, true)
+                .option(ChannelOption.SO_RCVBUF, Integer.MAX_VALUE)
+                .option(ChannelOption.RCVBUF_ALLOCATOR, new FixedRecvByteBufAllocator(maxPacketSize))
+                .handler(new ChannelInitializer<DatagramChannel>() {
+                    @Override
+                    protected void initChannel(DatagramChannel ch) throws Exception {
+                        ChannelPipeline p = ch.pipeline();
+                        p.addLast(new MessageToMessageDecoder<DatagramPacket>() {
+                            @Override
+                            protected void decode(ChannelHandlerContext ctx, DatagramPacket packet, List<Object> out) throws Exception {
+                                // Wrap the contents of the packet in a ByteBuffer, referencing
+                                // the underlying byte array if possible
+                                final ByteBuffer buffer = wrapContentsWithNioByteBuffer(packet);
+                                // Build the message to dispatch via the Sink API
+                                final TelemetryMessage msg = new TelemetryMessage(packet.sender(), buffer);
+                                // Dispatch and retain a reference to the packet
+                                // in the case that we are sharing the underlying byte array
+                                final CompletableFuture<TelemetryMessage> future = dispatcher.send(msg);
+                                packet.retain();
+                                future.whenComplete((res,ex) -> packet.release());
+                            }
+                        });
+                    }
+                });
+        future = b.bind(host, port).await();
+    }
+
