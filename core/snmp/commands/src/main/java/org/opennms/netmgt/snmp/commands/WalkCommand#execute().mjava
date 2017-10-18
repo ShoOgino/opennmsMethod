@@ -1,0 +1,28 @@
+    @Override
+    public Object execute() throws Exception {
+        LOG.debug("snmp:walk {} {} {}", m_location != null ? "-l " + m_location : "", m_host, m_oids);
+        final List<SnmpObjId> snmpObjIds = m_oids.stream()
+                    .map(oid -> SnmpObjId.get(oid))
+                    .collect(Collectors.toList());
+        final SnmpAgentConfig agent = snmpAgentConfigFactory.getAgentConfig(InetAddress.getByName(m_host), m_location);
+        final CompletableFuture<List<SnmpResult>> future = locationAwareSnmpClient.walk(agent, snmpObjIds)
+            .withDescription("snmp:walk")
+            .withLocation(m_location)
+            .withSystemId(m_systemId)
+            .execute();
+
+        while (true) {
+            try {
+                future.get(1, TimeUnit.SECONDS).stream()
+                    .forEach(res -> {
+                        System.out.printf("[%s].[%s] = %s%n", res.getBase(), res.getInstance(), res.getValue());
+                    });
+                break;
+            } catch (TimeoutException e) {
+                // pass
+            }
+            System.out.print(".");
+        }
+        return null;
+    }
+
