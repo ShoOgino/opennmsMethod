@@ -47,7 +47,7 @@
         }
 
         // Verify via OpenNMS ReST API
-        final String flowRestUrl = "http://" + opennmsWebAddress.getAddress().toString() + ":" + opennmsWebAddress.getPort() + "/opennms/" + REST_URL;
+        final String flowRestUrl = "http://" + opennmsWebAddress.getHostString().toString() + ":" + opennmsWebAddress.getPort() + "/opennms/" + REST_URL;
         final NetflowPacket netflowPacket = new NetflowPacket(ByteBuffer.wrap(getNetflowPacketContent()));
         final List<NetflowDocument> documents = new Netflow5Converter().convert(netflowPacket);
         documents.stream().forEach(d -> {
@@ -55,28 +55,33 @@
             d.setExporterAddress("127.0.0.1");
         });
         try (HttpClientWrapper restClient = createClientWrapper()) {
-            // Persist flow
-            HttpPost httpPost = new HttpPost(flowRestUrl);
-            httpPost.addHeader("content-type", "application/json");
-            httpPost.setEntity(new StringEntity(gson.toJson(documents)));
-            CloseableHttpResponse response = restClient.execute(httpPost);
-            assertEquals(204, response.getStatusLine().getStatusCode());
-
             // Query flows
-            HttpGet httpGet = new HttpGet(flowRestUrl);
-            httpPost.addHeader("accept", "application/json");
-            response = restClient.execute(httpGet);
+            final HttpGet httpGet = new HttpGet(flowRestUrl);
+            httpGet.addHeader("accept", "application/json");
+            CloseableHttpResponse response = restClient.execute(httpGet);
             assertEquals(200, response.getStatusLine().getStatusCode());
-            response.getEntity().writeTo(System.out);
+
+            // Read response
+            final Type listType = new TypeToken<ArrayList<NetflowDocument>>() {
+            }.getType();
+            List<NetflowDocument> netflowDocuments = gson.fromJson(new InputStreamReader(response.getEntity().getContent()), listType);
+            Assert.assertEquals(2, netflowDocuments.size());
 
             // Proxy query
-            httpPost = new HttpPost(flowRestUrl + "/proxy");
+            final HttpPost httpPost = new HttpPost(flowRestUrl + "/proxy");
             httpPost.addHeader("content-type", "application/json");
             httpPost.setEntity(new StringEntity("{}"));
             response = restClient.execute(httpPost);
             assertEquals(200, response.getStatusLine().getStatusCode());
-            response.getEntity().writeTo(System.out);
-        }
 
+            // Verify response
+            final byte[] bytes = new byte[(int) response.getEntity().getContentLength()];
+            ByteStreams.readFully(response.getEntity().getContent(), bytes);
+            final String json = new String(bytes);
+            final JsonElement jsonElement = gson.toJsonTree(json);
+            // verify hits.hits exists
+            final JsonArray jsonArray = jsonElement.getAsJsonObject().get("hits").getAsJsonObject().get("hits").getAsJsonArray();
+            Assert.assertEquals(2, jsonArray.size());
+        }
     }
 
