@@ -5,26 +5,16 @@
         for (TelemetryMessageDTO eachMessage : messageLog.getMessages()) {
             LOG.debug("Parse log message {}", eachMessage);
 
-            // Create NetflowPacket which delegates all calls to the byte array
             try {
-                final NetflowPacket flowPacket = new NetflowPacket(eachMessage.getBytes());
-                if (flowPacket.getVersion() != NetflowPacket.VERSION) {
-                    LOG.warn("Invalid Version. Expected {}, received {}. Skipping flow packet.", NetflowPacket.VERSION, flowPacket.getVersion());
-                    continue;
+                final NetflowPacket flowPacket = parse(eachMessage);
+                if (flowPacket != null) {
+                    final List<NetflowDocument> flowDocuments = convert(flowPacket);
+                    enrich(flowDocuments, messageLog);
+                    persist(flowDocuments);
                 }
-                if (flowPacket.getCount() == 0) {
-                    LOG.warn("Received packet has no content. Skipping flow packet.");
-                    continue;
-                }
-                // TODO MVR an invalid packet is skipped for now, but we may want to persist it anyways
-                if (!flowPacket.isValid()) {
-                    LOG.warn("Received packet is not valid. Skipping flow packet.");
-                    continue;
-                }
-                LOG.debug("Flow packet received: {}", flowPacket);
-
-            } catch (Exception e) {
-                LOG.error("Received packet cannot be read.", e);
+            } catch (Throwable t) {
+                LOG.error("An error occurred while handling incoming flow packets: {}", t.getMessage(), t);
+                throw new RuntimeException(t);
             }
         }
     }
