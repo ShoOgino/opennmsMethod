@@ -60,7 +60,10 @@
             httpPut.addHeader("content-type", "application/json");
             httpPut.setEntity(new StringEntity(gson.toJson(documents)));
             CloseableHttpResponse response = restClient.execute(httpPut);
-            assertEquals(204, response.getStatusLine().getStatusCode());
+            assertEquals(202, response.getStatusLine().getStatusCode());
+
+            // Wait 5 seconds, because it takes a while before elastic returns the data
+            Thread.sleep(5000);
 
             // Query flows
             final HttpGet httpGet = new HttpGet(flowRestUrl);
@@ -72,23 +75,22 @@
             final Type listType = new TypeToken<ArrayList<NetflowDocument>>() {
             }.getType();
             List<NetflowDocument> netflowDocuments = gson.fromJson(new InputStreamReader(response.getEntity().getContent()), listType);
-            Assert.assertEquals(4, netflowDocuments.size());
+            assertEquals(4, netflowDocuments.size());
 
             // Proxy query
             final HttpPost httpPost = new HttpPost(flowRestUrl + "/proxy");
             httpPost.addHeader("content-type", "application/json");
+            httpPost.addHeader("accept", "application/json");
             httpPost.setEntity(new StringEntity("{}"));
             response = restClient.execute(httpPost);
             assertEquals(200, response.getStatusLine().getStatusCode());
 
-            // Verify response
-            final byte[] bytes = new byte[(int) response.getEntity().getContentLength()];
-            ByteStreams.readFully(response.getEntity().getContent(), bytes);
-            final String json = new String(bytes);
-            final JsonElement jsonElement = gson.toJsonTree(json);
-            // verify hits.hits exists
-            final JsonArray jsonArray = jsonElement.getAsJsonObject().get("hits").getAsJsonObject().get("hits").getAsJsonArray();
-            Assert.assertEquals(4, jsonArray.size());
+            // Verify response by checking that hits.hits exists
+            final String json = EntityUtils.toString(response.getEntity());
+            EntityUtils.consume(response.getEntity());
+            final JsonObject jsonRoot = gson.fromJson(json, JsonObject.class);
+            final JsonArray jsonArray = jsonRoot.get("hits").getAsJsonObject().get("hits").getAsJsonArray();
+            assertEquals(4, jsonArray.size());
         }
     }
 
