@@ -1,0 +1,23 @@
+    @Override
+    public String sendMessage(String queueUrl, String body) throws InterruptedException {
+        final SendMessageRequest sendMessageRequest = new SendMessageRequest(queueUrl, body);
+        if (sqsConfig.getSinkQueueConfig().isFifoEnabled()) {
+            sendMessageRequest.setMessageGroupId(queueUrl);
+            if (!sqsConfig.getSinkQueueConfig().isFifoContentDedupEnabled()) {
+                sendMessageRequest.setMessageDeduplicationId(Long.toString(System.nanoTime()));
+            }
+        }
+        while (true) {
+            try {
+                return getSQSClient().sendMessage(sendMessageRequest).getMessageId();
+            } catch (RuntimeException ex) {
+                if (isCause(UnknownHostException.class, ex) || isCause(SocketException.class, ex)) {
+                    LOG.warn("Cannot reach AWS at {} while trying to send a message, trying again in 5 seconds...", queueUrl);
+                    Thread.sleep(5000);
+                } else {
+                    throw ex;
+                }
+            }
+        }
+    }
+
