@@ -1,0 +1,19 @@
+    /* (non-Javadoc)
+     * @see org.opennms.core.ipc.sink.common.AbstractMessageDispatcherFactory#dispatch(org.opennms.core.ipc.sink.api.SinkModule, java.lang.Object, org.opennms.core.ipc.sink.api.Message)
+     */
+    @Override
+    public <S extends Message, T extends Message> void dispatch(SinkModule<S, T> module, String topic, T message) {
+        try (MDCCloseable mdc = Logging.withPrefixCloseable(MessageConsumerManager.LOG_PREFIX)) {
+            LOG.trace("dispatch({}): sending message {}", topic, message);
+            try {
+                final String queueUrl = awsSqsManager.getSinkQueueUrlAndCreateIfNecessary(module.getId());
+                final String messageId = awsSqsManager.sendMessage(queueUrl, new String(module.marshal((T)message), StandardCharsets.UTF_8));
+                LOG.debug("SQS Message with ID {} has been successfully sent to {}", messageId, queueUrl);
+            } catch (InterruptedException ex) {
+                LOG.warn("Interrupted while trying to send message. Aborting.", ex);
+            } catch (RuntimeException ex) {
+                LOG.error("Unexpected AWS SDK exception while sending a message. Aborting.", ex);
+            }
+        }
+    }
+

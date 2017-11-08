@@ -3,32 +3,32 @@
 
         try {
             session = agentConfig.createSnmpSession();
-        } catch (IOException e) {
+            Snmp4JStrategy.trackSession(session);
+        } catch (final Exception e) {
             LOG.error("send: Could not create SNMP session for agent {}", agentConfig, e);
-            future.completeExceptionally(new Exception("Could not create SNMP session for agent"));
+            future.completeExceptionally(new SnmpException("Could not create SNMP session for agent", e));
             return;
         }
 
         if (expectResponse) {
             try {
                 session.listen();
-            } catch (IOException e) {
+            } catch (final Exception e) {
                 closeQuietly(session);
                 LOG.error("send: error setting up listener for SNMP responses", e);
-                future.completeExceptionally(new Exception("error setting up listener for SNMP responses"));
+                future.completeExceptionally(new SnmpException("error setting up listener for SNMP responses", e));
                 return;
             }
-        }
 
-        try {
-            if (expectResponse) {
-                session.send(pdu, agentConfig.getTarget(), null, new ResponseListener() {
+            try {
+                final Snmp mySession = session;
+                mySession.send(pdu, agentConfig.getTarget(), null, new ResponseListener() {
                     @Override
-                    public void onResponse(ResponseEvent responseEvent) {
+                    public void onResponse(final ResponseEvent responseEvent) {
                         try {
                             future.complete(processResponse(agentConfig, responseEvent));
-                        } catch (IOException e) {
-                            future.completeExceptionally(e);
+                        } catch (final Exception e) {
+                            future.completeExceptionally(new SnmpException(e));
                         } finally {
                             // Close the tracker using a separate thread
                             // This allows the SnmpWalker to clean up properly instead
@@ -36,27 +36,29 @@
                             REAPER_EXECUTOR.submit(new Runnable() {
                                 @Override
                                 public void run() {
-                                    closeQuietly(session);
+                                    closeQuietly(mySession);
                                 }
                             });
                         }
                     }
                 });
-            } else {
+            } catch (final Exception e) {
+                // The ResponseListener will not be called since an exception occurred in the send,
+                // so we make sure to close the session here
+                closeQuietly(session);
+                LOG.error("send: error during SNMP operation", e);
+                future.completeExceptionally(e);
+            }
+        } else { // we're not expecting a response
+            try {
                 session.send(pdu, agentConfig.getTarget());
                 future.complete(null);
-            }
-        } catch (final IOException e) {
-            LOG.error("send: error during SNMP operation", e);
-            future.completeExceptionally(e);
-        } catch (final RuntimeException e) {
-            LOG.error("send: unexpected error during SNMP operation", e);
-            future.completeExceptionally(e);
-        } finally {
-            // Always close the session if we're not expecting a response
-            // If we are expecting a response, the ResponseListener will handle the close
-            if (!expectResponse) {
+            } catch (final Exception e) {
+                LOG.error("send: error during SNMP operation", e);
+                future.completeExceptionally(new SnmpException(e));
+            } finally {
                 closeQuietly(session);
+                Snmp4JStrategy.reapSession(session);
             }
         }
     }
