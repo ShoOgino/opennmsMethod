@@ -5,12 +5,36 @@
      */
     @Before
     public void setUp() throws Exception {
-        Hashtable<String, Object> awsConfig = new Hashtable<String, Object>();
-        ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class, RETURNS_DEEP_STUBS);
-        when(configAdmin.getConfiguration(AmazonSQSSinkConstants.AWS_CONFIG_PID).getProperties()).thenReturn(awsConfig);
-        messageDispatcherFactory.setConfigAdmin(configAdmin);
+        messageDispatcherFactory = new AmazonSQSRemoteMessageDispatcherFactory();
         messageDispatcherFactory.setAwsSqsManager(sqsManager);
         messageDispatcherFactory.init();
-        consumerManager.afterPropertiesSet();
+
+        LinkedBlockingQueue<String> bodies = new LinkedBlockingQueue<>();
+        AmazonSQS sqsClient = mock(AmazonSQS.class, RETURNS_DEEP_STUBS);
+        when(sqsClient.receiveMessage(anyString()).getMessages()).thenAnswer(new Answer<List<Message>>() {
+            @Override
+            public List<Message> answer(InvocationOnMock invocation) {
+                List<String> messageBodies = new LinkedList<>();
+                bodies.drainTo(messageBodies);
+                return messageBodies.stream()
+                        .map(b -> {
+                            Message msg = new Message();
+                            msg.setBody(b);
+                            return msg;
+                        })
+                        .collect(Collectors.toList());
+            }
+        });
+
+        when(sqsManager.getSQSClient()).thenReturn(sqsClient);
+        when(sqsManager.getSinkQueueUrlAndCreateIfNecessary(anyString())).thenReturn("some-url");
+        when(sqsManager.sendMessage(anyString(), anyString())).thenAnswer(new Answer<String>() {
+            @Override
+            public String answer(InvocationOnMock invocation) throws Throwable {
+                String body = invocation.getArgumentAt(1, String.class);
+                bodies.add(body);
+                return null;
+            }
+        });
     }
 
