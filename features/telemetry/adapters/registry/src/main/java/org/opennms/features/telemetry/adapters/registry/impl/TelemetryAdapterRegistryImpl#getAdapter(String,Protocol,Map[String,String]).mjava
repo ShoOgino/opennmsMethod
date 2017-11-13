@@ -1,19 +1,25 @@
     @Override
     public Adapter getAdapter(String className, Protocol protocol, Map<String, String> properties) {
-        AdapterFactory adapterFactory = m_adapterFactoryByClassName.get(className);
-        while ((adapterFactory == null) && ManagementFactory.getRuntimeMXBean().getUptime() < GRACE_PERIOD_MS) {
+        AdapterFactoryRegistration registration = m_adapterFactoryByClassName.get(className);
+        while ((registration == null) && ManagementFactory.getRuntimeMXBean().getUptime() < ServiceLookupBuilder.GRACE_PERIOD_MS) {
             try {
-                Thread.sleep(LOOKUP_DELAY_MS);
+                Thread.sleep(ServiceLookupBuilder.LOOKUP_DELAY_MS);
             } catch (InterruptedException e) {
-                LOG.error(
-                        "Interrupted while waiting for adapter factory to become available in the service registry. Aborting.");
+                LOG.error("Interrupted while waiting for adapter factory to become available in the service registry. Aborting.");
                 return null;
             }
-            adapterFactory = m_adapterFactoryByClassName.get(className);
+            registration = m_adapterFactoryByClassName.get(className);
         }
+
         Adapter adapter = null;
-        if (adapterFactory != null) {
-            adapter = adapterFactory.createAdapter(protocol, properties);
+        if (registration != null) {
+            adapter = registration.getAdapterFactory().createAdapter(protocol, properties);
+            if (registration.shouldAutowire()) {
+                // Autowire!
+                final AutowireCapableBeanFactory beanFactory = applicationContext.getAutowireCapableBeanFactory();
+                beanFactory.autowireBean(adapter);
+                beanFactory.initializeBean(adapter, "adapter");
+            }
         }
 
         return adapter;
