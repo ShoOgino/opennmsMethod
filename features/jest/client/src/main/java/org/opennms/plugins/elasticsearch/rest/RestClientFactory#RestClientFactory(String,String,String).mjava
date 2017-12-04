@@ -3,13 +3,13 @@
 	 *
 	 * @param elasticSearchURL Elasticsearch URL, either a single URL or
 	 *   multiple URLs that are comma-separated without spaces
-	 * @param elasticUser Optional HTTP username
-	 * @param elasticPassword Optional HTTP password
+	 * @param globalElasticUser Optional HTTP username
+	 * @param globalElasticPassword Optional HTTP password
 	 */
-	public RestClientFactory(final String elasticSearchURL, final String elasticUser, final String elasticPassword ) throws MalformedURLException {
+	public RestClientFactory(final String elasticSearchURL, final String globalElasticUser, final String globalElasticPassword ) throws MalformedURLException {
 		final List<String> urls = parseUrl(elasticSearchURL);
-		final String user = elasticUser != null && !elasticUser.isEmpty() ? elasticUser : null;
-		final String password = elasticPassword != null && !elasticPassword.isEmpty() ? elasticPassword : null;
+		final String globalUser = globalElasticUser != null && !globalElasticUser.isEmpty() ? globalElasticUser : null;
+		final String globalPassword = globalElasticPassword != null && !globalElasticPassword.isEmpty() ? globalElasticPassword : null;
 
 		// Ensure urls is set
 		if (urls.isEmpty()) {
@@ -34,15 +34,21 @@
 					.gson(gson);
 
 		// Apply optional credentials
-		if (user != null && password != null) {
-			final URL targetUrl = new URL(urls.get(0));
-			if (urls.size() > 1) {
-				LOG.warn("Credentials have been defined, but multiple target hosts were found. " +
-						"Each host will use the same credentials. Preemptive auth is only enabled for host {}", urls.get(0));
-			}
+		if (globalUser != null && globalPassword != null) {
+			clientConfigBuilder.defaultCredentials(globalUser, globalPassword);
 
-			clientConfigBuilder.defaultCredentials(user, password);
-			clientConfigBuilder.setPreemptiveAuth(new HttpHost(targetUrl.getHost(), targetUrl.getPort(), targetUrl.getProtocol()));
+			// Enable preemptive auth
+			final Set<HttpHost> targetHosts = urls.stream()
+					.map(url -> {
+						try {
+							return new URL(url);
+						} catch (MalformedURLException ex) {
+							throw new RuntimeException(ex);
+						}
+					})
+					.map(url -> new HttpHost(url.getHost(), url.getPort(), url.getProtocol()))
+					.collect(Collectors.toSet());
+			clientConfigBuilder.preemptiveAuthTargetHosts(targetHosts);
 		}
 	}
 
