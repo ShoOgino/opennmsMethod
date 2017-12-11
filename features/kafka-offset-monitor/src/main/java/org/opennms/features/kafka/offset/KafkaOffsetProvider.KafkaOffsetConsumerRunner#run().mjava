@@ -1,60 +1,53 @@
-		@Override
-		public void run() {
-			try {
+        @Override
+        public void run() {
+            try {
 
-				consumer.subscribe(Arrays.asList(OFFSETS_TOPIC));
-				System.out.println("Connected to Kafka consumer offset topic");
-				Schema schema = new Schema(new Field("group", Schema.STRING), new Field(TOPIC, Schema.STRING),
-						new Field("partition", Schema.INT32));
-				while (!closed.get()) {
-					ConsumerRecords<byte[], byte[]> records = consumer.poll(1000);
-					for (ConsumerRecord<byte[], byte[]> consumerRecord : records) {
-						if (consumerRecord.value() != null && consumerRecord.key() != null) {
-							ByteBuffer key = ByteBuffer.wrap(consumerRecord.key());
-							short version = key.getShort();
-							if (version < 2) {
-								try {
-									Struct struct = (Struct) schema.read(key);
-									if (struct.getString("group").equalsIgnoreCase(CONSUMER_GROUP_NAME)) {
-										continue;
-									}
-									String group = struct.getString(GROUP);
-									String topic = struct.getString(TOPIC);
-									int partition = struct.getInt(PARTITION);
-									SimpleConsumer con = getConsumer(clientName);
-									if (con == null) {
-										System.out.println("Not able to create consumer with given host information");
-										continue;
-									}
-									long realOffset = getLastOffset(con, struct.getString(TOPIC), partition, -1,
-											clientName);
-									long consumerOffset = readOffsetMessageValue(
-											ByteBuffer.wrap(consumerRecord.value()));
-									long lag = realOffset - consumerOffset;
-									KafkaOffset mon = new KafkaOffset(group, topic, partition, realOffset,
-											consumerOffset, lag);
-									LOGGER.info(" group: " + group + "consumerOffset:" + consumerOffset + "  realOffset: " + realOffset
-											+ "   lag:  " + Long.toString(lag));
-									Map<String, KafkaOffset> map = consumerOffsetMap.get(topic);
-									if (map == null) {
-										map = new ConcurrentHashMap<>();
-										consumerOffsetMap.put(topic, map);
-									}
-									map.put(group + "%" + partition, mon);
-									dispatch(module, mon);
+                consumer.subscribe(Arrays.asList(KafkaOffsetConstants.OFFSETS_TOPIC));
+                LOGGER.info("Connected to Kafka consumer offset topic");
+                Schema schema = new Schema(new Field("group", Schema.STRING),
+                        new Field(KafkaOffsetConstants.TOPIC, Schema.STRING), new Field("partition", Schema.INT32));
+                while (!closed.get()) {
+                    ConsumerRecords<byte[], byte[]> records = consumer.poll(KafkaOffsetConstants.POLL_INTERVAL);
+                    for (ConsumerRecord<byte[], byte[]> consumerRecord : records) {
+                        if (consumerRecord.value() != null && consumerRecord.key() != null) {
+                            ByteBuffer key = ByteBuffer.wrap(consumerRecord.key());
+                            short version = key.getShort();
+                            if (version < 2) {
+                                try {
+                                    Struct struct = (Struct) schema.read(key);
+                                    String group = struct.getString(KafkaOffsetConstants.GROUP);
+                                    String topic = struct.getString(KafkaOffsetConstants.TOPIC);
+                                    int partition = struct.getInt(KafkaOffsetConstants.PARTITION);
+                                    SimpleConsumer con = getConsumer();
+                                    long realOffset = getLastOffset(con, struct.getString(KafkaOffsetConstants.TOPIC),
+                                            partition, -1);
+                                    long consumerOffset = readOffsetMessageValue(
+                                            ByteBuffer.wrap(consumerRecord.value()));
+                                    long lag = realOffset - consumerOffset;
+                                    KafkaOffset mon = new KafkaOffset(group, topic, partition, realOffset,
+                                            consumerOffset, lag);
+                                    LOGGER.info("group : {} , topic: {}:{} , offsets : {}-{}-{}", group, topic,
+                                            partition, consumerOffset, realOffset, lag);
+                                    Map<String, KafkaOffset> map = consumerOffsetMap.get(topic);
+                                    if (map == null) {
+                                        map = new ConcurrentHashMap<>();
+                                        consumerOffsetMap.put(topic, map);
+                                    }
+                                    map.put(group + "%" + partition, mon);
+                                    dispatch(module, mon);
 
-								} catch (Exception e) {
-									e.printStackTrace();
-								}
-							}
-						}
-					}
-				}
-			} catch (Exception e) {
-				 e.printStackTrace();
-			} finally {
-				consumer.close();
-			}
+                                } catch (Exception e) {
+                                    LOGGER.error("Exception while getting offset", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                LOGGER.error("Exception while getting offset", e);
+            } finally {
+                consumer.close();
+            }
 
-		}
+        }
 
