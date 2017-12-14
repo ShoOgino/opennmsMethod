@@ -1,0 +1,24 @@
+    private CompletableFuture<Table<Directional<String>, Long, Double>> getSeriesFromTopN(List<String> topN, long start, long end, long step, String groupByTerm) {
+        final String query = searchQueryProvider.getSeriesFromTopNQuery(topN, start, end, step, groupByTerm);
+        return searchAsync(query).thenApply(res -> {
+            // Build a table using the search results
+            final Table<Directional<String>, Long, Double> results = HashBasedTable.create();
+            final MetricAggregation aggs = res.getAggregations();
+            final TermsAggregation groupedBy = aggs.getTermsAggregation("grouped_by");
+            for (TermsAggregation.Entry groupedByBucket : groupedBy.getBuckets()) {
+                final DateHistogramAggregation bytesAggs = groupedByBucket.getDateHistogramAggregation("bytes_over_time");
+                for (DateHistogramAggregation.DateHistogram dateHistogram : bytesAggs.getBuckets()) {
+                    final Long time = dateHistogram.getTime();
+                    final TermsAggregation directionAgg = dateHistogram.getTermsAggregation("direction");
+                    for (TermsAggregation.Entry directionBucket : directionAgg.getBuckets()) {
+                        final boolean isInitiator = Boolean.valueOf(directionBucket.getKeyAsString());
+                        final SumAggregation sumAgg = directionBucket.getSumAggregation("total_bytes");
+                        final Double sum = sumAgg.getSum();
+                        results.put(new Directional<>(groupedByBucket.getKey(), isInitiator), time, sum);
+                    }
+                }
+            }
+            return results;
+        });
+    }
+
