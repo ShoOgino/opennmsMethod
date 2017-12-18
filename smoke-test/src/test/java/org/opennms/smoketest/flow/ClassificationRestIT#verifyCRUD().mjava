@@ -1,0 +1,83 @@
+    @Test
+    public void verifyCRUD() {
+        // Nothing there yet
+        given().get().then().assertThat().statusCode(204); // no content
+
+        // POST one rule
+        final ClassificationDTO httpRule = classification().withName("http").withPort("80,8080").withProtocol("tcp,udp").build();
+        String header = given().contentType(ContentType.JSON)
+                .accept(ContentType.JSON)
+                .body(httpRule)
+                .post().then().assertThat().statusCode(201) // created
+                .extract().header("Location");
+        final String[] split = header.split("/");
+        int classificationId = Integer.parseInt(split[split.length - 1]);
+
+        // Verify Creation of 1st element
+        final ClassificationDTO receivedHttpRule = given().get("" + classificationId)
+                .then().log().body(true)
+                .assertThat()
+                    .statusCode(200)
+                    .contentType(ContentType.JSON)
+                .extract().response().as(ClassificationDTO.class);
+        assertEquals(httpRule, receivedHttpRule);
+
+        // Post another rule
+        given().contentType(ContentType.JSON)
+            .accept(ContentType.JSON)
+            .body(classification().withName("https").withPort("443").withProtocol("tcp").build())
+            .post().then().assertThat().statusCode(201); // created
+
+        // Verify creation worked
+        given().get()
+                .then()
+                    .log().body(true)
+                .assertThat()
+                    .statusCode(200)
+                    .contentType(ContentType.JSON)
+                    .body("", hasSize(2))
+                .extract().response().asString();
+
+        // UPDATE 1st rule
+        receivedHttpRule.setName("http-opennms");
+        receivedHttpRule.setPort("8980");
+        receivedHttpRule.setProtocol("tcp");
+        receivedHttpRule.setIpAddress("127.0.0.1");
+        given().contentType(ContentType.JSON)
+                .body(receivedHttpRule)
+                .put(Integer.toString(classificationId))
+                .then().assertThat()
+                .statusCode(200);
+
+        // Verify update worked
+        final ClassificationDTO updatedRule = given().get(Integer.toString(classificationId))
+                .then()
+                    .log().body(true)
+                .assertThat()
+                    .contentType(ContentType.JSON)
+                    .statusCode(200)
+                .extract().response().as(ClassificationDTO.class);
+        assertEquals(receivedHttpRule, updatedRule);
+
+        // Delete 1st rule
+        given().delete(Integer.toString(classificationId))
+                .then().statusCode(200);
+
+        // Verify deleted
+        given().get()
+                .then()
+                    .log().body(true)
+                .assertThat()
+                    .contentType(ContentType.JSON)
+                    .statusCode(200)
+                    .body("", hasSize(1));
+
+        // Delete ALL
+        given().delete().then().assertThat().statusCode(200);
+
+        // Verify deleted
+        given().get()
+                .then().log().body(true)
+                .assertThat().statusCode(204);
+    }
+

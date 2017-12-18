@@ -1,0 +1,40 @@
+    @Override
+    public List<Rule> parse(InputStream inputStream) throws IOException {
+        Objects.requireNonNull(inputStream);
+
+        final Multimap<Key, String> protocolPortMapping = ArrayListMultimap.create();
+        final CSVParser parser = CSVFormat.RFC4180.parse(new InputStreamReader(inputStream));
+        for (CSVRecord record : parser.getRecords()) {
+            LOG.debug("Parsing record '{}'", record);
+            final String serviceName = record.get(0);
+            final String port = record.get(1);
+            final String protocol = record.get(2);
+
+            // Ignore empty services
+            if ("".equals(serviceName)) {
+                LOG.debug("Record {} has empty service name. Skipping.", record);
+                continue;
+            }
+
+            // Only accept if we have an actual port
+            if (!isNumber(port)) {
+                LOG.debug("Port {} of record {} is not a valid number. Skipping.", port, record);
+                continue;
+            }
+
+            // Create PortMapping
+            protocolPortMapping.put(new Key(serviceName, port), protocol);
+        }
+
+        // Convert to rules
+        final Map<Key, Collection<String>> collectionMap = protocolPortMapping.asMap();
+
+        final List<Rule> rules = collectionMap.keySet().stream()
+                .map(key -> new RuleBuilder()
+                        .withName(key.getServiceName())
+                        .withPort(key.getPort())
+                        .withProtocol(collectionMap.get(key).stream().collect(Collectors.joining(",")))
+                        .build()).collect(Collectors.toList());
+        return rules;
+    }
+
