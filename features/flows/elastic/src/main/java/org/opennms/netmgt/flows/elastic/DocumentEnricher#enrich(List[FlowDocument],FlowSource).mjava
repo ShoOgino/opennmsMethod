@@ -1,0 +1,30 @@
+    public void enrich(final List<FlowDocument> documents, final FlowSource source) {
+        if (documents.isEmpty()) {
+            LOG.info("Nothing to enrich.");
+            return;
+        }
+
+        transactionOperations.execute(callback -> {
+            documents.forEach(document -> {
+                // Metadata from message
+                document.setHost(source.getSourceAddress());
+                document.setLocation(source.getLocation());
+                document.setInitiator(isInitiator(document));
+
+                // Node data
+                getNodeInfoFromCache(source.getLocation(), source.getSourceAddress()).ifPresent(document::setNodeExporter);
+                getNodeInfoFromCache(source.getLocation(), document.getDstAddr()).ifPresent(document::setNodeDst);
+                getNodeInfoFromCache(source.getLocation(), document.getSrcAddr()).ifPresent(document::setNodeSrc);
+
+                // Locality
+                document.setSrcLocality(isPrivateAddress(document.getSrcAddr()) ? Locality.PRIVATE : Locality.PUBLIC);
+                document.setDstLocality(isPrivateAddress(document.getDstAddr()) ? Locality.PRIVATE : Locality.PUBLIC);
+                document.setFlowLocality(Locality.PUBLIC.equals(document.getDstLocality()) || Locality.PUBLIC.equals(document.getSrcLocality()) ? Locality.PUBLIC : Locality.PRIVATE);
+
+                // Apply Application mapping
+                document.setApplication(classificationEngine.classify(createClassificationRequest(document)));
+            });
+            return null;
+        });
+    }
+
