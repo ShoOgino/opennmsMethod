@@ -11,35 +11,18 @@
                     flowPackets.add(flowPacket);
                 }
             }
-        }
-        packetsPerLogHistogram.update(flowPackets.size());
-
-        final List<NetflowDocument> flowDocuments;
-        try (Timer.Context ctx = logEnrichementTimer.time()) {
-            LOG.debug("Converting {} packets to flows.", flowPackets.size());
-            flowDocuments = flowPackets.stream()
-                    .map(pkts -> {
-                        final List<NetflowDocument> docs = convert(pkts);
-                        // Track the number of flows per packet
-                        flowsPerPacketHistogram.update(docs.size());
-                        return docs;
-                    })
-                    .flatMap(docs -> docs.stream())
-                    .collect(Collectors.toList());
-            LOG.debug("Enriching {} flows.", flowDocuments.size());
-            enrich(flowDocuments, messageLog);
+            packetsPerLogHistogram.update(flowPackets.size());
         }
 
-        try (Timer.Context ctx = logPersistingTimer.time()) {
-            LOG.debug("Persisting {}.", flowDocuments.size());
-            persist(flowDocuments);
-            flowsPersistedMeter.mark(flowDocuments.size());
-        } catch (Exception e) {
-            LOG.error("An error occurred while handling incoming flow packets: {}", e.getMessage(), e);
-            throw new RuntimeException(e);
+        try {
+            LOG.debug("Persisting {} packets.", flowPackets.size());
+            final FlowSource source = new FlowSource(messageLog.getLocation(), messageLog.getSourceAddress());
+            flowRepository.persistNetFlow5Packets(flowPackets, source);
+        } catch (FlowException ex) {
+            LOG.error("Failed to persist one or more packets: {}", ex.getMessage());
         }
 
-        LOG.debug("Completed processing {} telemetry messages into {} flows.",
-                messageLog.getMessageList().size(), flowDocuments.size());
+        LOG.debug("Completed processing {} telemetry messages.",
+                messageLog.getMessageList().size());
     }
 
