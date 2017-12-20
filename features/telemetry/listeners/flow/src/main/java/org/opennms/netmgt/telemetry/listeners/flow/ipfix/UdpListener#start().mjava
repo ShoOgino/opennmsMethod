@@ -1,0 +1,31 @@
+    public void start() throws InterruptedException {
+        this.session = new UdpSession(this.templateTimeout);
+
+        this.bossGroup = new NioEventLoopGroup();
+
+        this.housekeepingFuture = this.bossGroup.scheduleAtFixedRate(this.session::doHousekeeping, HOUSEKEEPING_INTERVAL, HOUSEKEEPING_INTERVAL, TimeUnit.MILLISECONDS);
+
+        this.socketFuture = new Bootstrap()
+                .group(this.bossGroup)
+                .channel(NioDatagramChannel.class)
+                .option(ChannelOption.SO_REUSEADDR, true)
+                .handler(new ChannelInitializer<DatagramChannel>() {
+                    @Override
+                    protected void initChannel(final DatagramChannel ch) throws Exception {
+                        ch.pipeline()
+                                .addLast(new UdpPacketDecoder(UdpListener.this.session))
+                                .addLast(new PacketHandler(Protocol.IPFIX, UdpListener.this.dispatcher))
+                                .addLast(new ChannelInboundHandlerAdapter() {
+                                    @Override
+                                    public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
+                                        LOG.warn("Invalid packet: {}", cause.getMessage());
+                                        LOG.debug("", cause);
+                                        UdpListener.this.session.drop(ch.remoteAddress(), ch.localAddress());
+                                    }
+                                });
+                    }
+                })
+                .bind(this.bindHost, this.bindPort)
+                .sync();
+    }
+
