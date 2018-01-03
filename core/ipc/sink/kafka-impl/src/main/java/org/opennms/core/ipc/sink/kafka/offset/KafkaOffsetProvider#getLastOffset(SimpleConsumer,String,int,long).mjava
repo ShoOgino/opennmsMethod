@@ -1,0 +1,34 @@
+    public long getLastOffset(SimpleConsumer consumer, String topic, int partition, long whichTime) {
+        long lastOffset = 0;
+        try {
+            List<String> topics = Collections.singletonList(topic);
+            TopicMetadataRequest req = new TopicMetadataRequest(topics);
+            kafka.javaapi.TopicMetadataResponse topicMetadataResponse = consumer.send(req);
+            TopicAndPartition topicAndPartition = new TopicAndPartition(topic, partition);
+            for (TopicMetadata topicMetadata : topicMetadataResponse.topicsMetadata()) {
+                for (PartitionMetadata partitionMetadata : topicMetadata.partitionsMetadata()) {
+                    if (partitionMetadata.partitionId() == partition) {
+                        String partitionHost = partitionMetadata.leader().host();
+                        consumer = getConsumer(partitionHost, partitionMetadata.leader().port());
+                        break;
+                    }
+                }
+            }
+            Map<TopicAndPartition, PartitionOffsetRequestInfo> requestInfo = new HashMap<TopicAndPartition, PartitionOffsetRequestInfo>();
+            requestInfo.put(topicAndPartition, new PartitionOffsetRequestInfo(whichTime, 1));
+            kafka.javaapi.OffsetRequest request = new kafka.javaapi.OffsetRequest(requestInfo,
+                    kafka.api.OffsetRequest.CurrentVersion(), KafkaOffsetConstants.CLIENT_NAME);
+            OffsetResponse response = consumer.getOffsetsBefore(request);
+            if (response.hasError()) {
+                LOGGER.error("Error fetching Offset Data from the Broker. Reason: {}",
+                        response.errorCode(topic, partition));
+                lastOffset = 0;
+            }
+            long[] offsets = response.offsets(topic, partition);
+            lastOffset = offsets[0];
+        } catch (Exception e) {
+            LOGGER.error("Error while collecting the log Size for topic: {}:{} ", topic, partition, e);
+        }
+        return lastOffset;
+    }
+
