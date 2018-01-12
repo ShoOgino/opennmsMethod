@@ -1,0 +1,79 @@
+    public Packet(final TemplateManager templateManager,
+                  final Header header,
+                  final ByteBuffer buffer) throws InvalidPacketException {
+        this.header = Objects.requireNonNull(header);
+
+        final List<FlowSet<?>> sets = new LinkedList<>();
+        while(buffer.hasRemaining()) {
+            // We ignore header.counter here, because different exporters interpret it as flowset count or record count
+
+            final ByteBuffer headerBuffer = BufferUtils.slice(buffer, SetHeader.SIZE);
+            final FlowSetHeader flowSetHeader = new FlowSetHeader(headerBuffer);
+
+            final ByteBuffer payloadBuffer = BufferUtils.slice(buffer, flowSetHeader.length - FlowSetHeader.SIZE);
+            final FlowSet<?> set;
+            switch (flowSetHeader.getType()) {
+                case TEMPLATE_FLOWSET: {
+                    final FlowSet<TemplateRecord> templateSet = new FlowSet<>(flowSetHeader, TemplateRecord.parser(), payloadBuffer);
+
+                    for (final TemplateRecord record : templateSet) {
+                        if (record.header.fieldCount == 0) {
+                            // Empty template means revocation
+                            if (record.header.templateId == FlowSetHeader.TEMPLATE_SET_ID) {
+                                // Remove all templates
+                                templateManager.removeAll(this.header.sourceId, Template.Type.TEMPLATE);
+
+                            } else if (record.header.fieldCount == 0) {
+                                // Empty template means revocation
+                                templateManager.remove(this.header.sourceId, record.header.templateId);
+                            }
+
+                        } else {
+                            templateManager.add(this.header.sourceId,
+                                    record.header.templateId,
+                                    Template.builder()
+                                            .withType(Template.Type.TEMPLATE)
+                                            .withFields(Lists.transform(record.fields, f -> f.specifier))
+                                            .build());
+                        }
+                    }
+
+                    set = templateSet;
+                    break;
+                }
+
+                case OPTIONS_TEMPLATE_FLOWSET: {
+                    final FlowSet<OptionsTemplateRecord> optionsTemplateSet = new FlowSet<>(flowSetHeader, OptionsTemplateRecord.parser(), payloadBuffer);
+
+                    for (final OptionsTemplateRecord record : optionsTemplateSet) {
+                        templateManager.add(this.header.sourceId,
+                                record.header.templateId,
+                                Template.builder()
+                                        .withType(Template.Type.OPTIONS_TEMPLATE)
+                                        .withScopeFieldsCount(record.header.optionScopeLength / FieldSpecifier.SIZE)
+                                        .withFields(Lists.transform(record.fields, f -> f.specifier))
+                                        .build());
+                    }
+
+                    set = optionsTemplateSet;
+                    break;
+                }
+
+                case DATA_FLOWSET: {
+                    final TemplateManager.TemplateResolver templateResolver = templateManager.getResolver(header.sourceId);
+                    final Template template = templateResolver.lookup(flowSetHeader.flowSetId)
+                            .orElseThrow(() -> new InvalidPacketException(buffer, "Unknown Template ID: %d", flowSetHeader.flowSetId));
+                    set = new FlowSet<>(flowSetHeader, DataRecord.parser(template, templateResolver), payloadBuffer);
+                    break;
+                }
+
+                default: {
+                    throw new InvalidPacketException(buffer, "Invalid Set ID: %d", flowSetHeader.flowSetId);
+                }
+            }
+
+            sets.add(set);
+        }
+        this.sets = Collections.unmodifiableList(sets);
+    }
+
