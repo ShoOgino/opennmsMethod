@@ -1,0 +1,45 @@
+    private CompletableFuture<Table<Directional<String>, Long, Double>> getSeriesFromTopN(List<String> topN, long step, String groupByTerm,
+                                                                                          String directionTerm, String keyForMissingTerm,
+                                                                                          boolean includeOther, List<Filter> filters) {
+        final TimeRangeFilter timeRangeFilter = getRequiredTimeRangeFilter(filters);
+        final String seriesFromTopNQuery = searchQueryProvider.getSeriesFromTopNQuery(topN, step, timeRangeFilter.getStart(),
+                timeRangeFilter.getEnd(), groupByTerm, directionTerm, filters);
+        final ImmutableTable.Builder<Directional<String>, Long, Double> builder = ImmutableTable.builder();
+        CompletableFuture<Void> seriesFuture = searchAsync(seriesFromTopNQuery)
+                .thenApply(res -> {
+                    toTable(builder, res);
+                    return null;
+                });
+
+        final boolean missingTermIncludedInTopN = keyForMissingTerm != null && topN.contains(keyForMissingTerm);
+        if (missingTermIncludedInTopN) {
+            // We also need to query for items with a missing term, this will require a separate query
+            final String seriesFromMissingQuery = searchQueryProvider.getSeriesFromMissingQuery(step,
+                    timeRangeFilter.getStart(), timeRangeFilter.getEnd(), groupByTerm, directionTerm, keyForMissingTerm, filters);
+            seriesFuture = seriesFuture.thenCombine(searchAsync(seriesFromMissingQuery), (ignored,res) -> {
+                toTable(builder, res);
+                return null;
+            });
+        }
+
+        if (includeOther) {
+            // We also want to gather series for terms not part of the Top N
+            final String seriesFromOthersQuery = searchQueryProvider.getSeriesFromOthersQuery(topN, step,
+                    timeRangeFilter.getStart(), timeRangeFilter.getEnd(), groupByTerm, directionTerm, missingTermIncludedInTopN, filters);
+            seriesFuture = seriesFuture.thenCombine(searchAsync(seriesFromOthersQuery), (ignored,res) -> {
+                final MetricAggregation aggs = res.getAggregations();
+                final TermsAggregation directionAgg = aggs.getTermsAggregation("direction");
+                for (TermsAggregation.Entry directionBucket : directionAgg.getBuckets()) {
+                    final boolean isIngress = isIngress(directionBucket);
+                    final ProportionalSumAggregation sumAgg = directionBucket.getAggregation("bytes", ProportionalSumAggregation.class);
+                    for (ProportionalSumAggregation.DateHistogram dateHistogram : sumAgg.getBuckets()) {
+                        builder.put(new Directional<>(OTHER_APPLICATION_NAME, isIngress), dateHistogram.getTime(), dateHistogram.getValue());
+                    }
+                }
+                return null;
+            });
+        }
+
+        return seriesFuture.thenApply(ignored -> builder.build());
+    }
+
