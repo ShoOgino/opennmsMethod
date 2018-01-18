@@ -3,7 +3,9 @@
                   final ByteBuffer buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<FlowSet<?>> sets = new LinkedList<>();
+        final List<FlowSet<TemplateRecord>> templateSets = new LinkedList<>();
+        final List<FlowSet<OptionsTemplateRecord>> optionTemplateSets = new LinkedList<>();
+        final List<FlowSet<DataRecord>> dataSets = new LinkedList<>();
         while(buffer.hasRemaining()) {
             // We ignore header.counter here, because different exporters interpret it as flowset count or record count
 
@@ -11,7 +13,6 @@
             final FlowSetHeader flowSetHeader = new FlowSetHeader(headerBuffer);
 
             final ByteBuffer payloadBuffer = BufferUtils.slice(buffer, flowSetHeader.length - FlowSetHeader.SIZE);
-            final FlowSet<?> set;
             switch (flowSetHeader.getType()) {
                 case TEMPLATE_FLOWSET: {
                     final FlowSet<TemplateRecord> templateSet = new FlowSet<>(flowSetHeader, TemplateRecord.parser(), payloadBuffer);
@@ -38,7 +39,7 @@
                         }
                     }
 
-                    set = templateSet;
+                    templateSets.add(templateSet);
                     break;
                 }
 
@@ -55,7 +56,7 @@
                                         .build());
                     }
 
-                    set = optionsTemplateSet;
+                    optionTemplateSets.add(optionsTemplateSet);
                     break;
                 }
 
@@ -63,7 +64,10 @@
                     final TemplateManager.TemplateResolver templateResolver = templateManager.getResolver(header.sourceId);
                     final Template template = templateResolver.lookup(flowSetHeader.flowSetId)
                             .orElseThrow(() -> new InvalidPacketException(buffer, "Unknown Template ID: %d", flowSetHeader.flowSetId));
-                    set = new FlowSet<>(flowSetHeader, DataRecord.parser(template, templateResolver), payloadBuffer);
+
+                    final FlowSet<DataRecord> dataSet = new FlowSet<>(flowSetHeader, DataRecord.parser(template, templateResolver), payloadBuffer);
+
+                    dataSets.add(dataSet);
                     break;
                 }
 
@@ -71,9 +75,10 @@
                     throw new InvalidPacketException(buffer, "Invalid Set ID: %d", flowSetHeader.flowSetId);
                 }
             }
-
-            sets.add(set);
         }
-        this.sets = Collections.unmodifiableList(sets);
+
+        this.templateSets = Collections.unmodifiableList(templateSets);
+        this.optionTemplateSets = Collections.unmodifiableList(optionTemplateSets);
+        this.dataSets = Collections.unmodifiableList(dataSets);
     }
 

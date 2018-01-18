@@ -1,0 +1,39 @@
+    public void enrichAndPersistFlows(final Stream<FlowDocument> documents, FlowSource source) throws FlowException {
+        // TODO: Use streams here?
+        List<FlowDocument> flowDocuments = documents.collect(Collectors.toList());
+
+        // Track the number of flows per call
+        flowsPerLog.update(flowDocuments.size());
+
+        if (flowDocuments.isEmpty()) {
+            LOG.info("Received empty flows. Nothing to do.");
+            return;
+        }
+
+        LOG.debug("Enriching {} flow documents.", flowDocuments.size());
+        try (final Timer.Context ctx = logEnrichementTimer.time()) {
+            documentEnricher.enrich(flowDocuments, source);
+        }
+
+        LOG.debug("Persisting {} flow documents.", flowDocuments.size());
+        try (final Timer.Context ctx = logPersistingTimer.time()) {
+            final String index = indexStrategy.getIndex(new Date());
+
+            final Bulk.Builder bulkBuilder = new Bulk.Builder();
+            for (FlowDocument flowDocument : flowDocuments) {
+                final Index.Builder indexBuilder = new Index.Builder(flowDocument)
+                        .index(index)
+                        .type(TYPE);
+                bulkBuilder.addAction(indexBuilder.build());
+            }
+            final Bulk bulk = bulkBuilder.build();
+            final BulkResultWrapper result = new BulkResultWrapper(executeRequest(bulk));
+            if (!result.isSucceeded()) {
+                final List<FailedItem<FlowDocument>> failedFlows = result.getFailedItems(flowDocuments);
+                throw new PersistenceException(result.getErrorMessage(), failedFlows);
+            }
+
+            flowsPersistedMeter.mark(flowDocuments.size());
+        }
+    }
+
