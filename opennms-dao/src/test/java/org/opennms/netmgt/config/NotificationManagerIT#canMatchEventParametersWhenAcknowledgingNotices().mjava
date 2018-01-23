@@ -1,0 +1,69 @@
+    @Test
+    @JUnitTemporaryDatabase
+    public void canMatchEventParametersWhenAcknowledgingNotices() throws IOException, SQLException {
+        // Insert some event in the database with a few event parameters
+        OnmsEvent dbEvent = new OnmsEvent();
+        dbEvent.setDistPoller(m_distPollerDao.whoami());
+        dbEvent.setEventUei(EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI);
+        dbEvent.setEventCreateTime(new Date());
+        dbEvent.setEventLog("Y");
+        dbEvent.setEventDisplay("Y");
+        dbEvent.setEventSeverity(OnmsSeverity.CRITICAL.getId());
+        dbEvent.setEventSource("test");
+        dbEvent.setEventTime(new Date());
+        dbEvent.setEventParameters(Arrays.asList(
+                new OnmsEventParameter(dbEvent, "some-parameter", "some-specific-value", "string"),
+                new OnmsEventParameter(dbEvent, "some-other-parameter", "some-other-specific-value", "string")
+        ));
+        m_eventDao.save(dbEvent);
+        m_eventDao.flush();
+
+        // Create some notification referencing the event we just created
+        Notification notification = new Notification();
+        Map<String, String> params = new ImmutableMap.Builder<String, String>()
+                .put(NotificationManager.PARAM_TEXT_MSG, "some text message")
+                .put("eventUEI", dbEvent.getEventUei())
+                .put("eventID", Integer.toString(dbEvent.getId()))
+                .build();
+        m_notificationManager.insertNotice(1, params, "q1", notification);
+
+        final String[] matchList = new String[] {"parm[some-parameter]", "parm[#2]"};
+
+        // Verify that we're able to match the the notice when we have the same parameters set
+        Event e = new EventBuilder(EventConstants.SERVICE_RESPONSIVE_EVENT_UEI, "test")
+                .addParam("some-parameter", "some-specific-value")
+                .addParam("some-other-parameter", "some-other-specific-value")
+                .getEvent();
+        Collection<Integer> eventIds = m_notificationManager.acknowledgeNotice(e, EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI, matchList);
+        assertEquals(1, eventIds.size());
+        assertEquals(dbEvent.getId(), eventIds.iterator().next());
+
+        // It should not match when either of the event parameters are different
+        e = new EventBuilder(EventConstants.SERVICE_RESPONSIVE_EVENT_UEI, "test")
+                .addParam("some-parameter", "!some-specific-value")
+                .addParam("some-other-parameter", "some-other-specific-value")
+                .getEvent();
+        eventIds = m_notificationManager.acknowledgeNotice(e, EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI, matchList);
+        assertEquals(0, eventIds.size());
+
+        e = new EventBuilder(EventConstants.SERVICE_RESPONSIVE_EVENT_UEI, "test")
+                .addParam("some-parameter", "some-specific-value")
+                .addParam("some-other-parameter", "!some-other-specific-value")
+                .getEvent();
+        eventIds = m_notificationManager.acknowledgeNotice(e, EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI, matchList);
+        assertEquals(0, eventIds.size());
+
+        // It should not match when either of the event parameters are missing
+        e = new EventBuilder(EventConstants.SERVICE_RESPONSIVE_EVENT_UEI, "test")
+                .addParam("some-other-parameter", "some-other-specific-value")
+                .getEvent();
+        eventIds = m_notificationManager.acknowledgeNotice(e, EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI, matchList);
+        assertEquals(0, eventIds.size());
+
+        e = new EventBuilder(EventConstants.SERVICE_RESPONSIVE_EVENT_UEI, "test")
+                .addParam("some-parameter", "some-specific-value")
+                .getEvent();
+        eventIds = m_notificationManager.acknowledgeNotice(e, EventConstants.SERVICE_UNRESPONSIVE_EVENT_UEI, matchList);
+        assertEquals(0, eventIds.size());
+    }
+
