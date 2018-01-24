@@ -1,0 +1,33 @@
+    @Override
+    protected void channelRead0(final ChannelHandlerContext ctx, final DefaultAddressedEnvelope<SampleDatagram, InetSocketAddress> packet) throws Exception {
+        LOG.trace("Got packet: {}", packet);
+
+        final BasicOutputBuffer output = new BasicOutputBuffer();
+        try (final BsonBinaryWriter bsonWriter = new BsonBinaryWriter(output)) {
+            bsonWriter.writeStartDocument();
+
+            bsonWriter.writeName("time");
+            bsonWriter.writeInt64(System.currentTimeMillis());
+
+            bsonWriter.writeName("data");
+            packet.content().version.datagram.writeBson(bsonWriter);
+
+            bsonWriter.writeEndDocument();
+        }
+
+        // Build the message to dispatch
+        final TelemetryMessage msg = new TelemetryMessage(packet.sender(), output.getByteBuffers().get(0).asNIO());
+
+        // Dispatch and retain a reference to the packet
+        // in the case that we are sharing the underlying byte array
+        final CompletableFuture<TelemetryMessage> future = dispatcher.send(msg);
+
+        // Pass exception if dispatching fails
+        future.handle((result, ex) -> {
+            if (ex != null) {
+                ctx.fireExceptionCaught(ex);
+            }
+            return result;
+        });
+    }
+
