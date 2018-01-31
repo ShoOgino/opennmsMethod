@@ -1,0 +1,43 @@
+    @Override
+    public CsvImportResult parseCSV(InputStream inputStream, boolean hasHeader) throws CSVImportException {
+        Objects.requireNonNull(inputStream);
+        final CsvImportResult result = new CsvImportResult();
+        try {
+            CSVFormat csvFormat = CSVFormat.RFC4180.withDelimiter(';');
+            if (hasHeader) csvFormat = csvFormat.withHeader();
+            final CSVParser parser = csvFormat.parse(new InputStreamReader(inputStream));
+            for (CSVRecord record : parser.getRecords()) {
+                if (record.size() < EXPECTED_COLUMNS) {
+                    result.markError(record.getRecordNumber(), createError(Errors.CSV_TOO_FEW_COLUMNS, record.getRecordNumber(), record.toString(), EXPECTED_COLUMNS, record.size()));
+                    continue;
+                }
+                // Read Values
+                final String name = record.get(0);
+                final String ipAddress = record.get(1);
+                final String port = record.get(2);
+                final String protocol = record.get(3);
+
+                // Set values
+                final Rule rule = new Rule();
+                rule.setName("".equals(name) ? null : name);
+                rule.setPort("".equals(port) ? null : port);
+                rule.setIpAddress("".equals(ipAddress) ? null : ipAddress);
+                rule.setProtocol("".equals(protocol) ? null : protocol);
+
+                // Ensure it is a valid rule
+                try {
+                    ruleValidator.validate(rule);
+                } catch (InvalidRuleException ex) {
+                    result.markError(record.getRecordNumber(), ex.getError());
+                    continue;
+                }
+                if (!result.hasError(record.getRecordNumber())) {
+                    result.markSuccess(rule);
+                }
+            }
+        } catch (IOException ex) {
+            result.setError(createError(Errors.CSV_IMPORT_FAILED, ex.getMessage()));
+        }
+        return result;
+    }
+

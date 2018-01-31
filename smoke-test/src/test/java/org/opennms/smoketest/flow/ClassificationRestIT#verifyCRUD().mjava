@@ -1,10 +1,17 @@
     @Test
     public void verifyCRUD() {
-        // Nothing there yet
-        given().get().then().assertThat().statusCode(204); // no content
+        // Verify GET Rules
+        given().get().then().assertThat().statusCode(200); // 200 because "system defined" rules are enabled
 
-        // POST one rule
-        final ClassificationDTO httpRule = classification().withName("http").withPort("80,8080").withProtocol("tcp,udp").build();
+        // Verify GET Groups (system-defined and user-defined rules should be there)
+        given().get("/groups").then().assertThat().statusCode(200).body("", hasSize(2));
+
+        // Disable "system-defined" rules
+        setEnabled(1, false);
+        given().get().then().assertThat().statusCode(204); // 204 because "system-defined" rules are disabled
+
+        // POST (create) a rule
+        final RuleDTO httpRule = builder().withName("http").withPort("80,8080").withProtocol("tcp,udp").build();
         String header = given().contentType(ContentType.JSON)
                 .accept(ContentType.JSON)
                 .body(httpRule)
@@ -13,19 +20,23 @@
         final String[] split = header.split("/");
         int classificationId = Integer.parseInt(split[split.length - 1]);
 
-        // Verify Creation of 1st element
-        final ClassificationDTO receivedHttpRule = given().get("" + classificationId)
+        // Verify Creation of rule
+        final RuleDTO receivedHttpRule = given().get("" + classificationId)
                 .then().log().body(true)
                 .assertThat()
                     .statusCode(200)
                     .contentType(ContentType.JSON)
-                .extract().response().as(ClassificationDTO.class);
-        assertEquals(httpRule, receivedHttpRule);
+                .extract().response().as(RuleDTO.class);
+        assertThat(receivedHttpRule.getId(), is(classificationId));
+        assertThat(receivedHttpRule.getName(), is(httpRule.getName()));
+        assertThat(receivedHttpRule.getIpAddress(), is(httpRule.getIpAddress()));
+        assertThat(receivedHttpRule.getProtocols(), is(httpRule.getProtocols()));
+        assertThat(receivedHttpRule.getGroup().getName(), is(Groups.USER_DEFINED));
 
         // Post another rule
         given().contentType(ContentType.JSON)
             .accept(ContentType.JSON)
-            .body(classification().withName("https").withPort("443").withProtocol("tcp").build())
+            .body(builder().withName("https").withPort("443").withProtocol("tcp").build())
             .post().then().assertThat().statusCode(201); // created
 
         // Verify creation worked
@@ -45,23 +56,28 @@
         receivedHttpRule.setIpAddress("127.0.0.1");
         given().contentType(ContentType.JSON)
                 .body(receivedHttpRule)
+                .log().all()
                 .put(Integer.toString(classificationId))
                 .then().assertThat()
+                .log().all()
                 .statusCode(200);
 
         // Verify update worked
-        final ClassificationDTO updatedRule = given().get(Integer.toString(classificationId))
+        final RuleDTO updatedRule = given().get(Integer.toString(classificationId))
                 .then()
                     .log().body(true)
                 .assertThat()
                     .contentType(ContentType.JSON)
                     .statusCode(200)
-                .extract().response().as(ClassificationDTO.class);
-        assertEquals(receivedHttpRule, updatedRule);
+                .extract().response().as(RuleDTO.class);
+        assertThat(updatedRule.getId(), is(classificationId));
+        assertThat(updatedRule.getName(), is(receivedHttpRule.getName()));
+        assertThat(updatedRule.getIpAddress(), is(receivedHttpRule.getIpAddress()));
+        assertThat(updatedRule.getProtocols(), is(receivedHttpRule.getProtocols()));
+        assertThat(updatedRule.getGroup().getName(), is(Groups.USER_DEFINED));
 
         // Delete 1st rule
-        given().delete(Integer.toString(classificationId))
-                .then().statusCode(200);
+        given().delete(Integer.toString(classificationId)).then().statusCode(204);
 
         // Verify deleted
         given().get()
@@ -72,12 +88,14 @@
                     .statusCode(200)
                     .body("", hasSize(1));
 
-        // Delete ALL
-        given().delete().then().assertThat().statusCode(200);
+        // DELETE group
+        given().param("groupId", "2").delete()
+                .then().statusCode(204);
 
-        // Verify deleted
-        given().get()
-                .then().log().body(true)
-                .assertThat().statusCode(204);
+        // Verify Group deleted
+        given().get().then().statusCode(204);
+
+        // Verify DELETE ALL is not allowed
+        given().delete().then().assertThat().statusCode(400);
     }
 
