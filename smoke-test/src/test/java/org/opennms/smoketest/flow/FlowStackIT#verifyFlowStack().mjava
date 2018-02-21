@@ -6,7 +6,9 @@
         final InetSocketAddress elasticRestAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.ELASTICSEARCH_5, 9200, "tcp");
         final InetSocketAddress opennmsWebAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8980);
         final InetSocketAddress opennmsSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8101);
-        final InetSocketAddress opennmsNetflowAdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, NETFLOW_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsNetflow5AdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, NETFLOW5_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsNetflow9AdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, NETFLOW9_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsIpfixAdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, IPFIX_LISTENER_UDP_PORT, "udp");
         final String elasticRestUrl = String.format("http://%s:%d", elasticRestAddress.getHostString(), elasticRestAddress.getPort());
 
         // Proxy the REST service
@@ -24,8 +26,10 @@
                 .multiThreaded(true)
                 .build());
         try (final JestClient client = factory.getObject()) {
-            // Read Netflow 5 packet
-           sendNetflowPacket(opennmsNetflowAdapterAddress);
+            // Send packets
+           sendNetflowPacket(opennmsNetflow5AdapterAddress, "/flows/netflow5.dat");
+           sendNetflowPacket(opennmsNetflow9AdapterAddress, "/flows/netflow9.dat");
+           sendNetflowPacket(opennmsIpfixAdapterAddress, "/flows/ipfix.dat");
 
             // Ensure that the template has been created
             verify(client, (jestClient) -> {
@@ -36,12 +40,12 @@
             // Verify directly at elastic that the flows have been created
             verify(client, jestClient -> {
                 SearchResult response = jestClient.execute(new Search.Builder("").addIndex("netflow-*").build());
-                return response.isSucceeded() && response.getTotal() == 2;
+                return response.isSucceeded() && response.getTotal() == 11;
             });
 
             // Verify the flow count via the REST API
             with().pollInterval(15, SECONDS).await().atMost(1, MINUTES)
-                    .until(() -> restClient.getFlowCount(0L, System.currentTimeMillis()), equalTo(2L));
+                    .until(() -> restClient.getFlowCount(0L, System.currentTimeMillis()), equalTo(11L));
         }
     }
 
