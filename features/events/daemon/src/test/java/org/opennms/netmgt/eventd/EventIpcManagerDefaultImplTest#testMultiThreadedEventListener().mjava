@@ -1,0 +1,36 @@
+    /**
+     * Verify that an event listener that implements the {@link ThreadAwareEventListener} interface
+     * receives event callbacks over mulitple threads.
+     *
+     * @throws ExecutionException
+     * @throws InterruptedException
+     */
+    @Test
+    public void testMultiThreadedEventListener() throws ExecutionException, InterruptedException {
+        int N = 10;
+        ThreadLocker locker = new ThreadLocker();
+        MultiThreadedEventListener mtListener = new MultiThreadedEventListener(N, locker);
+        m_manager.addEventListener(mtListener);
+
+        // No threads waiting
+        CompletableFuture<Integer> lockedFuture = locker.waitForThreads(N);
+
+        // Send 2*N events
+        for (int k = 0; k < 2*N; k++) {
+            EventBuilder bldr = new EventBuilder("uei.opennms.org/foo", "testMultiThreadedEventListener");
+            m_manager.broadcastNow(bldr.getEvent(), false);
+        }
+
+        // Wait for N threads to be locked
+        lockedFuture.get();
+
+        // Sleep a little longer
+        Thread.sleep(500);
+
+        // No extra threads should be waiting
+        assertThat(locker.getNumExtraThreadsWaiting(), equalTo(0));
+
+        // Release
+        locker.release();
+    }
+
