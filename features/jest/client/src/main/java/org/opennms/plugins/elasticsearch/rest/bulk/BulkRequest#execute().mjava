@@ -1,0 +1,40 @@
+    public BulkResultWrapper execute() throws IOException {
+        do {
+            try {
+                final BulkResultWrapper bulkResultWrapper = executeRequest();
+                if (bulkResultWrapper.isSucceeded()) {
+                    return bulkResultWrapper;
+                }
+                // Handle errors
+                final List<T> failedDocuments = bulkResultWrapper.getFailedDocuments();
+                logError(bulkResultWrapper.getErrorMessage());
+
+                // bail if retry is not possible
+                if (!canRetry()) {
+                    throw new BulkException(bulkResultWrapper);
+                }
+
+                // Update documents if only some failed
+                if (!failedDocuments.isEmpty() && failedDocuments.size() != documents.size()) {
+                    documents.clear();
+                    documents.addAll(failedDocuments);
+                }
+            } catch (IOException ex) {
+                // Prevent wrapping the BulkException
+                // in an IOException and log twice
+                if (ex instanceof BulkException) {
+                    throw ex;
+                }
+                // Probably ConnectionTimeout, log and bail if no retries are left
+                logError(ex.getMessage());
+                if (!canRetry()) {
+                    throw new BulkException(ex);
+                }
+            }
+            retries++;
+            waitBeforeRetrying(retries);
+            LOG.info("Retrying now ...");
+        } while(retries != retryCount);
+        throw new IllegalStateException("The execution of the bulk request should have failed.");
+    }
+
