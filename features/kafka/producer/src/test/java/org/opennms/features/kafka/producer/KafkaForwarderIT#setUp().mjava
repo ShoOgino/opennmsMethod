@@ -1,0 +1,34 @@
+    @Before
+    public void setUp() throws IOException {
+        File data = tempFolder.newFolder("data");
+        eventdIpcMgr.setEventWriter(mockDatabase);
+
+        databasePopulator.populateDatabase();
+
+        Hashtable<String, Object> producerConfig = new Hashtable<>();
+        producerConfig.put(ConsumerConfig.GROUP_ID_CONFIG, KafkaForwarderIT.class.getCanonicalName());
+        producerConfig.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServer.getKafkaConnectString());
+        ConfigurationAdmin configAdmin = mock(ConfigurationAdmin.class, RETURNS_DEEP_STUBS);
+        Hashtable<String, Object> streamsConfig = new Hashtable<>();
+        streamsConfig.put(StreamsConfig.STATE_DIR_CONFIG, data.getAbsolutePath());
+        when(configAdmin.getConfiguration(OpennmsKafkaProducer.KAFKA_CLIENT_PID).getProperties()).thenReturn(producerConfig);
+        when(configAdmin.getConfiguration(KafkaAlarmDataSync.KAFKA_STREAMS_PID).getProperties()).thenReturn(streamsConfig);
+
+        kafkaProducer = new OpennmsKafkaProducer(protobufMapper, nodeCache, configAdmin, eventdIpcMgr,
+                alarmLifecycleListenerManager);
+        kafkaProducer.setEventTopic(EVENT_TOPIC_NAME);
+        // Don't forward newSuspect events
+        kafkaProducer.setEventFilter("!getUei().equals(\"" + EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI + "\")");
+        kafkaProducer.setAlarmTopic(ALARM_TOPIC_NAME);
+        // No alarm filtering
+        kafkaProducer.setAlarmFilter(null);
+        kafkaProducer.setNodeTopic(NODE_TOPIC_NAME);
+        kafkaProducer.init();
+
+        kafkaAlarmaDataStore = new KafkaAlarmDataSync(configAdmin, kafkaProducer, alarmDao, protobufMapper,
+                transactionTemplate);
+        kafkaAlarmaDataStore.setAlarmTopic(ALARM_TOPIC_NAME);
+        kafkaAlarmaDataStore.setAlarmSyncIntervalMs(1000);
+        kafkaAlarmaDataStore.init();
+    }
+

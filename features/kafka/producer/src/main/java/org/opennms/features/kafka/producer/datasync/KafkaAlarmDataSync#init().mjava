@@ -1,0 +1,53 @@
+    /**
+     * This method initializes the stream client, but doesn't actually start it until
+     * an alarm is forwarded by the producer.
+     *
+     * @throws IOException when an error occurs in loading/parsing the Kafka client/stream configuration
+     */
+    public void init() throws IOException {
+        if (!kafkaProducer.isForwardingAlarms() || alarmSyncIntervalMs <= 0) {
+            LOG.info("Alarm synchronization disabled.");
+            return;
+        }
+
+        final Properties streamProperties = loadStreamsProperties();
+        final StreamsBuilder builder = new StreamsBuilder();
+        final KTable<String, byte[]> alarmBytesKtable = builder.table(alarmTopic, Consumed.with(Serdes.String(), Serdes.ByteArray()),
+                Materialized.as(ALARM_STORE_NAME));
+        // If trace logging is enabled, the log the change to the stream
+        if (LOG.isTraceEnabled()) {
+            final KTable<String, OpennmsModelProtos.Alarm> alarmKtable = alarmBytesKtable.mapValues((bytes) -> {
+                try {
+                    return bytes != null ? OpennmsModelProtos.Alarm.parseFrom(bytes) : null;
+                } catch (InvalidProtocolBufferException e) {
+                    LOG.error("Failed to parse alarm bytes. Resulting alarm will empty in ktable.", e);
+                    return null;
+                }
+            });
+            alarmKtable.toStream().foreach((rkey,alarm) -> {
+                LOG.trace("Alarm with reduction key {} was updated: {}", rkey, alarm);
+            });
+        }
+
+        final Topology topology = builder.build();
+        final ClassLoader currentClassLoader = Thread.currentThread().getContextClassLoader();
+        try {
+            // Use the class-loader for the KStream class, since the kafka-client bundle
+            // does not import the required classes from the kafka-streams bundle
+            Thread.currentThread().setContextClassLoader(KStream.class.getClassLoader());
+            streams = new KafkaStreams(topology, streamProperties);
+        } finally {
+            Thread.currentThread().setContextClassLoader(currentClassLoader);
+        }
+        streams.setUncaughtExceptionHandler((t, e) -> LOG.error(
+                String.format("Stream error on thread: %s", t.getName()), e));
+
+        // Defer startup to another thread
+        scheduler = Executors.newScheduledThreadPool(1, new ThreadFactoryBuilder()
+                .setNameFormat("kafka-producer-alarm-datasync-%d")
+                .build()
+        );
+        closed.set(false);
+        scheduler.execute(this);
+    }
+
