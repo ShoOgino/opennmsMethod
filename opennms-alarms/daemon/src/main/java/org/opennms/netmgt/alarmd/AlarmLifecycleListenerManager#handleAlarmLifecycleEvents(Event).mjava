@@ -1,0 +1,56 @@
+    @EventHandler(ueis = {
+            EventConstants.ALARM_CREATED_UEI,
+            EventConstants.ALARM_ESCALATED_UEI,
+            EventConstants.ALARM_CLEARED_UEI,
+            EventConstants.ALARM_UNCLEARED_UEI,
+            EventConstants.ALARM_UPDATED_WITH_REDUCED_EVENT_UEI,
+            EventConstants.ALARM_DELETED_EVENT_UEI
+    })
+    public void handleAlarmLifecycleEvents(Event e) {
+        rwLock.readLock().lock();
+        try {
+            if (e == null || listeners.size() < 1) {
+                // Return quick if we weren't given an event, or if there are no listeners defined
+                // in which case we don't need to perform any further handling
+                return;
+            }
+
+            final Parm alarmIdParm = e.getParm(EventConstants.PARM_ALARM_ID);
+            if (alarmIdParm == null || alarmIdParm.getValue() == null) {
+                LOG.warn("The alarmId parameter has no value on event with uei: {}. Ignoring.", e.getUei());
+                return;
+            }
+
+            int alarmId;
+            try {
+                alarmId = Integer.parseInt(alarmIdParm.getValue().getContent());
+            } catch (NumberFormatException ee) {
+                LOG.warn("Failed to retrieve the alarmId for event with uei: {}. Ignoring.", e.getUei(), ee);
+                return;
+            }
+
+            if (EventConstants.ALARM_DELETED_EVENT_UEI.equals(e.getUei())) {
+                final Parm reductionKeyParm = e.getParm(EventConstants.PARM_ALARM_REDUCTION_KEY);
+                if (reductionKeyParm == null) {
+                    LOG.warn("Received alarm deleted event without reduction key. Ignoring.");
+                    return;
+                }
+                if (reductionKeyParm.getValue() == null) {
+                    LOG.warn("Received alarm deleted event with null reduction key value. Ignoring.");
+                    return;
+                }
+                final String reductionKey = reductionKeyParm.getValue().getContent();
+                if (reductionKey == null) {
+                    LOG.warn("Received alarm deleted event with null reduction key content. Ignoring.");
+                    return;
+                }
+
+                handleAlarmDeleted(alarmId, reductionKey);
+            } else {
+                handleAlarmCreatedOrUpdated(e, alarmId);
+            }
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+

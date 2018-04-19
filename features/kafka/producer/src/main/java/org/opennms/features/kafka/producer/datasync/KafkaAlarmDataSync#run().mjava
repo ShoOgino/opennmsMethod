@@ -1,0 +1,42 @@
+    @Override
+    public void run() {
+        try {
+            if (kafkaProducer.getAlarmForwardedLatch().await(2, TimeUnit.MINUTES)) {
+                LOG.debug("Triggered: An alarm was successfully forwarded to the topic.");
+            } else {
+                LOG.debug("Triggered: Timeout reached before an alarm was successfully forwarded to the topic.");
+            }
+        } catch (InterruptedException e) {
+            LOG.info("Interrupted while waiting for alarm to be forwarded. Synchronization will not be performed.");
+            return;
+        }
+
+        try {
+            LOG.info("Starting alarm datasync stream.");
+            streams.start();
+            LOG.info("Starting alarm datasync started.");
+        } catch (StreamsException | IllegalStateException e) {
+            LOG.error("Failed to start alarm datasync stream. Synchronization will not be performed.", e);
+        }
+
+        LOG.info("Waiting for alarm data store to be ready.");
+        while (!closed.get()) {
+            if (isReady()) {
+                break;
+            }
+
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                LOG.info("Interrupted while waiting for store to be ready. Synchronization will not be performed.");
+                return;
+            }
+        }
+        LOG.info("Alarm data store is ready!");
+
+        LOG.info("Scheduling periodic alarm synchronization every {}ms", alarmSyncIntervalMs);
+        // Schedule sync after initial delay of 1 minute or the sync interval, whichever is shorter
+        scheduler.scheduleWithFixedDelay(this::doSynchronizeAlarmsWithDb, Math.min(TimeUnit.MINUTES.toMillis(1), alarmSyncIntervalMs),
+                alarmSyncIntervalMs, TimeUnit.MILLISECONDS);
+    }
+

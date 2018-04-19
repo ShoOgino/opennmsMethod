@@ -1,0 +1,50 @@
+    private void updateAlarm(String reductionKey, OnmsAlarm alarm) {
+        // Always push null records, no good way to perform filtering on these
+        if (alarm == null) {
+            // The alarm was deleted, push a null record to the reduction key
+            sendRecord(() -> {
+                LOG.debug("Deleting alarm with reduction key: {}", reductionKey);
+                return new ProducerRecord<>(alarmTopic, reductionKey, null);
+            }, recordMetadata -> {
+                // We've got an ACK from the server that the alarm was forwarded
+                // Let other threads know when we've successfully forwarded an alarm
+                forwardedAlarm.countDown();
+            });
+            return;
+        }
+
+        // Filtering
+        boolean shouldForwardAlarm = true;
+        if (alarmFilterExpression != null) {
+            try {
+                shouldForwardAlarm = alarmFilterExpression.getValue(alarm, Boolean.class);
+            } catch (Exception e) {
+                LOG.error("Alarm filter '{}' failed to return a result for event: {}. The alarm will be forwarded anyways.",
+                        alarmFilterExpression.getExpressionString(), alarm, e);
+            }
+        }
+        if (!shouldForwardAlarm) {
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Alarm {} not forwarded due to event filter: {}",
+                        alarm, alarmFilterExpression.getExpressionString());
+            }
+            return;
+        }
+
+        // Node handling
+        if (forwardNodes && alarm.getNodeId() != null) {
+            maybeUpdateNode(alarm.getNodeId());
+        }
+
+        // Forward!
+        sendRecord(() -> {
+            final OpennmsModelProtos.Alarm mappedAlarm = protobufMapper.toAlarm(alarm).build();
+            LOG.debug("Sending alarm with reduction key: {}", reductionKey);
+            return new ProducerRecord<>(alarmTopic, reductionKey, mappedAlarm.toByteArray());
+        }, recordMetadata -> {
+            // We've got an ACK from the server that the alarm was forwarded
+            // Let other threads know when we've successfully forwarded an alarm
+            forwardedAlarm.countDown();
+        });
+    }
+

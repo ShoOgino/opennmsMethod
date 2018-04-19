@@ -1,0 +1,42 @@
+        @Override
+        public void run() {
+            Properties props = new Properties();
+            props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConnectString);
+            props.put(ConsumerConfig.GROUP_ID_CONFIG, KafkaMessageConsumerRunner.class.getCanonicalName() + "-" + UUID.randomUUID().toString());
+            props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+            props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+            props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+            props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, Boolean.TRUE.toString());
+            props.put(ConsumerConfig.METADATA_MAX_AGE_CONFIG, "1000");
+            props.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, "1000");
+            consumer = new KafkaConsumer<>(props);
+            consumer.subscribe(Arrays.asList(EVENT_TOPIC_NAME, NODE_TOPIC_NAME, ALARM_TOPIC_NAME));
+
+            while (!closed.get()) {
+                ConsumerRecords<String, byte[]> records = consumer.poll(1000);
+                for (ConsumerRecord<String, byte[]> record : records) {
+                    try {
+                        switch (record.topic()) {
+                            case EVENT_TOPIC_NAME:
+                                events.add(OpennmsModelProtos.Event.parseFrom(record.value()));
+                                break;
+                            case NODE_TOPIC_NAME:
+                                nodes.add(record.value() != null ?
+                                        OpennmsModelProtos.Node.parseFrom(record.value()) : null);
+                                break;
+                            case ALARM_TOPIC_NAME:
+                                final OpennmsModelProtos.Alarm alarm = record.value() != null ?
+                                        OpennmsModelProtos.Alarm.parseFrom(record.value()) : null;
+                                alarms.add(alarm);
+                                alarmsByReductionKey.put(record.key(), alarm);
+                                break;
+                        }
+                        numRecordsConsumed.incrementAndGet();
+                    } catch (Exception e) {
+                        LOG.error("Failed to parse record: {}",  record, e);
+                    }
+                }
+            }
+            consumer.close(1, TimeUnit.MINUTES);
+        }
+
