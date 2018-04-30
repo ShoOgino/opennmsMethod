@@ -5,7 +5,12 @@
 
         // Load rules
         final List<Rule> rules = ruleProvider.getRules();
+
+        // (port) -> rule mapping
         final List<List<Rule>> rulePortList = new ArrayList<>(Rule.MAX_PORT_VALUE);
+
+        // Rules which are not bound to a src OR dst port are stored here temporarily
+        final List<Rule> anyPortRules = new ArrayList<>();
 
         // Initialize each element
         for (int i=Rule.MIN_PORT_VALUE; i<Rule.MAX_PORT_VALUE; i++) {
@@ -13,21 +18,36 @@
             classifierPortList.add(new ArrayList<>());
         }
 
-        // Bind each rule to a port
-        final List<Rule> anyPortRule = new ArrayList<>();
+        // Technically there are 2^16 * 2^16 combinations, but it is possible to correctly pre-sort the rules
+        // by sorting them to all possible ports (2^16 possibilities).
+        // In case only src OR dst port is defined, the rule is sorted in the according port.
+        // In case src AND dst port are defined, the rule is only sorted by dst port.
+        // In case neither src NOR dst port are defined, the rule is applied to ALL ports.
         for (Rule eachRule : rules) {
-            if (eachRule.hasPortDefinition()) {
-                for (Integer eachPort : new PortValue(eachRule.getPort()).getPorts()) {
+            // src AND dst port are defined, only map rule to dst port
+            if (eachRule.hasSrcPortDefinition() && eachRule.hasDstPortDefinition()) {
+                for (Integer eachPort : new PortValue(eachRule.getDstPort()).getPorts()) {
+                    final List<Rule> portRules = rulePortList.get(eachPort);
+                    if (!portRules.contains(eachRule)) {
+                        portRules.add(eachRule);
+                    }
+                }
+            } else if (eachRule.hasSrcPortDefinition() || eachRule.hasDstPortDefinition()) {
+                // either src or dst is defined
+                final PortValue portValue = new PortValue(eachRule.hasDstPortDefinition() ? eachRule.getDstPort() : eachRule.getSrcPort());
+                for (Integer eachPort : portValue.getPorts()) {
                     rulePortList.get(eachPort).add(eachRule);
                 }
-            } else {
-                anyPortRule.add(eachRule);
+            } else if (!eachRule.hasDstPortDefinition() && !eachRule.hasSrcPortDefinition()) {
+                // Special treatment for rules which don't define a src or dst port, which are added ONCE
+                // to all ports
+                anyPortRules.add(eachRule);
             }
         }
 
-        // Bind classifiers to ANY port
+        // Add rules with no port mapping to ALL ports, if not already added
         for (final List<Rule> theRules : rulePortList) {
-            theRules.addAll(anyPortRule);
+            theRules.addAll(anyPortRules);
         }
 
         // Sort rules by priority
@@ -37,20 +57,37 @@
         }
 
         // Finally create classifiers
-        for (int i=0; i<rulePortList.size(); i++) {
+        for (int i = 0; i < rulePortList.size(); i++) {
             final int port = i;
             final List<Rule> portRules = rulePortList.get(port);
 
             // Convert rule to classifier
             final List<Classifier> classifiers = portRules.stream().map(rule -> {
-                final Rule portRule = new RuleBuilder()
-                        .withName(rule.getName())
-                        .withProtocol(rule.getProtocol())
-                        .withPort(port)
-                        .withIpAddress(rule.getIpAddress())
-                        .build();
-                return new CombinedClassifier(portRule);
-            }).collect(Collectors.toList());
+                final DefaultRuleDefinition portRule = new DefaultRuleDefinition();
+                portRule.setName(rule.getName());
+                portRule.setProtocol(rule.getProtocol());
+                portRule.setSrcAddress(rule.getSrcAddress());
+                portRule.setDstAddress(rule.getDstAddress());
+                portRule.setExporterFilter(rule.getExporterFilter());
+                portRule.setGroupPriority(rule.getGroupPriority());
+
+                // Check weather to apply rule for src or dst port (both may be very unlikely, but possible)
+                if (rule.hasDstPortDefinition() && rule.hasSrcPortDefinition()) {
+                    portRule.setSrcPort(rule.getSrcPort()); // keep src port as is, to apply filter
+                } else {
+                    // Only src or dst ports are defined (or none)
+                    // if none, the value of either src or dst port may be empty, as the filtering already occurred
+                    // through the index of the rule in the classifierPortList.
+                    if (rule.hasDstPortDefinition()) {
+                        portRule.setDstPort(Integer.toString(port));
+                    }
+                    if (rule.hasSrcPortDefinition()) {
+                        portRule.setSrcPort(Integer.toString(port));
+                    }
+                }
+                return new CombinedClassifier(portRule, filterService);
+            })
+            .collect(Collectors.toList());
             classifierPortList.set(port, classifiers);
         }
     }
