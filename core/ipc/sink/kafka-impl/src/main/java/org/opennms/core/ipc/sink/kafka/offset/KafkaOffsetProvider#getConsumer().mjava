@@ -1,12 +1,26 @@
     public SimpleConsumer getConsumer() {
-        Object kafkaServer = kafkaConfig.get("bootstrap.servers");
-        if (kafkaServer == null || !(kafkaServer instanceof String)) {
-            throw new IllegalArgumentException("Kafka server is invalid");
-        }
-        final String kafkaString = (String) kafkaServer;
-        HostAndPort kafkaHost = HostAndPort.fromString(kafkaString);
+        Object kafkaServer = null;
         if (kafkaHost == null) {
-            throw new IllegalArgumentException("Kafka server is invalid");
+            kafkaServer = kafkaConfig.get("bootstrap.servers");
+            if (kafkaServer == null || !(kafkaServer instanceof String)) {
+                throw new IllegalArgumentException("Kafka server is invalid");
+            }
+            final String kafkaString = (String) kafkaServer;
+            kafkaHost = HostAndPort.fromString(kafkaString);
+            if (kafkaHost == null) {
+                throw new IllegalArgumentException("Kafka server is invalid");
+            }
+        }
+        if (resetBroker.get() == NUM_RETRIES) {
+            LOGGER.debug(" Max num of retries reached, try if there is another broker");
+            kafkaHost = HostAndPort.getNextHostAndPort(kafkaHost);
+            if (kafkaHost == null) {
+                // No valid kafkaHost, shutdown offset consumer.
+                consumerRunner.shutdown();
+                throw new IllegalArgumentException("Kafka server is invalid");
+            }
+            partitionNumber = INVALID;
+            resetBroker.set(0);
         }
         return getConsumer(kafkaHost.getHost(), kafkaHost.getPort());
     }
