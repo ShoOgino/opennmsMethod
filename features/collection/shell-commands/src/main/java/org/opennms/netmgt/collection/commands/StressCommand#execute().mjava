@@ -15,8 +15,12 @@
         }
 
         // Display the effective settings and rates
-        double attributesPerSecond = (1 / (double)intervalInSeconds) * numberOfGroupsPerInterface
+        final double groupsPerSecond = (1 / (double)intervalInSeconds) * numberOfGroupsPerInterface
                 * numberOfInterfacesPerNode * numberOfNodes;
+        numNumericAttributesPerNodePerCycle = numberOfInterfacesPerNode * numberOfGroupsPerInterface
+                * numberOfNumericAttributesPerGroup;
+        numNumericAttributesPerSecond = numberOfNumericAttributesPerGroup * groupsPerSecond;
+        numStringAttributesPerSecond = numberOfStringAttributesPerGroup * groupsPerSecond;
         System.out.printf("Generating collection sets every %d seconds\n", intervalInSeconds);
         System.out.printf("\t for %d nodes\n", numberOfNodes);
         System.out.printf("\t with %d interfaces\n", numberOfInterfacesPerNode);
@@ -28,8 +32,8 @@
             System.out.printf("With string variation factor %d\n", stringVariationFactor);
         }
         System.out.printf("Which will yield an effective\n");
-        System.out.printf("\t %.2f numeric attributes per second\n", numberOfNumericAttributesPerGroup * attributesPerSecond);
-        System.out.printf("\t %.2f string attributes per second\n", numberOfStringAttributesPerGroup * attributesPerSecond);
+        System.out.printf("\t %.2f numeric attributes per second\n", numNumericAttributesPerSecond);
+        System.out.printf("\t %.2f string attributes per second\n", numStringAttributesPerSecond);
 
         ConsoleReporter reporter = ConsoleReporter.forRegistry(metrics)
                 .convertRatesTo(TimeUnit.SECONDS)
@@ -37,10 +41,10 @@
                 .build();
 
         // Setup the executor
-        ThreadFactory threadFactoy = new ThreadFactoryBuilder()
+        ThreadFactory threadFactory = new ThreadFactoryBuilder()
             .setNameFormat("Metrics Stress Tool Generator #%d")
             .build();
-        ExecutorService executor = Executors.newFixedThreadPool(numberOfGeneratorThreads, threadFactoy);
+        ExecutorService executor = Executors.newFixedThreadPool(numberOfGeneratorThreads, threadFactory);
 
         // Setup auxiliary objects needed by the persister
         ServiceParameters params = new ServiceParameters(Collections.emptyMap());
@@ -60,17 +64,14 @@
         }
         repository.setRrdBaseDir(Paths.get(System.getProperty("opennms.home"),"share","rrd","snmp").toFile());
 
-        // Calculate how we fast we should insert the collection sets
-        int sleepTimeInMillisBetweenNodes = 0;
-        int sleepTimeInSecondsBetweenIterations = 0;
-        System.out.printf("Sleeping for\n");
+        // Display effective rate limiting strategy:
+        System.out.printf("Limiting rate by\n");
         if (burst) {
-            sleepTimeInSecondsBetweenIterations = intervalInSeconds;
-            System.out.printf("\t %d seconds between batches\n", sleepTimeInSecondsBetweenIterations);
+            System.out.printf("\t sleeping %d seconds between batches (batch mode)\n", intervalInSeconds);
+            rateLimiter = null;
         } else {
-            // We want to "stream" the collection sets
-            sleepTimeInMillisBetweenNodes = Math.round((((float)intervalInSeconds * 1000) / numberOfNodes) * numberOfGeneratorThreads);
-            System.out.printf("\t %d milliseconds between nodes\n", sleepTimeInMillisBetweenNodes);
+            rateLimiter = RateLimiter.create(numNumericAttributesPerSecond);
+            System.out.printf("\t smoothing persistence to %.2f attributes per second\n", numNumericAttributesPerSecond);
         }
 
         // Start generating, and keep generating until we're interrupted
@@ -83,7 +84,7 @@
                     // Split the tasks up among the threads
                     List<Future<Void>> futures = new ArrayList<>();
                     for (int generatorThreadId = 0; generatorThreadId < numberOfGeneratorThreads; generatorThreadId++) {
-                        futures.add(executor.submit(generateAndPersistCollectionSets(params, repository, generatorThreadId, sleepTimeInMillisBetweenNodes)));
+                        futures.add(executor.submit(generateAndPersistCollectionSets(params, repository, generatorThreadId)));
                     }
                     // Wait for all the tasks to complete before starting others
                     for (Future<Void> future : futures) {
@@ -95,10 +96,12 @@
                     context.stop();
                 }
 
-                try {
-                    Thread.sleep(sleepTimeInSecondsBetweenIterations * 1000L);
-                } catch (InterruptedException e) {
-                    break;
+                if (burst) {
+                    try {
+                        Thread.sleep(intervalInSeconds * 1000L);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
                 }
             }
         } finally {
