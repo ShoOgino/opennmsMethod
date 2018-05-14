@@ -1,0 +1,40 @@
+    public void enrichAndPersistFlows(final List<FlowDocument> flowDocuments, FlowSource source) throws FlowException {
+        // Track the number of flows per call
+        flowsPerLog.update(flowDocuments.size());
+
+        if (flowDocuments.isEmpty()) {
+            LOG.info("Received empty flows. Nothing to do.");
+            return;
+        }
+
+        LOG.debug("Enriching {} flow documents.", flowDocuments.size());
+        try (final Timer.Context ctx = logEnrichementTimer.time()) {
+            documentEnricher.enrich(flowDocuments, source);
+        }
+
+        LOG.debug("Persisting {} flow documents.", flowDocuments.size());
+        try (final Timer.Context ctx = logPersistingTimer.time()) {
+            final BulkRequest<FlowDocument> bulkRequest = new BulkRequest<>(client, flowDocuments, (documents) -> {
+                final Bulk.Builder bulkBuilder = new Bulk.Builder();
+                for (FlowDocument flowDocument : documents) {
+                   final String index = indexStrategy.getIndex(TYPE, Instant.ofEpochMilli(flowDocument.getTimestamp()));
+                   final Index.Builder indexBuilder = new Index.Builder(flowDocument)
+                        .index(index)
+                        .type(TYPE);
+                    bulkBuilder.addAction(indexBuilder.build());
+                }
+                return new BulkWrapper(bulkBuilder);
+            }, bulkRetryCount);
+            try {
+                // the bulk request considers retries
+                bulkRequest.execute();
+            } catch (BulkException ex) {
+                throw new PersistenceException(ex.getMessage(), ex.getBulkResult().getFailedDocuments());
+            } catch (IOException ex) {
+                LOG.error("An error occurred while executing the given request: {}", ex.getMessage(), ex);
+                throw new FlowException(ex.getMessage(), ex);
+            }
+            flowsPersistedMeter.mark(flowDocuments.size());
+        }
+    }
+

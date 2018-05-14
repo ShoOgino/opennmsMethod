@@ -1,0 +1,43 @@
+	public List<Event> getEvents(Integer limit, Integer offset){
+		final List<Event> retrievedEvents= new ArrayList<>();
+		try (CloseableHttpClient httpclient= createHttpClient()) {
+
+			// Build query
+			final List<String> queryParts = new ArrayList<>();
+			if (limit != null) {
+				queryParts.add("limit=" + limit);
+			}
+			if (offset != null) {
+				queryParts.add("offset=" + offset);
+			}
+			final String query = queryParts.isEmpty() ? "" : "?" + queryParts.stream().collect(Collectors.joining("&"));
+
+			// importing events generated from opennms-webapp-rest/src/main/java/org/opennms/web/rest/v1/EventRestService.java
+			final HttpGet request = new HttpGet(baseUrl + EVENTS_URI + query);
+			request.addHeader("accept", "application/xml");
+
+			LOG.debug("Executing request " + request.getRequestLine());
+			try (CloseableHttpResponse response = httpclient.execute(request)) {
+				if (response.getStatusLine().getStatusCode() != 200) {
+					throw new RuntimeException("Failed : HTTP error code : "
+							+ response.getStatusLine().getStatusCode());
+				}
+				final String responseStr = EntityUtils.toString(response.getEntity());
+				LOG.debug("Response status: {}, entity: {}", response.getStatusLine(), responseStr);
+
+				final StringReader reader = new StringReader(responseStr);
+				final OnmsEventCollection eventCollection = JaxbUtils.unmarshal(OnmsEventCollection.class, reader);
+				LOG.debug("Received event Collection:´with offset: {}, totalCount: {}, size: {}", eventCollection.getOffset(), eventCollection.getTotalCount(), eventCollection.size());
+
+				// Convert
+				for (int i = 0; i < eventCollection.size(); i++) {
+					Event event = toEvent(eventCollection.get(i));
+					retrievedEvents.add(event);
+				}
+			}
+			return retrievedEvents;
+		} catch (Exception e) {
+			throw new RuntimeException("exception when getting event list", e);
+		}
+	}
+

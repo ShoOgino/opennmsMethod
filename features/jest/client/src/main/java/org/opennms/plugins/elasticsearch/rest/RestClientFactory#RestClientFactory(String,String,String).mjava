@@ -1,0 +1,48 @@
+	/**
+	 * Create a RestClientFactory.
+	 *
+	 * @param elasticSearchURL Elasticsearch URL, either a single URL or
+	 *   multiple URLs that are comma-separated without spaces
+	 * @param globalElasticUser Optional HTTP username
+	 * @param globalElasticPassword Optional HTTP password
+	 */
+	public RestClientFactory(final String elasticSearchURL, final String globalElasticUser, final String globalElasticPassword ) throws MalformedURLException {
+		final List<String> urls = parseUrl(elasticSearchURL);
+		final String globalUser = globalElasticUser != null && !globalElasticUser.isEmpty() ? globalElasticUser : null;
+		final String globalPassword = globalElasticPassword != null && !globalElasticPassword.isEmpty() ? globalElasticPassword : null;
+
+		// Ensure urls is set
+		if (urls.isEmpty()) {
+			throw new IllegalArgumentException("No urls have been provided");
+		}
+		final Gson gson = new GsonBuilder()
+				.setDateFormat(AbstractJestClient.ELASTIC_SEARCH_DATE_FORMAT)
+				.setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+				.create();
+
+		// If multiple URLs are specified in a comma-separated string, split them up
+		clientConfigBuilder = new HttpClientConfig.Builder(urls)
+					.multiThreaded(true)
+					.defaultMaxTotalConnectionPerRoute(DEFAULT_MAX_TOTAL_CONNECTION_PER_ROUTE)
+					.maxTotalConnection(DEFAULT_MAX_TOTAL_CONNECTION)
+					.gson(gson);
+
+		// Apply optional credentials
+		if (globalUser != null && globalPassword != null) {
+			clientConfigBuilder.defaultCredentials(globalUser, globalPassword);
+
+			// Enable preemptive auth
+			final Set<HttpHost> targetHosts = urls.stream()
+					.map(url -> {
+						try {
+							return new URL(url);
+						} catch (MalformedURLException ex) {
+							throw new RuntimeException(ex);
+						}
+					})
+					.map(url -> new HttpHost(url.getHost(), url.getPort(), url.getProtocol()))
+					.collect(Collectors.toSet());
+			clientConfigBuilder.preemptiveAuthTargetHosts(targetHosts);
+		}
+	}
+

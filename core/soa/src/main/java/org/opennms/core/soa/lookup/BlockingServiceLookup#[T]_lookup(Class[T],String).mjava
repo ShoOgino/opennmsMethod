@@ -1,0 +1,32 @@
+    @Override
+    public <T> T lookup(Class<T> serviceClass, String filter) {
+        Objects.requireNonNull(serviceClass);
+
+        // Lookup
+        T service = delegate.lookup(serviceClass, filter);
+        if (service != null) {
+            return service;
+        }
+
+        // A service matching the filter is not currently available.
+        // Wait until the system has finished starting up (uptime >= grace period)
+        // while ensuring we've waited for at least WAIT_PERIOD_MS before aborting the search.
+        final long waitUntil = System.currentTimeMillis() + ServiceLookupBuilder.WAIT_PERIOD_MS;
+        while (uptimeSupplier.get() < this.gracePeriodInMs
+                && System.currentTimeMillis() < waitUntil) {
+            try {
+                Thread.sleep(this.lookupDelayMs);
+            } catch (InterruptedException e) {
+                LOG.error("Interrupted while waiting for service of type " + serviceClass + " to become available in the service registry. Aborting.");
+                return null;
+            }
+            service = delegate.lookup(serviceClass, filter);
+            if (service != null) {
+                return service;
+            }
+        }
+
+        // Couldn't find a service within the defined time
+        return null;
+    }
+

@@ -1,0 +1,38 @@
+    public void start() throws InterruptedException {
+        this.bossGroup = new NioEventLoopGroup();
+        this.workerGroup = new NioEventLoopGroup();
+
+        final InetSocketAddress address = this.host != null
+                ? SocketUtils.socketAddress(this.host, this.port)
+                : new InetSocketAddress(this.port);
+
+        this.socketFuture = new ServerBootstrap()
+                .group(this.bossGroup, this.workerGroup)
+                .channel(NioServerSocketChannel.class)
+                .option(ChannelOption.SO_REUSEADDR, true)
+                .option(ChannelOption.SO_BACKLOG, 128)
+                .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childHandler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(final SocketChannel ch) {
+                        final Session session = new TcpSession();
+
+                        ch.pipeline()
+                                .addLast(new TcpPacketDecoder(ch.remoteAddress(), ch.localAddress(), session))
+                                .addLast(new PacketHandler(Protocol.IPFIX, TcpListener.this.dispatcher))
+                                .addLast(new ChannelInboundHandlerAdapter() {
+                                    @Override
+                                    public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
+                                        cause.printStackTrace();
+
+                                        LOG.warn("Invalid packet: {}", cause.getMessage());
+                                        LOG.debug("", cause);
+                                        ctx.close();
+                                    }
+                                });
+                    }
+                })
+                .bind(address)
+                .sync();
+    }
+

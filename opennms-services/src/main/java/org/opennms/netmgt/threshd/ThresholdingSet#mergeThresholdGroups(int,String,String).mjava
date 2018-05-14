@@ -5,47 +5,52 @@
      */
     /**
      * <p>mergeThresholdGroups</p>
+     * @throws ThresholdInitializationException 
      */
-    private void mergeThresholdGroups(final int nodeId, final String hostAddress, final String serviceName) {
+    private void mergeThresholdGroups(final int nodeId, final String hostAddress, final String serviceName) throws ThresholdInitializationException {
         final String logHeader = "mergeThresholdGroups(nodeId=" + nodeId + ",ipAddr=" + hostAddress + ",svc=" + serviceName + ")";
         LOG.debug("{}: Begin merging operation", logHeader);
-        List<String> groupNameList = getThresholdGroupNames(nodeId, hostAddress, serviceName);
+        final List<String> existingGroupNameList = m_thresholdGroups.stream().map(ThresholdGroup::getName).collect(Collectors.toList());
+        List<String> newGroupNameList = getThresholdGroupNames(nodeId, hostAddress, serviceName);
+
         synchronized(m_thresholdGroups) {
             // If size differs its because some groups where deleted.
-            if (groupNameList.size() != m_thresholdGroups.size()) {
+            if (newGroupNameList.size() != m_thresholdGroups.size() || !existingGroupNameList.equals(newGroupNameList)) {
                 // Deleting Groups
                 LOG.debug("{}: New group name list differs from current threshold group list", logHeader);
-                for (Iterator<ThresholdGroup> i = m_thresholdGroups.iterator(); i.hasNext();) {
-                    ThresholdGroup group = i.next();
-                    if (!groupNameList.contains(group.getName())) {
+                for (final Iterator<ThresholdGroup> i = m_thresholdGroups.iterator(); i.hasNext();) {
+                    final ThresholdGroup group = i.next();
+                    if (!newGroupNameList.contains(group.getName())) {
                         LOG.info("{}: deleting group {}", logHeader, group);
                         group.delete();
                         i.remove();
                     }
                 }
             }
-            List<ThresholdGroup> newThresholdGroupList = new LinkedList<>();
-            for (String groupName : groupNameList) {
+            final List<ThresholdGroup> newThresholdGroupList = new LinkedList<>();
+            for (final String groupName : newGroupNameList) {
                 // Check if group exist on current configured list
-                ThresholdGroup foundGroup = null;
-                for (ThresholdGroup group : m_thresholdGroups) {
-                    if (group.getName().equals(groupName))
-                        foundGroup = group;
-                }
-                if (foundGroup == null) {
-                    // Add new group
-                    ThresholdGroup thresholdGroup = m_thresholdsDao.get(groupName);
-                    if (thresholdGroup == null) {
-                        LOG.error("{}: Could not get threshold group with name {}", logHeader, groupName);
+                final Optional<ThresholdGroup> foundGroup = m_thresholdGroups.stream().filter(tg -> groupName.equals(tg.getName())).findFirst();
+                try {
+                    if (!foundGroup.isPresent()) {
+                        // Add new group
+                        final ThresholdGroup thresholdGroup = m_thresholdsDao.get(groupName);
+                        if (thresholdGroup == null) {
+                            LOG.error("{}: Could not get threshold group with name {}", logHeader, groupName);
+                        } else {
+                            newThresholdGroupList.add(thresholdGroup);
+                            LOG.debug("{}: Adding threshold group: {}", logHeader, thresholdGroup);
+                        }
                     } else {
+                        // Merge existing data with current data
+                        final ThresholdGroup thresholdGroup = m_thresholdsDao.merge(foundGroup.get());
                         newThresholdGroupList.add(thresholdGroup);
-                        LOG.debug("{}: Adding threshold group: {}", logHeader, thresholdGroup);
+                        LOG.debug("{}: Merging threshold group: {}", logHeader, thresholdGroup);
                     }
-                } else {
-                    // Merge existing data with current data
-                    ThresholdGroup thresholdGroup = m_thresholdsDao.merge(foundGroup);
-                    newThresholdGroupList.add(thresholdGroup);
-                    LOG.debug("{}: Merging threshold group: {}", logHeader, thresholdGroup);
+                } catch (final IllegalStateException e) {
+                    final ThresholdInitializationException tie = new ThresholdInitializationException("Unable to add or merge existing group " + foundGroup.orElse(null), e);
+                    LOG.error(tie.getLocalizedMessage(), e);
+                    throw tie;
                 }
             }
             m_thresholdGroups.clear();

@@ -1,0 +1,73 @@
+    @Test
+    public void verifyRuleEngineExtended() {
+        // Define Rule set
+        DefaultClassificationEngine engine = new DefaultClassificationEngine(() -> Lists.newArrayList(
+                new Rule("SSH", "22"),
+                new Rule("HTTP", "80"),
+                new Rule("HTTP_CUSTOM", "192.168.0.1", "80"),
+                new Rule("DUMMY", "192.168.1.*", "8000-9000,80,8080"),
+                new Rule("RANGE-TEST", "7000-8000"),
+                new Rule("OpenNMS", "8980"),
+                new RuleBuilder().withName("OpenNMS Monitor").withDstPort("1077").withSrcPort("5347").withSrcAddress("10.0.0.5").build()
+            ), FilterService.NOOP
+        );
+      
+        // Verify concrete mappings
+        assertEquals("SSH",         engine.classify(new ClassificationRequest("Default", 22, "127.0.0.1", ProtocolType.TCP)));
+        assertEquals("HTTP_CUSTOM", engine.classify(new ClassificationRequest("Default", 80, "192.168.0.1", ProtocolType.TCP)));
+        assertEquals("HTTP",        engine.classify(new ClassificationRequest("Default", 80, "192.168.0.2", ProtocolType.TCP)));
+        assertEquals(null,          engine.classify(new ClassificationRequest("Default", 5000, "localhost", ProtocolType.UDP)));
+        assertEquals(null,          engine.classify(new ClassificationRequest("Default", 5000, "localhost", ProtocolType.TCP)));
+        assertEquals("OpenNMS",     engine.classify(new ClassificationRequest("Default", 8980, "127.0.0.1", ProtocolType.TCP)));
+        assertEquals("OpenNMS Monitor", engine.classify(
+                new ClassificationRequestBuilder()
+                        .withLocation("Default")
+                        .withSrcAddress("10.0.0.5")
+                        .withSrcPort(5347)
+                        .withDstPort(1077)
+                        .withProtocol(ProtocolType.TCP).build()));
+        assertEquals("OpenNMS Monitor", engine.classify(
+                new ClassificationRequestBuilder()
+                        .withLocation("Default")
+                        .withSrcAddress("10.0.0.5")
+                        .withSrcPort(5347)
+                        .withDstPort(1077)
+                        .withDstAddress("192.168.0.2")
+                        .withProtocol(ProtocolType.TCP).build()));
+        assertEquals("HTTP", engine.classify(
+                new ClassificationRequestBuilder()
+                        .withLocation("Default")
+                        .withSrcAddress("10.0.0.5")
+                        .withSrcPort(5347)
+                        .withDstPort(80)
+                        .withDstAddress("192.168.0.2")
+                        .withProtocol(ProtocolType.TCP).build()));
+
+        // Verify IP Range
+        final IPAddressRange ipAddresses = new IPAddressRange("192.168.1.0", "192.168.1.255");
+        for (IPAddress ipAddress : ipAddresses) {
+            final ClassificationRequest classificationRequest = new ClassificationRequest("Default", 8080, ipAddress.toString(), ProtocolType.TCP);
+            assertEquals("DUMMY", engine.classify(classificationRequest));
+
+            // Populate src address and port. Result must be the same
+            classificationRequest.setSrcAddress("10.0.0.1");
+            classificationRequest.setSrcPort(5123);
+            assertEquals("DUMMY", engine.classify(classificationRequest));
+        }
+
+        // Verify Port Range
+        IntStream.range(7000, 8000).forEach(i -> assertEquals("RANGE-TEST", engine.classify(new ClassificationRequest("Default", i, "192.168.0.2", ProtocolType.TCP))));
+
+        // Verify Port Range with Src fields populated. Result must be the same
+        IntStream.range(7000, 8000).forEach(src -> {
+            IntStream.range(7000, 8000).forEach(dst -> {
+                final ClassificationRequest classificationRequest = new ClassificationRequestBuilder()
+                        .withLocation("Default")
+                        .withProtocol(ProtocolType.TCP)
+                        .withSrcAddress("10.0.0.1").withSrcPort(src)
+                        .withDstAddress("192.168.0.2").withDstPort(dst).build();
+                assertEquals("RANGE-TEST", engine.classify(classificationRequest));
+            });
+        });
+    }
+
