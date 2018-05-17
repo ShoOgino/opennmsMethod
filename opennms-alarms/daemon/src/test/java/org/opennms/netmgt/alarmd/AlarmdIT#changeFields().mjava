@@ -79,5 +79,133 @@
         assertTrue("The logMsg should have changed.", !"new logMsg".equals(newLogMsg));
         assertEquals("The logMsg should new be the default logMsg.", newLogMsg, defaultLogMsg);
         
+        // Acknowledge the alarm via update-field for "acktime" / "ackuser"
+        Map<String,String> eventParams = new LinkedHashMap<>();
+        long timeWhenSent = System.currentTimeMillis();
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "swivelchair", "", eventParams);
+        String newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        String newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertEquals("New alarmackuser must be as in event parameter", "swivelchair", newAckUser);
+        assertTrue("New alarmacktime must be non-null", newAckTime != null);
+        assertTrue("New alarmacktime must be within 5s of current system time", System.currentTimeMillis() - Long.valueOf(newAckTime) < 5000);
+        
+        // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be in whole seconds
+        eventParams.put("extSourcedAckUser", "somebodyelse");
+        eventParams.put("extSourcedAckTime", "1000000");
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
+        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertEquals("somebodyelse", newAckUser);
+        assertEquals("1000000000", newAckTime);
+        
+        // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be in milliseconds
+        eventParams.put("extSourcedAckUser", "somethirdactor");
+        eventParams.put("extSourcedAckTime", "1526040190000");
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
+        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertEquals("somethirdactor", newAckUser);
+        assertEquals("1526040190000", newAckTime);
+        
+        // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be an SNMPv2-TC::DateAndTime including time zone
+        eventParams.put("extSourcedAckUser", "someotheractortz");
+        eventParams.put("extSourcedAckTime", "0x07e2050b0d2a3a052d0000");
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
+        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertEquals("someotheractortz", newAckUser);
+        assertEquals("1526046178500", newAckTime);
+        
+        // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be an SNMPv2-TC::DateAndTime excluding time zone
+        eventParams.put("extSourcedAckUser", "someotheractornotz");
+        eventParams.put("extSourcedAckTime", "0x07e2050b0d2a3a09");
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
+        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertEquals("someotheractornotz", newAckUser);
+        assertEquals("1526046178900", newAckTime);
+        
+        // De-acknowledge the alarm via update-field. Verify this nulls both acktime and ackuser.
+        eventParams.clear();
+        eventParams.put("extSourcedAckUser", "somethirdactor");
+        eventParams.put("extSourcedAckTime", "null");
+        sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[extSourcedAckUser]%", "%parm[#2]%", eventParams);
+        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
+            @Override
+            public String extractData(ResultSet results) throws SQLException, DataAccessException {
+                results.next();
+                return results.getString(1);
+            }
+        });
+        assertNull(newAckUser);
+        assertNull(newAckTime);
+        
     }
 
