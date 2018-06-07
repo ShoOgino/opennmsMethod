@@ -1,8 +1,12 @@
     @Override
-    public Optional<CollectionSetWithAgent> handleMessage(TelemetryMessage message, TelemetryMessageLog messageLog)
-            throws Exception {
-
-        final TelemetryBis.Telemetry msg = tryParsingTelemetryMessage(message.getByteArray());
+    public Stream<CollectionSetWithAgent> handleMessage(TelemetryMessage message, TelemetryMessageLog messageLog) {
+        final Telemetry msg;
+        try {
+            msg = tryParsingTelemetryMessage(message.getByteArray());
+        } catch (InvalidProtocolBufferException e) {
+            LOG.warn("Invalid packet: {}", e);
+            return Stream.empty();
+        }
 
         CollectionAgent agent = null;
         try {
@@ -38,12 +42,22 @@
 
         if (agent == null) {
             LOG.warn("Unable to find node and interface for system id: {}", msg.getNodeIdStr());
-            return Optional.empty();
+            return Stream.empty();
         }
 
-        final ScriptedCollectionSetBuilder builder = getCollectionBuilder();
+        final ScriptedCollectionSetBuilder builder = scriptedCollectionSetBuilders.get();
+        if (builder == null) {
+            LOG.error("Error compiling script '{}'. See logs for details.", this.getScript());
+            return Stream.empty();
+        }
 
-        final CollectionSet collectionSet = builder.build(agent, msg);
-        return Optional.of(new CollectionSetWithAgent(agent, collectionSet));
+        try {
+            final CollectionSet collectionSet = builder.build(agent, msg);
+            return Stream.of(new CollectionSetWithAgent(agent, collectionSet));
+
+        } catch (final ScriptException e) {
+            LOG.warn("Error while running script: {}: {}", getScript(), e);
+            return Stream.empty();
+        }
     }
 
