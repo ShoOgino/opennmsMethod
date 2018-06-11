@@ -1,0 +1,52 @@
+    // Verifies that when OpenNMS and ElasticSearch is running and configured, that sending a flow packet
+    // will actually be persisted in elastic
+    @Test
+    public void verifyFlowStack() throws Exception {
+        // Determine endpoints
+        final InetSocketAddress elasticRestAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.ELASTICSEARCH_5, 9200, "tcp");
+        final InetSocketAddress opennmsWebAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8980);
+        final InetSocketAddress opennmsSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8101);
+        final InetSocketAddress opennmsNetflow5AdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, NETFLOW5_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsNetflow9AdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, NETFLOW9_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsIpfixAdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, IPFIX_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsSflowAdapterAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, SFLOW_LISTENER_UDP_PORT, "udp");
+        final String elasticRestUrl = String.format("http://%s:%d", elasticRestAddress.getHostString(), elasticRestAddress.getPort());
+
+        // Proxy the REST service
+        restClient = new RestClient(opennmsWebAddress);
+
+        // Configure OpenNMS
+        setupOnmsContainer(opennmsSshAddress);
+
+        // No flows should be present
+        assertEquals(Long.valueOf(0L), restClient.getFlowCount(0L, System.currentTimeMillis()));
+
+        // Build the Elastic Rest Client
+        final JestClientFactory factory = new JestClientFactory();
+        factory.setHttpClientConfig(new HttpClientConfig.Builder(elasticRestUrl).multiThreaded(true).build());
+        try (final JestClient client = factory.getObject()) {
+            // Send packets
+            sendNetflowPacket(opennmsNetflow5AdapterAddress, "/flows/netflow5.dat");
+            sendNetflowPacket(opennmsNetflow9AdapterAddress, "/flows/netflow9.dat");
+            sendNetflowPacket(opennmsIpfixAdapterAddress, "/flows/ipfix.dat");
+            sendNetflowPacket(opennmsSflowAdapterAddress, "/flows/sflow.dat");
+
+            // Ensure that the template has been created
+            verify(client, (jestClient) -> {
+                JestResult result = jestClient.execute(new GetTemplate.Builder(TEMPLATE_NAME).build());
+                return result.isSucceeded() && result.getJsonObject().get(TEMPLATE_NAME) != null;
+            });
+
+            // Verify directly at elastic that the flows have been created
+            verify(client, jestClient -> {
+                SearchResult response = jestClient.execute(new Search.Builder("").addIndex("netflow-*").build());
+                LOG.info("Response: {} {} ", response.isSucceeded() ? "Success" : "Failure", response.getTotal());
+                return response.isSucceeded() && response.getTotal() == 16;
+            });
+
+            // Verify the flow count via the REST API
+            with().pollInterval(15, SECONDS).await().atMost(1, MINUTES)
+                    .until(() -> restClient.getFlowCount(0L, System.currentTimeMillis()), equalTo(16L));
+        }
+    }
+

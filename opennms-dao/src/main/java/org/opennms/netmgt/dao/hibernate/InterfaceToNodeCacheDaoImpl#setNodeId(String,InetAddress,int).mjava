@@ -7,25 +7,23 @@
      */
     @Override
     @Transactional
-    public int setNodeId(final String location, final InetAddress addr, final int nodeid) {
+    public boolean setNodeId(final String location, final InetAddress addr, final int nodeid) {
         if (addr == null || nodeid == -1) {
-            return -1;
+            return false;
         }
 
-        // Only add the address if it doesn't exist on the map. If it exists, only replace
-        // the current one if the new address is primary.
-        if (m_knownips.getNodeId(location, addr) < 1) {
-            LOG.debug("setNodeId: adding IP address to cache: {}:{} -> {}", location, str(addr), nodeid);
-            return m_knownips.addManagedAddress(location, addr, nodeid);
-        } else {
-            final OnmsIpInterface intf = m_ipInterfaceDao.findByNodeIdAndIpAddress(nodeid, str(addr));
-            if (intf != null && intf.isPrimary()) {
-                LOG.info("setNodeId: updating SNMP primary IP address in cache: {}:{} -> {}", location, str(addr), nodeid);
-                return m_knownips.addManagedAddress(location, addr, nodeid);
-            } else {
-                LOG.debug("setNodeId: IP address {}:{} is not primary, avoiding cache update", location, str(addr));
-                return -1;
-            }
+        final OnmsIpInterface iface = m_ipInterfaceDao.findByNodeIdAndIpAddress(nodeid, str(addr));
+        if (iface == null) {
+            return false;
+        }
+
+        LOG.debug("setNodeId: adding IP address to cache: {}:{} -> {}", location, str(addr), nodeid);
+
+        m_lock.writeLock().lock();
+        try {
+            return m_managedAddresses.put(new Key(location, addr), new Value(nodeid, iface.getIsSnmpPrimary()));
+        } finally {
+            m_lock.writeLock().unlock();
         }
     }
 

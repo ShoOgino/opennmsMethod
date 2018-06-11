@@ -1,0 +1,52 @@
+	/**
+	 * sends events to Elasticsearch returns true if successful
+	 * @return
+	 */
+	public String sendEventsToEs(){
+		final OnmsRestEventsClient onmsRestEventsClient = new OnmsRestEventsClient(onmsUrl, onmsPassWord, onmsUserName);
+		Event firstEvent = null;
+		Event lastEvent = null;
+
+		boolean endofEvents = false;
+		int eventsSent = 0;
+
+		int eventOffset=offset;
+
+		while (!endofEvents && eventsSent <= limit){
+			final List<Event> events = onmsRestEventsClient.getEvents(logSize, eventOffset);
+			endofEvents = events.isEmpty();
+			if (!endofEvents) {
+				if (firstEvent == null) {
+					firstEvent = events.get(0);
+				}
+
+				// remove node label param if included in event
+				if (!useNodeLabel) {
+					events.forEach(event -> {
+						final Parm parm = event.getParm(OnmsRestEventsClient.NODE_LABEL);
+						if (parm != null) {
+							event.getParmCollection().remove(parm);
+						}
+					});
+				}
+
+				if (LOG.isDebugEnabled()) {
+					events.forEach(event -> {
+						LOG.debug("sending event to es: eventid={}", event.getDbid());
+					});
+				}
+				lastEvent = events.get(events.size() - 1);
+
+				final Log log = createLog(events);
+				getEventForwarder().sendNow(log);
+				eventsSent += log.getEvents().getEventCount();
+				eventOffset = eventOffset + events.size();
+			}
+		}
+
+		return "Dispatched "+eventsSent
+				+ " events to forward to Elasticsearch. First event "
+				+ "id="+((firstEvent!=null) ? firstEvent.getDbid() : "firstEvent null")
+				+ " last event id="+((lastEvent!=null) ? lastEvent.getDbid() : "lastEvent null");
+	}
+

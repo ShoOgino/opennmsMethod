@@ -1,0 +1,50 @@
+    /**
+     * Initialize drools engine.
+     *
+     * @throws Exception the exception
+     */
+    private void initializeDroolsEngine() throws Exception {
+        KieServices ks = KieServices.Factory.get();
+        KieFileSystem kFileSystem = ks.newKieFileSystem();
+
+        for (String ruleFile : m_engine.getRuleFiles()) {
+            LOG.debug("Loading rules file: {}", ruleFile);
+            kFileSystem.write("src/main/resources/" + ruleFile, ks.getResources().newFileSystemResource(new File(ruleFile)));
+        }
+
+        KieBuilder kbuilder = ks.newKieBuilder(kFileSystem);
+        kbuilder.buildAll();
+        if (kbuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
+            LOG.warn("Unable to initialize Drools engine: {}", kbuilder.getResults().getMessages(Level.ERROR));
+            throw new IllegalStateException("Unable to initialize Drools engine: " + kbuilder.getResults().getMessages(Level.ERROR));
+        }
+        KieContainer kContainer = ks.newKieContainer(ks.getRepository().getDefaultReleaseId());
+
+        AssertBehaviour behaviour = AssertBehaviour.determineAssertBehaviour(m_engine.getAssertBehaviour());
+        RuleBaseConfiguration ruleBaseConfig = new RuleBaseConfiguration();
+        ruleBaseConfig.setAssertBehaviour(behaviour);
+        ruleBaseConfig.setEventProcessingMode(EventProcessingOption.STREAM);
+
+        m_kieBase = kContainer.newKieBase(ruleBaseConfig);
+        m_kieSession = m_kieBase.newKieSession();
+        m_kieSession.setGlobal("engine", this);
+
+        unmarshallStateFromDisk(true);
+
+        ApplicationContext ctx = m_context;
+        if (m_engine.getAppContext() != null) {
+            ctx = new FileSystemXmlApplicationContext(new String[] { m_engine.getAppContext() },  m_context);
+        } 
+        for (Global global : m_engine.getGlobals()) {
+            m_kieSession.setGlobal(global.getName(), global.constructValue(ctx));
+        }
+
+        new Thread(() -> {
+            Logging.putPrefix(getName());
+            LOG.debug("Starting task thread for {}", getName());
+            m_kieSession.fireUntilHalt();
+            LOG.debug("Stopping task thread for {}", getName());
+        }, "FireTask-" + getName()).start();
+
+    }
+

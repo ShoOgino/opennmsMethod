@@ -1,0 +1,24 @@
+    private CompletableFuture<List<String>> getTopN(int N, String groupByTerm, String keyForMissingTerm, List<Filter> filters) {
+        if (N < 1) {
+            // Avoid a query and return an empty list
+            return CompletableFuture.completedFuture(Collections.emptyList());
+        }
+
+        // Increase the multiplier for increased accuracy
+        // See https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-bucket-terms-aggregation.html#_size
+        final int multiplier = 2;
+        final String query = searchQueryProvider.getTopNQuery(multiplier*N, groupByTerm, keyForMissingTerm, filters);
+        return searchAsync(query, extractTimeRangeFilter(filters))
+                .thenApply(res -> {
+                    final TermsAggregation groupedBy = res.getAggregations().getTermsAggregation("grouped_by");
+                    if (groupedBy == null) {
+                        // No results
+                        return Collections.emptyList();
+                    }
+                    return groupedBy.getBuckets().stream()
+                            .map(TermsAggregation.Entry::getKey)
+                            .limit(N)
+                            .collect(Collectors.toList());
+                });
+    }
+

@@ -1,0 +1,48 @@
+    @Override
+    public Response getRules(UriInfo uriInfo) {
+        final QueryParameters queryParameters = QueryParametersBuilder.buildFrom(uriInfo);
+        final CriteriaBuilder criteriaBuilder = CriteriaBuilderUtils.buildFrom(Rule.class, queryParameters);
+
+        // Apply group Filter
+        criteriaBuilder.alias("group", "group");
+        final Set<Integer> groupFilter = UriInfoUtils.getValues(uriInfo, "groupFilter", Collections.emptyList())
+                .stream().map(g -> g != null ? g.trim() : g)
+                .filter(g -> g != null)
+                .map(g -> Integer.valueOf(g))
+                .collect(Collectors.toSet());
+        if (!groupFilter.isEmpty()) {
+            criteriaBuilder.in("group.id", groupFilter);
+        }
+
+        // Apply query filter
+        final String rawQuery = UriInfoUtils.getValue(uriInfo, "query", null);
+        if (rawQuery != null && !rawQuery.trim().isEmpty()) {
+            final String query = "%" + rawQuery + "%";
+            criteriaBuilder.or(
+                    Restrictions.iplike("src_address", rawQuery), // use column for iplike and not the entity property
+                    Restrictions.like("srcAddress", query),
+                    Restrictions.ilike("srcPort", query),
+                    Restrictions.iplike("dst_address", rawQuery), // use column for iplike and not the entity property
+                    Restrictions.like("dstAddress", query),
+                    Restrictions.ilike("dstPort", query),
+                    Restrictions.ilike("name", query),
+                    Restrictions.ilike("exporterFilter", query),
+                    Restrictions.ilike("protocol", query)).toCriteria();
+        }
+
+        // Apply group priority sorting as well, if ordering is position
+        final QueryParameters.Order order = queryParameters.getOrder();
+        if (order != null && order.getColumn() != null && order.getColumn().equalsIgnoreCase("position")) {
+            criteriaBuilder.clearOrder();
+            criteriaBuilder.orderBy("group.priority", false);
+            criteriaBuilder.orderBy(order.getColumn(), queryParameters.getOrder().isAsc());
+        }
+
+        // Apply filter to only fetch rules for enabled groups
+        criteriaBuilder.eq("group.enabled", true);
+        return createResponse(criteriaBuilder,
+                (criteria) -> classificationService.findMatchingRules(criteria),
+                (criteria) -> classificationService.countMatchingRules(criteria),
+                rules -> rules.stream().map(rule -> convert(rule)).collect(Collectors.toList()));
+    }
+

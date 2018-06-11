@@ -1,0 +1,43 @@
+    @Override
+    public synchronized AlarmSyncResults synchronizeAlarmsWithDb() {
+        // Retrieve the map of alarms by reduction key from the ktable
+        final Map<String, OpennmsModelProtos.Alarm> alarmsInKtableByReductionKey = getAlarms();
+
+        // Perform the synchronization in a single transaction context
+        return transactionOperations.execute(status -> {
+            final Set<String> reductionKeysInKtable = alarmsInKtableByReductionKey.keySet();
+
+            // Retrieve all of the alarms from the database and apply the filter (if any) to these
+            final List<OnmsAlarm> alarmsInDb = alarmDao.findAll().stream()
+                    .filter(kafkaProducer::shouldForwardAlarm)
+                    .collect(Collectors.toList());
+
+            final Map<String, OnmsAlarm> alarmsInDbByReductionKey = alarmsInDb.stream()
+                    .collect(Collectors.toMap(OnmsAlarm::getReductionKey, a -> a));
+            final Set<String> reductionKeysInDb = alarmsInDbByReductionKey.keySet();
+
+            // Push deletes for keys that are in the ktable, but not in the database
+            final Set<String> reductionKeysNotInDb = Sets.difference(reductionKeysInKtable, reductionKeysInDb);
+            reductionKeysNotInDb.forEach(kafkaProducer::handleDeletedAlarm);
+
+            // Push new entries for keys that are in the database, but not in the ktable
+            final Set<String> reductionKeysNotInKtable = Sets.difference(reductionKeysInDb, reductionKeysInKtable);
+            reductionKeysNotInKtable.forEach(rkey -> kafkaProducer.handleNewOrUpdatedAlarm(alarmsInDbByReductionKey.get(rkey)));
+
+            // Handle Updates
+            final Set<String> reductionKeysUpdated = new LinkedHashSet<>();
+            final Set<String> commonReductionKeys = Sets.intersection(reductionKeysInKtable, reductionKeysInDb);
+            commonReductionKeys.forEach(rkey -> {
+                final OnmsAlarm dbAlarm = alarmsInDbByReductionKey.get(rkey);
+                final OpennmsModelProtos.Alarm mappedDbAlarm = protobufMapper.toAlarm(dbAlarm).build();
+                final OpennmsModelProtos.Alarm alarmFromKtable = alarmsInKtableByReductionKey.get(rkey);
+                if (!Objects.equals(mappedDbAlarm, alarmFromKtable)) {
+                    kafkaProducer.handleNewOrUpdatedAlarm(dbAlarm);
+                    reductionKeysUpdated.add(rkey);
+                }
+            });
+            return new AlarmSyncResults(alarmsInKtableByReductionKey, alarmsInDb, alarmsInDbByReductionKey,
+                    reductionKeysNotInKtable, reductionKeysNotInDb, reductionKeysUpdated);
+        });
+    }
+
