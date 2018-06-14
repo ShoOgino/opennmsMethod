@@ -1,0 +1,31 @@
+    protected static void createIntegrationTestDatabase(ApplicationContext context, Migration  migration, Migrator migrator, DataSource dataSource)
+            throws ClassNotFoundException, MigrationException, Throwable, SQLException {
+        if (migrator.databaseExists(migration)) {
+            migrator.databaseRemoveDB(migration);
+        }
+
+        migrator.setLiquibaseChangelogFilter(createProductionLiquibaseChangelogFilter());
+
+        try {
+            migrator.setupDatabase(migration, true, true, true, true, context);
+        } catch (Throwable t) {
+            if (migrator.databaseExists(migration)) {
+                try {
+                    //LOG.warn("Got an exception while setting up database, so removing");
+                    migrator.databaseRemoveDB(migration);
+                } catch (MigrationException e) {
+                    System.err.println("Got an exception while setting up database and then got another exception while removing database: " + e.getMessage());
+                    e.printStackTrace(System.err);
+                }
+            }
+            throw t;
+        }
+
+        final List<TemporaryDatabasePostgreSQL.ChangelogEntry> ids = TemporaryDatabasePostgreSQL.getChangelogEntries(dataSource);
+        assertTrue("no changelog entries were found in the newly created database", ids.size() > 0);
+
+        // Check to make sure some of the changelogs ran
+        assertTrue(ids.stream().anyMatch(id -> "17.0.0-remove-legacy-ipinterface-composite-key-fields".equals(id.getId())));
+        assertTrue(ids.stream().anyMatch(id -> "17.0.0-remove-legacy-outages-composite-key-fields".equals(id.getId())));
+    }
+
