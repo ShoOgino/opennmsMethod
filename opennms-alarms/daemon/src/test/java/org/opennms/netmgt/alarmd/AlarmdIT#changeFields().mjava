@@ -1,4 +1,5 @@
-    // @Test
+    @Test
+    @Transactional
     public void changeFields() throws InterruptedException, SQLException {
         assertEmptyAlarmTable();
 
@@ -7,61 +8,30 @@
 
         //Verify we have the default alarm
         sendNodeDownEvent(reductionKey, node1);
-        int severity = m_jdbcTemplate.queryForObject("select severity from alarms a where a.reductionKey = ?", new Object[] { reductionKey }, Integer.class).intValue();
-        assertEquals(OnmsSeverity.MAJOR, OnmsSeverity.get(severity));
+        OnmsAlarm alarm = m_alarmDao.findByReductionKey(reductionKey);
+        assertEquals(OnmsSeverity.MAJOR, alarm.getSeverity());
         
         //Store the original logmsg from the original alarm (we are about to test changing it with subsequent alarm reduction)
-        String defaultLogMsg = m_jdbcTemplate.query("select logmsg from alarms", new ResultSetExtractor<String>() {
-
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                int row = results.getRow();
-                boolean isLast = results.isLast();
-                boolean isFirst = results.isFirst();
-                
-                if (row != 1 && !isLast && !isFirst) {
-                    throw new SQLException("Row count is not = 1.  There should only be one row returned from the query: \n"+ results.getStatement());
-                }
-                
-                return results.getString(1);
-            }
-            
-        });
-        
+        String defaultLogMsg = alarm.getLogMsg();
         assertTrue("The logmsg column should not be null", defaultLogMsg != null);
 
         //Duplicate the alarm but change the severity and verify the change
         sendNodeDownEventWithUpdateFieldSeverity(reductionKey, node1, OnmsSeverity.CRITICAL);
-        severity = m_jdbcTemplate.queryForObject("select severity from alarms", Integer.class).intValue();
-        assertEquals("Severity should now be Critical", OnmsSeverity.CRITICAL, OnmsSeverity.get(severity));
+        assertEquals("Severity should now be Critical", OnmsSeverity.CRITICAL, m_alarmDao.findByReductionKey(reductionKey).getSeverity());
         
         //Duplicate the alarm but don't force the change of severity
         sendNodeDownEvent(reductionKey, node1);
-        severity = m_jdbcTemplate.queryForObject("select severity from alarms", Integer.class).intValue();
-        assertEquals("Severity should still be Critical", OnmsSeverity.CRITICAL, OnmsSeverity.get(severity));
+        assertEquals("Severity should still be Critical", OnmsSeverity.CRITICAL, m_alarmDao.findByReductionKey(reductionKey).getSeverity());
 
         //Duplicate the alarm and change the logmsg
         sendNodeDownEventChangeLogMsg(reductionKey, node1, "new logMsg");
-        String newLogMsg = m_jdbcTemplate.query("select logmsg from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        String newLogMsg = m_alarmDao.findByReductionKey(reductionKey).getLogMsg();
         assertEquals("new logMsg", newLogMsg);
         assertTrue(!newLogMsg.equals(defaultLogMsg));
         
-        //Duplicate the alarm but force logmsg to not change (lggmsg field is updated by default)
+        //Duplicate the alarm but force logmsg to not change (logmsg field is updated by default)
         sendNodeDownEventDontChangeLogMsg(reductionKey, node1, "newer logMsg");
-        newLogMsg = m_jdbcTemplate.query("select logmsg from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newLogMsg = m_alarmDao.findByReductionKey(reductionKey).getLogMsg();
         assertTrue("The logMsg should not have changed.", !"newer logMsg".equals(newLogMsg));
         assertEquals("The logMsg should still be equal to the previous update.", "new logMsg", newLogMsg);
 
@@ -69,13 +39,7 @@
         //Duplicate the alarm with the default configuration and verify the logmsg has changed (as is the default behavior
         //for this field)
         sendNodeDownEvent(reductionKey, node1);
-        newLogMsg = m_jdbcTemplate.query("select logmsg from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newLogMsg = m_alarmDao.findByReductionKey(reductionKey).getLogMsg();
         assertTrue("The logMsg should have changed.", !"new logMsg".equals(newLogMsg));
         assertEquals("The logMsg should new be the default logMsg.", newLogMsg, defaultLogMsg);
         
@@ -83,129 +47,54 @@
         Map<String,String> eventParams = new LinkedHashMap<>();
         long timeWhenSent = System.currentTimeMillis();
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "swivelchair", "", eventParams);
-        String newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        String newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        String newAckUser = m_alarmDao.findByReductionKey(reductionKey).getAckUser();
+        long newAckTime = m_alarmDao.findByReductionKey(reductionKey).getAckTime().getTime();
         assertEquals("New alarmackuser must be as in event parameter", "swivelchair", newAckUser);
-        assertTrue("New alarmacktime must be non-null", newAckTime != null);
-        assertTrue("New alarmacktime must be within 5s of current system time", System.currentTimeMillis() - Long.valueOf(newAckTime) < 5000);
+        assertTrue("New alarmacktime must be non-null", newAckTime != 0);
+        assertTrue("New alarmacktime must be within 5s of current system time", System.currentTimeMillis() - newAckTime < 5000);
         
         // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be in whole seconds
         eventParams.put("extSourcedAckUser", "somebodyelse");
         eventParams.put("extSourcedAckTime", "1000000");
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
-        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newAckUser = m_alarmDao.findByReductionKey(reductionKey).getAckUser();
+        newAckTime = m_alarmDao.findByReductionKey(reductionKey).getAckTime().getTime();
         assertEquals("somebodyelse", newAckUser);
-        assertEquals("1000000000", newAckTime);
+        assertEquals(1000000000L, newAckTime);
         
         // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be in milliseconds
         eventParams.put("extSourcedAckUser", "somethirdactor");
         eventParams.put("extSourcedAckTime", "1526040190000");
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
-        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newAckUser = m_alarmDao.findByReductionKey(reductionKey).getAckUser();
+        newAckTime = m_alarmDao.findByReductionKey(reductionKey).getAckTime().getTime();
         assertEquals("somethirdactor", newAckUser);
-        assertEquals("1526040190000", newAckTime);
+        assertEquals(1526040190000L, newAckTime);
         
         // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be an SNMPv2-TC::DateAndTime including time zone
         eventParams.put("extSourcedAckUser", "someotheractortz");
         eventParams.put("extSourcedAckTime", "0x07e2050b0d2a3a052d0000");
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
-        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newAckUser = m_alarmDao.findByReductionKey(reductionKey).getAckUser();
+        newAckTime = m_alarmDao.findByReductionKey(reductionKey).getAckTime().getTime();
         assertEquals("someotheractortz", newAckUser);
-        assertEquals("1526046178500", newAckTime);
+        assertEquals(1526046178500L, newAckTime);
         
         // Change the alarm's ackuser / acktime via update-field -- acktime heuristically assumed to be an SNMPv2-TC::DateAndTime excluding time zone
         eventParams.put("extSourcedAckUser", "someotheractornotz");
         eventParams.put("extSourcedAckTime", "0x07e2050b0d2a3a09");
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[#1]%", "%parm[extSourcedAckTime]%", eventParams);
-        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
+        newAckUser = m_alarmDao.findByReductionKey(reductionKey).getAckUser();
+        newAckTime = m_alarmDao.findByReductionKey(reductionKey).getAckTime().getTime();
         assertEquals("someotheractornotz", newAckUser);
-        assertEquals("1526046178900", newAckTime);
+        assertEquals(1526046178900L, newAckTime);
         
         // De-acknowledge the alarm via update-field. Verify this nulls both acktime and ackuser.
         eventParams.clear();
         eventParams.put("extSourcedAckUser", "somethirdactor");
         eventParams.put("extSourcedAckTime", "null");
         sendNodeDownEventWithUpdateFieldsAckUserAndTime(reductionKey, node1, "%parm[extSourcedAckUser]%", "%parm[#2]%", eventParams);
-        newAckUser = m_jdbcTemplate.query("select alarmackuser from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        newAckTime = m_jdbcTemplate.query("select extract(epoch from alarmacktime) * 1000 from alarms", new ResultSetExtractor<String>() {
-            @Override
-            public String extractData(ResultSet results) throws SQLException, DataAccessException {
-                results.next();
-                return results.getString(1);
-            }
-        });
-        assertNull(newAckUser);
-        assertNull(newAckTime);
-        
+        assertNull(m_alarmDao.findByReductionKey(reductionKey).getAckUser());
+        assertNull(m_alarmDao.findByReductionKey(reductionKey).getAckTime());
     }
 
