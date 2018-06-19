@@ -1,0 +1,90 @@
+    public static BridgeForwardingTable create(Bridge bridge, Set<BridgeForwardingTableEntry> entries) throws BridgeTopologyException {
+        if (bridge == null) {
+            throw new BridgeTopologyException("bridge must not be null");
+        }
+        if (entries == null) {
+            throw new BridgeTopologyException("bridge forwarding table must not be null");
+        }
+        
+        for (BridgeForwardingTableEntry link: entries) {
+            if (link.getNodeId().intValue() != bridge.getNodeId().intValue()) {
+                throw new BridgeTopologyException("create: bridge:["+ bridge.getNodeId()+ "] and forwarding table must have the same nodeid", link);                
+            }
+        }
+        final BridgeForwardingTable bridgeFt = new BridgeForwardingTable(bridge,entries);
+
+        entries.stream().filter(link -> link.getBridgeDot1qTpFdbStatus() 
+                                == BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF).
+                                forEach(link -> {
+            bridgeFt.getIdentifiers().add(link.getMacAddress());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("create: bridge:[{}] adding bid {}",
+                          bridge.getNodeId(),
+                          link.printTopology());
+            }
+        });
+        
+        for (BridgeForwardingTableEntry link: entries) {
+            if (link.getBridgeDot1qTpFdbStatus() 
+                                != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED ) {
+                continue;
+            }
+            if (bridgeFt.getIdentifiers().contains(link.getMacAddress())) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("create: bridge:[{}] skip bid {}",
+                          bridge.getNodeId(),
+                          link.printTopology());
+                }
+                continue;
+            }
+                
+            BridgePort bridgeport = BridgePort.getFromBridgeForwardingTableEntry(link);
+                
+            BridgePortWithMacs bpwm = bridgeFt.getBridgePortWithMacs(bridgeport);
+            if (bpwm == null ) {
+                bridgeFt.getPorttomac().add(BridgePortWithMacs.create(bridgeport,new HashSet<String>()));
+            }
+            bridgeFt.getBridgePortWithMacs(bridgeport).getMacs().add(link.getMacAddress());
+
+            if (bridgeFt.getMactoport().containsKey(link.getMacAddress())) {
+                bridgeFt.getDuplicated().put(link.getMacAddress(), new HashSet<BridgePort>());
+                bridgeFt.getDuplicated().get(link.getMacAddress()).add(bridgeport);
+
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("create: bridge:[{}] duplicated {}",
+                              bridge.getNodeId(),
+                              link.printTopology());
+                }
+                continue;
+            }
+            
+            if (LOG.isDebugEnabled()) {
+                    LOG.debug("create: bridge:[{}] adding {}",
+                          bridge.getNodeId(),
+                          link.printTopology());
+            }
+            bridgeFt.getMactoport().put(link.getMacAddress(), bridgeport);
+        }
+
+        for (String mac: bridgeFt.getDuplicated().keySet()) {
+            BridgePort saved = bridgeFt.getMactoport().remove(mac);            
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("create: bridge:[{}] remove duplicated [{}] from {}",
+                          bridge.getNodeId(),
+                          mac,
+                          saved.printTopology());
+            }
+
+            BridgePortWithMacs savedwithmacs = bridgeFt.getBridgePortWithMacs(saved);
+            savedwithmacs.getMacs().remove(mac);
+            
+            for (BridgePort dupli: bridgeFt.getDuplicated().get(mac)) {
+                BridgePortWithMacs dupliwithmacs = bridgeFt.getBridgePortWithMacs(dupli);
+                dupliwithmacs.getMacs().remove(mac);
+            }
+            bridgeFt.getDuplicated().get(mac).add(saved);
+        }
+
+        return bridgeFt;
+    }
+
