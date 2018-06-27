@@ -1,52 +1,63 @@
     @Transactional
-    @SuppressWarnings("deprecation")
-    private List<OspfLinkNode> convertFromModel(int nodeid, OspfLink link) {
-        List<OspfLinkNode> linkNodes = new ArrayList<OspfLinkNode>();
+    public OspfLinkNode convertFromModel(int nodeid, OspfLink link) {
+        OspfLinkNode linknode = create(nodeid, link);
 
-        List<OspfElement> ospfElements = m_ospfElementDao.findAllByRouterId(link.getOspfRemRouterId());
+        Integer remNodeid = null;
+        String remNodeLabel = null;
 
-        if (ospfElements.size() > 0) {
-            for (OspfElement ospfElement : ospfElements) {
-                OspfLinkNode linknode = new OspfLinkNode();
-                linknode.setOspfIpAddr(str(link.getOspfIpAddr()));
-                linknode.setOspfAddressLessIndex(link.getOspfAddressLessIndex());
-                linknode.setOspfIfIndex(link.getOspfIfIndex());
+        // set rem info
 
-                linknode.setOspfRemRouterId(getRemRouterIdString(str(link.getOspfRemRouterId()),
-                                                                 ospfElement.getNode().getLabel()));
-                linknode.setOspfRemRouterUrl(getNodeUrl(ospfElement.getNode().getId()));
-
-                linknode.setOspfRemIpAddr(str(link.getOspfRemIpAddr()));
-                linknode.setOspfRemAddressLessIndex(link.getOspfRemAddressLessIndex());
-
-                if (ospfElement != null
-                        && linknode.getOspfRemIpAddr() != null)
-                    linknode.setOspfRemPortUrl(getIpInterfaceUrl(ospfElement.getNode().getId(),
-                                                                 linknode.getOspfRemIpAddr()));
-
-                linknode.setOspfLinkCreateTime(Util.formatDateToUIString(link.getOspfLinkCreateTime()));
-                linknode.setOspfLinkLastPollTime(Util.formatDateToUIString(link.getOspfLinkLastPollTime()));
-
-                linkNodes.add(linknode);
-            }
-
-        } else {
-            OspfLinkNode linknode = new OspfLinkNode();
-            linknode.setOspfIpAddr(str(link.getOspfIpAddr()));
-            linknode.setOspfAddressLessIndex(link.getOspfAddressLessIndex());
-            linknode.setOspfIfIndex(link.getOspfIfIndex());
-
-            linknode.setOspfRemRouterId(str(link.getOspfRemRouterId()));
-
-            linknode.setOspfRemIpAddr(str(link.getOspfRemIpAddr()));
-            linknode.setOspfRemAddressLessIndex(link.getOspfRemAddressLessIndex());
-
-            linknode.setOspfLinkCreateTime(Util.formatDateToUIString(link.getOspfLinkCreateTime()));
-            linknode.setOspfLinkLastPollTime(Util.formatDateToUIString(link.getOspfLinkLastPollTime()));
-
-            linkNodes.add(linknode);
+        List<OspfElement> remOspfElements = m_ospfElementDao.findAllByRouterId(link.getOspfRemRouterId());
+        if (remOspfElements.size() == 1) {
+            OspfElement remOspfElement = remOspfElements.iterator().next();
+            remNodeid = remOspfElement.getNode().getId();
+            remNodeLabel = remOspfElement.getNode().getLabel();
         }
-        Collections.sort(linkNodes);
-        return linkNodes;
+        // set rem Router id
+        if (remNodeid != null) {
+            linknode.setOspfRemRouterId(getHostString(remNodeLabel,
+                                                      "router id",
+                                                      str(link.getOspfRemRouterId())));
+            linknode.setOspfRemRouterUrl(getNodeUrl(remNodeid));
+        } else {
+            linknode.setOspfRemRouterId(str(link.getOspfRemRouterId()));
+        }
+
+        String remipaddr = str(link.getOspfRemIpAddr());
+        OnmsSnmpInterface remsnmpiface = null;
+
+        if (remNodeid != null) {
+            if (link.getOspfRemAddressLessIndex() > 0) {
+                remsnmpiface = m_snmpInterfaceDao.findByNodeIdAndIfIndex(remNodeid,
+                                                                         link.getOspfAddressLessIndex());
+            } else {
+                OnmsIpInterface remipiface = m_ipInterfaceDao.findByNodeIdAndIpAddress(remNodeid,
+                                                                                       remipaddr);
+                if (remipiface != null) {
+                    remsnmpiface = remipiface.getSnmpInterface();
+                }
+            }
+        }
+
+        if (remsnmpiface != null) {
+            if (link.getOspfRemAddressLessIndex() > 0) {
+                linknode.setOspfRemPort(getPortString(remsnmpiface,
+                                                      "address less", ""));
+            } else {
+                linknode.setOspfRemPort(getPortString(remsnmpiface, "ip",
+                                                      remipaddr));
+            }
+            linknode.setOspfRemPortUrl(getSnmpInterfaceUrl(remNodeid,
+                                                           remsnmpiface.getIfIndex()));
+        } else if (link.getOspfAddressLessIndex() > 0) {
+            linknode.setOspfRemPort(getPortString(null,link.getOspfRemAddressLessIndex(),
+                                                  "Address less", ""));
+        } else if (remipaddr != null) {
+            linknode.setOspfRemPort(getPortString(null,null,"ip",remipaddr));
+            if (remNodeid != null) {
+                linknode.setOspfRemPortUrl(getIpInterfaceUrl(remNodeid, remipaddr));
+            }
+        }
+        return linknode;
     }
 

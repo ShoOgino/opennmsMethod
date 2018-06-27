@@ -2,9 +2,46 @@
     public Collection<BridgeLinkNode> getBridgeLinks(int nodeId) {
         List<BridgeLinkNode> bridgelinks = new ArrayList<BridgeLinkNode>();
         for (SharedSegment segment: m_bridgetopologyDao.getBridgeSharedSegments(nodeId)) {
-            bridgelinks.add(convertFromModel(nodeId, segment));
+            try {
+                bridgelinks.add(convertFromModel(nodeId, null,null, segment));
+            } catch (BridgeTopologyException e) {
+                e.printStackTrace();
+            }
+        }
+        if (bridgelinks.size() > 0 ) {
+            Collections.sort(bridgelinks);
+            return bridgelinks;
+        }
+        
+        Map<String, List<OnmsIpInterface>> mactoIpNodeMap = new HashMap<String, List<OnmsIpInterface>>();
+        for (OnmsIpInterface ip : m_ipInterfaceDao.findByNodeId(nodeId)) {
+            for (IpNetToMedia ipnetomedia : m_ipNetToMediaDao.findByNetAddress(ip.getIpAddress())) {
+                if (!mactoIpNodeMap.containsKey(ipnetomedia.getPhysAddress()))
+                    mactoIpNodeMap.put(ipnetomedia.getPhysAddress(),
+                                   new ArrayList<OnmsIpInterface>());
+                mactoIpNodeMap.get(ipnetomedia.getPhysAddress()).add(ip);
+            }
+        }
+        List<BridgeLinkNode> nodelinks = new ArrayList<BridgeLinkNode>();
+        for (String mac : mactoIpNodeMap.keySet()) {
+            SharedSegment segment = m_bridgetopologyDao.getHostSharedSegment(mac);
+            if (segment.isEmpty()) {
+                continue;
+            }
+            if (!segment.containsMac(mac)) {
+                continue;
+            }
+            try {
+                nodelinks.add(convertFromModel(nodeId,
+                                               mac,
+                                               mactoIpNodeMap.get(mac),
+                                                                 segment));
+            } catch (BridgeTopologyException e) {
+                e.printStackTrace();
+            }
         }
         Collections.sort(bridgelinks);
         return bridgelinks;
+
     }
 
