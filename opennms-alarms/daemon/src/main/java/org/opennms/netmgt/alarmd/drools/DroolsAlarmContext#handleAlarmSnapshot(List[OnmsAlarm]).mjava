@@ -1,0 +1,34 @@
+    @Override
+    public void handleAlarmSnapshot(List<OnmsAlarm> alarms) {
+        if (kieSession == null) {
+            LOG.debug("Ignoring alarm snapshot. Drools session is stopped.");
+            return;
+        }
+        lockIfNotFiring();
+        try {
+            LOG.debug("Handling snapshot for {} alarms.", alarms.size());
+            final Map<Integer, OnmsAlarm> alarmsInDbById = alarms.stream()
+                    .filter(a -> a.getId() != null)
+                    .collect(Collectors.toMap(OnmsAlarm::getId, a -> a));
+
+            final Set<Integer> alarmIdsInDb = alarmsInDbById.keySet();
+            final Set<Integer> alarmIdsInWorkingMem = alarmsById.keySet();
+
+            final Set<Integer> alarmIdsToAdd = Sets.difference(alarmIdsInDb, alarmIdsInWorkingMem).immutableCopy();
+            final Set<Integer> alarmIdsToRemove = Sets.difference(alarmIdsInWorkingMem, alarmIdsInDb).immutableCopy();
+            final Set<Integer> alarmIdsToUpdate = Sets.intersection(alarmIdsInWorkingMem, alarmIdsInDb).immutableCopy();
+
+            for (Integer alarmIdToRemove : alarmIdsToRemove) {
+                handleDeletedAlarmNoLock(alarmIdToRemove);
+            }
+            for (Integer alarmIdToAdd : alarmIdsToAdd) {
+                handleNewOrUpdatedAlarmNoLock(alarmsInDbById.get(alarmIdToAdd));
+            }
+            for (Integer alarmIdToUpdate : alarmIdsToUpdate) {
+                handleNewOrUpdatedAlarmNoLock(alarmsInDbById.get(alarmIdToUpdate));
+            }
+        } finally {
+            unlockIfNotFiring();
+        }
+    }
+
