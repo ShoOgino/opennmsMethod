@@ -1,0 +1,138 @@
+    private void down(BridgeForwardingTable bridgeUpFT,  
+            BridgeForwardingTable bridgeFT, BridgeSimpleConnection upsimpleconn, Map<Integer,BridgeForwardingTable> bridgeFtMapCalcul, Integer level) throws BridgeTopologyException {
+
+        if (++level == BroadcastDomain.maxlevel) {
+            throw new BridgeTopologyException(
+                          "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], too many iteration");
+        }
+
+        SharedSegment upSegment = m_domain.getSharedSegment(upsimpleconn.getFirstPort());
+        if (upSegment == null) {
+            throw new BridgeTopologyException(
+                          "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], up segment not found");
+        }
+
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("down: level: {}, bridge:[{}]. up segment -> \n{} ",
+                        level,
+                        bridgeFT.getNodeId(),
+                        upSegment.printTopology());
+        }
+
+        Set<BridgePort> parsed = new HashSet<BridgePort>();
+        parsed.add(bridgeFT.getRootPort());
+
+        Set<BridgeForwardingTable> checkforwarders = new HashSet<BridgeForwardingTable>();
+        checkforwarders.add(bridgeUpFT);
+        checkforwarders.add(bridgeFT);
+
+        Map<BridgePortWithMacs, Set<BridgePortWithMacs>> splitted 
+            = new HashMap<BridgePortWithMacs, Set<BridgePortWithMacs>>();
+        
+        BridgeForwardingTable nextDownBridge = null;
+        BridgeSimpleConnection nextDownSP = null;
+        boolean levelfound = false;
+        
+        Set<String> maconupsegment = BridgeSimpleConnection.getMacs(bridgeUpFT, bridgeFT, upsimpleconn);
+        
+        for (Bridge curbridge : m_domain.getBridgeOnSharedSegment(upSegment)) {
+            
+            if (curbridge.getNodeId().intValue() == upSegment.getDesignatedBridge().intValue()) {
+                continue;
+            }
+            
+            BridgeForwardingTable curBridgeFT = m_bridgeFtMapUpdate.get(curbridge.getNodeId());
+            if (curBridgeFT == null) {
+                curBridgeFT = bridgeFtMapCalcul.get(curbridge.getNodeId());
+            }
+            if (curBridgeFT == null) {
+                throw new BridgeTopologyException(
+                      "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], no bft for: " + curbridge.printTopology());
+            }
+            checkforwarders.add(curBridgeFT);
+            
+            BridgeSimpleConnection simpleconn = 
+                    BridgeSimpleConnection.createAndRun(curBridgeFT,
+                                       bridgeFT);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("down: level: {}, bridge:[{}]. {}", 
+                         level,
+                         bridgeFT.getNodeId(),
+                         simpleconn.printTopology());
+            }
+            if (simpleconn.getSecondBridgePort() != 
+                    bridgeFT.getBridge().getRootPort()
+                && simpleconn.getFirstBridgePort() != 
+                    curbridge.getRootPort()) {
+                throw new BridgeTopologyException(
+                              "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], Topology mismatch. NO ROOTS");
+            }
+
+            // bridge is a leaf of curbridge
+            if (simpleconn.getSecondBridgePort() 
+                    == bridgeFT.getRootBridgePort()
+                    && 
+                    simpleconn.getFirstBridgePort() != curbridge.getRootPort()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("down: level: {}, bridge: [{}], is 'down' of -> {}",
+                              level,
+                              bridgeFT.getNodeId(),
+                              simpleconn.getFirstPort().printTopology()
+                              );
+                }
+                if (nextDownBridge != null) {
+                    throw new BridgeTopologyException(
+                              "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], Topology mismatch. LEAF OF TWO");
+                }
+                if (levelfound) {
+                    throw new BridgeTopologyException(
+                              "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], Topology mismatch. LEAF AND LEVEL FOUND");
+                }
+                nextDownBridge = curBridgeFT;
+                nextDownSP = simpleconn;
+                continue;
+            }
+            
+            // bridge is up curbridge
+            if (simpleconn.getFirstBridgePort() == curBridgeFT.getRootBridgePort()
+                    && simpleconn.getSecondBridgePort() != bridgeFT.getRootBridgePort()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("down: level: {}, bridge: [{}], {} is 'up' of -> [{}]",
+                              level,
+                              bridgeFT.getNodeId(),
+                              simpleconn.getSecondPort().printTopology(),
+                              curbridge.getNodeId()
+                              );
+                }
+                if (nextDownBridge != null) {
+                    throw new BridgeTopologyException(
+                      "down: level: " + level +", bridge:["+bridgeFT.getNodeId()+"], Topology mismatch. LEAF AND LEVEL FOUND");
+                }
+                levelfound = true;
+                if (!splitted.containsKey(bridgeFT.getBridgePortWithMacs(simpleconn.getSecondPort()))) {
+                    splitted.put(bridgeFT.getBridgePortWithMacs(simpleconn.getSecondPort()),
+                                 new HashSet<BridgePortWithMacs>());
+                }
+                splitted.get(bridgeFT.getBridgePortWithMacs(simpleconn.getSecondPort())).
+                    add(curBridgeFT.getBridgePortWithMacs(simpleconn.getFirstPort()));
+                parsed.add(simpleconn.getSecondPort());
+                continue;
+            }
+            //here are all the simple connection in which the connection is the root port
+            maconupsegment.retainAll(BridgeSimpleConnection.getMacs(curBridgeFT, bridgeFT, simpleconn));
+        } // end of loop on up segment bridges
+        
+        if (nextDownBridge != null) {
+            down(nextDownBridge, bridgeFT, nextDownSP,bridgeFtMapCalcul,level);
+            return;
+        }
+        
+        SharedSegment.merge(m_domain, 
+                            upSegment, 
+                            splitted,
+                            maconupsegment,
+                            bridgeFT.getRootPort(),
+                            BridgeForwardingTable.getThroughSet(bridgeFT, parsed));
+        checkforwarders.stream().forEach(ft -> BroadcastDomain.addforwarders(m_domain, ft));        
+    }
+

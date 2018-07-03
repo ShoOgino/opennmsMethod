@@ -1,35 +1,47 @@
     @Test
+    @Transactional
     public void testPersistAlarm() throws Exception {
         final MockNode node = m_mockNetwork.getNode(1);
 
         //there should be no alarms in the alarms table
         assertEmptyAlarmTable();
 
+        // Expect an alarmCreated event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
         //this should be the first occurrence of this alarm
         //there should be 1 alarm now
         sendNodeDownEvent("%nodeid%", node);
-        Thread.sleep(1000);
-        assertEquals(1, m_jdbcTemplate.queryForObject("select count(*) from alarms", Integer.class).intValue());
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(1, m_alarmDao.findAll().size());
+
+        // Expect an alarmUpdatedWithReducedEvent event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_UPDATED_WITH_REDUCED_EVENT_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
 
         //this should be the second occurrence and shouldn't create another row
         //there should still be only 1 alarm
         sendNodeDownEvent("%nodeid%", node);
-        Thread.sleep(1000);
-        assertEquals(1, m_jdbcTemplate.queryForObject("select count(*) from alarms", Integer.class).intValue());
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(1, m_alarmDao.findAll().size());
+
+        // Expect an alarmCreated event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
 
         //this should be a new alarm because of the new key
         //there should now be 2 alarms
         sendNodeDownEvent("DontReduceThis", node);
-        Thread.sleep(1000);
-        assertEquals(2, m_jdbcTemplate.queryForObject("select count(*) from alarms", Integer.class).intValue());
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(2, m_alarmDao.findAll().size());
 
         MockUtil.println("Going for the print of the counter column");
-        m_jdbcTemplate.query("select reductionKey, sum(counter) from alarms group by reductionKey", new RowCallbackHandler() {
-            @Override
-            public void processRow(ResultSet rs) throws SQLException {
-                MockUtil.println("count for reductionKey: " + rs.getString(1) + " is: " + rs.getObject(2));
-            }
-
-        });
+        for (OnmsAlarm alarm : m_alarmDao.findAll()) {
+            MockUtil.println("count for reductionKey: " + alarm.getReductionKey() + " is: " + alarm.getCounter());
+        }
     }
 

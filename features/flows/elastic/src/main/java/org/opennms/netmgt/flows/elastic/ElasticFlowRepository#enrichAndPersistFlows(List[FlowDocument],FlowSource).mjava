@@ -36,5 +36,49 @@
             }
             flowsPersistedMeter.mark(flowDocuments.size());
         }
+
+        // Mark nodes and interfaces as having associated flows
+        try (final Timer.Context ctx = logMarkingTimer.time()) {
+            final List<Integer> nodesToUpdate = Lists.newArrayListWithExpectedSize(flowDocuments.size());
+            final Map<Integer, List<Integer>> interfacesToUpdate = Maps.newHashMap();
+
+            for (final FlowDocument flow : flowDocuments) {
+                if (flow.getNodeExporter() == null) continue;
+                if (flow.getNodeExporter().getNodeId() == null) continue;
+
+                final Integer nodeId = flow.getNodeExporter().getNodeId();
+
+                Set<Integer> ifaceMarkerCache = this.markerCache.get(nodeId);
+                if (ifaceMarkerCache == null) {
+                    this.markerCache.put(nodeId, ifaceMarkerCache = Sets.newConcurrentHashSet());
+                    nodesToUpdate.add(nodeId);
+                }
+
+                if (flow.getInputSnmp() != null &&
+                    flow.getInputSnmp() != 0 &&
+                    !ifaceMarkerCache.contains(flow.getInputSnmp())) {
+                    ifaceMarkerCache.add(flow.getInputSnmp());
+                    interfacesToUpdate.computeIfAbsent(nodeId, k -> Lists.newArrayList()).add(flow.getInputSnmp());
+                }
+                if (flow.getOutputSnmp() != null &&
+                    flow.getOutputSnmp() != 0 &&
+                    !ifaceMarkerCache.contains(flow.getOutputSnmp())) {
+                    ifaceMarkerCache.add(flow.getOutputSnmp());
+                    interfacesToUpdate.computeIfAbsent(nodeId, k -> Lists.newArrayList()).add(flow.getOutputSnmp());
+                }
+            }
+
+            if (!nodesToUpdate.isEmpty() || !interfacesToUpdate.isEmpty()) {
+                this.transactionOperations.execute(cb -> {
+                    if (!nodesToUpdate.isEmpty()) {
+                        this.nodeDao.markHavingFlows(nodesToUpdate);
+                    }
+                    for (final Map.Entry<Integer, List<Integer>> e : interfacesToUpdate.entrySet()) {
+                        this.snmpInterfaceDao.markHavingFlows(e.getKey(), e.getValue());
+                    }
+                    return null;
+                });
+            }
+        }
     }
 

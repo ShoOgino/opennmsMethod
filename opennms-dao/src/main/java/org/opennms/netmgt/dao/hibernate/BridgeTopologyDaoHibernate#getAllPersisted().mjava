@@ -1,0 +1,146 @@
+    public Set<BroadcastDomain> getAllPersisted() {
+
+        List<SharedSegment> bblsegments = new ArrayList<SharedSegment>();
+        Map<Integer,Set<Integer>> rootnodetodomainnodemap = new HashMap<Integer,Set<Integer>>();
+        Map<Integer,BridgePort> designatebridgemap = new HashMap<Integer,BridgePort>();
+
+        //start bridge bridge link parsing
+        for (BridgeBridgeLink link : m_bridgeBridgeLinkDao.findAll()) {
+            boolean  segmentnotfound = true;
+            BridgePort bridgeport = BridgePort.getFromBridgeBridgeLink(link);
+            designatebridgemap.put(link.getNode().getId(), bridgeport);
+            for (SharedSegment bblsegment : bblsegments) {
+                if (bblsegment.containsPort(BridgePort.getFromDesignatedBridgeBridgeLink(link))) {
+                    bblsegment.getBridgePortsOnSegment().add(bridgeport);
+                    segmentnotfound=false;
+                    break;
+                }
+            }
+            if (segmentnotfound)  {
+                try {
+                    bblsegments.add(SharedSegment.create(link));
+                } catch (BridgeTopologyException e) {
+                    LOG.error("getAllPersisted: cannot create shared segment {}", e.getMessage(),e);
+                    return new CopyOnWriteArraySet<BroadcastDomain>();
+                }
+            }
+            // set up domains
+            if (rootnodetodomainnodemap.containsKey(link.getDesignatedNode().getId())) {
+                rootnodetodomainnodemap.get(link.getDesignatedNode().getId()).
+                    add(link.getNode().getId());
+                if (rootnodetodomainnodemap.containsKey(link.getNode().getId())) {
+                    rootnodetodomainnodemap.get(link.getDesignatedNode().getId()).addAll(
+                                                                                         rootnodetodomainnodemap.remove(
+                                                                                                                     link.getNode().getId()));
+                }
+            } else if (rootnodetodomainnodemap.containsKey(link.getNode().getId())) {
+                Set<Integer> dependentsnode= rootnodetodomainnodemap.remove(link.getNode().getId());
+                dependentsnode.add(link.getNode().getId());
+                Integer rootdesignated=null;
+                for (Integer rootid: rootnodetodomainnodemap.keySet()) {
+                    if (rootnodetodomainnodemap.get(rootid).contains(link.getDesignatedNode().getId())) {
+                        rootdesignated=rootid;
+                        break;
+                    }
+                }
+                if (rootdesignated != null) {
+                    dependentsnode.add(link.getDesignatedNode().getId());
+                    rootnodetodomainnodemap.get(rootdesignated).addAll(dependentsnode);
+                } else {
+                    rootnodetodomainnodemap.put(link.getDesignatedNode().getId(), dependentsnode);
+                }
+            } else {
+                Integer rootdesignated=null;
+                for (Integer rootid: rootnodetodomainnodemap.keySet()) {
+                    if (rootnodetodomainnodemap.get(rootid).contains(link.getDesignatedNode().getId())) {
+                        rootdesignated=rootid;
+                        break;
+                    }
+                }
+                if (rootdesignated != null) {
+                    rootnodetodomainnodemap.get(rootdesignated).add(link.getNode().getId());
+                } else {
+                    rootnodetodomainnodemap.put(link.getDesignatedNode().getId(), new HashSet<Integer>());
+                    rootnodetodomainnodemap.get(link.getDesignatedNode().getId()).add(link.getNode().getId());                
+                }
+            }
+        }
+        LOG.info("getAllPersisted: bridge topology node set: {}", rootnodetodomainnodemap );
+        
+        
+        //end bridge bridge link parsing
+        
+        List<SharedSegment> bmlsegments = new ArrayList<SharedSegment>();
+        List<BridgeMacLink> forwarders = new ArrayList<BridgeMacLink>();
+
+BML:    for (BridgeMacLink link : m_bridgeMacLinkDao.findAll()) {
+            if (link.getLinkType() == BridgeMacLinkType.BRIDGE_FORWARDER) {
+                forwarders.add(link);
+                continue;
+            }
+            
+            for (SharedSegment bblsegment: bblsegments) {
+                if (bblsegment.containsPort(BridgePort.getFromBridgeMacLink(link))) {
+                    bblsegment.getMacsOnSegment().add(link.getMacAddress());
+                    continue BML;
+                }
+            }
+            for (SharedSegment bmlsegment: bmlsegments) {
+                if (bmlsegment.containsPort(BridgePort.getFromBridgeMacLink(link))) {
+                    bmlsegment.getMacsOnSegment().add(link.getMacAddress());
+                    continue BML;
+                }
+            }
+            try {
+                bmlsegments.add(SharedSegment.create(link));
+            } catch (BridgeTopologyException e) {
+                LOG.error("getAllPersisted: cannot create shared segment {}", e.getMessage(), e);
+                return new CopyOnWriteArraySet<BroadcastDomain>();
+            }
+        }
+                
+        Set<BroadcastDomain> domains = new CopyOnWriteArraySet<BroadcastDomain>();
+        for (Integer rootnode : rootnodetodomainnodemap.keySet()) {
+            BroadcastDomain domain = new BroadcastDomain();
+            Bridge.createRootBridge(domain,rootnode);
+            for (Integer bridgenodeId: rootnodetodomainnodemap.get(rootnode)) {
+                Bridge.create(domain,
+                              bridgenodeId, 
+                                               designatebridgemap.get(
+                                                                      bridgenodeId).getBridgePort());
+            }
+            domains.add(domain);
+        }
+        
+        for (SharedSegment segment : bblsegments) {
+            for (BroadcastDomain cdomain: domains) {
+                if (BroadcastDomain.loadTopologyEntry(cdomain,segment)) {
+                    break;
+                }
+            }
+        }
+
+SEG:        for (SharedSegment segment : bmlsegments) {
+            for (BroadcastDomain cdomain: domains) {
+                if (BroadcastDomain.loadTopologyEntry(cdomain,segment)) {
+                    continue SEG;
+                }
+            }
+            BroadcastDomain domain = new BroadcastDomain();
+            Bridge.createRootBridge(domain,segment.getDesignatedBridge());
+            BroadcastDomain.loadTopologyEntry(domain, segment);
+            domains.add(domain);
+        }
+
+        for (BridgeMacLink forwarder : forwarders) {
+            for (BroadcastDomain domain: domains) {
+                Bridge bridge = domain.getBridge(forwarder.getNode().getId());
+                if (bridge != null) {
+                    domain.addForwarding(BridgePort.getFromBridgeMacLink(forwarder),forwarder.getMacAddress());
+                    break;
+                }
+            }
+        }
+        return domains;
+    }
+
