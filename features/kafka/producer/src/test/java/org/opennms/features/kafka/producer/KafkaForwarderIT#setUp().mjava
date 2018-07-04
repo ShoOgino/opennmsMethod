@@ -3,6 +3,28 @@
         File data = tempFolder.newFolder("data");
         eventdIpcMgr.setEventWriter(mockDatabase);
 
+        databasePopulator.addExtension(new DatabasePopulator.Extension<HwEntityDao>() {
+
+            @Override
+            public DaoSupport<HwEntityDao> getDaoSupport() {
+                return new DaoSupport<HwEntityDao>(HwEntityDao.class, hwEntityDao);
+            }
+
+            @Override
+            public void onPopulate(DatabasePopulator populator, HwEntityDao dao) {
+                OnmsNode node = new OnmsNode();
+                node.setId(1);
+                dao.save(populateHwEntity(node));
+            }
+
+            @Override
+            public void onShutdown(DatabasePopulator populator, HwEntityDao dao) {
+                for (OnmsHwEntity entity : dao.findAll()) {
+                    dao.delete(entity);
+                }
+            }
+        });
+        
         databasePopulator.populateDatabase();
 
         Hashtable<String, Object> producerConfig = new Hashtable<>();
@@ -16,8 +38,7 @@
         when(configAdmin.getConfiguration(OpennmsKafkaProducer.KAFKA_CLIENT_PID).getProperties()).thenReturn(producerConfig);
         when(configAdmin.getConfiguration(KafkaAlarmDataSync.KAFKA_STREAMS_PID).getProperties()).thenReturn(streamsConfig);
 
-        kafkaProducer = new OpennmsKafkaProducer(protobufMapper, nodeCache, configAdmin, eventdIpcMgr,
-                alarmLifecycleListenerManager);
+        kafkaProducer = new OpennmsKafkaProducer(protobufMapper, nodeCache, configAdmin, eventdIpcMgr, alarmLifecycleListenerManager);
         kafkaProducer.setEventTopic(EVENT_TOPIC_NAME);
         // Don't forward newSuspect events
         kafkaProducer.setEventFilter("!getUei().equals(\"" + EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI + "\")");
@@ -27,8 +48,7 @@
         kafkaProducer.setNodeTopic(NODE_TOPIC_NAME);
         kafkaProducer.init();
 
-        kafkaAlarmaDataStore = new KafkaAlarmDataSync(configAdmin, kafkaProducer, alarmDao, protobufMapper,
-                transactionTemplate);
+        kafkaAlarmaDataStore = new KafkaAlarmDataSync(configAdmin, kafkaProducer, alarmDao, protobufMapper, transactionTemplate);
         kafkaAlarmaDataStore.setAlarmTopic(ALARM_TOPIC_NAME);
         kafkaAlarmaDataStore.setAlarmSyncIntervalMs(1000);
         kafkaAlarmaDataStore.init();
