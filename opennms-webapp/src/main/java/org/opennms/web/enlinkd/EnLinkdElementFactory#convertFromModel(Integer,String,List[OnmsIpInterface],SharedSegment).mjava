@@ -1,109 +1,28 @@
     @Transactional
-    private BridgeLinkNode convertFromModel(Integer nodeid, String mac, List<OnmsIpInterface> ipaddrs,
-            SharedSegment segment) throws BridgeTopologyException {
-
-        final BridgeLinkNode linknode; 
-        if (mac == null) {
-            linknode = create(segment.getBridgePort(nodeid));
-        } else {
-            linknode = create(mac,ipaddrs);
+    private BridgeLinkNode convertFromModel(Integer nodeid, String mac, List<OnmsIpInterface> ipaddrs, SharedSegment segment) {
+        BridgeLinkNode linknode = new BridgeLinkNode();
+        
+        if (ipaddrs.size() == 0) {
+            linknode.setBridgeLocalPort(getIdString("mac", mac));
+            return addBridgeRemotesNodes(nodeid, mac, linknode, segment);
         }
-
-        linknode.setBridgeLinkCreateTime(Util.formatDateToUIString(segment.getCreateTime()));
-        linknode.setBridgeLinkLastPollTime(Util.formatDateToUIString(segment.getLastPollTime()));
-
-        for (BridgePort remport : segment.getBridgePortsOnSegment()) {
-            if (nodeid.intValue() == remport.getNodeId().intValue()) {
-                continue;
-            }
-            final BridgeLinkRemoteNode remlinknode = new BridgeLinkRemoteNode();
-            final BridgeElement remBridgeElement = m_bridgeElementDao.getByNodeIdVlan(remport.getNodeId(),remport.getVlan());
-            if (remBridgeElement != null) {
-                remlinknode.setBridgeRemote(getHostString(remBridgeElement.getNode().getLabel(), "bridge base address", remBridgeElement.getBaseBridgeAddress()));
-            } else {
-                remlinknode.setBridgeRemote(getIdString("nodeid", remport.getNodeId().toString()));
-            }
-            remlinknode.setBridgeRemoteUrl(getNodeUrl(remport.getNodeId()));
-
-            final OnmsSnmpInterface remiface = remport.getBridgePortIfIndex() == null
-                                                                                     ? null
-                                                                                     : m_snmpInterfaceDao.findByNodeIdAndIfIndex(remport.getNodeId(),
-                                                                                                                                 remport.getBridgePortIfIndex());
-            if (remiface != null) {
-                remlinknode.setBridgeRemotePort(getPortString(remiface,"bridgeport",remport.getBridgePort().toString()));
-                remlinknode.setBridgeRemotePortUrl(getSnmpInterfaceUrl(remport.getNodeId(),
-                                                                       remport.getBridgePortIfIndex()));
-            } else {
-                remlinknode.setBridgeRemotePort(getPortString(null,remport.getBridgePortIfIndex(),
-                                                              "bridgeport", remport.getBridgePort().toString()));
-            }
-            linknode.getBridgeLinkRemoteNodes().add(remlinknode);
-        }
-                
-        Map<String, List<IpNetToMedia>> macsToIpNetTOMediaMap = new HashMap<String, List<IpNetToMedia>>();
-        for (String sharedmac: segment.getMacsOnSegment()) {
-            if (sharedmac.equals(mac)) {
-                continue;
-            }
-            macsToIpNetTOMediaMap.put(sharedmac, new ArrayList<IpNetToMedia>(m_ipNetToMediaDao.findByPhysAddress(sharedmac)));
-        }
-       
-        for (String sharedmac: macsToIpNetTOMediaMap.keySet()) {
-            final BridgeLinkRemoteNode remlinknode = new BridgeLinkRemoteNode();
-            if (macsToIpNetTOMediaMap.get(sharedmac).isEmpty()) {
-                OnmsSnmpInterface snmp = getFromPhysAddress(sharedmac);
-                if (snmp == null) {
-                    remlinknode.setBridgeRemote(getIdString("mac", sharedmac));
+        
+        if (ipaddrs.size() == 1 ) {
+            OnmsIpInterface ipiface =ipaddrs.iterator().next();
+            if (ipiface != null) {
+                OnmsSnmpInterface snmpiface = ipiface.getSnmpInterface();
+                if (snmpiface !=  null) {
+                    linknode.setBridgeLocalPort(getPortString(snmpiface,"mac",mac));
+                    linknode.setBridgeLocalPortUrl(getSnmpInterfaceUrl(snmpiface.getNodeId(), snmpiface.getIfIndex()));
                 } else {
-                    remlinknode.setBridgeRemote(getHostString(snmp.getNode().getLabel(),"mac",sharedmac));
-                    remlinknode.setBridgeRemoteUrl(getNodeUrl(snmp.getNode().getId()));
-
-                    remlinknode.setBridgeRemotePort(getPortString(snmp,null,null));
-                    remlinknode.setBridgeRemotePortUrl(getSnmpInterfaceUrl(snmp.getNode().getId(),
-                                                                           snmp.getIfIndex()));
+                    linknode.setBridgeLocalPort(getPortString(str(ipiface.getIpAddress()),ipiface.getIfIndex(),"mac",mac));
+                    linknode.setBridgeLocalPortUrl(getIpInterfaceUrl(ipiface.getNodeId(),str(ipiface.getIpAddress())));
                 }
-                linknode.getBridgeLinkRemoteNodes().add(remlinknode);
-                continue;
             }
-
-            List<OnmsIpInterface> remipaddrs = new ArrayList<OnmsIpInterface>();
-            for (IpNetToMedia ipnettomedia : macsToIpNetTOMediaMap.get(sharedmac)) {
-                remipaddrs.addAll(m_ipInterfaceDao.findByIpAddress(ipnettomedia.getNetAddress().getHostAddress()));
-            }
-            
-            if (remipaddrs.size() == 0) { 
-                remlinknode.setBridgeRemote(getIdString("mac", sharedmac));
-                remlinknode.setBridgeRemotePort(getIpListAsStringFromIpNetToMedia(macsToIpNetTOMediaMap.get(sharedmac)));
-                linknode.getBridgeLinkRemoteNodes().add(remlinknode);
-                continue;
-            }
-
-            if (remipaddrs.size() == 1) {
-                OnmsIpInterface remiface = remipaddrs.iterator().next();
-                remlinknode.setBridgeRemote(getHostString(remiface.getNode().getLabel(), "mac", sharedmac));
-                remlinknode.setBridgeRemoteUrl(getNodeUrl(remiface.getNodeId()));
-                OnmsSnmpInterface remsnmpiface = remiface.getSnmpInterface();
-                if (remsnmpiface != null) {
-                    remlinknode.setBridgeRemotePort(getPortString(remsnmpiface, "ip", str(remiface.getIpAddress())));
-                    remlinknode.setBridgeRemotePortUrl(getSnmpInterfaceUrl(remiface.getNodeId(), remsnmpiface.getIfIndex()));
-                } else {
-                    remlinknode.setBridgeRemotePort(getPortString(str(remiface.getIpAddress()), remiface.getIfIndex(), null, null));
-                    remlinknode.setBridgeRemotePortUrl(getIpInterfaceUrl(remiface.getNodeId(), str(remiface.getIpAddress())));
-                }
-                linknode.getBridgeLinkRemoteNodes().add(remlinknode);
-                continue;
-            }
-            Set<String> labels = new HashSet<String>();
-            for (OnmsIpInterface remiface: remipaddrs) {
-                labels.add(remiface.getNode().getLabel());
-            }
-            if (labels.size() == 1) {
-                remlinknode.setBridgeRemote(getHostString(labels.iterator().next(),"mac",sharedmac));
-                remlinknode.setBridgeRemoteUrl(getNodeUrl(remipaddrs.iterator().next().getNodeId()));
-            }
-            remlinknode.setBridgeRemotePort(getIpListAsStringFromIpNetToMedia(macsToIpNetTOMediaMap.get(sharedmac)));
-            linknode.getBridgeLinkRemoteNodes().add(remlinknode);
-        }        
-        return linknode;
+            return addBridgeRemotesNodes(nodeid, mac, linknode, segment);
+        }
+        
+        linknode.setBridgeLocalPort(getPortString(getIpListAsStringFromIpInterface(ipaddrs), null, "mac", mac));
+        return addBridgeRemotesNodes(nodeid, mac, linknode, segment);
     }
 
