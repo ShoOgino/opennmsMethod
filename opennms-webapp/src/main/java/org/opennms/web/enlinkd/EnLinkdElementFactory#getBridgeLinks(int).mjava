@@ -2,7 +2,40 @@
     public Collection<BridgeLinkNode> getBridgeLinks(int nodeId) {
         List<BridgeLinkNode> bridgelinks = new ArrayList<BridgeLinkNode>();
         for (SharedSegment segment: m_bridgetopologyDao.getBridgeSharedSegments(nodeId)) {
-            bridgelinks.add(convertFromModel(nodeId, segment));
+            try {
+                bridgelinks.add(convertFromModel(nodeId, segment));
+            } catch (BridgeTopologyException e) {
+                e.printStackTrace();
+            }
+        }
+        if (bridgelinks.size() > 0 ) {
+            Collections.sort(bridgelinks);
+            LOG.debug("getBridgeLinks: node:[{}] is bridge found {} bridgelinks", nodeId, bridgelinks.size());
+            return bridgelinks;
+        }
+        
+        Map<String, List<OnmsIpInterface>> mactoIpNodeMap = new HashMap<String, List<OnmsIpInterface>>();
+        m_ipInterfaceDao.findByNodeId(nodeId).stream().forEach( ip -> {
+            LOG.debug("getBridgeLinks: node:[{}] is host found {} ip:{}", nodeId, str(ip.getIpAddress()));
+            m_ipNetToMediaDao.findByNetAddress(ip.getIpAddress()).stream().forEach( ipnettomedia -> {
+                if (!mactoIpNodeMap.containsKey(ipnettomedia.getPhysAddress())) {
+                    mactoIpNodeMap.put(ipnettomedia.getPhysAddress(),
+                                   new ArrayList<OnmsIpInterface>());
+                }
+                mactoIpNodeMap.get(ipnettomedia.getPhysAddress()).add(ip);
+                LOG.debug("getBridgeLinks: node:[{}] is host found {} ip:{} mac:{}", nodeId, str(ip.getIpAddress()),ipnettomedia.getPhysAddress());
+            });
+        });
+
+        for (String mac : mactoIpNodeMap.keySet()) {
+            SharedSegment segment = m_bridgetopologyDao.getHostSharedSegment(mac);
+            if (segment.isEmpty()) {
+                continue;
+            }
+            bridgelinks.add(convertFromModel(nodeId,
+                                           mac,
+                                           mactoIpNodeMap.get(mac),
+                                                             segment));
         }
         Collections.sort(bridgelinks);
         return bridgelinks;
