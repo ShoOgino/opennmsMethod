@@ -1,0 +1,51 @@
+    @Override
+    public Response perform(Context context) throws Exception {
+        // Don't check within this delay period, because the container may not be started yet
+        if (ManagementFactory.getRuntimeMXBean().getUptime() <= 10000) {
+            return new Response(Status.Starting, "Container is in spin up phase");
+        }
+
+        // Verify all bundles
+        final List<Response> responses = new ArrayList<>();
+        for (Bundle b : bundleContext.getBundles()) {
+            final BundleInfo info = bundleService.getInfo(b);
+            switch (info.getState()) {
+                // Success
+                case Active:
+                    break;
+                // only success if bundle is a fragment bundle
+                case Resolved:
+                    if ((b.adapt(BundleRevision.class).getTypes() & BundleRevision.TYPE_FRAGMENT) != 0) {
+                        break;
+                    }
+                    responses.add(new Response(Status.Failure, "Bundle " + b.getBundleId() + " is resolved, but not active"));
+                    break;
+                case Waiting:
+                case GracePeriod:
+                    responses.add(new Response(Status.Starting, "Bundle " + b.getBundleId() + " is waiting for dependencies"));
+                    break;
+                case Installed:
+                    responses.add(new Response(Status.Starting, "Bundle " + b.getBundleId() + " is not yet started"));
+                    break;
+                case Starting:
+                    responses.add(new Response(Status.Starting, "Bundle " + b.getBundleId() + " is starting"));
+                    break;
+                case Stopping:
+                case Failure:
+                case Unknown:
+                    responses.add(new Response(Status.Failure, "Bundle " + b.getBundleId() + " is not started"));
+                    break;
+            }
+        }
+        // If there are some issues, we return the worst one
+        if (!responses.isEmpty()) {
+            return responses.stream()
+                    .sorted(Comparator.comparingInt(response -> -1 * response.getStatus().ordinal()))
+                    .findFirst()
+                    .get();
+        }
+
+        // Otherwise everything is okay
+        return new Response(Status.Success);
+    }
+
