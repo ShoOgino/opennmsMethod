@@ -1,0 +1,29 @@
+    private static void performHealthCheck(BundleContext bundleContext, Context context) throws InvalidSyntaxException {
+        final Collection<ServiceReference<HealthCheck>> serviceReferences = bundleContext.getServiceReferences(HealthCheck.class, null);
+        if (serviceReferences.isEmpty()) {
+            throw new IllegalStateException("No health checks available.");
+        }
+
+        // Determine max length for visualization
+        final List<HealthCheck> healthChecks = serviceReferences.stream().map(s -> bundleContext.getService(s)).collect(Collectors.toList());
+        final int maxDescriptionLength = healthChecks.stream().map(check -> check.getDescription()).max(Comparator.comparingInt(String::length)).get().length();
+        final int maxStatusLength = Arrays.stream(Status.values()).map(v -> v.name()).max(Comparator.comparingInt(String::length)).get().length();
+        final String descFormat = String.format(DESC_FORMAT, maxDescriptionLength);
+        final String statusFormat = String.format(STATUS_FORMAT, maxStatusLength);
+
+        // Run Health Check
+        new HealthCheckService(bundleContext)
+                .performAsyncHealthCheck(context,
+                        healthCheck -> System.out.print(String.format(descFormat, healthCheck.getDescription())),
+                        response -> {
+                            final Status status = response.getStatus();
+                            final Color statusColor = determineColor(status);
+                            final String statusText = String.format(statusFormat, Colorizer.colorize(status.name(), statusColor));
+                            System.out.print(statusText);
+                            if (response.getMessage() != null) {
+                                System.out.print(" => " + response.getMessage());
+                            }
+                            System.out.println();
+                        });
+    }
+
