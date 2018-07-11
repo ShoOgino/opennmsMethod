@@ -1,38 +1,16 @@
     // Perform check asynchronously
-    public void performAsyncHealthCheck(Context context, Consumer<HealthCheck> onStartConsumer, Consumer<Response> onFinishConsumer) throws InvalidSyntaxException {
-        Future<Response> currentFuture = null;
-        final List<HealthCheck> checks = getHealthChecks();
-        for (HealthCheck check : checks) {
-            try {
-                if (onStartConsumer != null) {
-                    onStartConsumer.accept(check);
-                }
-                currentFuture = executorService.submit(() -> {
-                    try {
-                        final Response response = check.perform(context);
-                        if (response == null) {
-                            return new Response(Status.Unknown);
-                        }
-                        return response;
-                    } catch (Exception ex) {
-                        return new Response(ex);
-                    }
-                });
-                final Response response = currentFuture.get(context.getTimeout(), TimeUnit.MILLISECONDS);
-                if (onFinishConsumer != null) {
-                    onFinishConsumer.accept(response);
-                }
-            } catch (TimeoutException timeoutException) {
-                if (currentFuture != null) {
-                    currentFuture.cancel(true);
-                }
-                onFinishConsumer.accept(new Response(Status.Timeout, "Health Check did not finish within " + context.getTimeout() + " ms"));
-            } catch (Exception ex) {
-                if (currentFuture != null) {
-                    currentFuture.cancel(true);
-                }
-                onFinishConsumer.accept(new Response(ex));
-            }
+    public CompletableFuture<Health> performAsyncHealthCheck(Context context, Consumer<HealthCheck> onStartConsumer, Consumer<Response> onFinishConsumer) throws InvalidSyntaxException {
+        final CompletableFuture<Health> returnFuture = new CompletableFuture<>();
+        final Health health = new Health();
+        final Consumer<Response> consumer = response -> {
+            health.withResponse(response);
+            onFinishConsumer.accept(response);
+        };
+        try {
+            runChecks(context, onStartConsumer, consumer);
+        } finally {
+            returnFuture.complete(health);
         }
+        return returnFuture;
     }
 
