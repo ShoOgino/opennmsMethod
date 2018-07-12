@@ -1,0 +1,61 @@
+    @Test
+    @Transactional
+    public void testPersistSituations() throws Exception {
+        final MockNode node = m_mockNetwork.getNode(1);
+
+        //there should be no alarms in the alarms table
+        assertEmptyAlarmTable();
+
+        //there should be no alarms in the alarm_situations table
+        assertEmptyAlarmSituationTable();
+
+        // Expect an alarmCreated event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        //create 3 alarms to roll up into situation
+        sendNodeDownEvent("Alarm1", node);
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(1, m_alarmDao.findAll().size());
+
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        sendNodeDownEvent("Alarm2", node);
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(2, m_alarmDao.findAll().size());
+
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        sendNodeDownEvent("Alarm3", node);
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        assertEquals(3, m_alarmDao.findAll().size());
+
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_CREATED_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        //create situation rolling up the first 2 alarms
+        List<String> reductionKeys = new ArrayList<>(Arrays.asList("Alarm1", "Alarm2"));
+        sendSituationEvent("Situation1", node, reductionKeys);
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        Situation situation = (Situation) m_alarmDao.findByReductionKey("Situation1");
+        assertEquals(2, situation.getAlarms().size());
+        
+        // Expect an alarmUpdatedWithReducedEvent event
+        m_eventMgr.getEventAnticipator().resetAnticipated();
+        m_eventMgr.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.ALARM_UPDATED_WITH_REDUCED_EVENT_UEI, "alarmd").getEvent());
+        m_eventMgr.getEventAnticipator().setDiscardUnanticipated(true);
+
+        //send situation in with 3rd alarm, should result in 1 situation with 3 alarms
+        List<String> newReductionKeys = new ArrayList<>(Arrays.asList("Alarm3"));
+        sendSituationEvent("Situation1", node, newReductionKeys);
+        await().atMost(1, SECONDS).until(allAnticipatedEventsWereReceived());
+        situation = (Situation) m_alarmDao.findByReductionKey("Situation1");
+        assertEquals(3, situation.getAlarms().size());
+    }
+

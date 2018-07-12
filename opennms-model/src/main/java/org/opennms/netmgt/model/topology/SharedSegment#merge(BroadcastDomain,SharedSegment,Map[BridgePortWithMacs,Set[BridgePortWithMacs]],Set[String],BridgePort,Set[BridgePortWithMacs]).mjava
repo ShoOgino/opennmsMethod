@@ -1,0 +1,61 @@
+    public static void merge(BroadcastDomain domain,
+        SharedSegment upsegment, 
+        Map<BridgePortWithMacs, Set<BridgePortWithMacs>> splitted, 
+        Set<String> macsonsegment, 
+        BridgePort rootport,
+        Set<BridgePortWithMacs> throughset) {
+        
+        splitted.keySet().stream().forEach( designated -> {
+            Set<BridgePortWithMacs> ports = splitted.get(designated);
+            SharedSegment splitsegment = new SharedSegment();
+            splitsegment.getBridgePortsOnSegment().add(designated.getPort());
+            splitsegment.setDesignatedBridge(designated.getPort().getNodeId());
+            Set<String> macs = new HashSet<String>(designated.getMacs());
+            ports.stream().forEach( bft -> 
+            {
+                macs.retainAll(bft.getMacs());
+                domain.cleanForwarders(bft.getPort().getNodeId());
+                upsegment.getBridgePortsOnSegment().remove(bft.getPort());
+                splitsegment.getBridgePortsOnSegment().add(bft.getPort());
+            });
+            splitsegment.getMacsOnSegment().addAll(macs);
+            domain.getSharedSegments().add(splitsegment);
+            domain.cleanForwarders(macs);
+        });
+        
+        //Add macs from forwarders
+        Map<String, Integer> forfpmacs = new HashMap<String, Integer>();
+        upsegment.getBridgePortsOnSegment().stream().forEach( port ->  
+        {
+            domain.getForwarders(port.getNodeId()).stream().filter(forward -> forward.getPort().equals(port)).
+            forEach( forward -> 
+            {    
+                forward.getMacs().stream().forEach(mac -> {
+                    int itemsfound=1;
+                    if (forfpmacs.containsKey(mac)) {
+                        itemsfound = forfpmacs.get(mac);
+                        itemsfound++;
+                    } 
+                    forfpmacs.put(mac, itemsfound);   
+                });
+            });
+            
+            Set<String> clearmacs = new HashSet<String>();
+            forfpmacs.keySet().stream().forEach( mac -> {
+                if (forfpmacs.get(mac).intValue() == upsegment.getBridgePortsOnSegment().size()) {
+                    upsegment.getMacsOnSegment().add(mac);
+                    clearmacs.add(mac);
+                }
+            });
+            domain.cleanForwarders(clearmacs);
+            
+        });
+
+        upsegment.getBridgePortsOnSegment().add(rootport);
+        upsegment.getMacsOnSegment().retainAll(macsonsegment);
+        domain.cleanForwarders(upsegment.getMacsOnSegment());
+
+        throughset.stream().forEach(bft -> SharedSegment.createAndAddToBroadcastDomain(domain,
+                                                                                       bft));
+    }
+
