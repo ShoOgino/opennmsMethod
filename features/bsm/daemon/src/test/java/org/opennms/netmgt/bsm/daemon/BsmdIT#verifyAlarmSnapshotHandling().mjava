@@ -1,0 +1,54 @@
+    /**
+     * Verifies that the state is properly updated when handling alarm snapshots from the lifecycle API.
+     */
+    @Test
+    public void verifyAlarmSnapshotHandling() throws Exception {
+        BusinessServiceEntity simpleBs = createSimpleBusinessService();
+        m_bsmd.start();
+
+        // Create an alarm
+        final AtomicReference<OnmsAlarm> alarmRef = new AtomicReference<>();
+        template.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus transactionStatus) {
+                Assert.assertEquals(Status.NORMAL, m_bsmd.getBusinessServiceStateMachine().getOperationalStatus(wrap(simpleBs)));
+                OnmsAlarm alarm = createAlarm();
+                m_alarmDao.save(alarm);
+                alarmRef.set(alarm);
+                m_alarmDao.flush();
+                Assert.assertEquals(Status.NORMAL, m_bsmd.getBusinessServiceStateMachine().getOperationalStatus(wrap(simpleBs)));
+            }
+        });
+
+        // Issue a snapshot callback
+        template.execute(new TransactionCallbackWithoutResult() {
+             @Override
+             protected void doInTransactionWithoutResult(TransactionStatus transactionStatus) {
+                 m_bsmd.handleAlarmSnapshot(m_alarmDao.findAll());
+             }
+         });
+
+        // Wait for the business service status to be updated
+        await().atMost(20, SECONDS).until(() -> m_bsmd.getBusinessServiceStateMachine().getOperationalStatus(wrap(simpleBs)), equalTo(Status.CRITICAL));
+
+        // Now delete alarm
+        template.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus transactionStatus) {
+                m_alarmDao.delete(alarmRef.get());
+                m_alarmDao.flush();
+            }
+        });
+
+        // Issue a snapshot callback
+        template.execute(new TransactionCallbackWithoutResult() {
+            @Override
+            protected void doInTransactionWithoutResult(TransactionStatus transactionStatus) {
+                m_bsmd.handleAlarmSnapshot(m_alarmDao.findAll());
+            }
+        });
+
+        // Wait for the business service status to be updated
+        await().atMost(20, SECONDS).until(() -> m_bsmd.getBusinessServiceStateMachine().getOperationalStatus(wrap(simpleBs)), equalTo(Status.NORMAL));
+    }
+

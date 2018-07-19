@@ -54,8 +54,28 @@
 
         // Events, nodes and alarms were forwarded and consumed!
 
+        // Ensure that we have some events with a fs:fid
+
+        List<OpennmsModelProtos.Event> eventsWithFsAndFid = kafkaConsumer.getEvents().stream()
+                .filter(e -> e.getNodeCriteria() != null
+                        && e.getNodeCriteria().getForeignId() != null
+                        && e.getNodeCriteria().getForeignSource() != null)
+                .collect(Collectors.toList());
+        assertThat(eventsWithFsAndFid, hasSize(greaterThanOrEqualTo(2)));
+
         // Verify the consumed alarm object
         assertThat(kafkaConsumer.getAlarmByReductionKey(alarmReductionKey).getDescription(), equalTo("node down"));
+
+        // Verify the consumed Node objects
+        List<org.opennms.features.kafka.producer.model.OpennmsModelProtos.Node> nodes = kafkaConsumer.getNodes();
+        assertThat(nodes.size(), equalTo(2));
+        // Verify the first node has hwInventory DAG including the Port with a hwEntAlias
+        assertThat(nodes.get(0), not(nullValue()));
+        assertThat(nodes.get(0).getHwInventory(), not(nullValue()));
+        assertThat(nodes.get(0).getHwInventory().getChildrenList().size(), equalTo(2));
+        assertThat(nodes.get(0).getHwInventory().getChildren(1).getChildren(0).getChildren(0).getEntHwAliasCount(), equalTo(1));
+        assertThat(nodes.get(0).getHwInventory().getChildren(1).getChildren(0).getChildren(0).getEntHwAlias(0).getIndex(), equalTo(0));
+        assertThat(nodes.get(0).getHwInventory().getChildren(1).getChildren(0).getChildren(0).getEntHwAlias(0).getOid(), equalTo(".1.3.6.1.2.1.2.2.1.1.10104"));
 
         // Now delete the alarm directly in the database
         alarmDao.delete(alarm);

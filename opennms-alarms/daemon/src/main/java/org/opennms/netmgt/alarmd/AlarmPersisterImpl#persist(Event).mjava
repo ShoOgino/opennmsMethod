@@ -1,0 +1,27 @@
+    @Override
+    public OnmsAlarm persist(Event event) {
+        Objects.requireNonNull(event, "Cannot create alarm from null event.");
+        if (!checkEventSanityAndDoWeProcess(event)) {
+            return null;
+        }
+
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("process: {}; nodeid: {}; ipaddr: {}; serviceid: {}", event.getUei(), event.getNodeid(), event.getInterface(), event.getService());
+        }
+
+        // Lock both the reduction and clear keys (if set) using a fair striped lock
+        // We do this to ensure that clears and triggers are processed in the same order
+        // as the calls are made
+        final Iterable<Lock> locks = lockStripes.bulkGet(getLockKeys(event));
+        final OnmsAlarm alarm;
+        try {
+            locks.forEach(Lock::lock);
+            // Process the alarm inside a transaction
+            alarm = m_transactionOperations.execute((action) -> addOrReduceEventAsAlarm(event));
+        } finally {
+            locks.forEach(Lock::unlock);
+        }
+
+        return alarm;
+    }
+

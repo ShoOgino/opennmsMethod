@@ -1,0 +1,43 @@
+    public List<State> getStateChangesForAlarmWithId(Integer id) {
+        // Build a sorted list of all known alarm states
+        final List<State> states = alarmsByTime.entrySet().stream()
+                .map(e -> {
+                    Optional<OnmsAlarm> alarm = e.getValue().stream()
+                            .filter(a -> Objects.equals(id, a.getId()))
+                            .findFirst();
+                    return alarm.map(onmsAlarm -> new State(e.getKey(), onmsAlarm));
+                })
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .sorted(Comparator.comparing(State::getTime))
+                .collect(Collectors.toList());
+
+        if (states.size() < 1) {
+            throw new IllegalStateException("No known state for alarm with id: " + id);
+        }
+
+        final List<State> stateChanges = new ArrayList<>();
+        State lastState = null;
+        for (State state : states) {
+            if (lastState == null) {
+                // Initial state
+                stateChanges.add(state);
+                lastState = state;
+                continue;
+            }
+
+            if (!areAlarmsEqual(state.getAlarm(), lastState.getAlarm())) {
+                // state has changed
+                stateChanges.add(state);
+                lastState = state;
+            }
+        }
+
+        final long lastSeenAt = states.get(states.size() - 1).getTime();
+        final Optional<Long> wasMissingAtLaterTime = alarmsByTime.keySet().stream()
+                .filter(t -> t > lastSeenAt)
+                .min(Comparator.comparing(t -> t));
+        wasMissingAtLaterTime.ifPresent(aLong -> stateChanges.add(new State(aLong, null)));
+        return stateChanges;
+    }
+
