@@ -1,0 +1,77 @@
+    private void parseSegment(SharedSegment segment) throws BridgeTopologyException {
+        Map<BridgePort,Vertex> portToVertexMap = new HashMap<BridgePort, Vertex>();
+        for (BridgePort bp : segment.getBridgePortsOnSegment()) {
+            portToVertexMap.put(bp,getOrCreateVertex(m_nodeMap.get(bp.getNodeId()), m_nodeToOnmsIpPrimaryMap.get(bp.getNodeId()),true));
+        }
+        
+        Map<String,Vertex> macToVertexMap = new HashMap<String, Vertex>();
+        Set<String> macswithoutip = new HashSet<String>();
+        for (String mac: segment.getMacsOnSegment()) {
+            if (m_macToOnmsIpMap.containsKey(mac) && m_macToOnmsIpMap.get(mac).size() > 0) {
+               List<OnmsIpInterface> targetInterfaces = m_macToOnmsIpMap.get(mac);
+               OnmsIpInterface targetIp = targetInterfaces.get(0);
+               macToVertexMap.put(mac,
+                 getOrCreateVertex(m_nodeMap.get(targetIp.getNode().getId()), m_nodeToOnmsIpPrimaryMap.get(targetIp.getNode().getId()),true));
+            } else {
+                macswithoutip.add(mac);
+            }
+        }
+        if (portToVertexMap.size() == 2 && 
+            segment.getMacsOnSegment().size() == 0) {
+            Vertex source = null;
+            Vertex target = null;
+            BridgePort sourcebp = null;
+            BridgePort targetbp = null;
+            for (BridgePort bp: portToVertexMap.keySet()) {
+                if (bp.getNodeId() == segment.getDesignatedBridge()) {
+                    source = portToVertexMap.get(bp);
+                    sourcebp = bp;
+                    continue;
+                } 
+                target = portToVertexMap.get(bp);
+                targetbp=bp;
+            }
+            BridgeLinkDetail detail = new BridgeLinkDetail(source, sourcebp, target, targetbp);
+            LinkdEdge edge = connectVertices(detail, BRIDGE_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(detail,m_nodeToOnmsSnmpMap));
+            return;
+        }
+        if (portToVertexMap.size() == 1 && 
+                macToVertexMap.size() == 1 && 
+                segment.getMacsOnSegment().size() == 1) {
+            Vertex source = null;
+            Vertex target = null;
+            List<OnmsIpInterface> targetInterfaces;
+            BridgePort sourcebp = null;
+            OnmsIpInterface targetIp = null;
+            for (BridgePort bp: portToVertexMap.keySet()) {
+                sourcebp = bp;
+                source = portToVertexMap.get(bp);        
+            }
+            for (String mac : macToVertexMap.keySet()) { 
+                targetInterfaces = m_macToOnmsIpMap.get(mac);
+                targetIp = targetInterfaces.get(0);
+                LinkdEdge edge = connectVertices(sourcebp, source, target, BRIDGE_EDGE_NAMESPACE);
+                edge.setTooltipText(getEdgeTooltipText(sourcebp,source,target, targetInterfaces,m_nodeToOnmsSnmpMap,mac));
+            }
+            return;
+        }
+        String cloudId = segment.getDesignatedBridge()+":"+segment.getDesignatedPort().getBridgePort();
+        AbstractVertex cloudVertex = addVertex(cloudId, 0, 0);
+        cloudVertex.setLabel("");
+        cloudVertex.setIconKey("cloud");
+        cloudVertex.setTooltipText("Shared Segment: designated node: " + m_nodeMap.get(segment.getDesignatedBridge()).getLabel() + " port: " + segment.getDesignatedPort().getBridgePort());
+        addVertices(cloudVertex);
+        LOG.info("loadtopology: adding cloud: id: '{}', {}", cloudId, cloudVertex.getTooltipText() );
+        for (BridgePort targetport: portToVertexMap.keySet()) {
+            Vertex target = portToVertexMap.get(targetport);
+            LinkdEdge edge = connectVertices(targetport, cloudVertex, target, BRIDGE_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(targetport,target,m_nodeToOnmsSnmpMap));
+        }
+        for (String mac: macToVertexMap.keySet()) {
+            Vertex target = macToVertexMap.get(mac);
+            LinkdEdge edge = connectCloudMacVertices(mac, cloudVertex, target, BRIDGE_EDGE_NAMESPACE);
+            edge.setTooltipText(getEdgeTooltipText(mac,target,m_macToOnmsIpMap.get(mac)));
+        }
+    }
+
