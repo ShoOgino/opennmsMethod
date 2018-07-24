@@ -1,0 +1,62 @@
+    @Override
+    public <S extends RpcRequest, T extends RpcResponse> RpcClient<S, T> getClient(RpcModule<S, T> module) {
+        return new RpcClient<S, T>() {
+
+            @Override
+            public CompletableFuture<T> execute(S request) {
+                if (request.getLocation() == null || request.getLocation().equals(location)) {
+                    // The request is for the current location, invoke it directly
+                    return module.execute(request);
+                }
+                final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory(
+                        KafkaRpcConstants.RPC_REQUEST_TOPIC_NAME, module.getId(), request.getLocation());
+                String requestTopic = topicNameFactory.getName();
+                String marshalledRequest = module.marshalRequest(request);
+                // Generate RPC Id for every request to track request/response.
+                String rpcId = UUID.randomUUID().toString();
+                // Calculate timeout based on ttl and default timeout.
+                long ttl = request.getTimeToLiveMs() != null ? request.getTimeToLiveMs().longValue() : TIMEOUT_FOR_KAFKA_RPC;
+                ttl = ttl > 0 ? ttl : TIMEOUT_FOR_KAFKA_RPC;
+                long expirationTime = System.currentTimeMillis() + ttl;
+                // Create a future and add it to response handler which will complete the future when it receives callback.
+                final CompletableFuture<T> future = new CompletableFuture<>();
+                final Map<String, String> loggingContext = Logging.getCopyOfContextMap();
+                ResponseHandler<S, T> responseHandler = new ResponseHandler<S, T>(future, module, rpcId,
+                        expirationTime, loggingContext);
+                delayQueue.offer(responseHandler);
+                rpcResponseMap.put(rpcId, responseHandler);
+                kafkaConsumerRunner.startConsumingForModule(module.getId());
+                if (request.getSystemId() != null) {
+                    // For directed RPCs, send request to all partitions (consumers),
+                    // this forces partitions >= max(number of minions at location)
+                    RpcMessageProtos.RpcMessage rpcMessage = RpcMessageProtos.RpcMessage.newBuilder()
+                                                                 .setRpcId(rpcId)
+                                                                 .setSystemId(request.getSystemId())
+                                                                 .setExpirationTime(expirationTime)
+                                                                 .setRpcContent(ByteString.copyFromUtf8(marshalledRequest))
+                                                                 .build();
+                    List<PartitionInfo> partitionInfo = producer.partitionsFor(requestTopic);
+                    partitionInfo.stream().forEach(partition -> {
+                        // Use rpc Id as key.
+                        final ProducerRecord<String, byte[]> record = new ProducerRecord<>(requestTopic,
+                                partition.partition(), rpcId, rpcMessage.toByteArray());
+                        producer.send(record);
+                    });
+                } else {
+                    RpcMessageProtos.RpcMessage rpcMessage = RpcMessageProtos.RpcMessage.newBuilder()
+                                                                .setRpcId(rpcId)
+                                                                .setExpirationTime(expirationTime)
+                                                                .setRpcContent(ByteString.copyFromUtf8(marshalledRequest))
+                                                                .build();
+                    // Use rpc Id as key.
+                    final ProducerRecord<String, byte[]> record = new ProducerRecord<>(requestTopic,
+                            rpcId, rpcMessage.toByteArray());
+                    producer.send(record);
+                }
+                LOG.debug("RPC Request {} with id {} sent to minion at location {}", request, rpcId, request.getLocation());
+                return future;
+            }
+        };
+
+    }
+
