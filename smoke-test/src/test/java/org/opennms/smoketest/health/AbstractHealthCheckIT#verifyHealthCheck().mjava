@@ -1,18 +1,20 @@
     @Test
-    public void verifyHealthCheck() {
-        final InetSocketAddress sentinelSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.SENTINEL, 8301);
+    public void verifyHealthCheck() throws Exception {
+        final int expectedHealthCheckServicesCount = getExpectedHealthCheckServices();
 
         // Ensure we are actually started the sink and are ready to listen for messages
         await().atMost(5, MINUTES)
                 .pollInterval(5, SECONDS)
                 .until(() -> {
-                    try (final SshClient sshClient = new SshClient(sentinelSshAddress, "admin", "admin")) {
+                    try (final SshClient sshClient = new SshClient(getSshAddress(), "admin", "admin")) {
                         final PrintStream pipe = sshClient.openShell();
                         pipe.println("health:check");
                         pipe.println("logout");
 
                         // Wait for karaf to process the commands
-                        await().atMost(10, SECONDS).until(sshClient.isShellClosedCallable());
+                        // each health check times out after 5 seconds, so we wait at least that long
+                        int maxWaitTime = expectedHealthCheckServicesCount * 5;
+                        await().atMost(maxWaitTime, SECONDS).until(sshClient.isShellClosedCallable());
 
                         // Read stdout and verify
                         final String shellOutput = sshClient.getStdout();
@@ -20,7 +22,7 @@
 
                         logger.info("log:display");
                         logger.info("{}", shellOutput);
-                        return count == EXPECTED_HEALTH_CHECK_SERVICES;
+                        return count == expectedHealthCheckServicesCount;
                     } catch (Exception ex) {
                         logger.error("Error while trying to verify health:check: {}", ex.getMessage());
                         return false;
