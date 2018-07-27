@@ -1,0 +1,42 @@
+    private ReleaseId buildKieModule() {
+        final KieServices ks = KieServices.Factory.get();
+        final KieFileSystem kfs = ks.newKieFileSystem();
+        final ReleaseId id = generateReleaseId();
+
+        final KieModuleModel module = ks.newKieModuleModel();
+        final KieBaseModel base = module.newKieBaseModel(kbaseName);
+        base.setDefault(true);
+        base.addPackage("*");
+        base.setEventProcessingMode(EventProcessingOption.STREAM);
+        final KieSessionModel kieSessionModel = base.newKieSessionModel(kSessionName).setDefault(true)
+                .setType(KieSessionModel.KieSessionType.STATEFUL);
+        if (usePseudoClock) {
+            kieSessionModel.setClockType(ClockTypeOption.get(ClockType.PSEUDO_CLOCK.getId()));
+        }
+
+        LOG.debug("kmodule.xml: {}", module.toXML());
+        kfs.writeKModuleXML(module.toXML());
+        kfs.generateAndWritePomXML(id);
+
+        final List<File> rulesFiles;
+        try {
+            rulesFiles = getRulesFiles();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        LOG.info("Using rules files: {}", rulesFiles);
+        for (File file : rulesFiles) {
+            kfs.write(ResourceFactory.newFileResource(file));
+        }
+
+        // Validate
+        final KieBuilder kb = ks.newKieBuilder(kfs);
+        kb.buildAll(); // kieModule is automatically deployed to KieRepository if successfully built.
+        if (kb.getResults().hasMessages(Message.Level.ERROR)) {
+            throw new RuntimeException("Build Errors:\n" + kb.getResults().toString());
+        }
+
+        LOG.info("Successfully built KIE module with ID: {}.", id);
+        return id;
+    }
+
