@@ -1,0 +1,41 @@
+    protected void runKafkaPeristerTest() throws Exception {
+        
+        Date startOfTest = new Date();
+        // Enable and install the Kafka producer feature
+        String kafkaHost = m_testEnvironment.getContainerInfo(ContainerAlias.KAFKA).networkSettings().ipAddress();
+        kafkaHost = kafkaHost + ":9092";
+        try (final SshClient sshClient = new SshClient(opennmsKarafSshAddr, "admin", "admin")) {
+            PrintStream pipe = sshClient.openShell();
+            pipe.println("config:edit org.opennms.features.kafka.producer.client");
+            pipe.println("config:property-set bootstrap.servers " + kafkaHost);
+            pipe.println("config:update");
+            pipe.println("config:edit org.opennms.features.kafka.producer");
+            pipe.println("config:property-set forward.metrics true");
+            pipe.println("config:property-set metricTopic  metrics");
+            pipe.println("config:update");
+            pipe.println("feature:install opennms-kafka-producer");
+            pipe.println("logout");
+            await().atMost(1, MINUTES).until(sshClient.isShellClosedCallable());
+        }
+        String snmpHost = m_testEnvironment.getContainerInfo(ContainerAlias.SNMPD).networkSettings().ipAddress();
+        DetectorsOnMinionIT.addRequisition(restClient, null, snmpHost);
+        InetSocketAddress pgsql = m_testEnvironment.getServiceAddress(ContainerAlias.POSTGRES, 5432);
+        HibernateDaoFactory daoFactory = new HibernateDaoFactory(pgsql);
+        NodeDao nodeDao = daoFactory.getDao(NodeDaoHibernate.class);
+        final OnmsNode onmsNode = await().atMost(1, MINUTES).pollInterval(15, SECONDS)
+                .until(DaoUtils.findMatchingCallable(nodeDao, new CriteriaBuilder(OnmsNode.class)
+                        .ge("createTime", startOfTest).eq("label", snmpHost).toCriteria()), notNullValue());
+
+        assertNotNull(onmsNode);
+        String nodeId = onmsNode.getId().toString();
+        KafkaMessageConsumerRunner kafkaConsumer = new KafkaMessageConsumerRunner(kafkaHost, "metrics");
+        kafkaConsumer.setNodeId(nodeId);
+        Executors.newSingleThreadExecutor().execute(kafkaConsumer);
+        await().atMost(2, MINUTES).pollInterval(15, SECONDS)
+        .until(() -> persistCollectionData(nodeId, snmpHost), containsString("Persisted collection"));
+        
+        // Can't get proto3 in here, so only verify non-null
+        await().atMost(1, MINUTES).pollInterval(15, SECONDS).until(() -> kafkaConsumer.getValue(), not(nullValue()));
+        kafkaConsumer.stop();
+    }
+
