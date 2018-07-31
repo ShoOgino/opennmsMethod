@@ -1,0 +1,56 @@
+    public void start() {
+        try (MDCCloseable mdc = Logging.withPrefixCloseable(RpcClientFactory.LOG_PREFIX)) {
+            // Set the defaults
+            kafkaConfig.clear();
+            kafkaConfig.put(ConsumerConfig.GROUP_ID_CONFIG, SystemInfoUtils.getInstanceId());
+            kafkaConfig.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
+            kafkaConfig.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getCanonicalName());
+            kafkaConfig.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getCanonicalName());
+            kafkaConfig.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, "1000");
+            kafkaConfig.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+            kafkaConfig.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getCanonicalName());
+            kafkaConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getCanonicalName());
+
+            // Find all of the system properties that start with 'org.opennms.core.ipc.rpc.kafka.' and add them to the config.
+            // See https://kafka.apache.org/10/documentation.html#newconsumerconfigs for the list of supported properties
+            for (Entry<Object, Object> entry : System.getProperties().entrySet()) {
+                final Object keyAsObject = entry.getKey();
+                if (keyAsObject == null || !(keyAsObject instanceof String)) {
+                    continue;
+                }
+                final String key = (String) keyAsObject;
+
+                if (key.length() > KafkaRpcConstants.KAFKA_CONFIG_SYS_PROP_PREFIX.length()
+                        && key.startsWith(KafkaRpcConstants.KAFKA_CONFIG_SYS_PROP_PREFIX)) {
+                    final String kafkaConfigKey = key.substring(KafkaRpcConstants.KAFKA_CONFIG_SYS_PROP_PREFIX.length());
+                    kafkaConfig.put(kafkaConfigKey, entry.getValue());
+                }
+            }
+            producer = new KafkaProducer<>(kafkaConfig);
+            LOG.info("initializing the Kafka producer with: {}", kafkaConfig);
+            // Start consumer which handles all the responses.
+            KafkaConsumer<String, byte[]> kafkaConsumer = new KafkaConsumer<>(kafkaConfig);
+            kafkaConsumerRunner = new KafkaConsumerRunner(kafkaConsumer);
+            executor.execute(kafkaConsumerRunner);
+            LOG.info("started  kafka consumer with : {}", kafkaConfig);
+            // Start a new thread which handles timeouts from delayQueue and calls response callback.
+            timerExecutor.execute(() -> {
+                while (true) {
+                    try {
+                        ResponseCallback responseCb = delayQueue.take();
+                        if (!responseCb.isProcessed()) {
+                            LOG.info("RPC request with id {} timedout ", responseCb.getRpcId());
+                            responseCb.sendResponse(null);
+                        }
+                    } catch (InterruptedException e) {
+                        LOG.info("interrupted while waiting for an element from delayQueue {}", e);
+                        break;
+                    } catch (Exception e) {
+                        LOG.warn("error while sending response from timeout handler {}", e);
+                    }
+                }
+            });
+            LOG.info("started timeout tracker");
+        }
+    }
+
