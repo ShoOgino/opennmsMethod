@@ -1,17 +1,7 @@
-    public void start() {
+    private void startWithModuleAndFacts(ReleaseId releaseId, List<Object> factObjects) {
         final KieServices ks = KieServices.Factory.get();
-        final KieContainer kcont = ks.newKieClasspathContainer(getClass().getClassLoader());
-        final KieBaseConfiguration kbaseConfig = ks.newKieBaseConfiguration();
-        kbaseConfig.setOption(EventProcessingOption.STREAM);
-        final KieBase kbase = kcont.newKieBase("alarmKBase", kbaseConfig);
-
-        final KieSessionConfiguration kieSessionConfig = KieServices.Factory.get().newKieSessionConfiguration();
-        if (usePseudoClock) {
-            kieSessionConfig.setOption(ClockTypeOption.get(ClockType.PSEUDO_CLOCK.getId()));
-        }
-
-        kieSession = kbase.newKieSession(kieSessionConfig, null);
-        kieSession.setGlobal("alarmService", alarmService);
+        kieContainer = ks.newKieContainer(releaseId);
+        kieSession = kieContainer.newKieSession(kSessionName);
 
         if (usePseudoClock) {
             this.clock = kieSession.getSessionClock();
@@ -19,9 +9,12 @@
             this.clock = null;
         }
 
-        alarmsById.clear();
+        // Optionally restore any facts
+        factObjects.forEach(factObject -> kieSession.insert(factObject));
 
-        kieSession.insert(alarmTicketerService);
+        if (onNewKiewSessionCallback != null) {
+            onNewKiewSessionCallback.accept(kieSession);
+        }
 
         if (!useManualTick) {
             timer = new Timer();
@@ -42,5 +35,11 @@
                 }
             }, TimeUnit.SECONDS.toMillis(1), TimeUnit.SECONDS.toMillis(1));
         }
+
+        // Save the releaseId
+        releaseIdForContainerUsedByKieSession = releaseId;
+
+        // We're started!
+        started = true;
     }
 
