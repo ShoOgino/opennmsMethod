@@ -6,20 +6,21 @@
         }
 
         List<IsIsLink> isislinks = m_isisLinkDao.findAll();
-        Set<LinkdIsIsDetail> combinedLinkDetails = new HashSet<LinkdIsIsDetail>();
         Set<Integer> parsed = new HashSet<Integer>();
 
         for (IsIsLink sourceLink : isislinks) {
             if (parsed.contains(sourceLink.getId())) { 
                 continue;
             }
-            LOG.debug("loadtopology: isis link with id '{}' link '{}' ", sourceLink.getId(), sourceLink);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("getIsIsLinks: source: {}", sourceLink.printTopology());
+            }
             IsIsElement sourceElement = elementmap.get(sourceLink.getNode().getId());
             IsIsLink targetLink = null;
             for (IsIsLink link : isislinks) {
-                if (sourceLink.getId().intValue() == link.getId().intValue()|| parsed.contains(link.getId()))
+                if (sourceLink.getId().intValue() == link.getId().intValue()|| parsed.contains(link.getId())) {
                     continue;
-                LOG.debug("loadtopology: checking isis link with id '{}' link '{}' ", link.getId(), link);
+                }
                 IsIsElement targetElement = elementmap.get(link.getNode().getId());
                 //Compare the remote data to the targetNode element data
                 if (!sourceLink.getIsisISAdjNeighSysID().equals(targetElement.getIsisSysID())  
@@ -30,13 +31,15 @@
                 if (sourceLink.getIsisISAdjIndex().intValue() == 
                         link.getIsisISAdjIndex().intValue()  ) {
                     targetLink=link;
-                    LOG.info("loadtopology: found isis mutual link: '{}' and '{}' ", sourceLink,targetLink);
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("getIsIsLinks: target: {}", targetLink.printTopology());
+                    }
                     break;
                 }
             }
             
             if (targetLink == null) {
-                LOG.info("loadtopology: cannot found isis target node for link: '{}'", sourceLink);
+                LOG.debug("getIsIsLinks: cannot found target for source: '{}'", sourceLink.getId());
                 continue;
             }
 
@@ -46,13 +49,15 @@
             source.getProtocolSupported().add(ProtocolSupported.ISIS);
             LinkdVertex target = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, targetLink.getNode().getNodeId());
             target.getProtocolSupported().add(ProtocolSupported.ISIS);
-            combinedLinkDetails.add(new LinkdIsIsDetail(Math.min(sourceLink.getId(), targetLink.getId()) + "|" + Math.max(sourceLink.getId(), targetLink.getId()),
-                                                       source, sourceLink, target, targetLink));
+            OnmsSnmpInterface sourceSnmpInterface = getSnmpInterface(sourceLink.getNode().getId(), sourceLink.getIsisCircIfIndex());
+            OnmsSnmpInterface targetSnmpInterface = getSnmpInterface(targetLink.getNode().getId(), targetLink.getIsisCircIfIndex());
+            connectVertices(getDefaultEdgeId(sourceLink.getId(), targetLink.getId()),
+                            source,target,
+                            sourceSnmpInterface,targetSnmpInterface,
+                            targetLink.getIsisISAdjNeighSNPAAddress(),
+                            sourceLink.getIsisISAdjNeighSNPAAddress(),
+                            ProtocolSupported.ISIS);
         }
 
-        for (LinkdIsIsDetail linkDetail : combinedLinkDetails) {
-            LinkdEdge edge = connectVertices(linkDetail,ProtocolSupported.ISIS);
-            edge.setTooltipText(LinkdEdge.getEdgeTooltipText(linkDetail,m_nodeToOnmsSnmpMap));
-        }
     }
 

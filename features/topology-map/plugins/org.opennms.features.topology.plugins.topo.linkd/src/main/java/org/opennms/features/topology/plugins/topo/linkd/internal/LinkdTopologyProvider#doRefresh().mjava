@@ -1,43 +1,26 @@
     @Transactional
     private void doRefresh() {        
-        Timer.Context vcontext = m_loadNodesTimer.time();
+        Timer.Context vcontext = m_loadIpInterfacesTimer.time();
+        Map<InetAddress, OnmsIpInterface>  ipToOnmsIpMap = new HashMap<InetAddress, OnmsIpInterface>();
+        Set<InetAddress> duplicated = new HashSet<InetAddress>();
         try {
-            for (OnmsNode node: m_nodeDao.findAll()) {
-                m_nodeMap.put(node.getId(), node);
-            }
-            LOG.info("refresh: Onms nodes loaded");
-        } catch (Exception e){
-            LOG.error("Loading Onms nodes failed: {}",e.getMessage(),e);
-        } finally {
-            vcontext.stop();
-        }
-
-        vcontext = m_loadIpInterfacesTimer.time();
-        try {
-            Set<InetAddress> duplicatedips = new HashSet<InetAddress>();
             for (OnmsIpInterface ip: m_ipInterfaceDao.findAll()) {
-                if (!m_nodeToOnmsIpMap.containsKey(ip.getNode().getId())) {
-                    m_nodeToOnmsIpMap.put(ip.getNode().getId(), new ArrayList<OnmsIpInterface>());
+                if (!m_nodeToOnmsIpPrimaryMap.containsKey(ip.getNode().getId())) {
                     m_nodeToOnmsIpPrimaryMap.put(ip.getNode().getId(), ip);
                 }
-                m_nodeToOnmsIpMap.get(ip.getNode().getId()).add(ip);
                 if (ip.getIsSnmpPrimary().equals(PrimaryType.PRIMARY)) {
                     m_nodeToOnmsIpPrimaryMap.put(ip.getNode().getId(), ip);
                 }
 
-                if (duplicatedips.contains(ip.getIpAddress())) {
-                    LOG.debug("refresh: found duplicated ip {}, skipping ", InetAddressUtils.str(ip.getIpAddress()));
-                    continue;
+                if (!ipToOnmsIpMap.containsKey(ip.getIpAddress())) {
+                    ipToOnmsIpMap.put(ip.getIpAddress(), ip);
+                } else {
+                    duplicated.add(ip.getIpAddress());
+                    LOG.debug("refresh: found duplicated ip {}", InetAddressUtils.str(ip.getIpAddress()));
                 }
-                if (m_ipToOnmsIpMap.containsKey(ip.getIpAddress())) {
-                    LOG.debug("refresh: found duplicated ip {}, skipping ", InetAddressUtils.str(ip.getIpAddress()));
-                    duplicatedips.add(ip.getIpAddress());
-                    continue;
-                }
-                m_ipToOnmsIpMap.put(ip.getIpAddress(), ip);
             }
-            for (InetAddress duplicated: duplicatedips) {
-                m_ipToOnmsIpMap.remove(duplicated);
+            for (InetAddress ipdup: duplicated) {
+                ipToOnmsIpMap.remove(ipdup);
             }
             LOG.info("refresh: Ip Interface loaded");
         } catch (Exception e){
@@ -51,12 +34,10 @@
             for (OnmsSnmpInterface snmp: m_snmpInterfaceDao.findAll()) {
                 // Index the SNMP interfaces by node id
                 final int nodeId = snmp.getNode().getId();
-                List<OnmsSnmpInterface> snmpinterfaces = m_nodeToOnmsSnmpMap.get(nodeId);
-                if (snmpinterfaces == null) {
-                    snmpinterfaces = new ArrayList<>();
-                    m_nodeToOnmsSnmpMap.put(nodeId, snmpinterfaces);
+                if (!m_nodeToOnmsSnmpMap.containsKey(nodeId)) {
+                    m_nodeToOnmsSnmpMap.put(nodeId, new HashMap<Integer, OnmsSnmpInterface>());
                 }
-                snmpinterfaces.add(snmp);
+                m_nodeToOnmsSnmpMap.get(nodeId).put(snmp.getIfIndex(), snmp);
             }
             LOG.info("refresh: Snmp Interface loaded");
         } catch (Exception e){
@@ -66,35 +47,43 @@
         }
 
         vcontext = m_loadIpNetToMediaTimer.time();
+
+        Set<String> multiIpMacs = new HashSet<String>();
+        Set<String> multiSnmpMacs = new HashSet<String>();
+
+        // mac -> ip[]  ->  snmp[]    —> macToNodeMap
+        // mac -> ip    ->  snmp      —> macToNodeMap, macToIpMap, macToSnmpMap
+        // mac -> ip    ->  no snmp   —> macToNodeMap, macToIpMap
+        // mac -> ip[]  ->  no snmp   —> macToNodeMap
+        // mac -> ip[]  ->  snmp      —> macToSnmpMap
         try {
-            Set<String> duplicatednodemac = new HashSet<String>();
-            Map<String, Integer> mactonodemap = new HashMap<String, Integer>();
             for (IpNetToMedia ipnettomedia: m_ipNetToMediaDao.findAll()) {
-                if (duplicatednodemac.contains(ipnettomedia.getPhysAddress())) {
-                    LOG.debug("refresh: different nodeid found for ip: {} mac: {}. Skipping...",InetAddressUtils.str(ipnettomedia.getNetAddress()), ipnettomedia.getPhysAddress());
+                OnmsIpInterface onmsip = ipToOnmsIpMap.get(ipnettomedia.getNetAddress());
+                if (onmsip == null) {
+                    LOG.debug("refresh: ipNetToMedia: {}:{}. No OnmsIpInterface found.", ipnettomedia.getPhysAddress(),InetAddressUtils.str(ipnettomedia.getNetAddress()));
                     continue;
                 }
-                OnmsIpInterface ip = m_ipToOnmsIpMap.get(ipnettomedia.getNetAddress());
-                if (ip == null) {
-                    LOG.debug("refresh: no nodeid found for ip: {} mac: {}. Skipping...",InetAddressUtils.str(ipnettomedia.getNetAddress()), ipnettomedia.getPhysAddress());
-                    continue;
+                if (!m_macToNodeidMap.containsKey(ipnettomedia.getPhysAddress())) {
+                    m_macToNodeidMap.put(ipnettomedia.getPhysAddress(), onmsip.getNodeId());
                 }
-                if (mactonodemap.containsKey(ipnettomedia.getPhysAddress())) {
-                    if (mactonodemap.get(ipnettomedia.getPhysAddress()).intValue() != ip.getNode().getId().intValue()) {
-                        LOG.debug("refresh:: different nodeid found for ip: {} mac: {}. Skipping...",InetAddressUtils.str(ipnettomedia.getNetAddress()), ipnettomedia.getPhysAddress());
-                        duplicatednodemac.add(ipnettomedia.getPhysAddress());
-                        continue;
+                if (!m_macToOnmsIpMap.containsKey(ipnettomedia.getPhysAddress())) {
+                    m_macToOnmsIpMap.put(ipnettomedia.getPhysAddress(), onmsip);
+                } else {
+                    multiIpMacs.add(ipnettomedia.getPhysAddress());
+                    LOG.debug("refresh: ipNetToMedia: {}:{}. Multiple OnmsIpInterface found.", ipnettomedia.getPhysAddress(),InetAddressUtils.str(ipnettomedia.getNetAddress()));
+                }
+                for (OnmsSnmpInterface onmssnmp : m_nodeToOnmsSnmpMap.get(onmsip.getNodeId()).values() ) {
+                    if (onmssnmp.getId().intValue() == onmssnmp.getId().intValue()) {
+                        if (!m_macToOnmsSnmpMap.containsKey(ipnettomedia.getPhysAddress())) {
+                            m_macToOnmsSnmpMap.put(ipnettomedia.getPhysAddress(), onmssnmp);
+                        } else if (m_macToOnmsSnmpMap.get(ipnettomedia.getPhysAddress()).getId().intValue() == onmssnmp.getId() ) {
+                            continue;
+                        } else {
+                            multiSnmpMacs.add(ipnettomedia.getPhysAddress());
+                            LOG.debug("refresh: ipNetToMedia: {}:{}. Multiple OnmsSnmpInterface found.", ipnettomedia.getPhysAddress(),InetAddressUtils.str(ipnettomedia.getNetAddress()));                                
+                        }
                     }
                 }
-
-                if (!m_macToOnmsIpMap.containsKey(ipnettomedia.getPhysAddress())) {
-                    m_macToOnmsIpMap.put(ipnettomedia.getPhysAddress(), new ArrayList<OnmsIpInterface>());
-                    mactonodemap.put(ipnettomedia.getPhysAddress(), ip.getNode().getId());
-                }
-                m_macToOnmsIpMap.get(ipnettomedia.getPhysAddress()).add(ip);
-            }
-            for (String dupmac: duplicatednodemac) {
-                m_macToOnmsIpMap.remove(dupmac);
             }
             LOG.info("refresh: IpNetToMedia loaded");
         } catch (Exception e){
