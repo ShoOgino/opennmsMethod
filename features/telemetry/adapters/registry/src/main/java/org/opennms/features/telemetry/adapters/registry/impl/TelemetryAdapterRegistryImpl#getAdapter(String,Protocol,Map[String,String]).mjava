@@ -1,34 +1,17 @@
     @Override
     public Adapter getAdapter(String className, Protocol protocol, Map<String, String> properties) {
-        AdapterFactoryRegistration registration = m_adapterFactoryByClassName.get(className);
-
-        final long waitUntil = System.currentTimeMillis() + ServiceLookupBuilder.WAIT_PERIOD_MS;
-        // If the adapter is not currently available, wait until the JVM has been up for at least GRACE_PERIOD_MS
-        // (absolute) and ensure we've waited for at least WAIT_PERIOD_MS (relative) before aborting
-        // the lookup
-        while ((registration == null)
-                && ManagementFactory.getRuntimeMXBean().getUptime() < ServiceLookupBuilder.GRACE_PERIOD_MS
-                && System.currentTimeMillis() < waitUntil) {
-            try {
-                Thread.sleep(ServiceLookupBuilder.LOOKUP_DELAY_MS);
-            } catch (InterruptedException e) {
-                LOG.error("Interrupted while waiting for adapter factory to become available in the service registry. Aborting.");
-                return null;
-            }
-            registration = m_adapterFactoryByClassName.get(className);
-        }
-
-        Adapter adapter = null;
+        final AdapterFactoryRegistration registration = delegate.lookup(className, null);
         if (registration != null) {
-            adapter = registration.getAdapterFactory().createAdapter(protocol, properties);
+            final Adapter adapter = registration.getAdapterFactory().createAdapter(protocol, properties);
             if (registration.shouldAutowire()) {
                 // Autowire!
                 final AutowireCapableBeanFactory beanFactory = applicationContext.getAutowireCapableBeanFactory();
                 beanFactory.autowireBean(adapter);
                 beanFactory.initializeBean(adapter, "adapter");
             }
+            return adapter;
         }
 
-        return adapter;
+        return null;
     }
 
