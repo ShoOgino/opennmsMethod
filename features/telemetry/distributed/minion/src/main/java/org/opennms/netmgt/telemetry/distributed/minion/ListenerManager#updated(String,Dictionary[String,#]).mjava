@@ -15,6 +15,12 @@
         final MapBasedProtocolDef protocolDef = new MapBasedProtocolDef(parameters);
         final MapBasedListenerDef listenerDef = new MapBasedListenerDef(parameters);
 
+        // Register health check
+        final ListenerHealthCheck healthCheck = new ListenerHealthCheck(listenerDef);
+        final ServiceRegistration<HealthCheck> serviceRegistration = bundleContext.registerService(HealthCheck.class, healthCheck, null);
+        healthChecksById.put(pid, serviceRegistration);
+
+        // Create Module
         final TelemetrySinkModule sinkModule = new TelemetrySinkModule(protocolDef);
         sinkModule.setDistPollerDao(distPollerDao);
         final AsyncDispatcher<TelemetryMessage> dispatcher = messageDispatcherFactory.createAsyncDispatcher(sinkModule);
@@ -24,7 +30,13 @@
             listener.start();
             listenersByPid.put(pid, listener);
             dispatchersByPid.put(pid, dispatcher);
+
+            // At this point the listener should be up and running,
+            // so we mark the underlying health check as success
+            healthCheck.markSucess();
         } catch (Exception e) {
+            // In case of error, we mark the health check as failure as well
+            healthCheck.markError(e);
             LOG.error("Failed to build listener.", e);
             try {
                 dispatcher.close();
