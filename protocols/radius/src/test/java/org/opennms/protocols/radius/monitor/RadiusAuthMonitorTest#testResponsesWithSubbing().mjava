@@ -1,0 +1,50 @@
+    @Test
+    public void testResponsesWithSubbing() throws Exception {
+        OnmsNode node = new OnmsNode(m_locationDao.getDefaultLocation(), "devjam2018nodelabel2");
+        node.setForeignSource("AlienSource");
+        node.setForeignId("31338");
+        node.setId(m_nodeDao.getNextNodeId());
+        OnmsAssetRecord oar = node.getAssetRecord();
+        oar.setUsername("testing");
+        oar.setPassword("password");
+
+        OnmsSnmpInterface snmpInterface = new OnmsSnmpInterface(node, 2);
+        snmpInterface.setId(2);
+        snmpInterface.setIfAlias("Connection to OpenNMS Wifi");
+        snmpInterface.setIfDescr("en1");
+        snmpInterface.setIfName("en1/0");
+        snmpInterface.setPhysAddr("00:00:00:00:00:02");
+
+        Set<OnmsIpInterface> ipInterfaces = new LinkedHashSet<OnmsIpInterface>(1);
+        InetAddress address = InetAddress.getByName("127.0.0.1");
+        OnmsIpInterface onmsIf = new OnmsIpInterface(address, node);
+        onmsIf.setSnmpInterface(snmpInterface);
+        onmsIf.setId(2);
+        onmsIf.setIfIndex(1);
+        onmsIf.setIpHostName("devjam2018nodelabel2");
+        onmsIf.setIsSnmpPrimary(PrimaryType.PRIMARY);
+
+        ipInterfaces.add(onmsIf);
+
+        node.setIpInterfaces(ipInterfaces);
+        m_nodeDao.save(node);
+        m_nodeDao.flush();
+        mockSrv.start(true,false);
+        final Map<String, Object> m = new ConcurrentSkipListMap<String, Object>();
+        final ServiceMonitor monitor = new RadiusAuthMonitor();
+        final MonitoredService svc = MonitorTestUtils.getMonitoredService(node.getId(), "devjam2018nodelabel2", InetAddressUtils.addr("127.0.0.1"), "RADIUS");
+
+        m.put("user", "{username}");
+        m.put("password", "{password}");
+        m.put("retry", "1");
+        m.put("secret", "{username}123");
+        m.put("authtype", "chap");
+        Map<String, Object> subbedParams = monitor.getRuntimeAttributes(svc, m);
+        subbedParams.forEach((k, v) -> {
+            m.put(k, v);
+        });
+        final PollStatus status = monitor.poll(svc, m);
+        MockUtil.println("Reason: "+status.getReason());
+        assertEquals(PollStatus.SERVICE_AVAILABLE, status.getStatusCode());
+    }
+
