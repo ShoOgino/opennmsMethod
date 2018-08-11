@@ -1,0 +1,51 @@
+    @Test
+    @JUnitHttpServer()
+    public void testBasicAuthParameterSubstitution() throws UnknownHostException {
+        OnmsNode node = new OnmsNode(m_locationDao.getDefaultLocation(), "devjam2018nodelabel4");
+        node.setForeignSource("AlienSource");
+        node.setForeignId("31340");
+        node.setId(m_nodeDao.getNextNodeId());
+        OnmsAssetRecord oar = node.getAssetRecord();
+        oar.setUsername("nimda");
+        oar.setPassword("@dm1n");
+
+        OnmsSnmpInterface snmpInterface = new OnmsSnmpInterface(node, 4);
+        snmpInterface.setId(4);
+        snmpInterface.setIfAlias("Connection to OpenNMS Wifi");
+        snmpInterface.setIfDescr("en1");
+        snmpInterface.setIfName("en1/0");
+        snmpInterface.setPhysAddr("00:00:00:00:00:04");
+
+        Set<OnmsIpInterface> ipInterfaces = new LinkedHashSet<OnmsIpInterface>(1);
+        InetAddress address = InetAddress.getByName("10.0.1.4");
+        OnmsIpInterface onmsIf = new OnmsIpInterface(address, node);
+        onmsIf.setSnmpInterface(snmpInterface);
+        onmsIf.setId(4);
+        onmsIf.setIfIndex(1);
+        onmsIf.setIpHostName("devjam2018nodelabel4");
+        onmsIf.setIsSnmpPrimary(PrimaryType.PRIMARY);
+
+        ipInterfaces.add(onmsIf);
+
+        node.setIpInterfaces(ipInterfaces);
+        m_nodeDao.save(node);
+        m_nodeDao.flush();
+        HttpMonitor monitor = new HttpMonitor();
+        Map<String, Object> parameters = new ConcurrentSkipListMap<String, Object>();
+        final int port = JUnitHttpServerExecutionListener.getPort();
+        if (port > 0) {
+            parameters.put("port", String.valueOf(port));
+        } else {
+            throw new IllegalStateException("Unable to determine what port the HTTP server started on!");
+        }
+        parameters.put("url", "/test-NMS2702.html");
+        parameters.put("retry", "1");
+        parameters.put("timeout", "500");
+        parameters.put("verbose", "true");
+        parameters.put("basic-authentication", "{username}:{password}");
+        parameters.put("response-text", "~.*OK.*");
+        MockMonitoredService svc = MonitorTestUtils.getMonitoredService(Integer.parseInt(node.getNodeId()), "devjam2018nodelabel2", InetAddress.getByName("10.0.1.2"), "HTTP");
+        Map<String, Object> subbedParams = monitor.getRuntimeAttributes(svc, parameters);
+        assertTrue(subbedParams.get("subbed-basic-authentication").toString().equals("nimda:@dm1n"));
+    }
+
