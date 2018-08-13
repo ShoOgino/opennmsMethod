@@ -1,0 +1,123 @@
+    private void parseSegment(SharedSegment segment) throws BridgeTopologyException {
+        Map<BridgePort,LinkdVertex> portToVertexMap = new HashMap<BridgePort, LinkdVertex>();
+        for (BridgePort bp : segment.getBridgePortsOnSegment()) {
+            LinkdVertex vertex = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, bp.getNodeId().toString());
+            vertex.getProtocolSupported().add(ProtocolSupported.BRIDGE);
+            portToVertexMap.put(bp,vertex);
+        }
+        
+        Set<String> nomappedmacs = new HashSet<String>();
+        Map<String,LinkdVertex> macToVertexMap = new HashMap<String, LinkdVertex>();
+        for (String mac: segment.getMacsOnSegment()) {
+           OnmsSnmpInterface targetsnmpIface = m_macToOnmsSnmpMap.get(mac);
+           if (targetsnmpIface != null) {
+               LinkdVertex vertex = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, targetsnmpIface.getNode().getNodeId());
+               vertex.getProtocolSupported().add(ProtocolSupported.BRIDGE);
+               macToVertexMap.put(mac,vertex);
+               continue;
+           }
+           OnmsIpInterface targetipIface = m_macToOnmsIpMap.get(mac);
+           if (targetipIface != null) {
+               LinkdVertex vertex = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, targetipIface.getNode().getNodeId());
+               vertex.getProtocolSupported().add(ProtocolSupported.BRIDGE);
+               macToVertexMap.put(mac,vertex);
+               continue;
+           }
+           if (m_macToNodeidMap.containsKey(mac)) {
+               Integer nodeid = m_macToNodeidMap.get(mac);
+               LinkdVertex vertex = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, nodeid.toString());
+               vertex.getProtocolSupported().add(ProtocolSupported.BRIDGE);
+               macToVertexMap.put(mac,vertex);
+               continue;
+           }
+           nomappedmacs.add(mac);
+        }
+        
+        if (portToVertexMap.size() == 2 && 
+            segment.getMacsOnSegment().size() == 0) {
+            LinkdVertex source = null;
+            LinkdVertex target = null;
+            BridgePort sourcebp = null;
+            BridgePort targetbp = null;
+            for (BridgePort bp: portToVertexMap.keySet()) {
+                if (bp.getNodeId() == segment.getDesignatedBridge()) {
+                    source = portToVertexMap.get(bp);
+                    sourcebp = bp;
+                    continue;
+                } 
+                target = portToVertexMap.get(bp);
+                targetbp=bp;
+            }
+            OnmsSnmpInterface sourceSnmpInterface = getSnmpInterface(sourcebp.getNodeId(), sourcebp.getBridgePortIfIndex());
+            OnmsSnmpInterface targetSnmpInterface = getSnmpInterface(targetbp.getNodeId(), targetbp.getBridgePortIfIndex());
+            connectVertices(getEdgeId(sourcebp,targetbp),
+                            source,target,
+                            sourceSnmpInterface,targetSnmpInterface,
+                            "bp: "+sourcebp.getBridgePort(),
+                            "bp: "+targetbp.getBridgePort(),
+                            ProtocolSupported.BRIDGE);
+            return;
+        }
+        if (portToVertexMap.size() == 1 && 
+                macToVertexMap.size() == 1 && 
+                segment.getMacsOnSegment().size() == 1) {
+            LinkdVertex source = portToVertexMap.values().iterator().next();
+            LinkdVertex target = macToVertexMap.values().iterator().next();
+            BridgePort sourcebp = portToVertexMap.keySet().iterator().next();
+            String targetmac = macToVertexMap.keySet().iterator().next();
+            
+            OnmsSnmpInterface sourceinterface = getSnmpInterface(sourcebp.getNodeId(), sourcebp.getBridgePortIfIndex());
+            OnmsSnmpInterface targetinterface = m_macToOnmsSnmpMap.get(targetmac);
+            OnmsIpInterface targetipinterface = m_macToOnmsIpMap.get(targetmac);
+            StringBuffer targetAddr = new StringBuffer();
+            targetAddr.append(targetmac); 
+            if (targetipinterface != null) {
+                targetAddr.append(":");
+                targetAddr.append(InetAddressUtils.str(targetipinterface.getIpAddress()));
+            } else {
+                targetAddr.append("Multiple ip addresses");                
+            }
+            connectVertices(getEdgeId(sourcebp, targetmac), source, target,sourceinterface,targetinterface,
+                            "bp: "+sourcebp.getBridgePort(),
+                            targetAddr.toString(),
+                            ProtocolSupported.BRIDGE);
+            return;
+        }
+        LinkdVertex topVertex = portToVertexMap.get(segment.getDesignatedPort());
+        AbstractVertex cloudVertex = addVertex(getEdgeId(segment), 0, 0);
+        if (nomappedmacs.size() > 0) {
+            cloudVertex.setLabel("Multiple Mac Addresses");
+        } else {
+            cloudVertex.setLabel("");            
+        }
+        cloudVertex.setIconKey("cloud");
+        cloudVertex.setTooltipText("'Shared Segment' with designated up bridge: " + topVertex.getLabel() + " port: " + segment.getDesignatedPort().getBridgePort());
+        addVertices(cloudVertex);
+        LOG.debug("parseSegment: adding cloud: id: '{}', {}", cloudVertex.getId(), segment.printTopology() );
+        for (BridgePort bp: portToVertexMap.keySet()) {
+            LinkdVertex bpportvertex = portToVertexMap.get(bp);
+            OnmsSnmpInterface targetinterface = getSnmpInterface(bp.getNodeId(), bp.getBridgePortIfIndex());
+            connectVertices(getEdgeId(cloudVertex, bp), cloudVertex, bpportvertex, null, targetinterface, 
+                            "shared segment: up bridge " + topVertex.getLabel() + " bp:" + segment.getDesignatedPort().getBridgePort(),
+                            "bp: "+bp.getBridgePort(), ProtocolSupported.BRIDGE);
+            
+        }
+        for (String mac: macToVertexMap.keySet()) {
+            LinkdVertex target = macToVertexMap.get(mac);
+            OnmsSnmpInterface targetiface = m_macToOnmsSnmpMap.get(mac);
+            OnmsIpInterface targetipinterface = m_macToOnmsIpMap.get(mac);
+            StringBuffer targetAddr = new StringBuffer();
+            targetAddr.append(mac); 
+            if (targetipinterface != null) {
+                targetAddr.append(":");
+                targetAddr.append(InetAddressUtils.str(targetipinterface.getIpAddress()));
+            } else {
+                targetAddr.append("Multiple ip addresses");                
+            }
+            connectVertices(getEdgeId(cloudVertex, mac), cloudVertex,target, null, 
+                            targetiface,
+                            "shared segment: up bridge " + topVertex.getLabel() + " bp:" + segment.getDesignatedPort().getBridgePort(),
+                            targetAddr.toString(), ProtocolSupported.BRIDGE);
+        }
+    }
+
