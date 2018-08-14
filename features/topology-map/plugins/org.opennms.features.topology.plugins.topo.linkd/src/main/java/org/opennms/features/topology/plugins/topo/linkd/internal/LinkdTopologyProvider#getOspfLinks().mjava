@@ -1,0 +1,37 @@
+    private void getOspfLinks() {
+        List<OspfLink> allLinks =  getOspfLinkDao().findAll();
+        Set<Integer> parsed = new HashSet<Integer>();
+SOURCE:        for(OspfLink sourceLink : allLinks) {
+            if (parsed.contains(sourceLink.getId())) {
+                continue;
+            }
+            parsed.add(sourceLink.getId());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("getOspfLinks: source: {}", sourceLink.printTopology());
+            }
+            for (OspfLink targetLink : allLinks) {
+                if (sourceLink.getId().intValue() == targetLink.getId().intValue() || parsed.contains(targetLink.getId())) { 
+                    continue;
+                }
+                if(sourceLink.getOspfRemIpAddr().equals(targetLink.getOspfIpAddr()) && targetLink.getOspfRemIpAddr().equals(sourceLink.getOspfIpAddr())) {
+                    LOG.info("getOspfLinks: target: {}", targetLink.printTopology());
+                    parsed.add(targetLink.getId());
+                    LinkdVertex source = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, sourceLink.getNode().getNodeId());
+                    source.getProtocolSupported().add(ProtocolSupported.OSPF);
+                    LinkdVertex target = (LinkdVertex)getVertex(TOPOLOGY_NAMESPACE_LINKD, targetLink.getNode().getNodeId());
+                    target.getProtocolSupported().add(ProtocolSupported.OSPF);
+                    OnmsSnmpInterface sourceSnmpInterface = getSnmpInterface(sourceLink.getNode().getId(), sourceLink.getOspfIfIndex());
+                    OnmsSnmpInterface targetSnmpInterface = getSnmpInterface(targetLink.getNode().getId(), targetLink.getOspfIfIndex());
+                    connectVertices(getDefaultEdgeId(sourceLink.getId(), targetLink.getId()),
+                                    source,target,
+                                    sourceSnmpInterface,targetSnmpInterface,
+                                    InetAddressUtils.str(targetLink.getOspfRemIpAddr()),
+                                    InetAddressUtils.str(sourceLink.getOspfRemIpAddr()),
+                                    ProtocolSupported.OSPF);
+                    continue SOURCE;
+                }
+            }
+            LOG.debug("getOspfLinks: cannot found target for source: '{}'", sourceLink.getId());
+        }
+    }
+
