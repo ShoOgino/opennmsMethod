@@ -1,0 +1,35 @@
+    @Test
+    public void testEventSinkWithKafka() throws UnknownHostException {
+        Date startOfTest = new Date();
+        String kafkaHost = m_testEnvironment.getContainerInfo(ContainerAlias.KAFKA).networkSettings().ipAddress();
+        kafkaHost = kafkaHost + ":9092";
+        EventBuilder eventBuilder = new EventBuilder(EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI, "system-test");
+        eventBuilder.setHost(SENDER_IP);
+        eventBuilder.setInterface(InetAddress.getByName(SENDER_IP));
+        Log eventLog = new Log();
+        eventLog.addEvent(eventBuilder.getEvent());
+        String xmlString = JaxbUtils.marshal(eventLog);
+
+        final Properties producerConfig = new Properties();
+        producerConfig.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaHost);
+        producerConfig.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getCanonicalName());
+        producerConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getCanonicalName());
+        KafkaProducer<String, byte[]> producer = new KafkaProducer<>(producerConfig);
+        final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory("Sink", "Events");
+        ProducerRecord<String, byte[]> producerRecord = new ProducerRecord<String, byte[]>(topicNameFactory.getName(),
+                xmlString.getBytes(StandardCharsets.UTF_8));
+        producer.send(producerRecord);
+
+        InetSocketAddress pgsql = m_testEnvironment.getServiceAddress(ContainerAlias.POSTGRES, 5432);
+        HibernateDaoFactory daoFactory = new HibernateDaoFactory(pgsql);
+        NodeDao nodeDao = daoFactory.getDao(NodeDaoHibernate.class);
+
+        final OnmsNode onmsNode = await().atMost(1, MINUTES).pollInterval(5, SECONDS)
+                .until(DaoUtils.findMatchingCallable(nodeDao, new CriteriaBuilder(OnmsNode.class).eq("label", SENDER_IP)
+                        .ge("createTime", startOfTest).toCriteria()), notNullValue());
+
+        assertNotNull(onmsNode);
+
+        producer.close();
+    }
+
