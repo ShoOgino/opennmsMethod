@@ -1,0 +1,42 @@
+    @Test
+    public void testArchiveAlarm() throws Exception {
+        // Enable the archiving functionality
+        AlarmPersisterImpl persisterImpl = (AlarmPersisterImpl)m_alarmd.getPersister();
+        persisterImpl.setCreateNewAlarmIfClearedAlarmExists(true);
+
+        final MockNode node = m_mockNetwork.getNode(1);
+
+        // There should be no alarms in the alarms table
+        assertEmptyAlarmTable();
+
+        //this should be the first occurrence of this alarm
+        //there should be 1 alarm now
+        sendNodeDownEvent("%nodeid%", node);
+
+        // Wait until we've create the node down alarm
+        await().atMost(10, SECONDS).until(getNumAlarmsCallable(), equalTo(1));
+
+        // Clear the existing alarm(s)
+        m_alarmDao.findAll().forEach(alarm -> {
+            alarm.setSeverity(OnmsSeverity.CLEARED);
+            m_alarmDao.update(alarm);
+            // Should not be archive
+            assertThat(alarm.isArchived(), equalTo(false));
+        });
+        m_alarmDao.flush();
+
+        // Trigger the alarm again
+        sendNodeDownEvent("%nodeid%", node);
+
+        // We should have two alarms now
+        await().atMost(10, SECONDS).until(getNumAlarmsCallable(), equalTo(2));
+
+        // One alarm should be cleared, and archived
+        assertThat(m_alarmDao.findAll().stream().filter(a -> a.isArchived()
+                && OnmsSeverity.CLEARED.equals(a.getSeverity())).count(), equalTo(1L));
+
+        // The other should not be cleared, and not be archived
+        assertThat(m_alarmDao.findAll().stream().filter(a -> !a.isArchived()
+                && !OnmsSeverity.CLEARED.equals(a.getSeverity())).count(), equalTo(1L));
+    }
+
