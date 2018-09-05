@@ -1,0 +1,42 @@
+    @Test
+    public void verifySflow() throws Exception {
+        // Determine endpoints
+        final InetSocketAddress sentinelSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.SENTINEL, 8301);
+        final InetSocketAddress minionSflowListenerAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.MINION, FlowStackIT.SFLOW_LISTENER_UDP_PORT, "udp");
+        final InetSocketAddress opennmsHttpAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8980);
+        final InetSocketAddress postgresqlAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.POSTGRES, 5432);
+
+        // Configure RestAssured
+        RestAssured.baseURI = String.format("http://%s:%s/opennms", opennmsHttpAddress.getHostName(), opennmsHttpAddress.getPort());
+        RestAssured.port = opennmsHttpAddress.getPort();
+        RestAssured.basePath = "/rest";
+        RestAssured.authentication = preemptive().basic(BASIC_AUTH_USERNAME, BASIC_AUTH_PASSWORD);
+
+        // The SFlow packet contains a node, which must be created in order to have the adapter store it to newts
+        // so a requisition is created first
+        createRequisition(opennmsHttpAddress, postgresqlAddress);
+
+        // Wait until a route for SFlow procession is actually started
+        waitForSentinelStartup(sentinelSshAddress);
+
+        // Now sentinel is up and running, we should re-sync the datasource,as the
+        // earlier created node may not be visible to sentinel yet.
+        syncDataSource(sentinelSshAddress);
+
+        // Ensure no measurement data available
+        final Response response = RestAssured.given().accept(ContentType.JSON)
+                .get("/measurements/node[telemetry-sflow:dummy-node].nodeSnmp[]/load_avg_5min");
+        Assert.assertEquals(404, response.statusCode());
+
+        // Send flow packet to minion
+        sendNetflowPacket(minionSflowListenerAddress, "/flows/sflow2.dat"); // ? record
+
+        await().atMost(3, TimeUnit.MINUTES).pollInterval(10, TimeUnit.SECONDS).until(
+                () -> {
+                    final Response theResponse = RestAssured.given().accept(ContentType.JSON)
+                            .get("/measurements/node[telemetry-sflow:dummy-node].nodeSnmp[]/load_avg_5min");
+                    return theResponse.statusCode() == 200;
+                }
+        );
+    }
+
