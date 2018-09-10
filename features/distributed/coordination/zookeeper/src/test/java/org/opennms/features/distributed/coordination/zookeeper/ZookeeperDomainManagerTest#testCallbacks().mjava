@@ -1,0 +1,66 @@
+    /**
+     * Test that the registered callbacks are called when ZooKeeper informs the manager to take leadership. Also tests
+     * that only one connection attempt to ZooKeeper was initiated even though multiple registrations/deregistrations
+     * are occurring in parallel.
+     *
+     * @throws InterruptedException
+     */
+    @Test
+    public void testCallbacks() throws InterruptedException, TimeoutException, ExecutionException {
+        CuratorFramework mockClient = mock(CuratorFramework.class);
+        CuratorFrameworkFactory.Builder mockBuilder = mock(CuratorFrameworkFactory.Builder.class);
+        LeaderSelector mockLeaderSelector = mock(LeaderSelector.class);
+
+        when(mockBuilder.build()).thenReturn(mockClient);
+        doAnswer((invocation) -> connectionAttempts.incrementAndGet()).when(mockClient).start();
+        doAnswer((invocation) -> disconnectionAttempts.incrementAndGet()).when(mockClient).close();
+
+        manager = ZookeeperDomainManager.withMocks("test.domain", mockBuilder, mockLeaderSelector);
+        LeaderSelectorListener leaderSelectorListener = manager.getLeaderSelectorListener();
+
+        int numToRegister = 100;
+        IntStream.range(0, numToRegister).parallel().forEach(this::register);
+
+        // We want to wait until the connection from above actually occurred
+        await().atMost(10, TimeUnit.SECONDS).until(manager::isConnected);
+        // Wait some extra time to avoid a race condition where a thread was connecting right after we became connected
+        Thread.sleep(1000);
+        assertEquals(1, connectionAttempts.get());
+
+        // Simulate ZooKeeper telling our client it is leader
+        CompletableFuture<Void> leadershipFuture = CompletableFuture.runAsync(() -> {
+            try {
+                leaderSelectorListener.takeLeadership(null);
+            } catch (Exception e) {
+                throw new CompletionException(e);
+            }
+        });
+
+        // Every registrant should have went active
+        CompletableFuture.allOf(activeFutures.toArray(new CompletableFuture[numToRegister])).get(10,
+                TimeUnit.SECONDS);
+
+        if (leadershipFuture.isDone() || leadershipFuture.isCompletedExceptionally()) {
+            fail("Leadership thread did not block");
+        }
+
+        try {
+            leaderSelectorListener.stateChanged(null, ConnectionState.LOST);
+            fail("No cancel leadership exception was caught");
+        } catch (Exception e) {
+            assertThat(e, instanceOf(CancelLeadershipException.class));
+        }
+
+        // Every registrant should have went standby
+        CompletableFuture.allOf(standbyFutures.toArray(new CompletableFuture[numToRegister])).get(10,
+                TimeUnit.SECONDS);
+
+        manager.getRoleChangeHandlers().keySet().parallelStream().forEach(manager::deregister);
+        await().atMost(10, TimeUnit.SECONDS).until(() -> !manager.isConnected());
+        // Wait some extra time to avoid a race condition where a thread was disconnecting right after we became 
+        // disconnected
+        Thread.sleep(1000);
+        assertEquals(1, disconnectionAttempts.get());
+        assertThat(manager.isAnythingRegistered(), is(equalTo(false)));
+    }
+
