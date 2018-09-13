@@ -1,8 +1,7 @@
     @Test
-    public void verifySflow() throws Exception {
+    public void verifyAdapter() throws Exception {
         // Determine endpoints
         final InetSocketAddress sentinelSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.SENTINEL, 8301);
-        final InetSocketAddress minionSflowListenerAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.MINION, FlowStackIT.SFLOW_LISTENER_UDP_PORT, "udp");
         final InetSocketAddress opennmsHttpAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8980);
         final InetSocketAddress postgresqlAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.POSTGRES, 5432);
 
@@ -12,29 +11,38 @@
         RestAssured.basePath = "/rest";
         RestAssured.authentication = preemptive().basic(BASIC_AUTH_USERNAME, BASIC_AUTH_PASSWORD);
 
-        // The SFlow packet contains a node, which must be created in order to have the adapter store it to newts
-        // so a requisition is created first
-        createRequisition(opennmsHttpAddress, postgresqlAddress);
+        // The package send may contain a node, which must be created in order to have the adapter store it to newts
+        // so we check if this is the case and afterwards create the requisition
+        final RequisitionCreateInfo requisitionToCreate = getRequisitionToCreate();
+        if (requisitionToCreate != null) {
+            createRequisition(requisitionToCreate, opennmsHttpAddress, postgresqlAddress);
+        }
 
-        // Wait until a route for SFlow procession is actually started
-        new KarafShell(sentinelSshAddress).verifyLog((output) -> output.contains("Route: Sink.Server.Telemetry-SFlow started and consuming from: queuingservice://OpenNMS.Sink.Telemetry-SFlow"));
+        // Wait until a route for procession is actually started
+        new KarafShell(sentinelSshAddress).verifyLog(getSentinelReadyVerificationFunction());
 
-        // Now sentinel is up and running, we should re-sync the datasource,as the
-        // earlier created node may not be visible to sentinel yet.
-        new KarafShell(sentinelSshAddress).runCommand("nodecache:sync");
+        // If a new requisition was created, also probably new nodes are available.
+        // However, sentinel may not know about it yet, so we manually sync the InterfaceToNodeCache in order to
+        // "see" the new nodes and interfaces.
+        if (requisitionToCreate != null) {
+            new KarafShell(sentinelSshAddress).runCommand("nodecache:sync");
+        }
+
+        // Resource Id to verify against
+        final String resourceId = getResourceId();
 
         // Ensure no measurement data available
         final Response response = RestAssured.given().accept(ContentType.JSON)
-                .get("/measurements/node[telemetry-sflow:dummy-node].nodeSnmp[]/load_avg_5min");
+                .get("/measurements/" + resourceId);
         Assert.assertEquals(404, response.statusCode());
 
-        // Send flow packet to minion
-        sendNetflowPacket(minionSflowListenerAddress, "/flows/sflow2.dat"); // ? record
+        // Send packet to minion
+        sendTelemetryMessage();
 
         await().atMost(3, TimeUnit.MINUTES).pollInterval(10, TimeUnit.SECONDS).until(
                 () -> {
                     final Response theResponse = RestAssured.given().accept(ContentType.JSON)
-                            .get("/measurements/node[telemetry-sflow:dummy-node].nodeSnmp[]/load_avg_5min");
+                            .get("/measurements/" + resourceId);
                     return theResponse.statusCode() == 200;
                 }
         );
