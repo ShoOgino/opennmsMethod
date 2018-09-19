@@ -1,25 +1,24 @@
     @Override
     public OnmsTopology getTopology() {
         Map<Integer, OnmsNode> nodeMap=new HashMap<Integer, OnmsNode>();
-        m_nodeDao.findAll().stream().forEach(node -> nodeMap.put(node.getId(), node));
+        m_linkd.getQueryManager().getAllOnmsNodes().stream().forEach(node -> nodeMap.put(node.getId(), node));
         Map<Integer, CdpElement> cdpelementmap = new HashMap<Integer, CdpElement>();
         OnmsTopology topology = new OnmsTopology();
-        m_cdpElementDao.findAll().stream().forEach(cdpelement -> {
+        m_linkd.getQueryManager().getAllCdpElements().stream().forEach(cdpelement -> {
             cdpelementmap.put(cdpelement.getNode().getId(), cdpelement);
             OnmsTopologyVertex vertex = OnmsTopologyVertex.create(nodeMap.get(cdpelement.getNode().getId()));
             vertex.getProtocolSupported().add(OnmsTopologyProtocol.createFromTopologySupportedProtocol(ProtocolSupported.CDP));
             topology.getVertices().add(vertex);
         });
-        List<CdpLink> allLinks = m_cdpLinkDao.findAll();
+        
+        List<CdpLink> allLinks = m_linkd.getQueryManager().getAllCdpLinks();
         Set<Integer> parsed = new HashSet<Integer>();
 
         for (CdpLink sourceLink : allLinks) {
             if (parsed.contains(sourceLink.getId())) { 
                 continue;
             }
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("getCdpTopology: source: {} ", sourceLink.printTopology());
-            }
+            LOG.warn("getCdpTopology: source: {} ", sourceLink.printTopology());
             CdpElement sourceCdpElement = cdpelementmap.get(sourceLink.getNode().getId());
             CdpLink targetLink = null;
             for (CdpLink link : allLinks) {
@@ -34,23 +33,21 @@
 
                 if (sourceLink.getCdpInterfaceName().equals(link.getCdpCacheDevicePort()) && link.getCdpInterfaceName().equals(sourceLink.getCdpCacheDevicePort())) {
                     targetLink=link;
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("getCdpLinks: cdp: {}, target: {} ", link.getCdpCacheDevicePort(), targetLink.printTopology());
-                    }
+                    LOG.warn("getCdpLinks: cdp: {}, target: {} ", link.getCdpCacheDevicePort(), targetLink.printTopology());
                     break;
                 }
             }
                         
             if (targetLink == null) {
-                LOG.debug("getCdpLinks: cannot found target for source: '{}'", sourceLink.getId());
+                LOG.warn("getCdpLinks: cannot found target for source: '{}'", sourceLink.getId());
                 continue;
             }
                 
             parsed.add(sourceLink.getId());
             parsed.add(targetLink.getId());
-            OnmsTopologyVertex source = topology.getVertex(sourceLink.getNode().getNodeId());
-            OnmsTopologyVertex target = topology.getVertex(targetLink.getNode().getNodeId());
-            OnmsTopologyEdge edge = OnmsTopologyEdge.create(source, target);
+            OnmsTopologyVertex source = topology.getVertex(sourceLink.getNode().getId().toString());
+            OnmsTopologyVertex target = topology.getVertex(targetLink.getNode().getId().toString());
+            OnmsTopologyEdge edge = OnmsTopologyEdge.create(source, target, sourceLink.getCdpCacheIfIndex(),targetLink.getCdpCacheIfIndex());
             edge.setSourcePort(sourceLink.getCdpInterfaceName());
             edge.setSourceIfIndex(sourceLink.getCdpCacheIfIndex());
             edge.setSourceAddr(targetLink.getCdpCacheAddress());
