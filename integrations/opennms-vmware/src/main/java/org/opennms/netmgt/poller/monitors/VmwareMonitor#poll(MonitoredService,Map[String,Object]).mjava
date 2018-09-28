@@ -8,6 +8,16 @@
     @Override
     public PollStatus poll(MonitoredService svc, Map<String, Object> parameters) {
         final boolean ignoreStandBy = getKeyedBoolean(parameters, "ignoreStandBy", false);
+
+        final List<String> severitiesToReport =
+                Splitter.on(",")
+                    .trimResults()
+                    .omitEmptyStrings()
+                    .splitToList(getKeyedString(parameters, "reportAlarms", ""))
+                    .stream()
+                    .filter(e -> VALID_VSPHERE_ALARM_STATES.contains(e))
+                    .collect(Collectors.toList());
+
         final String vmwareManagementServer = getKeyedString(parameters, VMWARE_MANAGEMENT_SERVER_KEY, null);
         final String vmwareManagedEntityType = getKeyedString(parameters, VMWARE_MANAGED_ENTITY_TYPE_KEY, null);
         final String vmwareManagedObjectId = getKeyedString(parameters, VMWARE_MANAGED_OBJECT_ID_KEY, null);
@@ -23,10 +33,7 @@
             final VmwareViJavaAccess vmwareViJavaAccess = new VmwareViJavaAccess(vmwareManagementServer, vmwareMangementServerUsername, vmwareMangementServerPassword);
             try {
                 vmwareViJavaAccess.connect();
-            } catch (MalformedURLException e) {
-                logger.warn("Error connecting VMware management server '{}': '{}' exception: {} cause: '{}'", vmwareManagementServer, e.getMessage(), e.getClass().getName(), e.getCause());
-                return PollStatus.unavailable("Error connecting VMware management server '" + vmwareManagementServer + "'");
-            } catch (RemoteException e) {
+            } catch (MalformedURLException | RemoteException e) {
                 logger.warn("Error connecting VMware management server '{}': '{}' exception: {} cause: '{}'", vmwareManagementServer, e.getMessage(), e.getClass().getName(), e.getCause());
                 return PollStatus.unavailable("Error connecting VMware management server '" + vmwareManagementServer + "'");
             }
@@ -36,6 +43,7 @@
             }
 
             String powerState = "unknown";
+            Map<String, Long> alarmCountMap;
 
             if ("HostSystem".equals(vmwareManagedEntityType)) {
                 HostSystem hostSystem = vmwareViJavaAccess.getHostSystemByManagedObjectId(vmwareManagedObjectId);
@@ -51,6 +59,7 @@
                             return PollStatus.unknown("hostSystemPowerState=null");
                         } else {
                             powerState = hostSystemPowerState.toString();
+                            alarmCountMap = getUnacknowledgedAlarmCountForEntity(hostSystem, severitiesToReport);
                         }
                     }
                 }
@@ -69,6 +78,7 @@
                                 return PollStatus.unknown("virtualMachinePowerState=null");
                             } else {
                                 powerState = virtualMachinePowerState.toString();
+                                alarmCountMap = getUnacknowledgedAlarmCountForEntity(virtualMachine, severitiesToReport);
                             }
                         }
                     }
@@ -81,13 +91,16 @@
                 }
             }
 
+            final boolean anyUnacknowledgedAlarms = severitiesToReport.size() > 0 && alarmCountMap != null && alarmCountMap.size() > 0;
+            final String alarmCountString = getMessageForAlarmCountMap(alarmCountMap);
+
             if ("poweredOn".equals(powerState)) {
-                serviceStatus = PollStatus.available();
+                serviceStatus = anyUnacknowledgedAlarms ? PollStatus.unavailable(alarmCountString) : PollStatus.available();
             } else {
                 if (ignoreStandBy && "standBy".equals(powerState)) {
-                    serviceStatus = PollStatus.up();
+                    serviceStatus = anyUnacknowledgedAlarms ? PollStatus.unavailable(alarmCountString) : PollStatus.available();
                 } else {
-                    serviceStatus = PollStatus.unavailable("The system's state is '" + powerState + "'");
+                    serviceStatus = PollStatus.unavailable("The system's state is '" + powerState + "'" + (anyUnacknowledgedAlarms ? ", " + alarmCountString : ""));
                 }
             }
 
