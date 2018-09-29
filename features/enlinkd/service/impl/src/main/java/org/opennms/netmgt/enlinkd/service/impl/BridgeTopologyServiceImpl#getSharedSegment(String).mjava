@@ -1,0 +1,48 @@
+    @Override
+    public SharedSegment getSharedSegment(String mac) {
+        
+        LOG.debug("getHostNodeSharedSegment: founding segment for mac:{}", mac);
+
+        final List<BridgeMacLink> links =  m_bridgeMacLinkDao.findByMacAddress(mac).
+                stream().
+                filter(maclink -> maclink.getLinkType() ==  BridgeMacLinkType.BRIDGE_LINK).
+                collect(Collectors.toCollection(ArrayList::new));
+        
+        if (links.size() == 0 ) {
+            LOG.info("getHostNodeSharedSegment: no segment found for mac:{}", mac);
+            return SharedSegment.create();
+        }
+
+        if (links.size() > 1 ) {
+            LOG.error("getHostNodeSharedSegment: more then one segment for mac:{}", mac);
+            return SharedSegment.create();
+        }
+
+        BridgeMacLink link = links.iterator().next();
+
+        SharedSegment segment = null;
+
+        try {
+            for (BridgeBridgeLink bblink: m_bridgeBridgeLinkDao.getByDesignatedNodeIdBridgePort(link.getNode().getId(), link.getBridgePort())) {
+                if (segment == null) {
+                        segment = SharedSegment.create(bblink);
+                } else {
+                    segment.getBridgePortsOnSegment().add(BridgePort.getFromBridgeBridgeLink(bblink));
+                }
+            }
+        
+            for (BridgeMacLink maclink :m_bridgeMacLinkDao.findByNodeIdBridgePort(link.getNode().getId(), link.getBridgePort())) {
+                if (segment == null) {
+                    segment = SharedSegment.create(maclink);
+                } else {
+                    segment.getMacsOnSegment().add(maclink.getMacAddress());
+                }
+            }
+        } catch (Exception e) {
+            LOG.error("getHostNodeSharedSegment: cannot create shared segment {} for mac {} ", e.getMessage(), mac,e);
+            return SharedSegment.create();
+        }
+ 
+        return segment;
+    }
+
