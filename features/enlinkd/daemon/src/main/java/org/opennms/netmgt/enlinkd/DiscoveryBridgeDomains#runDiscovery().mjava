@@ -61,13 +61,38 @@
             try {
                 BroadcastDomain domain = find(nodeondomainbft.get(nodeid).keySet(),
                                               nodeMacs.get(nodeid));
-                DiscoveryBridgeTopology nodebridgetopology = m_linkd.getNodeBridgeDiscoveryTopology(domain);
-                for (Integer bridgeId : nodeondomainbft.get(nodeid).keySet()) {
-                    nodebridgetopology.addUpdatedBFT(bridgeId,
-                                                     nodeondomainbft.get(nodeid).get(bridgeId));
+                DiscoveryBridgeTopology nodebridgetopology = new DiscoveryBridgeTopology(domain);
+                
+                synchronized (domain) {
+                    for (Integer bridgeId : nodeondomainbft.get(nodeid).keySet()) {
+                        nodebridgetopology.addUpdatedBFT(bridgeId,
+                                                         nodeondomainbft.get(nodeid).get(bridgeId));
+                        m_bridgeTopologyService.updateBridgeOnDomain(domain,bridgeId);
+                    }
                 }
+                                
                 Callable<String> task = () -> {
-                    nodebridgetopology.runDiscovery();
+                    synchronized (domain) {
+                        
+                        Date now = new Date();
+                        LOG.debug("run: calculate start"); 
+                        nodebridgetopology.calculate();
+                        LOG.debug("run: calculate end"); 
+                    
+                        LOG.debug("run: save start");
+                        try {
+                            m_bridgeTopologyService.store(domain, now);
+                        } catch (BridgeTopologyException e) {
+                            LOG.error("run: saving topology failed: {}. {}", 
+                                      e.getMessage(),
+                                      e.printTopology());
+                        } catch (ConcurrentModificationException e) {
+                            LOG.error("run: bridge:[{}], saving topology failed: {}. {}", 
+                                      e.getMessage(),
+                                      domain.printTopology());
+                        }
+                        LOG.debug("run: save end");
+                    }
                     return "executed Task: " + nodebridgetopology.getInfo();
                 };
                 taskList.add(task);
