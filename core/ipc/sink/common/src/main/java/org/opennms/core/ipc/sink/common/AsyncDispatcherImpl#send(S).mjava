@@ -1,5 +1,21 @@
     @Override
     public CompletableFuture<S> send(S message) {
+         
+        // Check if OffHeap is enabled and if local queue is full or if OffHeap not Empty then write message to OffHeap.
+        if (useOffHeap && (asyncPolicy.getQueueSize() == getQueueSize() ||
+                ((offHeapAdapter != null) && !offHeapAdapter.isOffHeapEmpty()))) {
+            // Start drain thread before the first write to OffHeapQueue.
+            if (offHeapAdapter == null) {
+                this.offHeapAdapter = new OffHeapAdapter();
+                offHeapAdapterExecutor.execute(offHeapAdapter);
+                LOG.info("started drain thread for {}", sinkModule.getId());
+            }
+            try {
+                return offHeapAdapter.writeMessage(message);
+            } catch (WriteFailedException e) {
+                rateLimittedLogger.error("OffHeap write failed ", e);
+            }
+        }
         try {
             return CompletableFuture.supplyAsync(() -> {
                 syncDispatcher.send(message);
