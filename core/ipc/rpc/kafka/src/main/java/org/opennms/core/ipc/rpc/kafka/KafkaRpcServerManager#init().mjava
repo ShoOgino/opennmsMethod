@@ -9,23 +9,9 @@
         kafkaConfig.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getCanonicalName());
         kafkaConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getCanonicalName());
         // Retrieve all of the properties from org.opennms.core.ipc.rpc.kafka.cfg
-        final Dictionary<String, Object> properties = configAdmin.getConfiguration(KafkaRpcConstants.KAFKA_CONFIG_PID).getProperties();
-        if (properties != null) {
-            final Enumeration<String> keys = properties.keys();
-            while (keys.hasMoreElements()) {
-                final String key = keys.nextElement();
-                kafkaConfig.put(key, properties.get(key));
-            }
-        }
+        kafkaConfig.putAll(kafkaConfigProvider.getProperties());
         LOG.info("initializing the Kafka producer with: {}", kafkaConfig);
-        final ClassLoader currentClassLoader = Thread.currentThread().getContextClassLoader();
-        try {
-            // Class-loader hack for accessing the org.apache.kafka.common.serialization.ByteArraySerializer
-            Thread.currentThread().setContextClassLoader(null);
-            producer = new KafkaProducer<>(kafkaConfig);
-        } finally {
-            Thread.currentThread().setContextClassLoader(currentClassLoader);
-        }
+        producer = Utils.runWithGivenClassLoader(() -> new KafkaProducer<String, byte[]>(kafkaConfig), KafkaProducer.class.getClassLoader());
         // Configurable cache config if needed.
         String cacheConfig = kafkaConfig.getProperty("rpcid.cache.config", "maximumSize=1000,expireAfterWrite=10m");
         rpcIdCache = CacheBuilder.from(cacheConfig).build();
