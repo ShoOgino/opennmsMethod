@@ -1,9 +1,9 @@
-    private void sendRecord(Callable<ProducerRecord<String,byte[]>> callable, Consumer<RecordMetadata> callback) {
+    private void sendRecord(Callable<ProducerRecord<String, byte[]>> callable, Consumer<RecordMetadata> callback) {
         if (producer == null) {
             return;
         }
 
-        final ProducerRecord<String,byte[]> record;
+        final ProducerRecord<String, byte[]> record;
         try {
             record = callable.call();
         } catch (Exception e) {
@@ -11,14 +11,13 @@
             throw new RuntimeException(e);
         }
 
-        producer.send(record, (recordMetadata, e) -> {
-            if (e != null) {
-                LOG.warn("Failed to send record to producer: {}.", record, e);
-                return;
-            }
-            if (callback != null) {
-                callback.accept(recordMetadata);
-            }
-        });
+        // Rather than attempt to send, we instead queue the record to avoid blocking since KafkaProducer's send()
+        // method can block if Kafka is not available when metadata is attempted to be retrieved
+
+        // Any offer that fails due to capacity overflow will simply be dropped and will have to wait until the next
+        // sync to be processed so this is just a best effort attempt
+        if (!kafkaSendQueue.offer(new KafkaRecord(record, callback))) {
+            RATE_LIMITED_LOGGER.warn("Dropped a Kafka record due to queue capacity being full.");
+        }
     }
 
