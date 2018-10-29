@@ -1,0 +1,32 @@
+    private static void verifyHealthCheckWithDescription(final InetSocketAddress sshAddress, String healthCheckDescription) {
+        // Now wait until the health check passes
+        await().atMost(2, MINUTES)
+                .pollInterval(5, SECONDS)
+                .until(() -> {
+                    try (final SshClient sshClient = new SshClient(sshAddress, "admin", "admin")) {
+                        final PrintStream pipe = sshClient.openShell();
+                        pipe.println("health:check");
+                        pipe.println("logout");
+                        await().atMost(1, MINUTES).until(sshClient.isShellClosedCallable());
+
+                        // Read stdout and verify
+                        String shellOutput = CommandTestUtils.stripAnsiCodes(sshClient.getStdout());
+                        shellOutput = org.apache.commons.lang.StringUtils.substringAfter(shellOutput, "health:check");
+
+                        boolean healthCheckSuccess = false;
+                        for (String line : shellOutput.split("\\r?\\n")) {
+                            if (line.contains(healthCheckDescription)) {
+                                LOG.info("Health check result: {}", line);
+                            }
+                            if (line.contains("Success")) {
+                                healthCheckSuccess = true;
+                            }
+                        }
+                        return healthCheckSuccess;
+                    } catch (Exception ex) {
+                        LOG.error("Error while trying to verify health:check: {}", ex.getMessage());
+                        return false;
+                    }
+                });
+    }
+
