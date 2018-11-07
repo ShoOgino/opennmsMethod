@@ -1,0 +1,69 @@
+    @Override
+    public void run() {
+        final Set<String> allKarDependencies = features.stream()
+                .map(Feature::getKarDependency)
+                .collect(Collectors.toSet());
+        final Set<String> karsToWaitFor = new HashSet<>(allKarDependencies);
+
+        // Wait for all the .kars to be installed
+        while (true) {
+            try {
+                LOG.info("Waiting on {}", karsToWaitFor);
+                karsToWaitFor.removeAll(karService.list());
+                if (karsToWaitFor.isEmpty()) {
+                    break;
+                }
+            } catch (Exception e) {
+                LOG.warn("Enumerating installed .kar files failed. Will retry in {}ms.", KAR_LIST_SLEEP_MS, e);
+            }
+
+            try {
+                Thread.sleep(KAR_LIST_SLEEP_MS);
+            } catch (InterruptedException e) {
+                LOG.info("Interrupted. Stopping thread.");
+            }
+        }
+        LOG.info("All .kar dependencies are ready now.");
+
+        // Gather the set of known feature URIs
+        final Set<URI> availableFeatureUris = new HashSet<>();
+        try {
+            for (Repository repository : featuresService.listRepositories()) {
+                availableFeatureUris.add(repository.getURI());
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to retrieve feature repository details. " +
+                    "Assuming there are not feature repositories installed.", e);
+        }
+
+        // Ensure that all of the feature repositories for the .kar files are installed
+        final Set<URI> missingFeatureUris = new HashSet<>();
+        for (String karDependency : allKarDependencies) {
+            missingFeatureUris.addAll(getFeaturesUrisForKar(karDependency));
+        }
+        missingFeatureUris.removeAll(availableFeatureUris);
+        if (missingFeatureUris.size() < 1) {
+            LOG.debug("No missing feature repositories.");
+        } else {
+            LOG.info("Installing feature repositories: {}", missingFeatureUris);
+            for (URI featureUri : missingFeatureUris) {
+                try {
+                    featuresService.addRepository(featureUri);
+                } catch (Exception e) {
+                    LOG.error("Failed to install feature repository: {}", featureUri, e);
+                }
+            }
+        }
+
+        // All set, install the features
+        final Set<String> featuresToInstall = features.stream()
+                .map(Feature::toInstallString)
+                .collect(Collectors.toSet());
+        try {
+            LOG.info("Installing features: {}", featuresToInstall);
+            featuresService.installFeatures(featuresToInstall, EnumSet.noneOf(FeaturesService.Option.class));
+        } catch (Exception e) {
+            LOG.error("Failed to install one or more features.", e);
+        }
+    }
+
