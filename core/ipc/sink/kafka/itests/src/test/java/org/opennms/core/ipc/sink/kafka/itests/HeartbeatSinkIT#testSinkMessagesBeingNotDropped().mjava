@@ -1,0 +1,39 @@
+    @Test(timeout = 60000)
+    public void testSinkMessagesBeingNotDropped() throws Exception {
+        kafkaServer.stopKafkaServer();
+        HeartbeatModule module = new HeartbeatModule();
+
+        AtomicInteger heartbeatCount = new AtomicInteger();
+        final MessageConsumer<Heartbeat, Heartbeat> heartbeatConsumer = new MessageConsumer<Heartbeat, Heartbeat>() {
+            @Override
+            public SinkModule<Heartbeat, Heartbeat> getModule() {
+                return module;
+            }
+
+            @Override
+            public void handleMessage(final Heartbeat heartbeat) {
+                heartbeatCount.incrementAndGet();
+            }
+        };
+
+        try {
+            consumerManager.registerConsumer(heartbeatConsumer);
+
+            final SyncDispatcher<Heartbeat> localDispatcher = localMessageDispatcherFactory.createSyncDispatcher(module);
+            localDispatcher.send(new Heartbeat());
+            await().atMost(30, SECONDS).until(() -> heartbeatCount.get(), equalTo(1));
+
+            final SyncDispatcher<Heartbeat> dispatcher = remoteMessageDispatcherFactory.createSyncDispatcher(HeartbeatModule.INSTANCE);
+
+            Executors.newSingleThreadExecutor().execute(() -> dispatcher.send(new Heartbeat()));
+            Executors.newSingleThreadExecutor().execute(() -> dispatcher.send(new Heartbeat()));
+            // This sleep is needed for testing the timeout for kafka producer.send();
+            Thread.sleep(15000);
+            kafkaServer.startKafkaServer();
+            await().atMost(30, SECONDS).until(() -> heartbeatCount.get(), equalTo(3));
+        } finally {
+            consumerManager.unregisterConsumer(heartbeatConsumer);
+        }
+
+    }
+
