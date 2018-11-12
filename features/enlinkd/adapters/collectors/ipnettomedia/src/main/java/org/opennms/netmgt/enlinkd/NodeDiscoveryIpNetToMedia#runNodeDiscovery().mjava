@@ -1,0 +1,68 @@
+    protected void runNodeDiscovery() {
+
+    	final Date now = new Date(); 
+
+        IpNetToMediaTableTracker ipNetToMediaTableTracker = new IpNetToMediaTableTracker() {
+            public void processIpNetToMediaRow(final IpNetToMediaRow row) {
+                IpNetToMedia macep = row.getIpNetToMedia();
+                if (macep.getPhysAddress() != null && 
+                        macep.getNetAddress() != null && 
+                        macep.getSourceIfIndex() != null &&
+                        (macep.getIpNetToMediaType() == IpNetToMediaType.IPNETTOMEDIA_TYPE_DYNAMIC
+                        || macep.getIpNetToMediaType() == IpNetToMediaType.IPNETTOMEDIA_TYPE_STATIC)) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("processIpNetToMediaRow: node [{}], mac address {} and ip {} mediatype {}. saving",
+                              getNodeId(),
+                              macep.getPhysAddress(), 
+                              str(macep.getNetAddress()),
+                              macep.getIpNetToMediaType());
+                    }
+                    m_ipNetToMediaTopologyService.store(getNodeId(), macep);
+                    return;
+                } 
+                if (macep.getPhysAddress() == null && macep.getNetAddress() == null) {
+                    LOG.debug("processIpNetToMediaRow: node [{}], null:null:{}. ip and mac addresses null. skipping",
+                              getNodeId(),
+                              macep.getIpNetToMediaType());
+                    return;
+                } 
+                if (macep.getPhysAddress() == null) {
+                        LOG.debug("processIpNetToMediaRow: node [{}], null:{}:{}. mac address null. skipping",
+                                  getNodeId(),
+                                  str(macep.getNetAddress()),
+                                  macep.getIpNetToMediaType());
+                        return;
+                } 
+                if (macep.getNetAddress() == null) {
+                    LOG.debug("processIpNetToMediaRow: node [{}], {}:null:{}. ip address null. skipping",
+                             getNodeId(),
+                             macep.getPhysAddress(), 
+                             macep.getIpNetToMediaType());
+                    return;
+                } 
+                LOG.debug("processIpNetToMediaRow: node [{}],  {}:{}:{}:{}. not valid. skipping",
+                             getNodeId(),
+                             macep.getPhysAddress(), 
+                             str(macep.getNetAddress()),
+                             macep.getIpNetToMediaType(),
+                             macep.getSourceIfIndex());
+            }
+        };
+		
+        SnmpAgentConfig peer = getSnmpAgentConfig();
+        try {
+            getLocationAwareSnmpClient().walk(peer,
+                                                      ipNetToMediaTableTracker).withDescription("ipNetToMedia").withLocation(getLocation()).execute().get();
+        } catch (ExecutionException e) {
+            LOG.debug("run: node [{}]: ExecutionException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+        } catch (final InterruptedException e) {
+            LOG.debug("run: node [{}]: InterruptedException: {}",
+                     getNodeId(),e.getMessage());
+            return;       
+        }
+
+        m_ipNetToMediaTopologyService.reconcile(getNodeId(), now);
+    }
+
