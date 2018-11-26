@@ -8,17 +8,15 @@
             LOG.info("Creating new consumer for pid: {}", pid);
         }
 
-        // Convert the dictionary to a map
-        final Map<String, String> parameters = MapUtils.fromDict(properties);
+        // Build the queue and adapter definitions
+        final PropertyTree propertyTree = PropertyTree.from(properties);
+        final QueueDefinition queueDefinition = new MapBasedQueueDef(propertyTree);
+        final List<AdapterDefinition> adapterDefinitions = new AdapterDefinitionParser().parse(propertyTree);
 
-        // Build the protocol and adapter definitions
-        final Protocol protocolDef = new MapBasedProtocolDef(parameters);
-        final List<Adapter> adapterDefinitions = new AdapterConfigurationParser().parse(parameters);
-
-        // Register health check
+        // Register health checks
         healthChecksById.putIfAbsent(pid, new ArrayList<>());
         final List<AdapterHealthCheck> healthChecks = new ArrayList<>(); // we need this temporarily, to mark the health check as success or failed afterwards
-        for (Adapter eachAdapter : adapterDefinitions) {
+        for (AdapterDefinition eachAdapter : adapterDefinitions) {
             final AdapterHealthCheck healthCheck = new AdapterHealthCheck(eachAdapter);
             healthChecks.add(healthCheck);
 
@@ -28,12 +26,12 @@
 
         try {
             // Create the Module
-            final TelemetrySinkModule sinkModule = new TelemetrySinkModule(protocolDef);
+            final TelemetrySinkModule sinkModule = new TelemetrySinkModule(queueDefinition);
             sinkModule.setDistPollerDao(distPollerDao);
 
             // Create the consumer
-            final TelemetryMessageConsumer consumer = new TelemetryMessageConsumer(protocolDef, adapterDefinitions, sinkModule);
-            consumer.setAdapterRegistry(telemetryAdapterRegistry);
+            final TelemetryMessageConsumer consumer = new TelemetryMessageConsumer(queueDefinition, adapterDefinitions, sinkModule);
+            consumer.setRegistry(telemetryRegistry);
             consumer.init();
             messageConsumerManager.registerConsumer(consumer);
             consumersById.put(pid, consumer);
