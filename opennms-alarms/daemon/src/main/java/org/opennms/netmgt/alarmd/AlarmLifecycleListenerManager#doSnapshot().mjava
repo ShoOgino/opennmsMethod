@@ -1,13 +1,26 @@
-    private void doSnapshot() {
+    protected void doSnapshot() {
         if (listeners.size() < 1) {
             return;
         }
-        template.execute(new TransactionCallbackWithoutResult() {
-            @Override
-            protected void doInTransactionWithoutResult(TransactionStatus status) {
-                final List<OnmsAlarm> allAlarms = alarmDao.findAll();
-                listeners.forEach(l -> l.handleAlarmSnapshot(allAlarms));
+
+        final AtomicLong numAlarms = new AtomicLong(-1);
+        final long systemMillisBefore = System.currentTimeMillis();
+        snapshotRwLock.writeLock().lock();
+        try {
+            template.execute(new TransactionCallbackWithoutResult() {
+                @Override
+                protected void doInTransactionWithoutResult(TransactionStatus status) {
+                    final List<OnmsAlarm> allAlarms = alarmDao.findAll();
+                    numAlarms.set(allAlarms.size());
+                    forEachListener(l -> l.handleAlarmSnapshot(allAlarms));
+                }
+            });
+        } finally {
+            snapshotRwLock.writeLock().unlock();
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Alarm snapshot for {} alarms completed. Other callbacks were blocked for a total of {}ms.",
+                        numAlarms.get(), System.currentTimeMillis() - systemMillisBefore);
             }
-        });
+        }
     }
 
