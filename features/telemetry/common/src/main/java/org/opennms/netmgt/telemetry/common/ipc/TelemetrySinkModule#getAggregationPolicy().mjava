@@ -1,0 +1,45 @@
+    @Override
+    public AggregationPolicy<TelemetryMessage, TelemetryProtos.TelemetryMessageLog, TelemetryProtos.TelemetryMessageLog.Builder> getAggregationPolicy() {
+        final String systemId = distPollerDao.whoami().getId();
+        final String systemLocation = distPollerDao.whoami().getLocation();
+        return new AggregationPolicy<TelemetryMessage, TelemetryProtos.TelemetryMessageLog, TelemetryProtos.TelemetryMessageLog.Builder>() {
+            @Override
+            public int getCompletionSize() {
+                return TelemetrySinkModule.this.queueConfig.getBatchSize().orElse(DEFAULT_BATCH_SIZE);
+            }
+
+            @Override
+            public int getCompletionIntervalMs() {
+                return TelemetrySinkModule.this.queueConfig.getBatchIntervalMs().orElse(DEFAULT_BATCH_INTERVAL_MS);
+            }
+
+            @Override
+            public Object key(TelemetryMessage telemetryMessage) {
+                return telemetryMessage.getSource();
+            }
+
+            @Override
+            public TelemetryProtos.TelemetryMessageLog.Builder aggregate(TelemetryProtos.TelemetryMessageLog.Builder accumulator, TelemetryMessage message) {
+                if (accumulator == null) {
+                    accumulator = TelemetryProtos.TelemetryMessageLog.newBuilder()
+                            .setLocation(systemLocation)
+                            .setSystemId(systemId)
+                            .setSourceAddress(message.getSource().getHostString())
+                            .setSourcePort(message.getSource().getPort());
+                }
+                final TelemetryProtos.TelemetryMessage messageDto = TelemetryProtos.TelemetryMessage.newBuilder()
+                        .setTimestamp(message.getReceivedAt().getTime())
+                        .setBytes(ByteString.copyFrom(message.getBuffer()))
+                        .build();
+                // Append
+                accumulator.addMessage(messageDto);
+                return accumulator;
+            }
+
+            @Override
+            public TelemetryProtos.TelemetryMessageLog build(TelemetryProtos.TelemetryMessageLog.Builder accumulator) {
+                return accumulator.build();
+            }
+        };
+    }
+
