@@ -16,7 +16,36 @@
 
             final Set<Integer> alarmIdsToAdd = Sets.difference(alarmIdsInDb, alarmIdsInWorkingMem).immutableCopy();
             final Set<Integer> alarmIdsToRemove = Sets.difference(alarmIdsInWorkingMem, alarmIdsInDb).immutableCopy();
-            final Set<Integer> alarmIdsToUpdate = Sets.intersection(alarmIdsInWorkingMem, alarmIdsInDb).immutableCopy();
+            final Set<Integer> alarmIdsToUpdate = Sets.intersection(alarmIdsInWorkingMem, alarmIdsInDb)
+                    .stream()
+                    .filter(alarmId -> {
+                        final AlarmAndFact alarmAndFact = alarmsById.get(alarmId);
+                        final OnmsAlarm alarmInMem = alarmAndFact.getAlarm();
+                        final OnmsAlarm alarmInDb = alarmsInDbById.get(alarmId);
+                        // Only update the alarms if they are different
+                        return shouldUpdateAlarmForSnapshot(alarmInMem, alarmInDb);
+                    })
+                    .collect(Collectors.toSet());
+
+            // Log details that help explain what actions are being performed, if any
+            if (LOG.isDebugEnabled()) {
+                if (!alarmIdsToAdd.isEmpty() || !alarmIdsToRemove.isEmpty() || !alarmIdsToUpdate.isEmpty()) {
+                    LOG.debug("Adding {} alarms, removing {} alarms and updating {} alarms for snapshot.",
+                            alarmIdsToAdd.size(), alarmIdsToRemove.size(), alarmIdsToUpdate.size());
+                } else {
+                    LOG.debug("No actions to perform for alarm snapshot.");
+                }
+                // When TRACE is enabled, include diagnostic information to help explain why
+                // the alarms are being updated
+                if (LOG.isTraceEnabled()) {
+                    for (Integer alarmIdToUpdate : alarmIdsToUpdate) {
+                        LOG.trace("Updating alarm with id={}. Alarm from DB: {} vs Alarm from memory: {}",
+                                alarmIdToUpdate,
+                                alarmsInDbById.get(alarmIdToUpdate),
+                                alarmsById.get(alarmIdToUpdate));
+                    }
+                }
+            }
 
             for (Integer alarmIdToRemove : alarmIdsToRemove) {
                 handleDeletedAlarmNoLock(alarmIdToRemove);
@@ -27,6 +56,8 @@
             for (Integer alarmIdToUpdate : alarmIdsToUpdate) {
                 handleNewOrUpdatedAlarmNoLock(alarmsInDbById.get(alarmIdToUpdate));
             }
+
+            LOG.debug("Done handling snapshot.");
         } finally {
             unlockIfNotFiring();
         }
