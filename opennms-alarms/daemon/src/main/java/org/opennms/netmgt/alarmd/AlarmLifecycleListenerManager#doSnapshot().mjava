@@ -4,9 +4,8 @@
         }
 
         final AtomicLong numAlarms = new AtomicLong(-1);
-        final long systemMillisBefore = System.currentTimeMillis();
+        final long systemMillisBeforeSnasphot = System.currentTimeMillis();
         final AtomicLong systemMillisAfterLoad = new AtomicLong(-1);
-        snapshotRwLock.writeLock().lock();
         try {
             template.execute(new TransactionCallbackWithoutResult() {
                 @Override
@@ -16,19 +15,23 @@
                     // Save the timestamp after the load, so we can differentiate between how long it took
                     // to load the alarms and how long it took to invoke the callbacks
                     systemMillisAfterLoad.set(System.currentTimeMillis());
-                    forEachListener(l -> l.handleAlarmSnapshot(allAlarms));
+                    forEachListener(l -> {
+                        LOG.debug("Calling handleAlarmSnapshot on listener: {}", l);
+                        l.handleAlarmSnapshot(allAlarms, systemMillisBeforeSnasphot);
+                        LOG.debug("Done calling listener.");
+                    });
                 }
             });
         } finally {
-            snapshotRwLock.writeLock().unlock();
             if (LOG.isDebugEnabled()) {
                 final long now = System.currentTimeMillis();
                 LOG.debug("Alarm snapshot for {} alarms completed. Spent {}ms loading the alarms. " +
-                                "Other callbacks were blocked for a total of {}ms.",
+                                "Snapshot processing took a total of of {}ms.",
                         numAlarms.get(),
-                        now - systemMillisAfterLoad.get(),
-                        now - systemMillisBefore);
+                        systemMillisAfterLoad.get() - systemMillisBeforeSnasphot,
+                        now - systemMillisBeforeSnasphot);
             }
+            forEachListener(l -> l.postHandleAlarmSnapshot(systemMillisBeforeSnasphot));
         }
     }
 
