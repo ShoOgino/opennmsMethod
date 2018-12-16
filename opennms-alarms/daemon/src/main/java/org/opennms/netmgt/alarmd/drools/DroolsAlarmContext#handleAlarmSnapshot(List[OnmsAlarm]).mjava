@@ -1,5 +1,5 @@
     @Override
-    public void handleAlarmSnapshot(List<OnmsAlarm> alarms, long systemMillisBeforeSnapshot) {
+    public void handleAlarmSnapshot(List<OnmsAlarm> alarms) {
         if (!isStarted()) {
             LOG.debug("Ignoring alarm snapshot. Drools session is stopped.");
             return;
@@ -17,20 +17,17 @@
         final Set<Integer> alarmIdsInDb = alarmsInDbById.keySet();
         final Set<Integer> alarmIdsInWorkingMem = alarmsById.keySet();
 
-        // Remove deleted alarm entries that happened before the snapshot
-        stateTracker.expireEntriesBefore(systemMillisBeforeSnapshot);
-
         final Set<Integer> alarmIdsToAdd = Sets.difference(alarmIdsInDb, alarmIdsInWorkingMem).stream()
                 // The snapshot contains an alarm which we don't have in working memory.
                 // It is possible that the alarm was in fact deleted some time after the
                 // snapshot was processed. We should only add it, if we did not explicitly
                 // delete the alarm after the snapshot was taken.
-                .filter(alarmId -> !stateTracker.wasAlarmWithIdDeletedOnOrAfter(alarmId, systemMillisBeforeSnapshot))
+                .filter(alarmId -> !stateTracker.wasAlarmWithIdDeleted(alarmId))
                 .collect(Collectors.toSet());
         final Set<Integer> alarmIdsToRemove = Sets.difference(alarmIdsInWorkingMem, alarmIdsInDb).stream()
                 // We have an alarm in working memory that is not contained in the snapshot.
                 // Only remove it from memory if the fact we have dates before the snapshot.
-                .filter(alarmId -> !stateTracker.wasAlarmWithIdUpdatedOnOrAfter(alarmId, systemMillisBeforeSnapshot))
+                .filter(alarmId -> !stateTracker.wasAlarmWithIdUpdated(alarmId))
                 .collect(Collectors.toSet());
         final Set<Integer> alarmIdsToUpdate = Sets.intersection(alarmIdsInWorkingMem, alarmIdsInDb).stream()
                 // This stream contains the set of all alarms which are both in the snapshot
@@ -38,7 +35,7 @@
                 .filter(alarmId -> {
                     final AlarmAndFact alarmAndFact = alarmsById.get(alarmId);
                     // Don't bother updating the alarm in memory if the fact we have is more recent than the snapshot
-                    if (stateTracker.wasAlarmWithIdUpdatedOnOrAfter(alarmId, systemMillisBeforeSnapshot)) {
+                    if (stateTracker.wasAlarmWithIdUpdated(alarmId)) {
                         return false;
                     }
                     final OnmsAlarm alarmInMem = alarmAndFact.getAlarm();
