@@ -1,0 +1,66 @@
+    public static void stressEventd(final SnmpTrapBuilder builder) throws ClassNotFoundException, SQLException, IllegalStateException, InterruptedException {
+
+        Connection connection = createConnection();
+        PoolingConnection pool = new PoolingConnection(connection);
+        if (m_deleteAllEvents) {
+            System.out.println("Delete events from opennms DB");
+            deleteAllEvents(connection);
+        }
+
+        int initialEventCount = getEventCount(pool).intValue();
+        System.out.println("Initial Event Count: " + initialEventCount);
+
+        if (m_batchCount < 1) {
+            throw new IllegalArgumentException("Batch count of < 1 is not allowed.");
+        } else if (m_batchCount > m_trapCount) {
+            throw new IllegalArgumentException("Batch count is > than trap count.");
+        }
+
+        long startTimeInMillis = Calendar.getInstance().getTimeInMillis();
+        int trapsSent = sendTraps(builder, pool, startTimeInMillis, initialEventCount);
+
+        int currentEventCount = getEventCount(pool) - initialEventCount;
+        int finalEventCount = currentEventCount;
+        long beginPersistenceCheck = Calendar.getInstance().getTimeInMillis();
+
+        System.out.println("Watching Event Queue to complete persistence for " + m_persistWait + " milliseconds...");
+        int equalCount = 0;
+        while (currentEventCount < trapsSent) {
+            Thread.sleep(1000);
+            m_sleepMillis += 1000;
+
+            currentEventCount = getEventCount(pool).intValue() - initialEventCount;
+
+            if (currentEventCount == finalEventCount) {
+                equalCount++;
+            } else {
+                equalCount = 0;
+            }
+
+            finalEventCount = currentEventCount;
+
+            System.out.println("Persist wait time (secs): " + ((System.currentTimeMillis() - beginPersistenceCheck) / 1000));
+            System.out.println("Current Event count: " + Integer.valueOf(finalEventCount).toString());
+
+            if (Calendar.getInstance().getTimeInMillis() - beginPersistenceCheck > m_persistWait) {
+                System.out.println("Waited " + ((System.currentTimeMillis() - beginPersistenceCheck) / 1000) + " millisecs for queue to flush.  Apparently missed " + (trapsSent - finalEventCount)
+                        + " traps :(");
+                break;
+            }
+
+            if (equalCount > 3) {
+                System.out.println("Appears that event persistence is completed.");
+                break;
+            }
+        }
+
+        if (m_deleteTestEvents) {
+            deleteTestEvents();
+        }
+
+        pool.close();
+        connection.close();
+
+        systemReport(startTimeInMillis, trapsSent, finalEventCount);
+    }
+
