@@ -1,27 +1,34 @@
     @Before
-    public void setUp() {
-        dac = new DroolsAlarmContext();
+    public void setUp() throws IOException {
+        // Copy default set of rules to a new folder
+        File rulesFolder = temporaryFolder.newFolder("rules");
+        FileUtils.copyDirectory(DroolsAlarmContext.getDefaultRulesFolder(), rulesFolder);
+
+        // Copy the rules from the example folder alongside the rules in our temporary folder
+        FileUtils.copyFile(Paths.get(ConfigFileConstants.getHome(), "etc", "examples",
+                "alarmd", "drools-rules.d", "nag.drl").toFile(),
+                new File(rulesFolder, "nag.drl"));
+
+        // Wire up the engine with mocks
+        dac = new DroolsAlarmContext(rulesFolder);
         dac.setUsePseudoClock(true);
         dac.setUseManualTick(true);
-        dac.setAlarmTicketerService(ticketer);
 
         MockTransactionTemplate transactionTemplate = new MockTransactionTemplate();
         transactionTemplate.afterPropertiesSet();
         dac.setTransactionTemplate(transactionTemplate);
 
         alarmDao = mock(AlarmDao.class);
-        when(alarmDao.findAll()).thenReturn(Collections.emptyList());
         dac.setAlarmDao(alarmDao);
 
         DefaultAlarmService alarmService = new DefaultAlarmService();
         alarmService.setAlarmDao(alarmDao);
+        eventForwarder = mock(EventForwarder.class);
+        alarmService.setEventForwarder(eventForwarder);
 
-        acknowledgmentDao = mock(AcknowledgmentDao.class);
+        AcknowledgmentDao acknowledgmentDao = mock(AcknowledgmentDao.class);
         when(acknowledgmentDao.findLatestAckForRefId(any(Integer.class))).thenReturn(Optional.empty());
         alarmService.setAcknowledgmentDao(acknowledgmentDao);
-
-        EventForwarder eventForwarder = mock(EventForwarder.class);
-        alarmService.setEventForwarder(eventForwarder);
 
         AlarmEntityNotifierImpl alarmEntityNotifier = mock(AlarmEntityNotifierImpl.class);
         alarmService.setAlarmEntityNotifier(alarmEntityNotifier);
@@ -29,11 +36,5 @@
         dac.setAcknowledgmentDao(acknowledgmentDao);
 
         dac.start();
-
-        // Wait until the seed thread has completed - it will hold the session lock
-        // after start returns, so it is sufficient to wait until we can acquire
-        // that same lock ourselves
-        dac.getLock().lock();
-        dac.getLock().unlock();
     }
 
