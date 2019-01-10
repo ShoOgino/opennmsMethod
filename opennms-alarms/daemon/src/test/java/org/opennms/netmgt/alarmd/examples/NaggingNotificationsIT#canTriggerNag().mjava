@@ -1,0 +1,59 @@
+    @Test
+    public void canTriggerNag() {
+        OnmsAlarm trigger = createNagAlarmTrigger(1, "uei.opennms.org/nag/notification");
+        when(alarmDao.get(trigger.getId())).thenReturn(trigger);
+        dac.getClock().advanceTime( 16, TimeUnit.SECONDS );
+        dac.handleNewOrUpdatedAlarm(trigger);
+        // t = 00:16.0000
+        dac.tick();
+
+        // Advance the clock only 1 ms and verify that no nagging events have been generated yet
+        dac.getClock().advanceTime( 1, TimeUnit.MILLISECONDS );
+        // t = 00:16.0001
+        dac.tick();
+        verify(eventForwarder, times(0)).sendNow(any(Event.class));
+
+        // Advance the clock sufficiently for a first nag event to generate
+        dac.getClock().advanceTime( 45, TimeUnit.SECONDS );
+        // t = 01:01.0001
+        dac.tick();
+
+        // Verify
+        ArgumentCaptor<Event> eventCaptor = ArgumentCaptor.forClass(Event.class);
+        verify(eventForwarder).sendNow(eventCaptor.capture());
+        Event event = eventCaptor.getValue();
+        assertThat(event.getTime().getTime(), equalTo(61001L));
+        assertThat(event.getUei(), equalTo("uei.opennms.org/nag/notification"));
+        reset(eventForwarder);
+
+        // Advance the clock sufficiently for a second nag event to generate
+        dac.getClock().advanceTime( 30, TimeUnit.SECONDS );
+        // t = 01:31.0001
+        dac.tick();
+
+        // Verify
+        verify(eventForwarder).sendNow(eventCaptor.capture());
+        event = eventCaptor.getValue();
+        assertThat(event.getTime().getTime(), equalTo(91001L));
+        assertThat(event.getUei(), equalTo("uei.opennms.org/nag/notification"));
+        reset(eventForwarder);
+
+        // Advance the clock only 1 ms and verify that no nagging events have been generated yet
+        dac.getClock().advanceTime( 1, TimeUnit.MILLISECONDS );
+        // t = 01:31.0002
+        dac.tick();
+        verify(eventForwarder, times(0)).sendNow(any(Event.class));
+
+        // Delete the alarm
+        dac.handleDeletedAlarm(trigger.getId(), trigger.getReductionKey());
+
+        // Tick tock far in the future
+        dac.getClock().advanceTime( 1, TimeUnit.SECONDS );
+        dac.tick();
+        dac.getClock().advanceTime( 1, TimeUnit.DAYS );
+        dac.tick();
+
+        // No mo' calls
+        verify(eventForwarder, times(0)).sendNow(any(Event.class));
+    }
+

@@ -4,23 +4,35 @@
         }
 
         final AtomicLong numAlarms = new AtomicLong(-1);
-        final long systemMillisBefore = System.currentTimeMillis();
-        snapshotRwLock.writeLock().lock();
+        final long systemMillisBeforeSnasphot = System.currentTimeMillis();
+        final AtomicLong systemMillisAfterLoad = new AtomicLong(-1);
         try {
+            forEachListener(AlarmLifecycleListener::preHandleAlarmSnapshot);
             template.execute(new TransactionCallbackWithoutResult() {
                 @Override
                 protected void doInTransactionWithoutResult(TransactionStatus status) {
                     final List<OnmsAlarm> allAlarms = alarmDao.findAll();
                     numAlarms.set(allAlarms.size());
-                    forEachListener(l -> l.handleAlarmSnapshot(allAlarms));
+                    // Save the timestamp after the load, so we can differentiate between how long it took
+                    // to load the alarms and how long it took to invoke the callbacks
+                    systemMillisAfterLoad.set(System.currentTimeMillis());
+                    forEachListener(l -> {
+                        LOG.debug("Calling handleAlarmSnapshot on listener: {}", l);
+                        l.handleAlarmSnapshot(allAlarms);
+                        LOG.debug("Done calling listener.");
+                    });
                 }
             });
         } finally {
-            snapshotRwLock.writeLock().unlock();
             if (LOG.isDebugEnabled()) {
-                LOG.debug("Alarm snapshot for {} alarms completed. Other callbacks were blocked for a total of {}ms.",
-                        numAlarms.get(), System.currentTimeMillis() - systemMillisBefore);
+                final long now = System.currentTimeMillis();
+                LOG.debug("Alarm snapshot for {} alarms completed. Spent {}ms loading the alarms. " +
+                                "Snapshot processing took a total of of {}ms.",
+                        numAlarms.get(),
+                        systemMillisAfterLoad.get() - systemMillisBeforeSnasphot,
+                        now - systemMillisBeforeSnasphot);
             }
+            forEachListener(AlarmLifecycleListener::postHandleAlarmSnapshot);
         }
     }
 
