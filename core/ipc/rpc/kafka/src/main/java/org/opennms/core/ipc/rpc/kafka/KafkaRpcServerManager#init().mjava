@@ -12,8 +12,19 @@
         kafkaConfig.putAll(kafkaConfigProvider.getProperties());
         LOG.info("initializing the Kafka producer with: {}", kafkaConfig);
         producer = Utils.runWithGivenClassLoader(() -> new KafkaProducer<String, byte[]>(kafkaConfig), KafkaProducer.class.getClassLoader());
-        // Configurable cache config if needed.
-        String cacheConfig = kafkaConfig.getProperty("rpcid.cache.config", "maximumSize=1000,expireAfterWrite=10m");
-        rpcIdCache = CacheBuilder.from(cacheConfig).build();
+        // Configurable cache config.
+        maxBufferSize = KafkaRpcConstants.getMaxBufferSize(kafkaConfig);
+        // Thread to expire RpcId from rpcIdQueue.
+        delayQueueExecutor.execute(() -> {
+            while(true) {
+                try {
+                    RpcId rpcId = rpcIdQueue.take();
+                    messageCache.remove(rpcId.getRpcId());
+                } catch (InterruptedException e) {
+                    LOG.error("Delay Queue has been interrupted ", e);
+                    break;
+                }
+            }
+        });
     }
 
