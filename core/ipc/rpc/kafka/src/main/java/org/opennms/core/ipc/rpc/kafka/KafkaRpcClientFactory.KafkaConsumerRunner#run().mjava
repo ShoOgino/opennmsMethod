@@ -29,8 +29,26 @@
                         ResponseCallback responseCb = rpcResponseMap.get(record.key());
                         if (responseCb != null) {
                             RpcMessageProtos.RpcMessage rpcMessage = RpcMessageProtos.RpcMessage
-                                                                         .parseFrom(record.value());
-                            responseCb.sendResponse(rpcMessage.getRpcContent().toStringUtf8());
+                                    .parseFrom(record.value());
+                            ByteString rpcContent = rpcMessage.getRpcContent();
+                            // For larger messages which get split into multiple chunks, cache them until all of them arrive.
+                            if (rpcMessage.getTotalChunks() > 1) {
+                                String rpcId = rpcMessage.getRpcId();
+                                ByteString byteString = messageCache.get(rpcId);
+                                if (byteString != null) {
+                                    messageCache.put(rpcId, byteString.concat(rpcMessage.getRpcContent()));
+                                } else {
+                                    messageCache.put(rpcId, rpcMessage.getRpcContent());
+                                }
+                                if (rpcMessage.getTotalChunks() != rpcMessage.getCurrentChunkNumber() + 1) {
+                                    continue;
+                                }
+                                rpcContent = messageCache.get(rpcId);
+                            }
+                            if (LOG.isTraceEnabled()) {
+                                LOG.trace("Received RPC response for id {}",  rpcMessage.getRpcId());
+                            }
+                            responseCb.sendResponse(rpcContent.toStringUtf8());
                         } else {
                             LOG.warn("Received a response for request with ID:{}, but no outstanding request was found with this id, The request may have timed out.",
                                     record.key());
