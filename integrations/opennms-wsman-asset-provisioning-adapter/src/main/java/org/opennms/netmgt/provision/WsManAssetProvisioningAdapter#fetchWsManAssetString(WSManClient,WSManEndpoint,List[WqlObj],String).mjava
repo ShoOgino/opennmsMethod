@@ -1,0 +1,52 @@
+        private static String fetchWsManAssetString(final WSManClient client, final WSManEndpoint endpoint, final List<WqlObj> wqlObjs, final String formatString) {
+
+                final List<String> aliases = new ArrayList<>();
+                final List<String> wqls = new ArrayList<>();
+                final List<String> resourceUris = new ArrayList<>();
+                final List<String> values = new ArrayList<>();
+                for (final WqlObj wqlobj : wqlObjs) {
+                	List<Node> nodes = Lists.newLinkedList();
+                        aliases.add(wqlobj.getAlias());
+                        wqls.add(wqlobj.getWql());
+                        resourceUris.add(wqlobj.getResourceUri());
+			client.enumerateAndPullUsingFilter(wqlobj.getResourceUri(), WSManConstants.XML_NS_WQL_DIALECT, wqlobj.getWql(), nodes, true);
+                        if (!nodes.isEmpty()) {
+                        	values.add(nodes.get(0).getTextContent());
+                        } else {
+				values.add(null);
+			}
+                }
+                if (values.size() == aliases.size() && values.size() == resourceUris.size() && values.size() == wqls.size()) {
+                        final Properties substitutions = new Properties();
+                        boolean foundAValue = false;
+                        for (int i = 0; i < values.size(); i++) {
+                                if (values.get(i) == null) {
+                                        // No value for this WQL
+                                        continue;
+                                }
+                                foundAValue = true;
+                                substitutions.setProperty(
+                                                aliases.get(i),
+                                                values.get(i)
+                                );
+                        }
+
+                        if (!foundAValue) {
+                                LOG.debug("fetchWsManAssetString: Failed to fetch any WsMan values for endpoint {}", endpoint.getUrl());
+                                throw new MissingFormatArgumentException("fetchWsManAssetString: Failed to fetch any WsMan values for endpoint " + endpoint.getUrl());
+                        } else {
+                                LOG.debug("fetchWsManAssetString: Fetched asset properties from WsMan agent:\n {}", formatPropertiesAsString(substitutions));
+                        }
+
+                        if (values.size() != substitutions.size()) {
+                            LOG.warn("fetchWsManAssetString: Unexpected number of properties returned from WsMan WQL:\n {}", formatPropertiesAsString(substitutions));
+                        }
+
+                        return PropertiesUtils.substitute(formatString, substitutions);
+                } else {
+                        LOG.warn("fetchWsManAssetString: Invalid number of parameters returned: {} != {}", aliases.size(), values.size());
+                        throw new MissingFormatArgumentException("fetchWsManAssetString: Invalid number of parameters returned: " + values.size() + " != " + aliases.size());
+                }
+
+        }
+
