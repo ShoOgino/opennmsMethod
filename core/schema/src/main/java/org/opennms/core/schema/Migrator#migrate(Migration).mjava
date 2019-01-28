@@ -6,27 +6,29 @@
      */
     public void migrate(final Migration migration) throws MigrationException {
         Connection connection = null;
-        DatabaseConnection dbConnection = null;
 
         try {
             connection = m_dataSource.getConnection();
-            dbConnection = new JdbcConnection(connection);
 
-            ResourceAccessor accessor = migration.getAccessor();
-            if (accessor == null) accessor = new SpringResourceAccessor();
+            final SpringLiquibase lb = new SpringLiquibase();
+            lb.setChangeLog(migration.getChangeLog());
+            lb.setDataSource(m_dataSource);
 
-            final Liquibase liquibase = new Liquibase( migration.getChangeLog(), accessor, dbConnection );
-            liquibase.setChangeLogParameter("install.database.admin.user", migration.getAdminUser());
-            liquibase.setChangeLogParameter("install.database.admin.password", migration.getAdminPassword());
-            liquibase.setChangeLogParameter("install.database.user", migration.getDatabaseUser());
-            liquibase.getDatabase().setDefaultSchemaName(migration.getSchemaName());
+            final Map<String,String> parameters = new HashMap<>();
+            parameters.put("install.database.admin.user", migration.getAdminUser());
+            parameters.put("install.database.admin.password", migration.getAdminPassword());
+            parameters.put("install.database.user", migration.getDatabaseUser());
+            lb.setChangeLogParameters(parameters);
+            lb.setDefaultSchema(migration.getSchemaName());
+            lb.setResourceLoader(new DefaultResourceLoader());
 
             final String contexts = System.getProperty("opennms.contexts", "production");
-            liquibase.update(contexts);
+            lb.setContexts(contexts);
+            lb.afterPropertiesSet();
         } catch (final Throwable e) {
             throw new MigrationException("unable to migrate the database", e);
         } finally {
-            cleanUpDatabase(connection, dbConnection, null, null);
+            cleanUpDatabase(connection, null, null, null);
         }
     }
 
