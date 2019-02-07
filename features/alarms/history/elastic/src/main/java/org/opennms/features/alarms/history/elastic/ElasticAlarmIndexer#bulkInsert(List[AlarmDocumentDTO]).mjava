@@ -1,0 +1,35 @@
+    public void bulkInsert(List<AlarmDocumentDTO> alarmDocuments) throws PersistenceException, IOException {
+        final BulkRequest<AlarmDocumentDTO> bulkRequest = new BulkRequest<>(client, alarmDocuments, (documents) -> {
+            final Bulk.Builder bulkBuilder = new Bulk.Builder();
+            for (AlarmDocumentDTO alarmDocument : alarmDocuments) {
+                final String index = indexStrategy.getIndex(INDEX_PREFIX, Instant.ofEpochMilli(alarmDocument.getUpdateTime()));
+                final Index.Builder indexBuilder = new Index.Builder(alarmDocument)
+                        .index(index)
+                        .type(AlarmDocumentDTO.TYPE);
+                if (LOG.isTraceEnabled()) {
+                    LOG.trace("Adding index action on index: {} with type: {} and payload: {}",
+                            index, AlarmDocumentDTO.TYPE, gson.toJson(alarmDocument));
+                }
+                bulkBuilder.addAction(indexBuilder.build());
+            }
+            return new BulkWrapper(bulkBuilder);
+        }, bulkRetryCount);
+
+        try {
+            // the bulk request considers retries
+            bulkRequest.execute();
+        } catch (BulkException ex) {
+            final List<FailedItem<AlarmDocumentDTO>> failedItems;
+            if (ex.getBulkResult() != null) {
+                //noinspection unchecked
+                failedItems = ex.getBulkResult().getFailedItems();
+            } else {
+                failedItems = Collections.emptyList();
+            }
+            throw new PersistenceException(ex.getMessage(), failedItems);
+        } catch (IOException ex) {
+            LOG.error("An error occurred while executing the given request: {}", ex.getMessage(), ex);
+            throw ex;
+        }
+    }
+

@@ -1,0 +1,111 @@
+    @Override
+    public void run() {
+        final AtomicLong lastbulkDeleteWithNoChanges = new AtomicLong(-1);
+        templateInitializer.initialize();
+        while(!stopped.get()) {
+            try {
+                final Task task = taskQueue.take();
+                task.visit(new TaskVisitor() {
+                    @Override
+                    public void indexAlarms(List<AlarmDocumentDTO> docs) {
+                        if (LOG.isDebugEnabled()) {
+                            LOG.debug("Indexing documents for alarms with ids: {}", docs.stream().map(AlarmDocumentDTO::getId).collect(Collectors.toList()));
+                        }
+                        try (final Timer.Context ctx = alarmsToESMetrics.getBulkIndexTimer().time()) {
+                            bulkInsert(docs);
+                            LOG.debug("Successfully indexed {} documents.", docs.size());
+                            alarmsToESMetrics.getBulkIndexSizeHistogram().update(docs.size());
+                        } catch (PersistenceException|IOException e) {
+                            LOG.error("Indexing {} documents failed. These documents will be lost.", docs.size(), e);
+                            alarmsToESMetrics.getTasksFailedCounter().inc();
+                        }
+                    }
+
+                    @Override
+                    public void deleteAlarmsWithoutIdsIn(Set<Integer> alarmIdsToKeep, long time) {
+                        // If we have successfully performed a bulk delete with no changes, then we know
+                        // that all of the alarms before that time that should have been marked as deleted
+                        // were in fact deleted. Since any additional inserts will happen *after* this time
+                        // we can safely reduce the window size and only evaluate documents that were added
+                        // after this time in subsequent queries in order to help reduce the workload
+                        final long includeUpdatesAfter = Math.min(lastbulkDeleteWithNoChanges.get(), Math.max(time - lookbackPeriodMs, 0));
+                        LOG.debug("Marking documents without ids in: {} as deleted for time: {}", alarmIdsToKeep, time);
+                        try (final Timer.Context ctx = alarmsToESMetrics.getBulkDeleteTimer().time()) {
+                            // Find all of the alarms at time X, excluding ids in Y - handle deletes for each of those
+                            final List<AlarmDocumentDTO> alarms = new LinkedList<>();
+                            Integer afterAlarmWithId = null;
+                            while (true) {
+                                final TimeRange timeRange = new TimeRange(includeUpdatesAfter, time);
+                                final String query = queryProvider.getActiveAlarmIdsAtTimeAndExclude(timeRange, alarmIdsToKeep, afterAlarmWithId);
+
+                                final Search.Builder search = new Search.Builder(query)
+                                        .addType(AlarmDocumentDTO.TYPE);
+                                final List<String> indices = indexSelector.getIndexNames(timeRange.getStart(), timeRange.getEnd());
+                                search.addIndices(indices);
+                                search.setParameter("ignore_unavailable", "true"); // ignore unknown index
+                                LOG.debug("Executing query on {}: {}", indices, query);
+
+                                final SearchResult result;
+                                try {
+                                    result = client.execute(search.build());
+                                } catch (IOException e) {
+                                    LOG.error("Querying for active alarms failed.", e);
+                                    return;
+                                }
+                                if (!result.isSucceeded()) {
+                                    LOG.error("Querying for active alarms failed with: {}", result.getErrorMessage());
+                                }
+
+                                final CompositeAggregation alarmsById = result.getAggregations().getAggregation("alarms_by_id", CompositeAggregation.class);
+                                if (alarmsById == null) {
+                                    // No results, we're done
+                                    break;
+                                } else {
+                                    for (CompositeAggregation.Entry entry : alarmsById.getBuckets()) {
+                                        final TopHitsAggregation topHitsAggregation = entry.getTopHitsAggregation("latest_alarm");
+                                        final List<SearchResult.Hit<AlarmDocumentDTO, Void>> hits = topHitsAggregation.getHits(AlarmDocumentDTO.class);
+                                        hits.stream().map(h -> h.source).forEach(alarms::add);
+                                    }
+
+                                    if (alarmsById.hasAfterKey()) {
+                                        // There are more results to page through
+                                        afterAlarmWithId = alarmsById.getAfterKey().get("alarm_id").getAsInt();
+                                    } else {
+                                        // There are no more results to page through
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!alarms.isEmpty()) {
+                                final List<AlarmDocumentDTO> deletes = alarms.stream()
+                                        .map(a -> documentFactory.createAlarmDocumentForDelete(a.getId(), a.getReductionKey()))
+                                        .collect(Collectors.toList());
+                                if (LOG.isDebugEnabled()) {
+                                    LOG.debug("Deleting alarms with IDs: {}", deletes.stream().map(a -> Integer.toString(a.getId()))
+                                            .collect(Collectors.joining(",")));
+                                }
+
+                                // Break the list up into small batches limited by the configured batch size
+                                for (List<AlarmDocumentDTO> partition : Lists.partition(deletes, batchSize)) {
+                                    indexAlarms(partition);
+                                }
+                            } else {
+                                LOG.debug("Did not find any extraneous alarms that need to be deleted.");
+                                // Save the current time
+                                lastbulkDeleteWithNoChanges.set(time);
+                            }
+                        }
+
+                    }
+                });
+            } catch (InterruptedException e) {
+                LOG.info("Interrupted. Stopping.");
+                return;
+            } catch (Exception e) {
+                LOG.error("Handling of task failed.", e);
+                alarmsToESMetrics.getTasksFailedCounter().inc();
+            }
+        }
+    }
+
