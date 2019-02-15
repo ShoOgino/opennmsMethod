@@ -1,0 +1,53 @@
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testCollectionSetMappingFromIntegrationAPI() {
+
+        // Mock NodeDao.
+        NodeDao nodeDao = mock(NodeDao.class);
+        when(nodeDao.getNodeByCriteria(anyString())).thenReturn(new NodeImpl());
+        // Mock the ResourceType and other storage strategies.
+        ResourceType rt = mock(ResourceType.class, RETURNS_DEEP_STUBS);
+        when(rt.getName()).thenReturn(RESOURCE_NAME);
+        when(rt.getStorageStrategy().getClazz()).thenReturn(IndexStorageStrategy.class.getCanonicalName());
+        when(rt.getStorageStrategy().getParameters()).thenReturn(Collections.emptyList());
+        when(rt.getPersistenceSelectorStrategy().getClazz()).thenReturn(PersistAllSelectorStrategy.class.getCanonicalName());
+        when(rt.getPersistenceSelectorStrategy().getParameters()).thenReturn(Collections.emptyList());
+        ResourceTypeMapper.getInstance().setResourceTypeMapper(type -> rt);
+
+
+        // Create a CollectionSet From Integration API.
+        CollectionSet collectionSet = createCollectionSetFromIntegrationAPI();
+        org.opennms.netmgt.collection.support.builder.CollectionSetBuilder builder =
+                new org.opennms.netmgt.collection.support.builder.CollectionSetBuilder(new CollectionAgentImpl());
+        // Map CollectionSet from Integration API to  default CollectionSet
+        org.opennms.netmgt.collection.api.CollectionSet collectionSet1 = CollectionSetMapper.buildCollectionSet(builder, collectionSet);
+
+        CollectionSetMapper collectionSetMapper = new CollectionSetMapper(nodeDao);
+        CollectionSet collectionSetResult = collectionSetMapper.buildCollectionSet(new CollectionSetBuilder(), collectionSet1);
+
+        assertThat(collectionSetResult.getCollectionSetResources().size(), is(3));
+        for (CollectionSetResource collectionSetResource : collectionSetResult.getCollectionSetResources()) {
+            Resource resource = collectionSetResource.getResource();
+            if (resource instanceof GenericTypeResource) {
+                GenericTypeResource genericTypeResource = (GenericTypeResource) resource;
+                assertTrue(genericTypeResource.getInstance().equals(GENERIC_INSTANCE));
+                assertTrue(genericTypeResource.getNodeResource().getNodeLabel().equals(NODE_LABEL));
+                List<NumericAttribute> numericAttributes = collectionSetResource.getNumericAttributes();
+                assertThat(numericAttributes.size(), is(1));
+                assertThat(numericAttributes.get(0).getValue(), is(COUNTER_VALUE));
+                assertTrue(numericAttributes.get(0).getType().equals(NumericAttribute.Type.COUNTER));
+                List<StringAttribute> stringAttributes = collectionSetResource.getStringAttributes();
+                assertThat(stringAttributes.size(), is(1));
+                assertThat(stringAttributes.get(0).getName(), is(STRING_VALUE));
+            } else if (resource instanceof IpInterfaceResource) {
+                IpInterfaceResource ipInterfaceResource = (IpInterfaceResource) resource;
+                assertTrue(ipInterfaceResource.getInstance().equals(IP_INSTANCE));
+                List<NumericAttribute> numericAttributes = collectionSetResource.getNumericAttributes();
+                assertThat(numericAttributes.size(), is(1));
+                assertThat(numericAttributes.get(0).getValue(), is(GAUGE_VALUE));
+                assertTrue(numericAttributes.get(0).getType().equals(NumericAttribute.Type.GAUGE));
+            }
+        }
+
+    }
+

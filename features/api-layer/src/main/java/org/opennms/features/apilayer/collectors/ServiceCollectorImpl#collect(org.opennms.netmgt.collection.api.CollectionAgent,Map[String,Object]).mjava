@@ -1,0 +1,24 @@
+    @Override
+    public org.opennms.netmgt.collection.api.CollectionSet collect(org.opennms.netmgt.collection.api.CollectionAgent agent, Map<String, Object> parameters) throws CollectionException {
+        // Instantiate a new collector each time there is a call to collect.
+        ServiceCollector serviceCollector = serviceCollectorFactory.createCollector();
+        serviceCollector.initialize();
+        try {
+            // build collection request for service collector
+            CollectionRequest collectionRequest = new CollectionRequestImpl(agent);
+            // Call collect on Service collector that implements integration api.
+            CompletableFuture<CollectionSet> future = serviceCollector.collect(collectionRequest, parameters);
+            CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+            CollectionSet collectionSet = future.get();
+            if (collectionSet.getStatus().equals(CollectionSet.Status.FAILED)) {
+                return  builder.withTimestamp(new Date(collectionSet.getTimeStamp()))
+                        .withStatus(CollectionStatus.FAILED).build();
+            }
+            // Map CollectionSet from Integration API and build CollectionSet.
+            return CollectionSetMapper.buildCollectionSet(builder, collectionSet);
+        } catch (InterruptedException | ExecutionException e) {
+            LOG.error("Collection failed", e);
+            throw new CollectionException("Collection failed", e);
+        }
+    }
+
