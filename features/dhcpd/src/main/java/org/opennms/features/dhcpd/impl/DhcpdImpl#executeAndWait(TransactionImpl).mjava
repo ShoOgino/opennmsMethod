@@ -1,0 +1,57 @@
+    private void executeAndWait(final TransactionImpl transaction) throws IOException {
+        if (shutdown || !port67Listener.start() || !port68Listener.start()) {
+            return;
+        }
+
+        final int xid = nextXid();
+        transaction.setXid(xid);
+
+        synchronized (this.transactions) {
+            this.transactions.add(transaction);
+        }
+
+        final List<DHCPPacket> dhcpPackets = new ArrayList<>();
+
+        dhcpPackets.add(createPacket(xid, transaction, DHCPDISCOVER));
+
+        if (transaction.isExtendedMode()) {
+            dhcpPackets.add(createPacket(xid, transaction, DHCPINFORM));
+            dhcpPackets.add(createPacket(xid, transaction, DHCPREQUEST));
+        }
+
+        for (final DHCPPacket dhcpPacket : dhcpPackets) {
+            final byte[] buf = dhcpPacket.serialize();
+            final DatagramPacket discoverPacket = new DatagramPacket(buf, buf.length);
+            discoverPacket.setAddress(transaction.getHostAddress());
+
+            transaction.updateStartTime();
+
+            if (transaction.isRelayMode()) {
+                discoverPacket.setPort(BOOTP_REQUEST_PORT);
+                this.port67Listener.send(discoverPacket);
+            } else {
+                discoverPacket.setPort(BOOTP_REQUEST_PORT);
+                this.port68Listener.send(discoverPacket);
+            }
+
+            for (int i = 0; i < Math.max(0, transaction.getTimeout() / 250); i++) {
+                try {
+                    Thread.sleep(250);
+                } catch (InterruptedException e) {
+                    // ignore
+                }
+
+                if (transaction.isSuccess()) {
+                    synchronized (this.transactions) {
+                        this.transactions.remove(transaction);
+                    }
+                    return;
+                }
+            }
+        }
+
+        synchronized (this.transactions) {
+            this.transactions.remove(transaction);
+        }
+    }
+

@@ -1,0 +1,68 @@
+    @Override
+    public List<TopologyConnection<LldpLinkTopologyEntity, LldpLinkTopologyEntity>> match() {
+        
+            List<TopologyConnection<LldpLinkTopologyEntity, LldpLinkTopologyEntity>> results = new ArrayList<>();
+
+            Map<Integer, LldpElementTopologyEntity> nodelldpelementidMap = getTopologyEntityCache().getLldpElementTopologyEntities().stream()
+                    .collect(Collectors.toMap(lldpelem -> lldpelem.getNodeId(), lldpelem -> lldpelem));
+            
+            List<LldpLinkTopologyEntity> allLinks = getTopologyEntityCache().getLldpLinkTopologyEntities();
+            // 1.) create mapping
+            Map<CompositeKey, LldpLinkTopologyEntity> targetLinkMap = new HashMap<>();
+            for(LldpLinkTopologyEntity targetLink : allLinks){
+
+                CompositeKey key = new CompositeKey(
+                        targetLink.getLldpRemChassisId(),
+                        nodelldpelementidMap.get(targetLink.getNodeId()).getLldpChassisId(),
+                        targetLink.getLldpPortId(),
+                        targetLink.getLldpPortIdSubType(),
+                        targetLink.getLldpRemPortId(),
+                        targetLink.getLldpRemPortIdSubType());
+                targetLinkMap.put(key, targetLink);
+            }
+
+            // 2.) iterate
+            Set<Integer> parsed = new HashSet<Integer>();
+            for (LldpLinkTopologyEntity sourceLink : allLinks) {
+                if (parsed.contains(sourceLink.getId())) {
+                    continue;
+                }
+                String sourceLldpChassisId = nodelldpelementidMap.get(sourceLink.getNodeId()).getLldpChassisId();
+                if (sourceLldpChassisId.equals(sourceLink.getLldpRemChassisId())) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("getLldpLinks: self link not adding source: {}",sourceLink);
+                    }
+                    parsed.add(sourceLink.getId());
+                    continue;
+                }
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("getLldpLinks: source: {}",sourceLink);
+                }
+
+                CompositeKey key = new CompositeKey(
+                        nodelldpelementidMap.get(sourceLink.getNodeId()).getLldpChassisId(),
+                        sourceLink.getLldpRemChassisId(),
+                        sourceLink.getLldpRemPortId(),
+                        sourceLink.getLldpRemPortIdSubType(),
+                        sourceLink.getLldpPortId(),
+                        sourceLink.getLldpPortIdSubType());
+                LldpLinkTopologyEntity targetLink = targetLinkMap.get(key);
+
+                if (targetLink == null) {
+                    LOG.debug("getLldpLinks: cannot found target for source: '{}'", sourceLink.getId());
+                    continue;
+                }
+
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("getLldpLinks: lldp: {} target: {}", sourceLink.getLldpRemChassisId(), targetLink);
+                }
+
+                parsed.add(sourceLink.getId());
+                parsed.add(targetLink.getId());
+                results.add(TopologyConnection.of(sourceLink, targetLink));
+            }
+            return results;
+       // }
+
+    }
+

@@ -1,0 +1,29 @@
+    @Override
+    public CompletableFuture<CollectionSet> execute() {
+        org.opennms.netmgt.collection.api.CollectionAgent collectionAgent =
+                collectionAgentFactory.createCollectionAgent(collectionRequest.getNodeCriteria(), collectionRequest.getAddress());
+        CompletableFuture<org.opennms.netmgt.collection.api.CollectionSet> result = locationAwareCollectorClient.collect()
+                .withAgent(collectionAgent)
+                .withCollectorClassName(className)
+                .withAttributes(attributes)
+                .withTimeToLive(ttlInMs)
+                .execute();
+        CompletableFuture<CollectionSet> future = new CompletableFuture<>();
+        try {
+            org.opennms.netmgt.collection.api.CollectionSet collectionSet = result.get();
+            CollectionSetBuilder builder = new CollectionSetBuilder();
+            if (collectionSet.getStatus().equals(CollectionStatus.FAILED)) {
+                CollectionSet collectionSetResult = builder.withTimeStamp(collectionSet.getCollectionTimestamp().getTime())
+                        .withStatus(CollectionSet.Status.FAILED).build();
+                future.complete(collectionSetResult);
+            } else {
+                CollectionSetMapper collectionSetMapper = new CollectionSetMapper(nodeDao);
+                future.complete(collectionSetMapper.buildCollectionSet(builder, collectionSet));
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            LOG.error("Collection encountered error", e);
+            throw new CollectionException("Collection encountered error", e);
+        }
+        return future;
+    }
+

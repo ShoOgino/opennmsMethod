@@ -1,0 +1,56 @@
+    @Override
+    public List<TopologyConnection<CdpLinkTopologyEntity, CdpLinkTopologyEntity>> match() {
+
+        final Collection<CdpElementTopologyEntity> cdpElements = getTopologyEntityCache().getCdpElementTopologyEntities();
+        final List<CdpLinkTopologyEntity> allLinks = getTopologyEntityCache().getCdpLinkTopologyEntities();
+        // 1. create lookup maps:
+        Map<Integer, CdpElementTopologyEntity> cdpelementmap = new HashMap<Integer, CdpElementTopologyEntity>();
+        for (CdpElementTopologyEntity cdpelement: cdpElements) {
+            cdpelementmap.put(cdpelement.getNodeId(), cdpelement);
+        }
+        Map<CompositeKey, CdpLinkTopologyEntity> targetLinkMap = new HashMap<>();
+        for (CdpLinkTopologyEntity targetLink : allLinks) {
+            CompositeKey key = new CompositeKey(targetLink.getCdpCacheDevicePort(),
+                    targetLink.getCdpInterfaceName(),
+                    cdpelementmap.get(targetLink.getNodeId()).getCdpGlobalDeviceId(),
+                    targetLink.getCdpCacheDeviceId());
+            targetLinkMap.put(key, targetLink);
+        }
+        Set<Integer> parsed = new HashSet<Integer>();
+
+        // 2. iterate
+        List<TopologyConnection<CdpLinkTopologyEntity, CdpLinkTopologyEntity>> results = new ArrayList<>();
+        for (CdpLinkTopologyEntity sourceLink : allLinks) {
+            if (parsed.contains(sourceLink.getId())) {
+                continue;
+            }
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("getCdpLinks: source: {} ", sourceLink);
+            }
+            CdpElementTopologyEntity sourceCdpElement = cdpelementmap.get(sourceLink.getNodeId());
+
+            CdpLinkTopologyEntity targetLink = targetLinkMap.get(new CompositeKey(sourceLink.getCdpInterfaceName(),
+                    sourceLink.getCdpCacheDevicePort(),
+                    sourceLink.getCdpCacheDeviceId(),
+                    sourceCdpElement.getCdpGlobalDeviceId()));
+
+            if (targetLink == null) {
+                LOG.debug("getCdpLinks: cannot found target for source: '{}'", sourceLink.getId());
+                continue;
+            }
+
+            if (sourceLink.getId().equals(targetLink.getId()) || parsed.contains(targetLink.getId())) {
+                continue;
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("getCdpLinks: cdp: {}, target: {} ", sourceLink.getCdpCacheDevicePort(), targetLink);
+            }
+
+            parsed.add(sourceLink.getId());
+            parsed.add(targetLink.getId());
+            results.add(TopologyConnection.of(sourceLink, targetLink));
+        }
+        return results;
+    }
+
