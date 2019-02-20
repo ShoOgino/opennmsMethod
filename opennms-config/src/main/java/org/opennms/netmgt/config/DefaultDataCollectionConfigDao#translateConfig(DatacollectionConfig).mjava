@@ -3,23 +3,44 @@
         final DataCollectionConfigParser parser = new DataCollectionConfigParser(getConfigDirectory());
         resourceTypes.clear();
 
-        final Map<String,DatacollectionGroup> externalGroupMap = parser.getExternalGroupMap();
-
+        Map<String,DatacollectionGroup> externalGroupMap = parser.loadExternalGroupMap();
         // Create a special collection to hold all resource types, because they should be defined only once.
         final SnmpCollection resourceTypeCollection = new SnmpCollection();
         resourceTypeCollection.setName("__resource_type_collection");
 
+        // Load data collection groups from container.
+        DataCollectionGroups dataCollectionGroupObj = m_extContainer.getObject();
+        if (dataCollectionGroupObj != null) {
+            // Add data collection groups loaded from container to external group map.
+            dataCollectionGroupObj.getSnmpCollectionNames().forEach(collectionName -> {
+                List<DatacollectionGroup> datacollectionGroupList = dataCollectionGroupObj.getDataCollectionGroup(collectionName);
+                datacollectionGroupList.stream().forEach(group -> externalGroupMap.put(group.getName(), group));
+            });
+        }
+
         // Updating Configured Collections
         for (final SnmpCollection collection : config.getSnmpCollections()) {
+            if(dataCollectionGroupObj != null) {
+                // Set include-collection for the specific collection so that parseCollection will load all resources.
+                Set<String> collectionNames = dataCollectionGroupObj.getSnmpCollectionNames();
+                if (collectionNames.contains(collection.getName())) {
+                    List<DatacollectionGroup> datacollectionGroupList = dataCollectionGroupObj.getDataCollectionGroup(collection.getName());
+                    datacollectionGroupList.stream().forEach(datacollectionGroup -> {
+                        IncludeCollection includeCollection = new IncludeCollection();
+                        includeCollection.setDataCollectionGroup(datacollectionGroup.getName());
+                        collection.addIncludeCollection(includeCollection);
+                    });
+                }
+            }
             parser.parseCollection(collection);
             // Save local resource types
             for (final ResourceType rt : collection.getResourceTypes()) {
                 resourceTypeCollection.addResourceType(rt);
                 resourceTypes.put(rt.getName(), rt);
             }
+
             // Remove local resource types
             collection.setResourceTypes(new ArrayList<ResourceType>());
-
             // Save external Resource Types
             for (IncludeCollection include : collection.getIncludeCollections()) {
                 if (include.getDataCollectionGroup() != null) {
@@ -36,7 +57,7 @@
         resourceTypeCollection.setSystems(new Systems());
         config.insertSnmpCollection(resourceTypeCollection);
         dataCollectionGroups.clear();
-        dataCollectionGroups.addAll(parser.getExternalGroupMap().keySet());
+        dataCollectionGroups.addAll(externalGroupMap.keySet());
 
         validateResourceTypes(config.getSnmpCollections(), resourceTypes.keySet());
 
