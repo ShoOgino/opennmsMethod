@@ -1,0 +1,41 @@
+    /**
+     * Verify that a large result set gets processed in a reasonable amount of time.
+     * We limit the test with a timeout of 30 seconds, to avoid the results from flapping,
+     * but we expect this to be done in significantly less time.
+     *
+     * @throws Exception on error
+     */
+    @Test(timeout=300000)
+    public void canProcessResultsWithThousandsOfValues() throws Exception {
+        // Build a large result set with 100k values
+        final int N = 100000;
+        long[] timestamps = new long[N];
+        double[] values = new double[N];
+        for (int i = 0; i < N; i++) {
+            timestamps[i] = i * 1000;
+            values[i] = i;
+        }
+        final Map<String, double[]> columns = new HashMap<>();
+        columns.put("X", values);
+
+        long now = System.currentTimeMillis();
+        FetchResults results = new FetchResults(timestamps, columns, 1, Collections.emptyMap());
+        RowSortedTable<Long, String, Double> table = results.asRowSortedTable();
+
+        // Apply the filter
+        double quantile = 0.95;
+        FilterDef filterDef = new FilterDef("Percentile",
+                "inputColumn", "X",
+                "outputColumn", "Y",
+                "quantile", Double.valueOf(quantile).toString());
+        getFilterEngine().filter(filterDef, table);
+        results = new FetchResults(table, results.getStep(), results.getConstants());
+
+        // Quickly validate the results
+        assertEquals(94999.95, table.get(1000L, "Y"), 0.0001);
+
+        // Print out how long we took
+        long delta = System.currentTimeMillis() - now;
+        System.out.printf("%d values processed in: %.2f seconds\n", N, (double)delta / 1000d);
+    }
+
