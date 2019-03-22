@@ -1,0 +1,54 @@
+    @Override
+    public OnmsTopologyConsumer map(TopologyEdgeConsumer ext) {
+        return new OnmsTopologyConsumer() {
+            @Override
+            public String getName() {
+                return ext.getClass().getName();
+            }
+
+            @Override
+            public Set<OnmsTopologyProtocol> getProtocols() {
+                if(ext.getProtocols() == null) {
+                    return Collections.emptySet();
+                }
+
+                Set<OnmsTopologyProtocol> protocols = new HashSet<>();
+
+                for (String protocol : ext.getProtocols().split(",")) {
+                    try {
+                        protocols.add(OnmsTopologyProtocol.create(protocol));
+                    } catch (Exception e) {
+                        LOG.warn("Cannot add protocol {} for consumer {}", protocol, ext, e);
+                    }
+                }
+
+                return protocols;
+            }
+
+            @Override
+            public void consume(OnmsTopologyMessage message) {
+                message.getMessagebody().accept(new TopologyVisitor() {
+                    @Override
+                    public void visit(OnmsTopologyEdge edge) {
+                        TopologyEdge topologyEdge = ModelMappers.toEdge(message.getProtocol().getId(), edge);
+
+                        switch (message.getMessagestatus()) {
+                            case UPDATE:
+                                LOG.trace("Mapped topology message {} to topology edge {} for add/update", message,
+                                        topologyEdge);
+                                ext.onEdgeAddedOrUpdated(topologyEdge);
+                                break;
+                            case DELETE:
+                                LOG.trace("Mapped topology message {} to topology edge {} for delete", message,
+                                        topologyEdge);
+                                ext.onEdgeDeleted(topologyEdge);
+                                break;
+                            default:
+                                LOG.warn("Unsupported message status of {}", message.getMessagestatus());
+                        }
+                    }
+                });
+            }
+        };
+    }
+
