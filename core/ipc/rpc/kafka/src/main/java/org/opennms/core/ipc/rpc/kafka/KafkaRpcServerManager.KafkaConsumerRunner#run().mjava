@@ -51,6 +51,16 @@
                                 rpcContent = messageCache.get(rpcId);
                                 messageCache.remove(rpcId);
                             }
+                            Map<String, String> tracingInfoMap = RequestCarrier.getTracingInfoMap(rpcMessage.getTracingInfoList());
+                            Tracer.SpanBuilder spanBuilder = null;
+                            SpanContext context = tracer.extract(Format.Builtin.TEXT_MAP, new TextMapAdapter(tracingInfoMap));
+                            if (context != null) {
+                                spanBuilder = tracer.buildSpan(module.getId()).asChildOf(context);
+                            } else {
+                                spanBuilder = tracer.buildSpan(module.getId());
+                            }
+                            Span minionSpan = spanBuilder.start();
+                            minionSpan.setTag("rpcId", rpcId);
                             RpcRequest request = module.unmarshalRequest(rpcContent.toStringUtf8());
                             CompletableFuture<RpcResponse> future = module.execute(request);
                             future.whenComplete((res, ex) -> {
@@ -59,11 +69,12 @@
                                     // An exception occurred, store the exception in a new response
                                     LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
                                     response = module.createResponseWithException(ex);
+                                    minionSpan.log(ex.getMessage());
                                 } else {
                                     // No exception occurred, use the given response
                                     response = res;
                                 }
-
+                                minionSpan.finish();
                                 try {
                                     final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory(KafkaRpcConstants.RPC_RESPONSE_TOPIC_NAME,
                                             module.getId());

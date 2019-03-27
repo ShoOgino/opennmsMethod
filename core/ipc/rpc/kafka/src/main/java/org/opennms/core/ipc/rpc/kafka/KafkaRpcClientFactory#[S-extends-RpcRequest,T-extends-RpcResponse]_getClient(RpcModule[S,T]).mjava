@@ -8,12 +8,14 @@
                     // The request is for the current location, invoke it directly
                     return module.execute(request);
                 }
+                Span span = tracer.buildSpan(module.getId()).start();
                 final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory(
                         KafkaRpcConstants.RPC_REQUEST_TOPIC_NAME, module.getId(), request.getLocation());
                 String requestTopic = topicNameFactory.getName();
                 String marshalRequest = module.marshalRequest(request);
                 // Generate RPC Id for every request to track request/response.
                 String rpcId = UUID.randomUUID().toString();
+                span.setTag("rpcId", rpcId);
                 // Calculate timeout based on ttl and default timeout.
                 Long ttl = request.getTimeToLiveMs();
                 ttl = (ttl != null && ttl > 0) ? ttl : DEFAULT_TTL;
@@ -22,7 +24,7 @@
                 final CompletableFuture<T> future = new CompletableFuture<>();
                 final Map<String, String> loggingContext = Logging.getCopyOfContextMap();
                 ResponseHandler<S, T> responseHandler = new ResponseHandler<S, T>(future, module, rpcId,
-                        expirationTime, loggingContext);
+                        expirationTime, loggingContext, span);
                 delayQueue.offer(responseHandler);
                 rpcResponseMap.put(rpcId, responseHandler);
                 kafkaConsumerRunner.startConsumingForModule(module.getId());
@@ -49,6 +51,8 @@
                             }
                         }
                     };
+                    // Add tracing info.
+                    tracer.inject(span.context(), Format.Builtin.TEXT_MAP, new RequestCarrier(builder));
                     RpcMessageProtos.RpcMessage rpcMessage =  builder.setRpcContent(byteString)
                             .setCurrentChunkNumber(chunk)
                             .setTotalChunks(totalChunks)
