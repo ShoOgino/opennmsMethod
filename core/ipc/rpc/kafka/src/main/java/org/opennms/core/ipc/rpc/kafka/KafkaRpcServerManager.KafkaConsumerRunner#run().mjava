@@ -53,15 +53,22 @@
                             }
                             Map<String, String> tracingInfoMap = RequestCarrier.getTracingInfoMap(rpcMessage.getTracingInfoList());
                             Tracer.SpanBuilder spanBuilder;
+                            if(tracerRegistry.isRegistered()) {
+                                tracer = getTracer();
+                            }
                             SpanContext context = tracer.extract(Format.Builtin.TEXT_MAP, new TextMapExtractAdapter(tracingInfoMap));
                             if (context != null) {
                                 spanBuilder = tracer.buildSpan(module.getId()).asChildOf(context);
                             } else {
                                 spanBuilder = tracer.buildSpan(module.getId());
                             }
+
                             Span minionSpan = spanBuilder.start();
-                            minionSpan.setTag("rpcId", rpcId);
                             RpcRequest request = module.unmarshalRequest(rpcContent.toStringUtf8());
+                            minionSpan.setTag("rpcId", rpcId);
+                            if(request.getSystemId() != null) {
+                                minionSpan.setTag("systemId", request.getSystemId());
+                            }
                             CompletableFuture<RpcResponse> future = module.execute(request);
                             future.whenComplete((res, ex) -> {
                                 final RpcResponse response;
@@ -74,6 +81,7 @@
                                     // No exception occurred, use the given response
                                     response = res;
                                 }
+
                                 minionSpan.finish();
                                 try {
                                     final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory(KafkaRpcConstants.RPC_RESPONSE_TOPIC_NAME,
