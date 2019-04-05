@@ -1,0 +1,61 @@
+    private void testSnmpV3NotificationWithSecurityLevel(TrapOrInform trapOrInform, SecurityLevel securityLevel) {
+        // Retrieve a v3 user from the configuration
+        final Snmpv3User v3User = m_trapdConfig.getConfig().getSnmpv3UserCollection().stream()
+                .filter(u -> Objects.equals(securityLevel.getSnmpValue(), u.getSecurityLevel()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No existing SNMPv3 user configured with security level: " + securityLevel));
+
+        SnmpTrapHelper snmpTrapHelper = new SnmpTrapHelper();
+        EventForwarder snmpv3EventForwarder;
+        if (trapOrInform == TrapOrInform.TRAP) {
+            snmpv3EventForwarder = new SnmpV3TrapEventForwarder(
+                    localhost,
+                    m_trapdConfig.getSnmpTrapPort(),
+                    v3User.getSecurityLevel(),
+                    v3User.getSecurityName(),
+                    v3User.getAuthPassphrase(),
+                    v3User.getAuthProtocol(),
+                    v3User.getPrivacyPassphrase(),
+                    v3User.getPrivacyProtocol(),
+                    snmpTrapHelper
+            );
+        } else if (trapOrInform == TrapOrInform.INFORM) {
+            snmpv3EventForwarder = new SnmpV3InformEventForwarder(
+                    localhost,
+                    m_trapdConfig.getSnmpTrapPort(),
+                    5000,
+                    3,
+                    v3User.getSecurityLevel(),
+                    v3User.getSecurityName(),
+                    v3User.getAuthPassphrase(),
+                    v3User.getAuthProtocol(),
+                    v3User.getPrivacyPassphrase(),
+                    v3User.getPrivacyProtocol(),
+                    snmpTrapHelper
+            );
+        } else {
+            throw new IllegalArgumentException("Invalid trapOrInform value: " + trapOrInform);
+        }
+
+        // Use the default policy rule that forwards all events - we can manage the filtering ourselves in this script
+        snmpv3EventForwarder.setEventPolicyRule(new org.opennms.netmgt.scriptd.helper.EventPolicyRuleDefaultImpl());
+
+        // Build the event we're going to send as a trap, and expect that same event
+        Event trapEvent = new EventBuilder("uei.opennms.org/default/trap", "trapd")
+                .setInterface(localAddr)
+                .getEvent();
+        m_mockEventIpcManager.getEventAnticipator().anticipateEvent(trapEvent);
+
+        // Also build a new suspect event that we'll expect
+        Event newSuspectEvent = new EventBuilder(EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI, "trapd")
+                .setInterface(localAddr)
+                .getEvent();
+        m_mockEventIpcManager.getEventAnticipator().anticipateEvent(newSuspectEvent);
+
+        // Send the event via the helper
+        snmpv3EventForwarder.flushEvent(trapEvent);
+
+        // Wait until we received the expected events
+        await().until(() -> m_mockEventIpcManager.getEventAnticipator().getAnticipatedEventsReceived(), hasSize(2));
+    }
+
