@@ -1,0 +1,42 @@
+    @Override
+    public GeocoderResult resolveAddress(final String address) throws GeocoderException {
+        if (!acceptUsageTerms) {
+            return new GeocoderResult(new GeocoderException("Cannot resolve coordinates. Usage Terms must be accepted before."));
+        }
+        try (HttpClientWrapper clientWrapper = HttpClientWrapper.create().dontReuseConnections()) {
+            if (useSystemProxy) {
+                clientWrapper.useSystemProxySettings();
+            }
+
+            final String url = buildUrl(emailAddress, address);
+            final HttpUriRequest method = new HttpGet(url);
+            if (!Strings.isNullOrEmpty(userAgent)) {
+                method.addHeader("User-Agent", userAgent);
+            }
+            if (!Strings.isNullOrEmpty(referer)) {
+                method.addHeader("Referer", referer);
+            }
+
+            try (CloseableHttpResponse response = clientWrapper.execute(method)) {
+                final StatusLine statusLine = response.getStatusLine();
+                if (statusLine.getStatusCode() != 200) {
+                    throw new GeocoderException("Nominatim returned a non-OK response code: " + statusLine.getStatusCode() + " " + statusLine.getReasonPhrase());
+                }
+                final InputStream responseStream = response.getEntity().getContent();
+                final JSONTokener tokener = new JSONTokener(responseStream);
+                final JSONArray results = new JSONArray(tokener);
+                if (results.length() > 0) {
+                    final JSONObject result = results.getJSONObject(0);
+                    if (result.has("lat") && result.has("lon")) {
+                        final Float longitude = result.getFloat("lon");
+                        final Float latitude = result.getFloat("lat");
+                        return new GeocoderResult(new Coordinates(longitude, latitude));
+                    }
+                }
+                return new GeocoderResult(new GeocoderException("No results found for address " + address));
+            }
+        } catch (IOException e) {
+            return new GeocoderResult(e);
+        }
+    }
+

@@ -1,0 +1,38 @@
+    @Override
+    public GeocoderResult resolveAddress(final String address) {
+        try (HttpClientWrapper clientWrapper = HttpClientWrapper.create().dontReuseConnections()) {
+            if(useSystemProxy) {
+                clientWrapper.useSystemProxySettings();
+            }
+            final String requestUrl = buildURL(urlTemplate, apiKey, address);
+            final HttpUriRequest request = new HttpGet(requestUrl);
+            try (CloseableHttpResponse response = clientWrapper.execute(request)) {
+                final StatusLine statusLine = response.getStatusLine();
+                if (statusLine.getStatusCode() != 200) {
+                    return new GeocoderResult(
+                        new GeocoderException("MapQuest returned a non-OK response code: " + statusLine.getStatusCode() + " " + statusLine.getReasonPhrase())
+                    );
+                }
+                final InputStream responseStream = response.getEntity().getContent();
+                final JSONTokener jsonTokener = new JSONTokener(responseStream);
+                final JSONObject jsonObject = new JSONObject(jsonTokener);
+                if (jsonObject.has("results")
+                        && jsonObject.getJSONArray("results").length() > 0
+                        && jsonObject.getJSONArray("results").getJSONObject(0).has("locations")) {
+                    final JSONArray locationResults = jsonObject.getJSONArray("results").getJSONObject(0).getJSONArray("locations");
+                    if (locationResults.length() > 0) {
+                        final JSONObject location = (JSONObject) locationResults.get(0);
+                        if (location.has("latLng")) {
+                            final double lat = location.getJSONObject("latLng").getDouble("lat");
+                            final double lng = location.getJSONObject("latLng").getDouble("lng");
+                            return new GeocoderResult(new Coordinates(lng, lat));
+                        }
+                    }
+                }
+            }
+            return new GeocoderResult();
+        } catch (IOException e) {
+            return new GeocoderResult(e);
+        }
+    }
+

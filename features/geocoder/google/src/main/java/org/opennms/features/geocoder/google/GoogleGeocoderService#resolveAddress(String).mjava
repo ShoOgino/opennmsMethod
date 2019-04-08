@@ -1,0 +1,36 @@
+    @Override
+    public synchronized GeocoderResult resolveAddress(final String address) throws GeocoderException {
+        final GeoApiContext.Builder builder = new GeoApiContext.Builder()
+                .readTimeout(timeout, TimeUnit.MILLISECONDS)
+                .connectTimeout(timeout, TimeUnit.MILLISECONDS)
+                .maxRetries(1);
+        if (useSystemProxy) {
+            try {
+                final Proxy proxy = selectProxy("https://maps.googleapis.com");
+                builder.proxy(proxy);
+            } catch (URISyntaxException e) {
+                return new GeocoderResult(e);
+            }
+        }
+        if (useEnterpriseCredentials) {
+            builder.enterpriseCredentials(clientId, signature);
+        } else {
+            builder.apiKey(apiKey);
+        }
+        try {
+            final GeoApiContext context = builder.build();
+            final GeocodingResult[] results = GeocodingApi.geocode(context, address).await();
+            if (results.length == 0) {
+                return new GeocoderResult(new GeocoderException("No result found")); // TODO MVR maybe empty response?
+            }
+            final LatLng location = results[0].geometry.location;
+            return new GeocoderResult(new Coordinates(location.lng, location.lat));
+        } catch (ApiException e) {
+            return new GeocoderResult(e);
+        } catch (InterruptedException e) {
+            return new GeocoderResult(e);
+        } catch (IOException e) {
+            return new GeocoderResult(e);
+        }
+    }
+
