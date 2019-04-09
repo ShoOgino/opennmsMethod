@@ -7,27 +7,38 @@
                     // The request is for the current location, invoke it directly
                     return module.execute(request);
                 }
-
                 // Save the context map and restore it on callback
                 final Map<String, String> clientContextMap = Logging.getCopyOfContextMap();
-
+                // Build span with module id and start it.
+                Span span = tracer.buildSpan(module.getId()).start();
+                span.setTag(TAG_LOCATION, request.getLocation());
+                if(request.getSystemId() != null) {
+                    span.setTag(TAG_SYSTEM_ID, request.getSystemId());
+                }
+                TracingInfoCarrier tracingInfoCarrier = new TracingInfoCarrier();
+                tracer.inject(span.context(), Format.Builtin.TEXT_MAP, tracingInfoCarrier);
                 // Wrap the request in a CamelRpcRequest and forward it to the Camel route
                 final CompletableFuture<T> future = new CompletableFuture<>();
                 try {
-                    template.asyncCallbackSendBody(endpoint, new CamelRpcRequest<>(module, request), new Synchronization() {
+                    template.asyncCallbackSendBody(endpoint, new CamelRpcRequest<>(module, request, tracingInfoCarrier.getTracingInfoMap()), new Synchronization() {
                         @Override
                         public void onComplete(Exchange exchange) {
                             try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
                                 final T response = module.unmarshalResponse(exchange.getOut().getBody(String.class));
                                 if (response.getErrorMessage() != null) {
                                     future.completeExceptionally(new RemoteExecutionException(response.getErrorMessage()));
+                                    span.setTag(TAG_RPC_FAILED, "true");
+                                    span.log(response.getErrorMessage());
                                 } else {
                                     future.complete(response);
                                 }
                             } catch (Throwable ex) {
                                 LOG.error("Unmarshalling a response in RPC module {} failed.", module, ex);
                                 future.completeExceptionally(ex);
+                                span.setTag(TAG_RPC_FAILED, "true");
+                                span.log(ex.getMessage());
                             }
+                            span.finish();
                             // Ensure that future log statements on this thread are routed properly
                             Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
                         }
@@ -40,6 +51,7 @@
                                 if (timeoutException != null) {
                                     // Wrap timeout exceptions within a RequestTimedOutException
                                     future.completeExceptionally(new RequestTimedOutException(exchange.getException()));
+                                    span.setTag(TAG_TIMEOUT, "true");
                                 } else if (directConsumerNotAvailableException != null) {
                                     // Wrap consumer not available exceptions with a RequestRejectedException
                                     future.completeExceptionally(new RequestRejectedException(exchange.getException()));
@@ -47,6 +59,9 @@
                                     future.completeExceptionally(exchange.getException());
                                 }
                             }
+                            span.setTag(TAG_RPC_FAILED, "true");
+                            span.log(exchange.getException().getMessage());
+                            span.finish();
                             // Ensure that future log statements on this thread are routed properly
                             Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
                         }
@@ -55,6 +70,9 @@
                     try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
                         // Wrap ProducerTemplate exceptions with a RequestRejectedException
                         future.completeExceptionally(new RequestRejectedException(e));
+                        span.setTag(TAG_RPC_FAILED, "true");
+                        span.log(e.getMessage());
+                        span.finish();
                     }
                     // Ensure that future log statements on this thread are routed properly
                     Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
