@@ -1,0 +1,83 @@
+    /**
+     *  Maps @{@link org.opennms.netmgt.collection.api.CollectionSet} to Integration API @{@link CollectionSet} and builds it.
+     */
+    @SuppressWarnings("unchecked")
+    public CollectionSet buildCollectionSet(ImmutableCollectionSet.Builder builder, org.opennms.netmgt.collection.api.CollectionSet collectionSet) {
+
+        collectionSet.visit(new CollectionSetVisitor() {
+            ImmutableCollectionSetResource.Builder resourceBuilder;
+            String groupName = null;
+
+            @Override
+            public void visitCollectionSet(org.opennms.netmgt.collection.api.CollectionSet set) {
+
+            }
+
+            @Override
+            public void visitResource(CollectionResource resource) {
+                if (resource.getResourceTypeName().equals(CollectionResource.RESOURCE_TYPE_NODE)) {
+                    resourceBuilder = ImmutableCollectionSetResource.newBuilder(NodeResource.class);
+                    resourceBuilder.setResource(buildNodeResource(resource));
+                } else if (resource.getResourceTypeName().equals(CollectionResource.RESOURCE_TYPE_IF)) {
+                    resourceBuilder = ImmutableCollectionSetResource.newBuilder(IpInterfaceResource.class);
+                    IpInterfaceResource ipInterfaceResource = ImmutableIpInterfaceResource.newInstance(buildNodeResource(resource), resource.getInstance());
+                    resourceBuilder.setResource(ipInterfaceResource);
+                } else {
+                    resourceBuilder = ImmutableCollectionSetResource.newBuilder(GenericTypeResource.class);
+                    GenericTypeResource genericTypeResource = ImmutableGenericTypeResource.newBuilder()
+                            .setInstance(resource.getInstance())
+                            .setType(resource.getResourceTypeName())
+                            .setNodeResource(buildNodeResource(resource))
+                            .build();
+                    resourceBuilder.setResource(genericTypeResource);
+                }
+            }
+
+            @Override
+            public void visitGroup(AttributeGroup group) {
+                groupName = group.getName();
+            }
+
+            @Override
+            public void visitAttribute(CollectionAttribute attribute) {
+                if (attribute.getType().equals(AttributeType.STRING)) {
+                    StringAttribute stringAttribute = ImmutableStringAttribute.newBuilder()
+                            .setName(attribute.getName())
+                            .setValue(attribute.getStringValue())
+                            .build();
+                    resourceBuilder.addStringAttribute(stringAttribute);
+                } else {
+                    NumericAttribute numericAttribute = ImmutableNumericAttribute.newBuilder()
+                            .setName(attribute.getName())
+                            .setGroup(groupName)
+                            .setType((attribute.getType() == AttributeType.COUNTER) ? NumericAttribute.Type.COUNTER : NumericAttribute.Type.GAUGE)
+                            .setValue(attribute.getNumericValue().doubleValue())
+                            .build();
+                    resourceBuilder.addNumericAttribute(numericAttribute);
+                }
+            }
+
+            @Override
+            public void completeAttribute(CollectionAttribute attribute) {
+
+            }
+
+            @Override
+            public void completeGroup(AttributeGroup group) {
+
+            }
+
+            @Override
+            public void completeResource(CollectionResource resource) {
+                builder.addCollectionSetResource(resourceBuilder.build());
+            }
+
+            @Override
+            public void completeCollectionSet(org.opennms.netmgt.collection.api.CollectionSet set) {
+                builder.setTimestamp(set.getCollectionTimestamp().getTime());
+                builder.setStatus(CollectionSet.Status.SUCCEEDED);
+            }
+        });
+        return builder.build();
+    }
+
