@@ -1,0 +1,49 @@
+    @Override
+    public OnmsTopologyConsumer map(TopologyEdgeConsumer ext) {
+        return new OnmsTopologyConsumer() {
+            @Override
+            public String getName() {
+                return ext.getClass().getName();
+            }
+
+            @Override
+            public Set<OnmsTopologyProtocol> getProtocols() {
+                if (ext.getProtocols() == null) {
+                    LOG.debug("Protocols was null, returning empty set");
+                    return Collections.emptySet();
+                }
+
+                LOG.trace("Returning mapped protocols from {}", ext.getProtocols());
+                return ext.getProtocols()
+                        .stream()
+                        .map(ModelMappers::toOnmsTopologyProtocol)
+                        .collect(Collectors.toSet());
+            }
+
+            @Override
+            public void consume(OnmsTopologyMessage message) {
+                message.getMessagebody().accept(new TopologyVisitor() {
+                    @Override
+                    public void visit(OnmsTopologyEdge edge) {
+                        TopologyEdge topologyEdge = edgeMapper.toEdge(message.getProtocol(), edge);
+
+                        switch (message.getMessagestatus()) {
+                            case UPDATE:
+                                LOG.trace("Mapped topology message {} to topology edge {} for add/update", message,
+                                        topologyEdge);
+                                ext.onEdgeAddedOrUpdated(topologyEdge);
+                                break;
+                            case DELETE:
+                                LOG.trace("Mapped topology message {} to topology edge {} for delete", message,
+                                        topologyEdge);
+                                ext.onEdgeDeleted(topologyEdge);
+                                break;
+                            default:
+                                LOG.warn("Unsupported message status of {}", message.getMessagestatus());
+                        }
+                    }
+                });
+            }
+        };
+    }
+
