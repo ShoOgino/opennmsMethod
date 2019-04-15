@@ -20,22 +20,27 @@
             }
 
             private List<OnmsAlarm> filterAlarms(List<OnmsAlarm> alarms, TriggerPackage triggerPackage) {
+
+                Stream<OnmsAlarm> stream = alarms.stream();
+
                 if (triggerPackage.getOnlyUnacknowledged()) {
-                    return alarms.stream()
-                            .filter(alarm -> alarm.getNodeId() != null)
-                            .filter(alarm -> !alarm.isAcknowledged())
-                            .filter(alarm -> Strings.isNullOrEmpty(triggerPackage.getCategoryFilter()) ||
-                                    alarm.getNode().getCategories().stream()
-                                            .anyMatch(category -> category.getName().matches(triggerPackage.getCategoryFilter())))
-                            .collect(Collectors.toList());
-                } else {
-                    return alarms.stream()
-                            .filter(alarm -> alarm.getNodeId() != null)
-                            .filter(alarm -> Strings.isNullOrEmpty(triggerPackage.getCategoryFilter()) ||
-                                    alarm.getNode().getCategories().stream()
-                                            .anyMatch(category -> category.getName().matches(triggerPackage.getCategoryFilter())))
-                            .collect(Collectors.toList());
+                    stream = stream.filter(alarm -> !alarm.isAcknowledged());
                 }
+
+                if (!Strings.isNullOrEmpty(triggerPackage.getCategoryFilter())) {
+                    stream = stream
+                            .filter(alarm -> alarm.getNodeId() != null)
+                            .filter(alarm -> alarm.getNode().getCategories().stream()
+                                    .anyMatch(category -> category.getName().matches(triggerPackage.getCategoryFilter())));
+                }
+
+                if (!Strings.isNullOrEmpty(triggerPackage.getReductionKeyFilter())) {
+                    stream = stream
+                            .filter(alarm -> !Strings.isNullOrEmpty(alarm.getReductionKey()))
+                            .filter(alarm -> alarm.getReductionKey().matches(triggerPackage.getReductionKeyFilter()));
+                }
+
+                return stream.collect(Collectors.toList());
             }
 
             @Override
@@ -60,16 +65,15 @@
                             // Retrieve the alarms with an associated node and filter for matching categories.
 
                             final CriteriaBuilder criteriaBuilder = new CriteriaBuilder(OnmsAlarm.class)
-                                    .isNotNull("node")
                                     .gt("severity", OnmsSeverity.NORMAL);
 
                             final List<OnmsAlarm> alarms = alarmDao.findMatching(criteriaBuilder.toCriteria());
 
                             for (final TriggerPackage triggerPackage : ifTttConfig.getTriggerPackages()) {
 
-                                if (!oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).containsKey(triggerPackage.getCategoryFilter())) {
-                                    oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getCategoryFilter(), OnmsSeverity.INDETERMINATE);
-                                    oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getCategoryFilter(), 0);
+                                if (!oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).containsKey(triggerPackage.getFilterKey())) {
+                                    oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getFilterKey(), OnmsSeverity.INDETERMINATE);
+                                    oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getFilterKey(), 0);
                                 }
 
                                 final List<OnmsAlarm> filteredAlarms = filterAlarms(alarms, triggerPackage);
@@ -86,24 +90,24 @@
                                 LOG.debug("Received {} filtered, {} new severity", newAlarmCount, newSeverity);
 
                                 final DefaultVariableNameExpansion defaultVariableNameExpansion = new DefaultVariableNameExpansion(
-                                        oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter()), newSeverity,
-                                        oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter()), newAlarmCount
+                                        oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey()), newSeverity,
+                                        oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey()), newAlarmCount
                                 );
 
                                 // Trigger IFTTT event if necessary.
 
-                                if (!newSeverity.equals(oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter())) ||
-                                        newAlarmCount != oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter())) {
-                                    fireIfTttTriggerSet(ifTttConfig, triggerPackage.getCategoryFilter(), newSeverity, defaultVariableNameExpansion);
+                                if (!newSeverity.equals(oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey())) ||
+                                        newAlarmCount != oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey())) {
+                                    fireIfTttTriggerSet(ifTttConfig, triggerPackage.getFilterKey(), newSeverity, defaultVariableNameExpansion);
                                 }
 
                                 LOG.debug("Old severity: {}, new severity: {}, old alarm count: {}, new alarm count: {}",
-                                        oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter()), newSeverity,
-                                        oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getCategoryFilter()), newAlarmCount
+                                        oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey()), newSeverity,
+                                        oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).get(triggerPackage.getFilterKey()), newAlarmCount
                                 );
 
-                                oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getCategoryFilter(), newSeverity);
-                                oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getCategoryFilter(), newAlarmCount);
+                                oldSeverity.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getFilterKey(), newSeverity);
+                                oldAlarmCount.get(triggerPackage.getOnlyUnacknowledged()).put(triggerPackage.getFilterKey(), newAlarmCount);
                             }
                         }
                     });
