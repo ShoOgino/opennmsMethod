@@ -1,6 +1,15 @@
     @Override
+    @SuppressWarnings("unchecked")
     public boolean process(Exchange exchange, AsyncCallback callback) {
+        // build span from message headers.
+        Tracer.SpanBuilder spanBuilder = buildSpanFromHeaders(exchange.getIn());
+        // Start minion span.
+        Span minionSpan = spanBuilder.start();
         final RpcRequest request = module.unmarshalRequest(exchange.getIn().getBody(String.class));
+        minionSpan.setTag(TAG_LOCATION, request.getLocation());
+        if(request.getSystemId() != null) {
+            minionSpan.setTag(TAG_SYSTEM_ID, request.getSystemId());
+        }
         final CompletableFuture<RpcResponse> future = module.execute(request);
         future.whenComplete((res, ex) -> {
             try {
@@ -9,11 +18,14 @@
                     // An exception occurred, store the exception in a new response
                     LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
                     response = module.createResponseWithException(ex);
+                    minionSpan.setTag(TAG_RPC_FAILED, "true");
+                    minionSpan.log(ex.getMessage());
                 } else {
                     // No exception occurred, use the given response
                     response = res;
                 }
-
+                // Received response, finish minion span.
+                minionSpan.finish();
                 try {
                     exchange.getOut().setBody(module.marshalResponse(response), String.class);
                     postProcess(exchange);
