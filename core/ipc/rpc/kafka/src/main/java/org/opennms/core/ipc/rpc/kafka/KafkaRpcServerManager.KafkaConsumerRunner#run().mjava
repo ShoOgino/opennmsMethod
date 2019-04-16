@@ -51,20 +51,16 @@
                                 rpcContent = messageCache.get(rpcId);
                                 messageCache.remove(rpcId);
                             }
-                            Map<String, String> tracingInfoMap = RequestCarrier.getTracingInfoMap(rpcMessage.getTracingInfoList());
-                            Tracer.SpanBuilder spanBuilder;
-                            if(tracerRegistry.isRegistered()) {
-                                tracer = getTracer();
-                            }
-                            SpanContext context = tracer.extract(Format.Builtin.TEXT_MAP, new TextMapExtractAdapter(tracingInfoMap));
-                            if (context != null) {
-                                spanBuilder = tracer.buildSpan(module.getId()).asChildOf(context);
-                            } else {
-                                spanBuilder = tracer.buildSpan(module.getId());
-                            }
-
+                            //Build child span from rpcMessage.
+                            Tracer.SpanBuilder spanBuilder = buildSpanFromRpcMessage(rpcMessage);
+                            // Start minion span.
                             Span minionSpan = spanBuilder.start();
+                            // Retrieve custom tags from rpcMessage and add them as tags.
+                            rpcMessage.getTracingInfoList().forEach(tracingInfo -> {
+                                minionSpan.setTag(tracingInfo.getKey(), tracingInfo.getValue());
+                            });
                             RpcRequest request = module.unmarshalRequest(rpcContent.toStringUtf8());
+                            // Set tags for minion span
                             minionSpan.setTag(TAG_LOCATION, request.getLocation());
                             if(request.getSystemId() != null) {
                                 minionSpan.setTag(TAG_SYSTEM_ID, request.getSystemId());
@@ -77,11 +73,12 @@
                                     LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
                                     response = module.createResponseWithException(ex);
                                     minionSpan.log(ex.getMessage());
+                                    minionSpan.setTag(TAG_RPC_FAILED, "true");
                                 } else {
                                     // No exception occurred, use the given response
                                     response = res;
                                 }
-
+                                // Finish minion Span
                                 minionSpan.finish();
                                 try {
                                     final JmsQueueNameFactory topicNameFactory = new JmsQueueNameFactory(KafkaRpcConstants.RPC_RESPONSE_TOPIC_NAME,
