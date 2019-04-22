@@ -1,19 +1,50 @@
 	public static EventMatcher valueMatchesRegexMatcher(final Field field,	final String value) {
-		final Pattern regex = Pattern.compile(value.startsWith("~") ? value.substring(1) : value);
-	
-		return new EventMatcher() {
-			
-			@Override
-			public boolean matches(Event matchingEvent) {
-				String eventValue = field.get(matchingEvent);
-				// we have to do equals check for compatibility with the old code
-				return eventValue != null && (regex.matcher(eventValue).matches() || eventValue.equals(value));
-			}
-			
-			@Override
-			public String toString() {
-				return field + "~" + regex;
-			}
-		};
+		final Pattern eventValueRegex = Pattern.compile(value.startsWith("~") ? value.substring(1) : value);
+		final List<String> namedCaptureGroupsFromRegex = RegexUtils.getNamedCaptureGroupsFromPattern(eventValueRegex.pattern());
+
+        return new EventMatcher() {
+            @Override
+            public MatchResult matches(Event matchingEvent) {
+		        final String eventValue = field.get(matchingEvent);
+		        if (eventValue == null) {
+		            return MatchResult.FALSE;
+		        }
+		        // we have to do equals check for compatibility with the old code
+                if (eventValue.equals(value)) {
+		            return MatchResult.TRUE;
+		        }
+
+                final Matcher eventValueMatcher = eventValueRegex.matcher(eventValue);
+                if (!eventValueMatcher.matches()) {
+                    return MatchResult.FALSE;
+                }
+
+                // if there are no named capture groups, return immediately
+                if (namedCaptureGroupsFromRegex.isEmpty()) {
+                	return MatchResult.TRUE;
+				}
+
+				// there are 1+ named capture groups in the regex, let's fetch the values for these
+				final Map<String, String> extractedParms = new LinkedHashMap<>(namedCaptureGroupsFromRegex.size());
+                for (String namedCaptureGroup : namedCaptureGroupsFromRegex) {
+                    try {
+                        final String groupValue = eventValueMatcher.group(namedCaptureGroup);
+                        if (groupValue != null) {
+                            extractedParms.put(namedCaptureGroup, groupValue);
+                        }
+                    } catch (IllegalArgumentException e) {
+                        // There is no capturing group in the pattern with the given name, skip it
+                    }
+                }
+
+                // include the extracted parameters in the match
+                return MatchResult.of(true, extractedParms);
+            }
+
+            @Override
+            public String toString() {
+                return field + "~" + eventValueRegex;
+            }
+        };
 	}
 
