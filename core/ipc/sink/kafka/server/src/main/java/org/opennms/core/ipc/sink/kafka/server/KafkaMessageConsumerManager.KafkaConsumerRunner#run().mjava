@@ -7,7 +7,25 @@
                     ConsumerRecords<String, byte[]> records = consumer.poll(100);
                     for (ConsumerRecord<String, byte[]> record : records) {
                         try {
-                            byte[] messageInBytes = getSinkMessageFromProto(record.value());
+                            // Parse sink message content from protobuf.
+                            SinkMessageProtos.SinkMessage sinkMessage = SinkMessageProtos.SinkMessage.parseFrom(record.value());
+                            byte[] messageInBytes = sinkMessage.getContent().toByteArray();
+                            // Handle large message where there are multiple chunks of message.
+                            if (sinkMessage.getTotalChunks() > 1) {
+                                String messageId = sinkMessage.getMessageId();
+                                ByteString byteString = largeMessageCache.get(messageId);
+                                if(byteString != null) {
+                                    largeMessageCache.put(messageId, byteString.concat(sinkMessage.getContent()));
+                                } else {
+                                    largeMessageCache.put(messageId, sinkMessage.getContent());
+                                }
+                                // continue till all chunks arrive.
+                                if (sinkMessage.getTotalChunks() > sinkMessage.getCurrentChunkNumber() + 1) {
+                                    continue;
+                                }
+                                messageInBytes = largeMessageCache.get(messageId).toByteArray();
+                                largeMessageCache.remove(messageId);
+                            }
                             dispatch(module, module.unmarshal(messageInBytes));
                         } catch (RuntimeException e) {
                             LOG.warn("Unexpected exception while dispatching message", e);
