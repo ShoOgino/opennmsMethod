@@ -1,0 +1,62 @@
+    @Override
+    public Object execute() throws InvalidSyntaxException {
+        // Grab a reference to the OnmsTopologyConsumer interface exposed by the OpennmsKafkaProducer
+        final ServiceReference<OnmsTopologyConsumer> serviceRef = bundleContext.getServiceReferences(OnmsTopologyConsumer.class, "(type=kafkaProducer)").stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Could not find reference to OnmsTopologyConsumer service exposed by the OpennmsKafkaProducer."));
+        final OnmsTopologyConsumer consumer = bundleContext.getService(serviceRef);
+
+        System.out.println("Retrieving topologies...");
+        final Map<OnmsTopologyProtocol, OnmsTopology> topologies;
+        if (protocols == null || protocols.isEmpty()) {
+            // No protocols set, retrieve them all
+            topologies =  onmsTopologyDao.getTopologies();
+        } else {
+            // One or more protocols set, retrieve them in and process them in the order specified
+            topologies = new LinkedHashMap<>();
+            for (String protocol : protocols) {
+                topologies.put(OnmsTopologyProtocol.create(protocol), onmsTopologyDao.getTopology(protocol));
+            }
+        }
+
+        System.out.printf("Retrieved %d topologies.\n", topologies.size());
+        for (Map.Entry<OnmsTopologyProtocol, OnmsTopology> entry : topologies.entrySet()) {
+            final OnmsTopologyProtocol protocol = entry.getKey();
+            final String protocolName = protocol.getId().toUpperCase();
+            final OnmsTopology topology = entry.getValue();
+
+            final Set<OnmsTopologyVertex> topologyVertices= topology.getVertices();
+            final Set<OnmsTopologyEdge> topologyEdges = topology.getEdges();
+            System.out.printf("%s: Pushing %d vertices and %d edges.\n",
+                    protocolName, topologyVertices.size(), topologyEdges.size());
+
+            int numVerticesPushed = 0;
+            for (OnmsTopologyVertex vertex : topology.getVertices()) {
+                consumer.consume(OnmsTopologyMessage.update(vertex, protocol));
+                // Progress tracking
+                numVerticesPushed++;
+                if (numVerticesPushed > 0 && numVerticesPushed % 100 == 0) {
+                    System.out.printf("%s: Pushed %d vertices.\n", protocolName, numVerticesPushed);
+                }
+                if (Thread.interrupted()) {
+                    System.out.println("Interrupted. Aborting.");
+                }
+            }
+
+            int numEdgesPushed = 0;
+            for (OnmsTopologyEdge edge : topology.getEdges()) {
+                consumer.consume(OnmsTopologyMessage.update(edge, protocol));
+                // Progress tracking
+                numEdgesPushed++;
+                if (numEdgesPushed > 0 && numEdgesPushed % 100 == 0) {
+                    System.out.printf("%s: Pushed %d edges.\n", protocolName, numEdgesPushed);
+                }
+                if (Thread.interrupted()) {
+                    System.out.println("Interrupted. Aborting.");
+                }
+            }
+        }
+        System.out.println("Done.");
+        return null;
+    }
+
