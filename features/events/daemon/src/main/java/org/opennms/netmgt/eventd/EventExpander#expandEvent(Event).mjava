@@ -172,7 +172,7 @@
                 alarmData.setX733AlarmType(econfAlarmData.getX733AlarmType());
                 alarmData.setX733ProbableCause(econfAlarmData.getX733ProbableCause());
                 alarmData.setClearKey(econfAlarmData.getClearKey());
-                
+
                 List<org.opennms.netmgt.xml.eventconf.UpdateField> updateFieldList = econfAlarmData.getUpdateFields();
                 if (updateFieldList.size() > 0) {
                     List<UpdateField> updateFields = new ArrayList<>(updateFieldList.size());
@@ -195,28 +195,24 @@
                 e.setAlarmData(alarmData);
             }
 
-            if (econf.getParameters() != null && econf.getParameters().size() > 0) {
-                if (e.getParmCollection() == null) {
-                    e.setParmCollection(new ArrayList<>(econf.getParameters().size()));
-                }
+            // Perform the match again in order to retrieve any event parameters that may of been extracted
+            final MatchResult matchResult = econf.matches(e);
+            // The event has changed since we last matched, so we cannot guarantee that we will match again
+            if (matchResult.matched()) {
+                // Add the parms
+                matchResult.getEventParameters().forEach((key, value) -> maybeAddParameterToEvent(e, key, value,
+                        // Don't expand parameters derived from matches for sanity
+                        false));
+            }
+
+            // Add parameters defined in the event definition
+            if (econf.getParameters() != null && !econf.getParameters().isEmpty()) {
                 for (Parameter p : econf.getParameters()) {
-                    if (EventUtils.getParm(e, p.getName()) == null) {
-                        Parm parm = new Parm();
-                        parm.setParmName(p.getName());
-                        Value v = new Value();
-                        v.setContent(p.getValue());
-                        v.setType("string");
-                        v.setEncoding("text");
-                        v.setExpand(p.getExpand());
-                        parm.setValue(v);
-                        e.addParm(parm);
-                    } else {
-                        LOG.warn("expandEvent: the event {} already has a parameter named {}, the original content will be preserved. Check the event definition and rename the optional parameter.", e.getUei(),p.getName());
-                    }
+                    maybeAddParameterToEvent(e, p.getName(), p.getValue(), p.getExpand());
                 }
             }
         }
-        
+
         Map<String, Map<String, String>> decode = new HashMap<String, Map<String,String>>();
         if (econf != null && econf.getVarbindsdecodes().size() > 0) {
            for (final Varbindsdecode element : econf.getVarbindsdecodes()) {
