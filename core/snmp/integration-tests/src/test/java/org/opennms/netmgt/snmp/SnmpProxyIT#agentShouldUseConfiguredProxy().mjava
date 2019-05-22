@@ -4,20 +4,34 @@
      */
     @Test
     public void agentShouldUseConfiguredProxy() throws Exception {
-        int port = SocketUtils.findAvailableUdpPort();
-        UDPListener udpListener = new UDPListener(port);
-        executorService.submit(udpListener);
 
-        final List<SnmpObjId> snmpObjIds = Collections.singletonList(SnmpObjId.get(new int[]{port}));
+        final List<SnmpObjId> snmpObjIds = Collections.singletonList(SnmpObjId.get(".1.3.6.1.2.1.1.2"));
         Resource configuration = createConfiguration(port);
         SnmpPeerFactory snmpAgentConfigFactory = new SnmpPeerFactory(configuration);
 
         String targetHost = "169.254.1.1";
         final SnmpAgentConfig agent = snmpAgentConfigFactory.getAgentConfig(InetAddress.getByName(targetHost));
-        locationAwareSnmpClient.walk(agent, snmpObjIds)
+        final CompletableFuture<List<SnmpResult>> future = locationAwareSnmpClient.walk(agent, snmpObjIds)
                 .withDescription("snmp:walk")
                 .execute();
 
-        assertTrue(udpListener.wasCalled);
+        boolean answerReceived = false;
+
+
+        while (true) {
+            try {
+                future.get(1, TimeUnit.SECONDS)
+                        .forEach(res -> {
+                            LOG.info("[{}].[{}] = {}", res.getBase(), res.getInstance(), res.getValue());
+                        });
+                answerReceived = true;
+                break;
+            } catch (TimeoutException e) {
+                // pass
+            }
+            System.out.print(".");
+        }
+
+        assertTrue(answerReceived);
     }
 
