@@ -1,0 +1,45 @@
+    private void writeOverlay(Path home) throws IOException {
+        // Allow other users to read the folder
+        OverlayUtils.setOverlayPermissions(home);
+
+        // Copy the files from the profile *first*
+        // If this test class writes something, we expect it to be there
+        OverlayUtils.copyFiles(profile.getFiles(), home);
+
+        Path etc = home.resolve("etc");
+        Files.createDirectories(etc);
+
+        // Copy configuration from $OPENNMS_HOME/etc
+        final Path opennmsSourceEtcDirectory = new TargetRoot(getClass()).getPath("system-test-resources", "etc");
+        FileUtils.copyDirectory(opennmsSourceEtcDirectory.resolve("telemetryd-adapters").toFile(), etc.resolve("telemetryd-adapters").toFile());
+        FileUtils.copyDirectory(opennmsSourceEtcDirectory.resolve("resource-types.d").toFile(), etc.resolve("resource-types.d").toFile());
+        FileUtils.copyDirectory(opennmsSourceEtcDirectory.resolve("datacollection").toFile(), etc.resolve("datacollection").toFile());
+        FileUtils.copyFile(opennmsSourceEtcDirectory.resolve("datacollection-config.xml").toFile(), etc.resolve("datacollection-config.xml").toFile());
+
+        // Copy over the fixed configuration from the class-path
+        FileUtils.copyDirectory(new File(MountableFile.forClasspathResource("sentinel-overlay").getFilesystemPath()), home.toFile());
+
+        Path bootD = etc.resolve("featuresBoot.d");
+        Files.createDirectories(bootD);
+        writeFeaturesBoot(bootD.resolve("stest.boot"), getFeaturesOnBoot());
+
+        writeProps(etc.resolve("org.opennms.core.ipc.sink.kafka.consumer.cfg"),
+                ImmutableMap.<String,String>builder()
+                        .put("bootstrap.servers", OpenNMSContainer.KAFKA_ALIAS + ":9092")
+                        .put("acks", "1")
+                        .build());
+
+        writeProps(etc.resolve("org.opennms.features.flows.persistence.elastic.cfg"),
+                ImmutableMap.<String,String>builder()
+                        .put("elasticUrl", "http://" + OpenNMSContainer.ELASTIC_ALIAS + ":9200")
+                        .build());
+
+        if (TimeSeriesStrategy.NEWTS.equals(model.getTimeSeriesStrategy())) {
+            writeProps(etc.resolve("org.opennms.newts.config.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            .put("hostname", OpenNMSContainer.CASSANDRA_ALIAS)
+                            .put("port", Integer.toString(CassandraContainer.CQL_PORT))
+                            .build());
+        }
+    }
+
