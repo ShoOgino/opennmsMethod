@@ -1,0 +1,28 @@
+    @Test
+    public void testExceptionInDroolsReloadsEngine() throws Exception {
+        Collection<CorrelationEngine> engines = m_correlator.getEngines();
+        Assert.assertNotNull(engines);
+        Assert.assertEquals(1, engines.size());
+        FileUtils.copyDirectory(new File(DROOLS_SRC, "droolsFusion"), new File(DROOLS_HOME, "droolsFusion"));
+        sendReloadDaemonConfig();
+        engines = m_correlator.getEngines();
+        Assert.assertEquals(2, engines.size());
+        // Reset anticipated events, verify everything here after.
+        m_eventIpcMgr.getEventAnticipator().reset();
+        // Anticipate reload and engine exception related events.
+        anticipate(new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_UEI, "Junit").getEvent());
+        anticipate(new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_SUCCESSFUL_UEI, "droolsFusion").getEvent());
+        anticipate(new EventBuilder(EventConstants.DROOLS_ENGINE_ENCOUNTERED_EXCEPTION, "droolsFusion").getEvent());
+        // Correlate event that will throw exception and cause engine to reload.
+        DroolsCorrelationEngine engine = findEngineByName("droolsFusion");
+        Event event = new EventBuilder("uei.opennms.org/triggerTestForFusion", "Junit").getEvent();
+        engine.correlate(event);
+        // verify
+        m_eventIpcMgr.getEventAnticipator().verifyAnticipated(5000, 0, 0, 0, 0);
+        // Engine reloaded, sending NodeLostEvent should create NodeUp Event on from rule.
+        anticipate(createNodeUpEvent(1));
+        engine.correlate(createNodeLostServiceEvent(1, "ICMP"));
+        // verify again for NodeUp Event
+        m_eventIpcMgr.getEventAnticipator().verifyAnticipated(3000, 0, 0, 0, 0);
+    }
+
