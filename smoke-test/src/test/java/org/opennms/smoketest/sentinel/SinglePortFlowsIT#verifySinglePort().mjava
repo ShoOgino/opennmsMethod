@@ -1,15 +1,13 @@
     @Test
     public void verifySinglePort() throws Exception {
         // Determine endpoints
-        final InetSocketAddress elasticRestAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.ELASTICSEARCH_6, 9200, "tcp");
-        final InetSocketAddress sentinelSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.SENTINEL, 8301);
-        final InetSocketAddress minionSinglePortAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.MINION, Ports.SFLOW_PORT, "udp");
-
-        waitForSentinelStartup(sentinelSshAddress);
+        final InetSocketAddress elasticRestAddress = InetSocketAddress.createUnresolved(
+                stack.elastic().getContainerIpAddress(), stack.elastic().getMappedPort(9200));
+        final InetSocketAddress flowTelemetryAddress = stack.minion().getNetworkProtocolAddress(NetworkProtocol.FLOWS);
 
         // For each existing FlowPacket, create a definition to point to "minionSinglePortAddress"
         final List<FlowPacket> collect = Packets.getFlowPackets().stream()
-                .map(p -> new FlowPacket(p.getResource(), p.getFlowCount(), minionSinglePortAddress))
+                .map(p -> p.withDestinationAddress(flowTelemetryAddress))
                 .collect(Collectors.toList());
 
         // Now verify Flow creation
@@ -17,11 +15,14 @@
                 .withFlowPackets(collect)
                 .verifyBeforeSendingFlows((flowTester) -> {
                     try {
-                        final SearchResult response = flowTester.getJestClient().execute(new Search.Builder("").addIndex("netflow-*").build());
-                        Assert.assertEquals(Boolean.TRUE, response.isSucceeded());
-                        Assert.assertEquals(0L, response.getTotal().longValue());
+                        final SearchResult response = flowTester.getJestClient().execute(
+                                new Search.Builder("")
+                                        .addIndex("netflow-*")
+                                        .build());
+                        assertEquals(Boolean.TRUE, response.isSucceeded());
+                        assertEquals(0L, response.getTotal().longValue());
                     } catch (IOException e) {
-                        Throwables.propagate(e);
+                        throw new RuntimeException(e);
                     }
                 })
                 .build(elasticRestAddress);

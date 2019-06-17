@@ -1,0 +1,81 @@
+    @Test
+    public void testMinionSyslogsOverKafkaToEsRest() throws Exception {
+        Date startOfTest = new Date();
+        int numMessages = 10000;
+        int packetsPerSecond = 500;
+
+        final String sender = TestContainerUtils.getInternalIpAddress(stack.postgres());
+
+        // Wait for the minion to show up
+        await().atMost(90, SECONDS).pollInterval(5, SECONDS)
+            .until(DaoUtils.countMatchingCallable(
+                 stack.postgres().getDaoFactory().getDao(MinionDaoHibernate.class),
+                 new CriteriaBuilder(OnmsMinion.class)
+                     .gt("lastUpdated", startOfTest)
+                     .eq("location", stack.minion().getLocation())
+                     .toCriteria()
+                 ),
+                 is(1)
+             );
+
+        LOG.info("Warming up syslog routes by sending 100 packets");
+
+        // Warm up the routes
+        SyslogUtils.sendMessage(stack.minion().getSyslogAddress(), sender, 100);
+
+        for (int i = 1; i <= 15; i++) {
+            Thread.sleep(1000);
+            LOG.info("Slept for " + i + " seconds");
+        }
+
+        // Make sure that this evenly divides into the numMessages
+        final int chunk = 500;
+        // Make sure that this is an even multiple of chunk
+        final int logEvery = 1000;
+
+        int count = 0;
+        long start = System.currentTimeMillis();
+
+        // Send ${numMessages} syslog messages
+        RateLimiter limiter = RateLimiter.create(packetsPerSecond);
+        for (int i = 0; i < (numMessages / chunk); i++) {
+            limiter.acquire(chunk);
+            SyslogUtils.sendMessage(stack.minion().getSyslogAddress(), sender, chunk);
+            count += chunk;
+            if (count % logEvery == 0) {
+                long mid = System.currentTimeMillis();
+                LOG.info(String.format("Sent %d packets in %d milliseconds", logEvery, mid - start));
+                start = System.currentTimeMillis();
+            }
+        }
+
+        // Wait for at least 1k messages to show up in Elastisearch
+        final JestClientFactory factory = new JestClientFactory();
+        factory.setHttpClientConfig(new HttpClientConfig.Builder(String.format("http://%s", stack.elastic().getHttpHostAddress()))
+                .multiThreaded(true)
+                .build());
+
+        final String queryString = "{\n" +
+                "    \"query\": {\n" +
+                "        \"bool\" : {\n" +
+                "            \"filter\" : {\n" +
+                "                \"term\" : { \"eventuei\" : \"" + SyslogUtils.SYSLOG_MESSAGE_UEI + "\" }\n" +
+                "            }\n" +
+                "        }\n" +
+                "    }\n" +
+                "}";
+
+        try (JestClient client = factory.getObject()) {
+            with().pollInterval(15, SECONDS).await().atMost(5, MINUTES).until(() -> {
+                    LOG.debug("SEARCH QUERY: {}", queryString);
+                    SearchResult response = client.execute(
+                            new Search.Builder(queryString)
+                                    .addIndex("opennms*")
+                                    .build()
+                    );
+                    LOG.debug("SEARCH RESPONSE: {}", response.toString());
+                    return response.getTotal();
+            }, greaterThanOrEqualTo(1000L));
+        }
+    }
+
