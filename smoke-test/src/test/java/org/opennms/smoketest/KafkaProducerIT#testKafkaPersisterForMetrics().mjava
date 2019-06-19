@@ -1,6 +1,26 @@
-    /** Most of the test code is common with KafkaPersisterIT, runKafkaPersisterIT has all the test code **/
     @Test
-    public void testKafkaPersisterForMetrics() throws Exception {
-        runKafkaPeristerTest();
+    public void testKafkaPersisterForMetrics() {
+        Date startOfTest = new Date();
+
+        String localhost = "127.0.0.1";
+        DetectorsOnMinionIT.addRequisition(stack.opennms().getRestClient(), null, localhost);
+        HibernateDaoFactory daoFactory = stack.postgres().getDaoFactory();
+        NodeDao nodeDao = daoFactory.getDao(NodeDaoHibernate.class);
+        final OnmsNode onmsNode = await().atMost(1, MINUTES).pollInterval(15, SECONDS)
+                .until(DaoUtils.findMatchingCallable(nodeDao, new CriteriaBuilder(OnmsNode.class)
+                        .ge("createTime", startOfTest)
+                        .eq("label", localhost).toCriteria()), notNullValue());
+
+        assertNotNull(onmsNode);
+        String nodeId = onmsNode.getId().toString();
+        KafkaMessageConsumerRunner kafkaConsumer = new KafkaMessageConsumerRunner(stack.kafka().getBootstrapServers(), "metrics");
+        kafkaConsumer.setNodeId(nodeId);
+        Executors.newSingleThreadExecutor().execute(kafkaConsumer);
+        await().atMost(2, MINUTES).pollInterval(15, SECONDS)
+                .until(() -> persistCollectionData(stack, nodeId), containsString("Persisted collection"));
+
+        // Can't get proto3 in here, so only verify non-null
+        await().atMost(1, MINUTES).pollInterval(15, SECONDS).until(kafkaConsumer::getValue, not(nullValue()));
+        kafkaConsumer.stop();
     }
 

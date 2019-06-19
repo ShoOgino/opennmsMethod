@@ -1,21 +1,20 @@
     @Test
     public void verifyAdapter() throws Exception {
         // Determine endpoints
-        final InetSocketAddress sentinelSshAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.SENTINEL, 8301);
-        final InetSocketAddress opennmsHttpAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.OPENNMS, 8980);
-        final InetSocketAddress postgresqlAddress = testEnvironment.getServiceAddress(NewTestEnvironment.ContainerAlias.POSTGRES, 5432);
+        final InetSocketAddress sentinelSshAddress = stack.sentinel().getSshAddress();
+        final InetSocketAddress opennmsHttpAddress = stack.opennms().getWebAddress();
 
         // Configure RestAssured
         RestAssured.baseURI = String.format("http://%s:%s/opennms", opennmsHttpAddress.getHostName(), opennmsHttpAddress.getPort());
         RestAssured.port = opennmsHttpAddress.getPort();
         RestAssured.basePath = "/rest";
-        RestAssured.authentication = preemptive().basic(BASIC_AUTH_USERNAME, BASIC_AUTH_PASSWORD);
+        RestAssured.authentication = preemptive().basic(OpenNMSContainer.ADMIN_USER, OpenNMSContainer.ADMIN_PASSWORD);
 
         // The package send may contain a node, which must be created in order to have the adapter store it to newts
         // so we check if this is the case and afterwards create the requisition
         final RequisitionCreateInfo requisitionToCreate = getRequisitionToCreate();
         if (requisitionToCreate != null) {
-            createRequisition(requisitionToCreate, opennmsHttpAddress, postgresqlAddress);
+            createRequisition(requisitionToCreate, opennmsHttpAddress, stack.postgres().getDaoFactory());
         }
 
         // Wait until a route for procession is actually started
@@ -36,11 +35,11 @@
                 .get("/measurements/" + resourceId);
         Assert.assertEquals(404, response.statusCode());
 
-        // Send packet to minion
-        sendTelemetryMessage();
-
         await().atMost(3, TimeUnit.MINUTES).pollInterval(10, TimeUnit.SECONDS).until(
                 () -> {
+                    // Send packet to Minion
+                    sendTelemetryMessage();
+                    // Verify that the resource exists
                     final Response theResponse = RestAssured.given().accept(ContentType.JSON)
                             .get("/measurements/" + resourceId);
                     return theResponse.statusCode() == 200;

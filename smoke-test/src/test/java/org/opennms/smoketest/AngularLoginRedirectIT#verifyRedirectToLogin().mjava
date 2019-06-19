@@ -1,0 +1,50 @@
+    @Test
+    public void verifyRedirectToLogin() throws IOException {
+        for (Check eachCheck : checks) {
+            LOG.info("{}: Run test for page", eachCheck.url);
+
+            // Go to Page
+            login();
+            driver.get(getBaseUrlInternal() + "opennms/" + eachCheck.url);
+
+            // Verify Page loaded
+            LOG.info("{}: Verify that page loaded", eachCheck.url);
+            eachCheck.verifyPageLoaded.run();
+
+            // Run action
+            LOG.info("{}: Perform action", eachCheck.url);
+            eachCheck.actionToPerform.run();
+
+            // Wait before logging out as the http request may be still in progress
+            // and may result in a pre-mature redirect, causing the test to fail
+            sleep(SLEEP_TIME);
+
+            // Logout (via HttpGet, so we are still on the page)
+            LOG.info("{}: Simulate session timeout", eachCheck.url);
+            simulateSessionTimeout();
+            sleep(SLEEP_TIME);
+
+            // Verify we are still on the page
+            LOG.info("{}: Verify that page is still loaded", eachCheck.url);
+            eachCheck.verifyPageLoaded.run();
+            sleep(SLEEP_TIME);
+
+            // Run action (again or an individual one), which should still pass
+            LOG.info("{}: Perform action again. Should redirect to login page.", eachCheck.url);
+            if (eachCheck.actionToPerformAfterLogout != null) {
+                eachCheck.actionToPerformAfterLogout.run();
+            } else {
+                eachCheck.actionToPerform.run();
+            }
+            sleep(SLEEP_TIME);
+
+            // Verify we have been forwarded to the login page
+            new WebDriverWait(driver, 5).until(input -> {
+                    LOG.info("{}: Verify redirect to login.jsp occurred", eachCheck.url);
+                    return Objects.equals(getBaseUrlInternal() + "opennms/login.jsp?session_expired=true", driver.getCurrentUrl());
+                }
+            );
+            LOG.info("{}: Test passed", eachCheck.url);
+        }
+    }
+
