@@ -1,0 +1,37 @@
+    /**
+     * Goal: We want to trigger a threshold based on metrics collected by collectd.
+     *
+     * We achieve this by configuring the JDBC collector to collect values from the node_metadata table,
+     * storing these in generic type resources, and thresholding on these values.
+     *
+     * Controlling the thresholds becomes as simple as changing the meta-data values.
+     */
+    @Test
+    public void canTriggerAbsoluteChangeThreshold() {
+        // Create our test node
+        LOG.info("Setting up test node...");
+        final OnmsNode testNode = addNode();
+        // Validate that the was associated with the expected category
+        final Set<String> categoriesOnNode = testNode.getCategories().stream()
+                .map(OnmsCategory::getName)
+                .collect(Collectors.toSet());
+        assertThat(categoriesOnNode, hasItem(TEST_NODE_CATEGORY));
+
+        // Verify that no existing absoluteChangeExceeded event exists for the node
+        assertThat(getEventsUeisForNode(testNode.getId()), not(hasItem(ABSOLUTE_CHANGE_THRESHOLD_EVENT_UEI)));
+
+        // We use a another distinct meta-data attribute since there's a bug with JDBC collector whereby it doesn't
+        // build generic type resources if there is only one result in the result-set
+        final AtomicLong currentValue = new AtomicLong(0);
+        final int absoluteChangeThreshold = 10;
+
+        // Wait for the high threshold to appear
+        LOG.info("Waiting for absolute change threshold event...");
+        await().atMost(2, TimeUnit.MINUTES).pollInterval(10, TimeUnit.SECONDS).pollDelay(0, TimeUnit.SECONDS)
+                .until(() -> {
+                    // Keep increasing the value until the threshold is hit
+                    setServiceJitter(currentValue.getAndAdd(absoluteChangeThreshold), TimeUnit.SECONDS);
+                    return getEventsUeisForNode(testNode.getId());
+                }, hasItem(ABSOLUTE_CHANGE_THRESHOLD_EVENT_UEI));
+    }
+

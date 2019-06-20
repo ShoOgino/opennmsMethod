@@ -1,0 +1,40 @@
+    /**
+     * Goal: We want to trigger a threshold based on response time data from a service
+     * monitored by the poller.
+     *
+     * We achieve this by configuring a SystemExecuteMonitor for a node where the amount
+     * of time to sleep is passed in as a command line argument and is populated by the node
+     * meta-data. Controlling the delay then becomes as simple as changing the meta-data value.
+     *
+     */
+    @Test
+    public void canTriggerHighResponseTimeThreshold() {
+        // Create our test node
+        LOG.info("Setting up test node...");
+        final OnmsNode testNode = addNode();
+        // Validate that the was associated with the expected category
+        final Set<String> categoriesOnNode = testNode.getCategories().stream()
+                .map(OnmsCategory::getName)
+                .collect(Collectors.toSet());
+        assertThat(categoriesOnNode, hasItem(TEST_NODE_CATEGORY));
+
+        // Verify that no existing highThresholdExceeded alarm exists for the node
+        assertThat(getAlarmsUeisForNode(testNode.getId()), not(hasItem(HIGH_THRESHOLD_EVENT_UEI)));
+
+        // Increase the service delay above the threshold limit
+        setServiceDelay(6, TimeUnit.SECONDS);
+
+        // Wait for the high threshold to appear
+        LOG.info("Waiting for high threshold alarm...");
+        await().atMost(1, TimeUnit.MINUTES).pollInterval(5, TimeUnit.SECONDS)
+                .until(() -> getAlarmsUeisForNode(testNode.getId()), hasItem(HIGH_THRESHOLD_EVENT_UEI));
+
+        // Now remove the delay
+        setServiceDelay(0, TimeUnit.SECONDS);
+
+        LOG.info("Waiting for high threshold alarm to clear...");
+        await().atMost(1, TimeUnit.MINUTES).pollInterval(5, TimeUnit.SECONDS)
+                .until(() -> restClient.getAlarmsByEventUei(HIGH_THRESHOLD_EVENT_UEI)
+                        .getObjects().get(0).getSeverity(), equalTo(OnmsSeverity.CLEARED));
+    }
+
