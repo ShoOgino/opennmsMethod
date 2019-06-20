@@ -1,0 +1,46 @@
+    private void triggerAdapterAndVerifyAssetPopulation(Consumer<Integer> triggerAdapterForNodeId) {
+        final WSManClientFactory clientFactory = mock(WSManClientFactory.class);
+        // Use our mock client factory
+        adapter.setWsmanClientFactory(clientFactory);
+
+        // Return a mock client
+        final WSManClient client = mock(WSManClient.class);
+        when(clientFactory.getClient(any(WSManEndpoint.class))).thenReturn(client);
+
+        when(client.enumerateAndPullUsingFilter(any(), any(), any(), any(), anyBoolean())).then((Answer) invocation -> {
+            final String query = invocation.getArgumentAt(2, String.class);
+            @SuppressWarnings("unchecked")
+            final List<Node> nodes = (List<Node>)invocation.getArgumentAt(3, List.class);
+
+            Node node = mock(Node.class);
+            when(node.getTextContent()).thenReturn("Wesley");
+            nodes.add(node);
+
+            // Add another node if the query contains the given substring
+            if (query.contains("caption")) {
+                node = mock(Node.class);
+                when(node.getTextContent()).thenReturn("Snipes");
+                nodes.add(node);
+            }
+
+            return null;
+        });
+
+        // Now trigger the adapter
+        triggerAdapterForNodeId.accept(node.getId());
+
+        // Retrieve our node from the database again
+        node = template.execute(status -> {
+            final OnmsNode newNode = nodeDao.get(node.getId());
+            // Trigger a lazy load of the asset record
+            //noinspection ResultOfMethodCallIgnored
+            newNode.getAssetRecord().getVendor();
+            return newNode;
+        });
+
+        // Verify a field that contains concatenated results
+        assertThat(node.getAssetRecord().getOperatingSystem(), equalTo("Wesley\nSnipes"));
+        // Verify a field that contains a single result
+        assertThat(node.getAssetRecord().getRam(), equalTo("Wesley"));
+    }
+
