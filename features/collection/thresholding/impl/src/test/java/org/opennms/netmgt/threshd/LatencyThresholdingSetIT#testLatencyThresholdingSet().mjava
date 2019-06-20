@@ -1,0 +1,49 @@
+    /*
+     * Testing custom ThresholdingSet implementation for in-line Latency thresholds processing for Pollerd.
+     * 
+     * This test validate that Bug 1582 has been fixed.
+     * ifLabel and ifIndex are set correctly based on Bug 2711
+     */
+    @Test
+    @JUnitTemporaryDatabase(tempDbClass=MockDatabase.class)
+    public void testLatencyThresholdingSet() throws Exception {
+        String ifName = "lo0";
+        setupSnmpInterfaceDatabase(m_db, m_ipAddress, ifName);
+        mockIfInfo.put("snmpifindex", "1");
+        EasyMock.expect(m_ifLabelDao.getIfLabel(EasyMock.anyInt(), EasyMock.anyObject(InetAddress.class))).andReturn(ifName).anyTimes();
+        EasyMock.expect(m_ifLabelDao.getInterfaceInfoFromIfLabel(EasyMock.anyInt(), EasyMock.anyString())).andReturn(mockIfInfo).anyTimes();
+        EasyMock.replay(m_ifLabelDao);
+
+        ThresholdingSession session = m_thresholdingService.createSession(m_nodeId, m_ipAddress, m_svcName, getRepository(), m_serviceParams);
+
+        Map<String, Double> attributes = new HashMap<String, Double>();
+        attributes.put("http", 90.0);
+        CollectionSet collectionSet = getCollectionSet(m_nodeId, m_ipAddress, m_svcName, m_location, getRepository(), attributes);
+
+        session.accept(collectionSet);
+
+        // Test Trigger
+        attributes.put("http", 200.0);
+        collectionSet = getCollectionSet(m_nodeId, m_ipAddress, m_svcName, m_location, getRepository(), attributes);
+        for (int i = 1; i < 5; i++) {
+            LOG.debug("testLatencyThresholdingSet: run number {}", i);
+            session.accept(collectionSet);
+        }
+        verifyEvents(0);
+
+        addEvent(EventConstants.HIGH_THRESHOLD_EVENT_UEI, "127.0.0.1", "HTTP", 5, 100.0, 50.0, 200.0, ifName, "127.0.0.1[HTTP]", "http", ifName, null,
+                 m_eventIpcManager.getEventAnticipator(), m_anticipatedEvents);
+        LOG.debug("testLatencyThresholdingSet: run number 5");
+        session.accept(collectionSet);
+
+        verifyEvents(0);
+
+        // Test Rearm
+        addEvent(EventConstants.HIGH_THRESHOLD_REARM_EVENT_UEI, "127.0.0.1", "HTTP", 5, 100.0, 50.0, 40.0, ifName, "127.0.0.1[HTTP]", "http", ifName, null,
+                 m_eventIpcManager.getEventAnticipator(), m_anticipatedEvents);
+        attributes.put("http", 40.0);
+        collectionSet = getCollectionSet(m_nodeId, m_ipAddress, m_svcName, m_location, getRepository(), attributes);
+        session.accept(collectionSet);
+        verifyEvents(0);
+    }
+

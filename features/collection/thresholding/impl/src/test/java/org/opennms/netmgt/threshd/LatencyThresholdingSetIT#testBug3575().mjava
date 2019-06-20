@@ -1,0 +1,34 @@
+    /*
+     * This test uses this files from src/test/resources:
+     * - threshd-configuration-bug3575.xml
+     * - test-thresholds-bug3575.xml
+     */
+    @Test
+    @JUnitTemporaryDatabase(tempDbClass=MockDatabase.class)
+    public void testBug3575() throws Exception {
+        initFactories("/threshd-configuration-bug3575.xml","/test-thresholds-bug3575.xml");
+        String ifName = "eth0";
+        setupSnmpInterfaceDatabase(m_db, m_ipAddress, ifName);
+        EasyMock.expect(m_ifLabelDao.getIfLabel(EasyMock.anyInt(), EasyMock.anyObject(InetAddress.class))).andReturn(ifName).anyTimes();
+        EasyMock.expect(m_ifLabelDao.getInterfaceInfoFromIfLabel(EasyMock.anyInt(), EasyMock.anyString())).andReturn(mockIfInfo).anyTimes();
+        EasyMock.replay(m_ifLabelDao);
+
+        Map<String, Double> attributes = new HashMap<String, Double>();
+        for (double i=1; i<21; i++) {
+            attributes.put("ping" + i, 2 * i);
+        }
+        attributes.put("loss", 60.0);
+        attributes.put("median", 100.0);
+        attributes.put(PollStatus.PROPERTY_RESPONSE_TIME, 100.0);
+
+        addEvent(EventConstants.HIGH_THRESHOLD_EVENT_UEI, m_ipAddress, "StrafePing", 1, 50.0, 25.0, 60.0, ifName, "127.0.0.1[StrafePing]", "loss", "eth0", null,
+                 m_eventIpcManager.getEventAnticipator(), m_anticipatedEvents);
+
+        ServiceParameters serviceParams = new ServiceParameters(Collections.emptyMap());
+        ThresholdingSession session = m_thresholdingService.createSession(m_nodeId, m_ipAddress, "StrafePing", getRepository(), serviceParams);
+        CollectionSet collectionSet = getCollectionSet(1, m_ipAddress, "StrafePing", m_location, getRepository(), attributes);
+        session.accept(collectionSet);
+
+        verifyEvents(0);
+    }
+
