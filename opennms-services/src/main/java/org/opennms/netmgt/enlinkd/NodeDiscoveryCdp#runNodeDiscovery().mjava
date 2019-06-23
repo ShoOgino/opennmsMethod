@@ -1,0 +1,67 @@
+    protected void runNodeDiscovery() {
+
+    	final Date now = new Date(); 
+        final CdpGlobalGroupTracker cdpGlobalGroup = new CdpGlobalGroupTracker();
+
+        SnmpAgentConfig peer = m_linkd.getSnmpAgentConfig(getPrimaryIpAddress(), getLocation());
+        try {
+            m_linkd.getLocationAwareSnmpClient().walk(peer, cdpGlobalGroup).
+            withDescription("cdpGlobalGroup").
+            withLocation(getLocation()).
+            execute().
+            get();
+       } catch (ExecutionException e) {
+           LOG.info("run: node [{}]: ExecutionException: CDP_MIB not supported {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       } catch (final InterruptedException e) {
+           LOG.info("run: node [{}]: InterruptedException: CDP_MIB not supported {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       }
+       if (cdpGlobalGroup.getCdpDeviceId() == null ) {
+            LOG.info("run: node [{}]: CDP_MIB not supported", 
+                     getNodeId());
+            return;
+       } 
+       CdpElement cdpElement = cdpGlobalGroup.getCdpElement();
+       m_linkd.getQueryManager().store(getNodeId(), cdpElement);
+       if (cdpElement.getCdpGlobalRun() == TruthValue.FALSE) {
+           LOG.info("run: node [{}]. CDP_MIB disabled.",
+                    getNodeId());
+           return;
+       }
+        
+       List<CdpLink> links = new ArrayList<>();
+        CdpCacheTableTracker cdpCacheTable = new CdpCacheTableTracker() {
+
+            public void processCdpCacheRow(final CdpCacheRow row) {
+                links.add(row.getLink());
+            }
+       };
+
+        try {
+            m_linkd.getLocationAwareSnmpClient().walk(peer, cdpCacheTable).
+            withDescription("cdpCacheTable").
+            withLocation(getLocation()).
+            execute().
+            get();
+        } catch (ExecutionException e) {
+            LOG.debug("run: node [{}]: ExecutionException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+        } catch (final InterruptedException e) {
+            LOG.debug("run: node [{}]: InterruptedException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+        }
+        final CdpInterfacePortNameGetter cdpInterfacePortNameGetter = new CdpInterfacePortNameGetter(peer, 
+                                                                                                     m_linkd.getLocationAwareSnmpClient(),
+                                                                                                     getLocation(),
+                                                                                                     getNodeId());
+        for (CdpLink link: links)
+            m_linkd.getQueryManager().store(getNodeId(),cdpInterfacePortNameGetter.get(link));
+        
+        m_linkd.getQueryManager().reconcileCdp(getNodeId(),now);
+    }
+

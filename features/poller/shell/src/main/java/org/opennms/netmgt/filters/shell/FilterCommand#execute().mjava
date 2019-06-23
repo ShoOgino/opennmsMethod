@@ -1,0 +1,53 @@
+    @Override
+    public Object execute() throws Exception {
+        transactionOperations.execute((TransactionCallback<Void>) status -> {
+            boolean matching = false;
+            SortedMap<Integer, String> nodeMap = null;
+            List<InetAddress> matchingInetAddressList = null;
+            try {
+                matching = filterDao.isRuleMatching(filterRule);
+                if (matching) {
+                    nodeMap = filterDao.getNodeMap(filterRule);
+                    matchingInetAddressList = filterDao.getActiveIPAddressList(filterRule);
+                }
+            } catch (Exception e) {
+                // pass
+            }
+            if (!matching) {
+                System.out.printf("No matching nodes/interfaces for this rule.\n");
+                return null;
+            }
+            List<OnmsNode> nodes = new ArrayList<>();
+            if (nodeMap != null && !nodeMap.isEmpty()) {
+                nodeMap.keySet().forEach(nodeId -> nodes.add(nodeDao.get(nodeId)));
+            }
+            for (OnmsNode node : nodes) {
+
+                String foreignId = (node.getForeignId() != null) ? "" : "foreignId=" + node.getForeignId();
+                String foreignSource = (node.getForeignSource() != null) ? ""
+                        : "foreignSource=" + node.getForeignSource();
+                String location = nodeDao.getLocationForId(node.getId());
+                System.out.printf("\nnodeId=%d nodeLabel=%s location=%s %s %s \n", node.getId(), node.getLabel(), location, foreignId, foreignSource);
+
+                List<String> categoryNames = new ArrayList<>();
+                node.getCategories().forEach(category -> categoryNames.add(category.getName()));
+                if (!node.getCategories().isEmpty()) {
+                    System.out.printf("\tcategories: \n");
+                    categoryNames.stream().forEach(name -> System.out.printf("\t\t%s", name));
+                }
+
+                List<String> matchingIpAddresses = new ArrayList<>();
+                matchingInetAddressList.stream().forEach(ipAddress -> matchingIpAddresses.add(ipAddress.getHostAddress()));
+                System.out.printf("\tIpAddresses: \n");
+                List<String> interfacesOnNode = new ArrayList<>();
+                node.getIpInterfaces().forEach(ipInterface -> interfacesOnNode.add(ipInterface.getIpAddress().getHostAddress()));
+                interfacesOnNode.stream().filter(matchingIpAddresses::contains).collect(Collectors.toList())
+                        .forEach(ipAddress -> System.out.printf("\t\t%s \n", ipAddress));
+
+            }
+            System.out.flush();
+            return null;
+        });
+        return null;
+    }
+
