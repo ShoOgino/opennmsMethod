@@ -1,0 +1,52 @@
+    @Override
+    public CollectionSet collect(CollectionAgent agent, Map<String, Object> parameters) throws CollectionException {
+        try {
+            final ServiceParameters params = new ServiceParameters(parameters);
+            params.logIfAliasConfig();
+
+            if (m_client == null) {
+                m_client = BeanUtils.getBean("daoContext", "locationAwareSnmpClient", LocationAwareSnmpClient.class);
+            }
+
+            if (!(agent instanceof SnmpCollectionAgent)) {
+                throw new InvalidCollectionAgentException(String.format("Expected agent of type: %s, but got: %s",
+                    SnmpCollectionAgent.class.getCanonicalName(), agent.getClass().getCanonicalName()));
+            }
+            OnmsSnmpCollection snmpCollection = new OnmsSnmpCollection((SnmpCollectionAgent)agent, params, m_client);
+
+            final EventProxy eventProxy = EventIpcManagerFactory.getIpcManager();
+            final ForceRescanState forceRescanState = new ForceRescanState(agent, eventProxy);
+
+            SnmpCollectionSet collectionSet = new SnmpCollectionSet((SnmpCollectionAgent)agent, snmpCollection, snmpCollection.getClient());
+
+            collectionSet.setCollectionTimestamp(new Date());
+            if (!collectionSet.hasDataToCollect()) {
+                LOG.info("agent {} defines no data to collect.  Skipping.", agent);
+                // should we return here?
+            }
+
+            collectionSet.collect();
+
+            /*
+             * FIXME: Should we even be doing this? I say we get rid of this force rescan thingie
+             * {@see http://issues.opennms.org/browse/NMS-1057}
+             */
+            if (System.getProperty("org.opennms.netmgt.collectd.SnmpCollector.forceRescan", "false").equalsIgnoreCase("true")
+                && collectionSet.rescanNeeded()) {
+                /*
+                 * TODO: the behavior of this object may have been re-factored away.
+                 * Verify that this is correct and remove this unused object if it
+                 * is no longer needed.  My gut thinks this should be investigated.
+                 */
+                forceRescanState.rescanIndicated();
+            } else {
+                collectionSet.checkForSystemRestart();
+            }
+            return new SnmpCollectionSetToCollectionSetDTOConverter().withParameters(params).convert(collectionSet);
+        } catch (CollectionException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new CollectionException("Unexpected error during node SNMP collection for: " + agent.getHostAddress(), t);
+        }
+    }
+

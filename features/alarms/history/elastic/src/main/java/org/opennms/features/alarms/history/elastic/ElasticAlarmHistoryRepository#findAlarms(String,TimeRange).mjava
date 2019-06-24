@@ -1,0 +1,26 @@
+    private List<AlarmDocumentDTO> findAlarms(String query, TimeRange timeRange) {
+        final Search.Builder search = new Search.Builder(query).addType(AlarmDocumentDTO.TYPE);
+        if (timeRange != null) {
+            final List<String> indices = indexSelector.getIndexNames(timeRange.getStart(), timeRange.getEnd());
+            search.addIndices(indices);
+            search.setParameter("ignore_unavailable", "true"); // ignore unknown index
+            LOG.debug("Executing query on {}: {}", indices, query);
+        } else {
+            search.addIndex("opennms-alarms-*");
+            LOG.debug("Executing query on all indices: {}", query);
+        }
+
+        final SearchResult result;
+        try {
+            result = client.execute(search.build());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        if (!result.isSucceeded()) {
+            throw new RuntimeException(result.getErrorMessage());
+        }
+
+        final List<SearchResult.Hit<AlarmDocumentDTO, Void>> hits = result.getHits(AlarmDocumentDTO.class);
+        return hits.stream().map(h -> h.source).collect(Collectors.toList());
+    }
+

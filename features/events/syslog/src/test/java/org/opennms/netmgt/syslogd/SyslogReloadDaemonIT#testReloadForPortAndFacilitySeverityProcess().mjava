@@ -1,0 +1,35 @@
+    @Test
+    public void testReloadForPortAndFacilitySeverityProcess() throws Exception {
+        // change configuration file location.
+        File opennmsHome = Paths.get("src", "test", "resources", "opennms-home-reload").toFile();
+        System.setProperty("opennms.home", opennmsHome.getAbsolutePath());
+        EventBuilder eventBuilder = new EventBuilder("uei.opennms.org/internal/reloadDaemonConfig", "syslog-test");
+        eventBuilder.addParam("daemonName", "Syslogd");
+        m_syslogd.handleReloadEvent(eventBuilder.getEvent());
+        SyslogdTestUtils.waitForSyslogdToReload();
+        // test new port change in config 
+        assertEquals(10515, m_config.getSyslogPort());
+        MockLogAppender.setupLogging(true, "TRACE");
+        // Match changes in configuration file
+        final String testPDU = "2018-01-01 127.0.0.1 reload: check reload severity process match";
+        final String testUEI = "uei.opennms.org/tests/syslogd/nonMessageMatch/facilitySeverityProcess";
+        final String testMsg = "check reload severity process match";
+    
+        final EventBuilder expectedEventBldr = new EventBuilder(testUEI, "syslogd");
+        expectedEventBldr.setInterface(InetAddressUtils.ONE_TWENTY_SEVEN);
+        expectedEventBldr.setLogDest("logndisplay");
+        expectedEventBldr.setLogMessage(testMsg);
+        
+        expectedEventBldr.addParam("process", "reload");
+        expectedEventBldr.addParam("service", "local1");
+        expectedEventBldr.addParam("severity", "Warning");
+    
+        m_eventIpcManager.getEventAnticipator().anticipateEvent(expectedEventBldr.getEvent());
+        
+        final SyslogClient s = new SyslogClient("coco", 10, SyslogClient.LOG_LOCAL1, InetAddressUtils.ONE_TWENTY_SEVEN);
+        s.setSyslogPort(m_config.getSyslogPort());
+        s.syslog(SyslogClient.LOG_WARNING, testPDU);
+    
+        m_eventIpcManager.getEventAnticipator().verifyAnticipated(5000, 0, 0, 0, 1);
+    }
+

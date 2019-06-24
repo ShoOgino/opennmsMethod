@@ -1,0 +1,89 @@
+    public void refresh() {
+        runInLoggingTransaction(() -> {
+            LOG.info("Refreshing minion status from the outages database.");
+
+            final Map<String,OnmsMinion> minions = new ConcurrentHashMap<>();
+            final Map<Integer,OnmsMinion> minionNodes = new ConcurrentHashMap<>();
+            final Map<String,AggregateMinionStatus> state = new ConcurrentHashMap<>();
+
+            final List<OnmsMinion> dbMinions = m_minionDao.findAll();
+
+            if (dbMinions.size() == 0) {
+                LOG.info("No minions found in the database.  Skipping processing.  Next refresh in {} milliseconds.", m_refresh);
+                return;
+            }
+
+            // populate the foreignId -> minion map
+            LOG.debug("Populating minion state from the database.  Found {} minions.", dbMinions.size());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Processing minions: {}", dbMinions.stream().map(OnmsMinion::getId).collect(Collectors.toList()));
+            }
+
+            final AggregateMinionStatus upStatus = AggregateMinionStatus.up();
+            dbMinions.forEach(minion -> {
+                final String minionId = minion.getId();
+                minions.put(minionId, minion);
+            });
+
+            // populate the nodeId -> minion map
+            final Criteria c = new CriteriaBuilder(OnmsNode.class)
+                    .in("foreignId", minions.keySet())
+                    .distinct()
+                    .toCriteria();
+            final List<OnmsNode> nodes = m_nodeDao.findMatching(c);
+            for (final OnmsNode node : nodes) {
+                m_nodeDao.initialize(node.getLocation());
+            }
+            LOG.debug("Mapping {} node IDs to minions.", nodes.size());
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Processing nodes: {}", nodes.stream().map(OnmsNode::getId).collect(Collectors.toList()));
+            }
+            nodes.forEach(node -> {
+                final OnmsMinion m = minions.get(node.getForeignId());
+                if (m.getLocation().equals(node.getLocation().getLocationName())) {
+                    minionNodes.put(node.getId(), m);
+                    // if the minion has an associated node, give it a default "up" status
+                    // this will get marked "down" if there are associated outages
+                    state.put(node.getForeignId(), upStatus);
+                }
+            });
+
+            final Collection<CurrentOutageDetails> outages = m_outageDao.newestCurrentOutages(Arrays.asList(MINION_HEARTBEAT, MINION_RPC));
+
+            if (outages != null && outages.size() > 0) {
+                LOG.debug("Processing {} outage records.", outages.size());
+                outages.stream().sorted(Comparator.comparing(CurrentOutageDetails::getOutageId).reversed()).forEach(outage -> {
+                    final String foreignId = outage.getForeignId();
+
+                    final AggregateMinionStatus currentStatus = state.get(foreignId);
+                    final AggregateMinionStatus newStatus = transformStatus(currentStatus, outage.getServiceName(), null, outage.getIfLostService());
+
+                    // If this is a refresh, and the "in-memory" tracking is more up-to-date than the outage records, keep it. Otherwise update with outage records.
+                    final AggregateMinionStatus existingStatus = m_state.get(foreignId);
+                    if (newStatus.equals(existingStatus)) {
+                        LOG.trace("{} status {} is unchanged.", foreignId, newStatus);
+                    } else {
+                        // if there is no existing status, or the new status is changed, update the state
+                        LOG.trace("{} status {} is different than {}, using it instead.", foreignId, newStatus, existingStatus);
+                        state.put(foreignId, newStatus);
+                    }
+                });
+            } else {
+                LOG.debug("No minion-related outages were found.");
+            }
+
+            LOG.debug("Persisting states to the database.");
+            minions.values().forEach(minion -> {
+                final AggregateMinionStatus oldState = m_state.get(minion.getId());
+                final AggregateMinionStatus newState = state.get(minion.getId());
+                updateStateIfChanged(minion, newState, oldState);
+            });
+
+            m_state = state;
+            m_minions = minions;
+            m_minionNodes = minionNodes;
+
+            LOG.info("Minion status updated from the outages database.  Next refresh in {} milliseconds.", m_refresh);
+        });
+    }
+

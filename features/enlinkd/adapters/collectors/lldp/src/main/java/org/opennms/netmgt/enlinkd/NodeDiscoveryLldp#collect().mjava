@@ -1,0 +1,91 @@
+    public void collect() {
+
+    	final Date now = new Date(); 
+
+        final LldpLocalGroupTracker lldpLocalGroup = new LldpLocalGroupTracker();
+        SnmpAgentConfig peer = getSnmpAgentConfig();
+
+        try {
+            getLocationAwareSnmpClient().walk(peer,
+                          lldpLocalGroup)
+                          .withDescription("lldpLocalGroup")
+                          .withLocation(getLocation())
+                          .execute()
+                          .get();
+        } catch (ExecutionException e) {
+            LOG.info("run: node [{}]: ExecutionException: LLDP_MIB not supported {}", 
+                     getNodeId(), e.getMessage());
+                return;
+        } catch (final InterruptedException e) {
+            LOG.info("run: node [{}]: InterruptedException: LLDP_MIB not supported {}", 
+                     getNodeId(), e.getMessage());
+                return;
+        }
+        
+        if (lldpLocalGroup.getLldpLocChassisid() == null ) {
+    		LOG.info( "run: node[{}]: LLDP_MIB not supported",
+    				getNodeId());
+            return;
+        } else {
+    		LOG.debug( "run: node[{}]: lldp identifier : {}",
+    				getNodeId(),
+    				lldpLocalGroup.getLldpElement().getLldpChassisId());
+        }
+
+        m_lldpTopologyService.store(getNodeId(),
+                lldpLocalGroup.getLldpElement());
+
+        if (getSysoid() == null || getSysoid().equals(DW_SYSOID) ) {
+            if (lldpLocalGroup.getLldpLocChassisid().toHexString().equals(DW_NULL_CHASSIS_ID) &&
+                    lldpLocalGroup.getLldpLocChassisidSubType() == LldpChassisIdSubType.LLDP_CHASSISID_SUBTYPE_CHASSISCOMPONENT.getValue()) {
+        		LOG.info( "run: node[{}]: address {}. lldp identifier : {}. lldp not active for Dragon Wave Device.",
+        				getNodeId(),
+        				getPrimaryIpAddressString(),
+        				lldpLocalGroup.getLldpElement());
+                return;
+            }
+    
+            if (lldpLocalGroup.getLldpLocSysname().equals(DW_NULL_SYSOID_ID) ) {
+        		LOG.info( "run: node[{}]: lldp identifier : {}. lldp not active for Dragon Wave Device.",
+        				getNodeId(),
+        				lldpLocalGroup.getLldpElement());
+                return;
+            }
+        }
+
+        List<LldpLink> links = new ArrayList<>();
+        LldpRemTableTracker lldpRemTable = new LldpRemTableTracker() {
+
+        	public void processLldpRemRow(final LldpRemRow row) {
+        	    links.add(row.getLldpLink());
+        	}
+        };
+        try {
+            getLocationAwareSnmpClient().walk(peer,
+                                      lldpRemTable)
+                                  .withDescription("lldpRemTable")
+                                  .withLocation(getLocation())
+                                  .execute()
+                                  .get();
+        } catch (ExecutionException e) {
+            LOG.debug("run: node [{}]: ExecutionException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+        } catch (final InterruptedException e) {
+            LOG.debug("run: node [{}]: InterruptedException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+        }
+        
+        
+        final LldpLocPortGetter lldpLocPort = 
+                new LldpLocPortGetter(peer,
+                                getLocationAwareSnmpClient(),
+                                getLocation(),getNodeId());
+        for (LldpLink link: links) {
+            m_lldpTopologyService.store(getNodeId(),lldpLocPort.getLldpLink(link));
+        }
+        
+        m_lldpTopologyService.reconcile(getNodeId(),now);
+    }
+

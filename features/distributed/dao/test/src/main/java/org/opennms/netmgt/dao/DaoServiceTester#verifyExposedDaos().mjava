@@ -1,0 +1,38 @@
+    public void verifyExposedDaos() throws Exception {
+        // Load services to verify
+        final List<Class> serviceTypes = loadExposedServices("/META-INF/opennms/applicationContext-shared.xml", "/META-INF/opennms/component-dao.xml");
+        if (serviceTypes.isEmpty()) {
+            throw new IllegalStateException("No exposed services found. This seems fishy. Bailing");
+        }
+
+        // Verify
+        for (Class eachServiceType : serviceTypes) {
+            if (!testRegistry.isIgnored(eachServiceType)) {
+                LOG.info("Verifying service {} ...", eachServiceType);
+                final Consumer consumer = testRegistry.getTest(eachServiceType);
+                if (consumer == null) {
+                    throw new IllegalStateException("No test for type " + eachServiceType + " was found. Bailing");
+                }
+                try (ServiceHolder serviceHolder = getService(eachServiceType)) {
+                    final Object service = serviceHolder.getService();
+                    consumer.accept(service);
+                    testRegistry.markAsRun(eachServiceType);
+                    LOG.info("Verifying service {}. OK", eachServiceType);
+                }
+            } else {
+                LOG.info("Verifying service {}. SKIPPED.", eachServiceType);
+            }
+        }
+        
+        // Check that all services have been either ignored or tested
+        // Verify all classes have been checked
+        final List<Class> notTestedServices = serviceTypes.stream()
+                .filter(e -> !testRegistry.isTested(e) && !testRegistry.isIgnored(e))
+                .collect(Collectors.toList());
+        
+        if (!notTestedServices.isEmpty()) {
+            notTestedServices.forEach(serviceType -> LOG.error("Service of type {} was not tested", serviceType));
+            throw new IllegalStateException("Not all services have been tested. Bailing");
+        }
+    }
+

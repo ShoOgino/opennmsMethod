@@ -6,6 +6,15 @@
 	 * @return
 	 */
 	private static BiConsumer<ParserState,String> semanticStringToField(String semanticString) {
+		// Discard this match
+		if (semanticString.equalsIgnoreCase(IGNORE_FIELD)) {
+			return (s, v) -> {};
+		}
+
+		if (semanticString.startsWith(PARAMETER_PREFIX)) {
+			return (s, v) -> s.message.addParameter(semanticString.substring(PARAMETER_PREFIX.length()), v);
+		}
+		
 		SyslogSemanticType semanticType = null;
 		try {
 			semanticType = SyslogSemanticType.valueOf(semanticString);
@@ -79,9 +88,29 @@
 						break;
 					}
 				};
+			case month:
+				return (s, v) -> {
+					int month;
+					try {
+						month = new SimpleDateFormat("MMM", Locale.ENGLISH).parse(v).toInstant().atZone(
+								ZoneId.systemDefault()).toLocalDate().getMonthValue();
+
+					} catch (ParseException e) {
+						throw new IllegalArgumentException(String.format("Could not parse month '%s'", v));
+					}
+					s.message.setMonth(month);
+				};
 			case timezone:
 				return (s,v) -> {
-					s.message.setZoneId(ZonedDateTimeBuilder.parseZoneId(v));
+					ZoneId zoneId;
+					try {
+						zoneId = ZonedDateTimeBuilder.parseZoneId(v);
+					} catch (ZoneRulesException zre) {
+						// Zone was not found, attempt to convert the zone to uppercase
+						// i.e. if the string is 'cst', then the lookup will fail unless we query for 'CST'
+						zoneId = ZonedDateTimeBuilder.parseZoneId(v.toUpperCase());
+					}
+					s.message.setZoneId(zoneId);
 				};
 			default:
 				throw new IllegalArgumentException(String.format("Semantic type %s does not have a string value", semanticString));

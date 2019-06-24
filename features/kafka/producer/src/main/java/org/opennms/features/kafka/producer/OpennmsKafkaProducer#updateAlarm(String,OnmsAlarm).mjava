@@ -1,10 +1,13 @@
     private void updateAlarm(String reductionKey, OnmsAlarm alarm) {
         // Always push null records, no good way to perform filtering on these
         if (alarm == null) {
+            // The alarm has been deleted so we shouldn't track it in the map of outstanding alarms any longer
+            outstandingAlarms.remove(reductionKey);
+            
             // The alarm was deleted, push a null record to the reduction key
             sendRecord(() -> {
                 LOG.debug("Deleting alarm with reduction key: {}", reductionKey);
-                return new ProducerRecord<>(alarmTopic, reductionKey, null);
+                return new ProducerRecord<>(alarmTopic, reductionKey.getBytes(encoding), null);
             }, recordMetadata -> {
                 // We've got an ACK from the server that the alarm was forwarded
                 // Let other threads know when we've successfully forwarded an alarm
@@ -18,6 +21,10 @@
             return;
         }
 
+        if (suppressIncrementalAlarms && isIncrementalAlarm(reductionKey, alarm)) {
+            return;
+        }
+
         // Node handling
         if (forwardNodes && alarm.getNodeId() != null) {
             maybeUpdateNode(alarm.getNodeId());
@@ -27,7 +34,10 @@
         sendRecord(() -> {
             final OpennmsModelProtos.Alarm mappedAlarm = protobufMapper.toAlarm(alarm).build();
             LOG.debug("Sending alarm with reduction key: {}", reductionKey);
-            return new ProducerRecord<>(alarmTopic, reductionKey, mappedAlarm.toByteArray());
+            if (suppressIncrementalAlarms) {
+                recordIncrementalAlarm(reductionKey, alarm);
+            }
+            return new ProducerRecord<>(alarmTopic, reductionKey.getBytes(encoding), mappedAlarm.toByteArray());
         }, recordMetadata -> {
             // We've got an ACK from the server that the alarm was forwarded
             // Let other threads know when we've successfully forwarded an alarm

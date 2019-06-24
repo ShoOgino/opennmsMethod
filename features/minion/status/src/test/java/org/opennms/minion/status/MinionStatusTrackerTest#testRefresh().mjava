@@ -1,0 +1,73 @@
+    @Test
+    public void testRefresh() throws Exception {
+        assertEquals("there should be no minions in the node:minion cache", 0, m_tracker.m_minionNodes.size());
+        assertEquals("there should be no minions in the minion cache", 0, m_tracker.m_minionNodes.size());
+        assertEquals("there should be no minions in the state cache", 0, m_tracker.m_minionNodes.size());
+
+        final OnmsServiceType heartbeatServiceType = new OnmsServiceType(1, MINION_HEARTBEAT);
+        final OnmsServiceType rpcServiceType = new OnmsServiceType(2, MINION_RPC);
+        when(m_serviceTypeDao.findByName(MINION_HEARTBEAT)).thenReturn(heartbeatServiceType);
+        when(m_serviceTypeDao.findByName(MINION_RPC)).thenReturn(rpcServiceType);
+
+        final String foreignIdA = "00000000-0000-0000-0000-00000000042A";
+        final OnmsNode nodeA = getNode(1, FOREIGN_SOURCE, foreignIdA, "MinionLocA");
+        final OnmsMinion minionA = getMinion(nodeA);
+
+        final String foreignIdB = "00000000-0000-0000-0000-00000000042B";
+        final OnmsNode nodeB = getNode(2, FOREIGN_SOURCE, foreignIdB, "MinionLocB");
+        final OnmsMinion minionB = getMinion(nodeB);
+
+        final String foreignIdC = "00000000-0000-0000-0000-00000000042C";
+        final OnmsNode nodeC = getNode(3, FOREIGN_SOURCE, foreignIdC, "MinionLocC");
+        final OnmsMinion minionC = getMinion(nodeC);
+
+        final String foreignIdD = "00000000-0000-0000-0000-00000000042D";
+        final OnmsNode nodeD = getNode(4, FOREIGN_SOURCE, foreignIdD, "MinionLocD");
+        final OnmsMinion minionD = getMinion(nodeD);
+
+        final Date now = new Date(System.currentTimeMillis());
+        final Date old = new Date(1);
+        final List<CurrentOutageDetails> outages = Arrays.asList(
+                                                       createOutage(now, null, nodeA, MINION_RPC), // nodeA RPC down
+                                                       createOutage(now, null, nodeA, MINION_HEARTBEAT) // nodeA heartbeat down
+                );
+
+        when(m_minionDao.findAll()).thenReturn(Arrays.asList(minionA, minionB, minionC, minionD));
+        when(m_nodeDao.findMatching(any(Criteria.class))).thenReturn(Arrays.asList(nodeA, nodeB, nodeC, nodeD));
+        when(m_outageDao.newestCurrentOutages(anyListOf(String.class))).thenReturn(outages);
+
+        System.err.println("old=" + old);
+        System.err.println("now=" + now);
+
+        m_tracker.refresh();
+
+        assertEquals("there should be 4 minions", 4, m_tracker.getMinions().size());
+        assertFalse("we should get a down status for minion A (both services down)", m_tracker.getStatus(foreignIdA).isUp());
+        assertTrue("we should get an up status for minion B", m_tracker.getStatus(foreignIdB).isUp());
+        assertTrue("we should get an up status for minion C", m_tracker.getStatus(foreignIdC).isUp());
+        assertTrue("we should get an up status for minion D", m_tracker.getStatus(foreignIdD).isUp());
+
+        final AggregateMinionStatus statusA = (AggregateMinionStatus)m_tracker.getStatus(foreignIdA);
+        assertFalse("node A heartbeat status should be down", statusA.getHeartbeatStatus().isUp());
+        assertFalse("node A RPC status should be down", statusA.getRpcStatus().isUp());
+
+        AggregateMinionStatus statusB = (AggregateMinionStatus)m_tracker.getStatus(foreignIdB);
+        assertTrue("node B heartbeat status should be up", statusB.getHeartbeatStatus().isUp());
+        assertTrue("node B RPC status should be up", statusB.getRpcStatus().isUp());
+
+        AggregateMinionStatus statusC = (AggregateMinionStatus)m_tracker.getStatus(foreignIdC);
+        assertTrue("node C heartbeat status should be up", statusC.getHeartbeatStatus().isUp());
+        assertTrue("node C RPC status should be up", statusC.getRpcStatus().isUp());
+
+        AggregateMinionStatus statusD = (AggregateMinionStatus)m_tracker.getStatus(foreignIdD);
+        assertTrue("node D heartbeat status should be up", statusD.getHeartbeatStatus().isUp());
+        assertTrue("node D RPC status should be up", statusD.getRpcStatus().isUp());
+
+        generateOutage(EventConstants.OUTAGE_RESOLVED_EVENT_UEI, nodeA, MINION_HEARTBEAT, now);
+        assertFalse("node A should still be down", m_tracker.getStatus(foreignIdA).isUp());
+        generateOutage(EventConstants.OUTAGE_RESOLVED_EVENT_UEI, nodeA, MINION_RPC, now);
+        assertTrue("node A should now be up", m_tracker.getStatus(foreignIdA).isUp());
+
+        verify(m_minionDao, times(2)).saveOrUpdate(minionA);
+    }
+

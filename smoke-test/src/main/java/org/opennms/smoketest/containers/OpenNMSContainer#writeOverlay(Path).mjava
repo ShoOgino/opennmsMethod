@@ -1,0 +1,65 @@
+    private void writeOverlay(Path home) throws IOException {
+        // Allow other users to read the folder
+        OverlayUtils.setOverlayPermissions(home);
+
+        // Copy the files from the profile *first*
+        // If this test class writes something, we expect it to be there
+        OverlayUtils.copyFiles(profile.getFiles(), home);
+
+        // Copy over files from the class-path
+        // Files ending in .j2 will be templated using Jinja2 with a context that has the model
+        OverlayUtils.copyAndTemplate("opennms-overlay", home, model);
+
+        Path etc = home.resolve("etc");
+        Path propsD = etc.resolve("opennms.properties.d");
+        Files.createDirectories(propsD);
+
+        final Properties sysProps = getSystemProperties();
+        File propsFile = propsD.resolve("stest.properties").toFile();
+        try (FileOutputStream fos = new FileOutputStream(propsFile)) {
+            sysProps.store(fos, "Generated");
+        }
+
+        // Karaf feature configuration
+
+        Path bootD = etc.resolve("featuresBoot.d");
+        Files.createDirectories(bootD);
+        writeFeaturesBoot(bootD.resolve("stest.boot"), getFeaturesOnBoot());
+
+        if (model.isElasticsearchEnabled()) {
+            writeProps(etc.resolve("org.opennms.features.flows.persistence.elastic.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            .put("elasticUrl", "http://" + ELASTIC_ALIAS + ":9200")
+                            .build());
+
+            writeProps(etc.resolve("org.opennms.plugin.elasticsearch.rest.forwarder.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            .put("elasticUrl", "http://" + ELASTIC_ALIAS + ":9200")
+                            // Everything
+                            .put("logAllEvents", Boolean.TRUE.toString())
+                            // Tweak timeouts and batching
+                            .put("batchSize", Integer.toString(500))
+                            .put("batchInterval", Integer.toString(500))
+                            .put("connTimeout", Integer.toString(5000))
+                            .put("retries", Integer.toString(10))
+                            .build());
+
+            writeProps(etc.resolve("org.opennms.features.alarms.history.elastic.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            .put("elasticUrl", "http://" + ELASTIC_ALIAS + ":9200")
+                            .build());
+        }
+
+        if (model.getOpenNMS().isKafkaProducerEnabled()) {
+            writeProps(etc.resolve("org.opennms.features.kafka.producer.client.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            .put("bootstrap.servers", KAFKA_ALIAS + ":9092")
+                            .build());
+            writeProps(etc.resolve("org.opennms.features.kafka.producer.cfg"),
+                    ImmutableMap.<String,String>builder()
+                            // This is false by default, so we enable it here
+                            .put("forward.metrics", Boolean.TRUE.toString())
+                            .build());
+        }
+    }
+

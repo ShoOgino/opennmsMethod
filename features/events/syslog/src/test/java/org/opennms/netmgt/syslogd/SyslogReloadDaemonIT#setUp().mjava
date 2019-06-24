@@ -1,0 +1,37 @@
+    @Before
+    public void setUp() throws Exception {
+        MockLogAppender.setupLogging();
+        MockLogAppender.resetState();
+
+        File opennmsHome = Paths.get("src", "test", "resources", "opennms-home").toFile();
+        System.setProperty("opennms.home", opennmsHome.getAbsolutePath());
+        m_config = new SyslogdConfigFactory();
+
+        // Verify that the test syslogd-configuration.xml file was loaded
+        boolean foundMalt = false;
+        assertEquals(10514, m_config.getSyslogPort());
+        for (final UeiMatch match : m_config.getUeiList()) {
+            if (match.getProcessMatch().isPresent()) {
+                final ProcessMatch processMatch = match.getProcessMatch().get();
+                if (!foundMalt && "maltd".equals(processMatch.getExpression())) {
+                    foundMalt = true;
+                }
+            }
+        }
+        assertTrue(foundMalt);
+
+        m_syslogSinkConsumer = new SyslogSinkConsumer(new MetricRegistry());
+        m_syslogSinkConsumer.setDistPollerDao(m_distPollerDao);
+        m_syslogSinkConsumer.setSyslogdConfig(m_config);
+        m_syslogSinkConsumer.setEventForwarder(m_eventIpcManager);
+        m_syslogSinkModule = m_syslogSinkConsumer.getModule();
+        m_messageDispatcherFactory.setConsumer(m_syslogSinkConsumer);
+
+        m_receiver = new SyslogReceiverCamelNettyImpl(m_config);
+        m_receiver.setDistPollerDao(m_distPollerDao);
+        m_receiver.setMessageDispatcherFactory(m_messageDispatcherFactory);
+        m_syslogd.setSyslogReceiver(m_receiver);
+        m_syslogd.init();
+        SyslogdTestUtils.startSyslogdGracefully(m_syslogd);
+    }
+

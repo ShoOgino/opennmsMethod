@@ -1,0 +1,43 @@
+    public static void copyLogs(Container container, Path targetLogFolder, Path sourceLogFolder, List<String> logFiles) {
+        try {
+            Files.createDirectories(targetLogFolder);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create " + targetLogFolder, e);
+        }
+
+        // Copying files from the containers seems to block some times
+        // We limit their execution times so we don't block for too long when this happen
+        final ExecutorService executor = Executors.newCachedThreadPool();
+        final TimeLimiter limiter = SimpleTimeLimiter.create(executor);
+
+        final Path containerLogOutputFile = targetLogFolder.resolve("container_stdout_stderr");
+        try {
+            limiter.runWithTimeout(() -> {
+                try {
+                    Files.write(containerLogOutputFile, container.getLogs().getBytes(StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }, 1, TimeUnit.MINUTES);
+        } catch (Exception e) {
+            LOG.info("Failed to copy stdout/stderr from container to file {}: {}", containerLogOutputFile, e.getMessage());
+        }
+
+        for (String logFile : logFiles) {
+            try {
+                limiter.runWithTimeout(() -> {
+                    try {
+                        container.copyFileFromContainer(sourceLogFolder.resolve(logFile).toString(),
+                                targetLogFolder.resolve(logFile).toString());
+                    } catch (IOException|InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }, 1, TimeUnit.MINUTES);
+            } catch (Exception e) {
+                LOG.info("Failed to copy log file {} from container: {}", logFile, e.getMessage());
+            }
+        }
+
+        executor.shutdownNow();
+    }
+

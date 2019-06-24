@@ -1,0 +1,95 @@
+    private List<BridgeForwardingTableEntry> walkDot1qTpFdb(SnmpAgentConfig peer,
+            final Map<Integer, Integer> bridgeifindex,
+            final List<BridgeForwardingTableEntry> bft) {
+
+        LOG.debug("walkDot1qTpFdb: node [{}]: bridge ifindex map {}",
+                  getNodeId(), bridgeifindex);
+        
+
+        Dot1qTpFdbTableTracker dot1qTpFdbTableTracker = new Dot1qTpFdbTableTracker() {
+
+            @Override
+            public void processDot1qTpFdbRow(final Dot1qTpFdbRow row) {
+                BridgeForwardingTableEntry link = row.getLink();
+
+                if (link.getBridgeDot1qTpFdbStatus() == null) {
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {}. row has null status.",
+                    		getNodeId(),
+                             link.getMacAddress(),
+                             link.getBridgePort());
+                    return;
+                }
+                if (link.getBridgePort() == null) {
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {} status {}. row has null bridge port.",
+                    		getNodeId(),
+                                link.getMacAddress(),
+                                link.getBridgePort(),
+                                link.getBridgeDot1qTpFdbStatus());
+                    return;
+                }
+                if (link.getMacAddress() == null
+                        || !isValidBridgeAddress(link.getMacAddress())) {
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {} ifindex {} status {}. row has invalid mac.",
+                    		getNodeId(),
+                    	     link.getMacAddress(),
+                             link.getBridgePort(),
+                             link.getBridgePortIfIndex(),
+                             link.getBridgeDot1qTpFdbStatus());
+                    return;
+                }
+                if (bridgeifindex.isEmpty() && link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) {
+                    link.setBridgePortIfIndex(link.getBridgePort());
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {} ifindex {} status {}. Empty map from bridgeport to ifindex. Assuming ifindex=bridgeport",
+                              getNodeId(),
+                           link.getMacAddress(),
+                           link.getBridgePort(),
+                           link.getBridgePortIfIndex(),
+                           link.getBridgeDot1qTpFdbStatus());
+                } else  if (!bridgeifindex.containsKey(link.getBridgePort()) && bridgeifindex.containsValue(link.getBridgePort())
+                        && link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) {
+                    for (Integer bridgeport: bridgeifindex.keySet()) {
+                        if (link.getBridgePort().intValue() == bridgeifindex.get(bridgeport).intValue()) {
+                            link.setBridgePort(bridgeport);
+                            link.setBridgePortIfIndex(bridgeifindex.get(bridgeport));
+                        }
+                    }
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {} ifindex {} status {}. Assument bridgeport index is ifindex. Reverting bridgeport/ifindex",
+                             getNodeId(),
+                          link.getMacAddress(),
+                          link.getBridgePort(),   
+                          link.getBridgePortIfIndex(),
+                          link.getBridgeDot1qTpFdbStatus());
+                } else  if (!bridgeifindex.containsKey(link.getBridgePort()) 
+                        && link.getBridgeDot1qTpFdbStatus() != BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF) {
+                    LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: on port {} ifindex {} status {}. Cnnot find suitable skipping entry",
+                             getNodeId(),
+                          link.getMacAddress(),
+                          link.getBridgePort(),
+                          link.getBridgePortIfIndex(),
+                          link.getBridgeDot1qTpFdbStatus());
+                    return;
+                } else {
+                    link.setBridgePortIfIndex(bridgeifindex.get(link.getBridgePort()));
+                }
+                LOG.debug("processDot1qTpFdbRow: node [{}]: mac {}: vlan {}: on port {} ifindex {} status {}. row processed.",
+                		getNodeId(),
+                         link.getMacAddress(), link.getVlan(),
+                         link.getBridgePort(), link.getBridgePortIfIndex(),
+                         link.getBridgeDot1qTpFdbStatus());
+                bft.add(link);
+            }
+
+        };
+        try {
+            getLocationAwareSnmpClient().walk(peer,
+                                                      dot1qTpFdbTableTracker).withDescription("dot1qTbFdbPortTable").withLocation(getLocation()).execute().get();
+        } catch (ExecutionException e) {
+            LOG.debug("run: node [{}]: ExecutionException: {}", 
+                     getNodeId(), e.getMessage());
+        } catch (final InterruptedException e) {
+            LOG.debug("run: node [{}]: InterruptedException: {}", 
+                     getNodeId(), e.getMessage());
+        }
+        return bft;
+    }
+

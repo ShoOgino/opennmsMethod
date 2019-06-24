@@ -1,0 +1,37 @@
+    /**
+     * See NMS-10257 for further details.
+     */
+    @Test
+    public void verifyEventListenerHandlingOnReload() throws Exception {
+        // Setup the correlator with mocks
+        EventIpcManager eventIpcManager = mock(EventIpcManager.class);
+        CorrelationEngine engine = mock(CorrelationEngine.class);
+        when(engine.getName()).thenReturn("test-engine");
+
+        Correlator correlator = new Correlator();
+        correlator.setEventIpcManager(eventIpcManager);
+        correlator.setCorrelationEngines(Collections.singletonList(engine));
+        correlator.afterPropertiesSet();
+
+        // Grab the event listener for our engine
+        ArgumentCaptor<EventListener> listenerCaptor = ArgumentCaptor.forClass(EventListener.class);
+        verify(eventIpcManager, times(1)).addEventListener(listenerCaptor.capture(), eq(EventConstants.RELOAD_DAEMON_CONFIG_UEI));
+        EventListener listener = listenerCaptor.getValue();
+
+        // Now send a reloadDaemonConfig event targeting a different daemon
+        listener.onEvent(new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_UEI, "test")
+                .addParam(EventConstants.PARM_DAEMON_NAME, "some-other-name")
+                .getEvent());
+        // No invocations to add/remove event listeners should have been made
+        verify(eventIpcManager, never()).removeEventListener(any(EventListener.class));
+        verify(eventIpcManager, times(1)).addEventListener(any(EventListener.class), any(String.class));
+
+        // Now send a reloadDaemonConfig event targeting our engine
+        listener.onEvent(new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_UEI, "test")
+                .addParam(EventConstants.PARM_DAEMON_NAME, listener.getName())
+                .getEvent());
+        // The event listener should have been removed and re-added
+        verify(eventIpcManager, times(1)).removeEventListener(any(EventListener.class));
+        verify(eventIpcManager, times(2)).addEventListener(any(EventListener.class), any(String.class));
+    }
+

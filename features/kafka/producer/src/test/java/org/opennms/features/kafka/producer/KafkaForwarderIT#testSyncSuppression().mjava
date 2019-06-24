@@ -1,0 +1,27 @@
+    @Test
+    public void testSyncSuppression() {
+        kafkaProducer.setSuppressIncrementalAlarms(true);
+
+        // Send an alarm
+        final OnmsAlarm alarm = nodeDownAlarmWithRelatedAlarm();
+        alarmDao.save(alarm);
+        kafkaProducer.handleNewOrUpdatedAlarm(alarm);
+
+        // Increment the alarm and write directly to db
+        alarm.setCounter(2);
+        // Also update the related alarm
+        alarm.getRelatedAlarms().iterator().next().setCounter(2);
+        alarmDao.save(alarm);
+
+        // Fire up the consumer
+        kafkaConsumer = startConsumer();
+
+        // Only one alarm should have been consumed
+        try {
+            // This is a bit tricky since we need to wait fairly long to verify that the sync suppressed the alarm
+            await().atMost(2, TimeUnit.MINUTES).until(() -> kafkaConsumer.getAlarms().size() > 1);
+            fail("Alarm was not suppressed!");
+        } catch (Exception e) {
+        }
+    }
+

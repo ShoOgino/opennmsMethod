@@ -1,0 +1,25 @@
+    private byte[] wrapMessageToProto(String messageId, int chunk, int totalChunks, byte[] sinkMessageContent) {
+        // Calculate remaining bufferSize for each chunk.
+        int bufferSize = getRemainingBufferSize(sinkMessageContent.length, chunk);
+        ByteString byteString = ByteString.copyFrom(sinkMessageContent, chunk * maxBufferSize, bufferSize);
+        SinkMessageProtos.SinkMessage.Builder sinkMessageBuilder = SinkMessageProtos.SinkMessage.newBuilder()
+                .setMessageId(messageId)
+                .setCurrentChunkNumber(chunk)
+                .setTotalChunks(totalChunks)
+                .setContent(byteString);
+        // Add tracing info
+        final Tracer tracer = getTracer();
+        if (tracer.activeSpan() != null && (chunk + 1 == totalChunks)) {
+            TracingInfoCarrier tracingInfoCarrier = new TracingInfoCarrier();
+            tracer.inject(tracer.activeSpan().context(), Format.Builtin.TEXT_MAP, tracingInfoCarrier);
+            tracer.activeSpan().setTag(TracerConstants.TAG_LOCATION, minionIdentity.getLocation());
+            tracingInfoCarrier.getTracingInfoMap().forEach((key, value) -> {
+                SinkMessageProtos.TracingInfo tracingInfo = SinkMessageProtos.TracingInfo.newBuilder()
+                        .setKey(key).setValue(value).build();
+                sinkMessageBuilder.addTracingInfo(tracingInfo);
+            });
+
+        }
+        return sinkMessageBuilder.build().toByteArray();
+    }
+

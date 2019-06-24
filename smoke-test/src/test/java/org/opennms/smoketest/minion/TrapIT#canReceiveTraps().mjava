@@ -1,13 +1,11 @@
     @Test
-    public void canReceiveTraps() throws Exception {
+    public void canReceiveTraps() {
         Date startOfTest = new Date();
 
-        final InetSocketAddress trapAddr = m_testEnvironment.getServiceAddress(ContainerAlias.MINION, 1162, "udp");
+        final InetSocketAddress trapAddr = stack.minion().getNetworkProtocolAddress(NetworkProtocol.SNMP);
 
         // Connect to the postgresql container
-        InetSocketAddress pgsql = m_testEnvironment.getServiceAddress(ContainerAlias.POSTGRES, 5432);
-        HibernateDaoFactory daoFactory = new HibernateDaoFactory(pgsql);
-        EventDao eventDao = daoFactory.getDao(EventDaoHibernate.class);
+        EventDao eventDao = stack.postgres().dao(EventDaoHibernate.class);
 
         // Parsing the message correctly relies on the customized syslogd-configuration.xml that is part of the OpenNMS image
         Criteria criteria = new CriteriaBuilder(OnmsEvent.class)
@@ -16,16 +14,16 @@
                 .toCriteria();
 
         // Send traps to the Minion listener until one makes it through
-        await().atMost(5, MINUTES).pollInterval(30, SECONDS).pollDelay(0, SECONDS).until(new Callable<Boolean>() {
-            @Override public Boolean call() throws Exception {
-                sendTrap(trapAddr);
-                try {
-                    await().atMost(30, SECONDS).pollInterval(5, SECONDS).until(DaoUtils.countMatchingCallable(eventDao, criteria), greaterThanOrEqualTo(1));
-                } catch (final Exception e) {
-                    return false;
-                }
-                return true;
-            }
-        });
+        await().atMost(5, MINUTES).pollInterval(5, SECONDS)
+                .until(() -> {
+                    sendTrap(trapAddr);
+                    try {
+                        await().atMost(30, SECONDS).pollInterval(5, SECONDS)
+                                .until(DaoUtils.countMatchingCallable(eventDao, criteria), greaterThanOrEqualTo(1));
+                    } catch (final Exception e) {
+                        return false;
+                    }
+                    return true;
+                });
     }
 

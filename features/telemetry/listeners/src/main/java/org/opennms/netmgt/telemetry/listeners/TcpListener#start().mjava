@@ -1,0 +1,50 @@
+    public void start() throws InterruptedException {
+        this.bossGroup = new NioEventLoopGroup();
+        this.workerGroup = new NioEventLoopGroup();
+
+        this.parser.start(this.bossGroup);
+
+        final InetSocketAddress address = this.host != null
+                ? SocketUtils.socketAddress(this.host, this.port)
+                : new InetSocketAddress(this.port);
+
+        this.socketFuture = new ServerBootstrap()
+                .group(this.bossGroup, this.workerGroup)
+                .channel(NioServerSocketChannel.class)
+                .option(ChannelOption.SO_REUSEADDR, true)
+                .option(ChannelOption.SO_BACKLOG, 128)
+                .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childHandler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(final SocketChannel ch) {
+                        final TcpParser.Handler session = TcpListener.this.parser.accept(ch.remoteAddress(), ch.localAddress());
+                        ch.pipeline()
+                                .addLast(new SimpleChannelInboundHandler<ByteBuf>() {
+                                    @Override
+                                    protected void channelRead0(final ChannelHandlerContext ctx,
+                                                                final ByteBuf msg) throws Exception {
+                                        session.parse(ReferenceCountUtil.retain(msg).nioBuffer())
+                                                .handle((result, ex) -> {
+                                                    ReferenceCountUtil.release(msg);
+                                                    if (ex != null) {
+                                                        ctx.fireExceptionCaught(ex);
+                                                    }
+                                                    return result;
+                                                });;
+                                    }
+                                })
+                                .addLast(new ChannelInboundHandlerAdapter() {
+                                    @Override
+                                    public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
+                                        LOG.warn("Invalid packet: {}", cause.getMessage());
+                                        LOG.debug("", cause);
+
+                                        ctx.close();
+                                    }
+                                });
+                    }
+                })
+                .bind(address)
+                .sync();
+    }
+

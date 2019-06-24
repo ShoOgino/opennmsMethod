@@ -1,0 +1,105 @@
+    public CollectionSetProtos.CollectionSet buildCollectionSetProtos(CollectionSet collectionSet) {
+        CollectionSetProtos.CollectionSet.Builder builder = CollectionSetProtos.CollectionSet.newBuilder();
+
+        collectionSet.visit(new CollectionSetVisitor() {
+            CollectionSetProtos.CollectionSetResource.Builder collectionSetResourceBuilder;
+            String lastGroupName = null;
+
+            @Override
+            public void visitCollectionSet(CollectionSet set) {
+
+            }
+
+            @Override
+            public void visitResource(CollectionResource resource) {
+                collectionSetResourceBuilder = CollectionSetProtos.CollectionSetResource.newBuilder();
+                if (resource.getResourceTypeName().equals(CollectionResource.RESOURCE_TYPE_NODE)) {
+                    String nodeCriteria = getNodeCriteriaFromResource(resource);
+                    CollectionSetProtos.NodeLevelResource.Builder nodeResourceBuilder = buildNodeLevelResourceForProto(
+                            nodeCriteria);
+                    collectionSetResourceBuilder.setNode(nodeResourceBuilder);
+                } else if (resource.getResourceTypeName().equals(CollectionResource.RESOURCE_TYPE_IF)) {
+                    CollectionSetProtos.InterfaceLevelResource.Builder interfaceResourceBuilder = CollectionSetProtos.InterfaceLevelResource
+                            .newBuilder();
+                    String nodeCriteria = getNodeCriteriaFromResource(resource);
+                    if (!Strings.isNullOrEmpty(nodeCriteria)) {
+                        CollectionSetProtos.NodeLevelResource.Builder nodeResourceBuilder = buildNodeLevelResourceForProto(
+                                nodeCriteria);
+                        interfaceResourceBuilder.setNode(nodeResourceBuilder);
+                        interfaceResourceBuilder.setInstance(resource.getInterfaceLabel());
+                        collectionSetResourceBuilder.setInterface(interfaceResourceBuilder);
+                    } else {
+                        // it is likely to be response time resource.
+                        CollectionSetProtos.ResponseTimeResource.Builder responseTimeResource = buildResponseTimeResource(
+                                resource);
+                        if (responseTimeResource != null) {
+                            collectionSetResourceBuilder.setResponse(responseTimeResource);
+                        }
+                    }
+
+                } else {
+                    CollectionSetProtos.GenericTypeResource.Builder genericResourceBuilder = CollectionSetProtos.GenericTypeResource
+                            .newBuilder();
+                    String nodeCriteria = getNodeCriteriaFromResource(resource);
+                    CollectionSetProtos.NodeLevelResource.Builder nodeResourceBuilder = buildNodeLevelResourceForProto(
+                            nodeCriteria);
+                    genericResourceBuilder.setNode(nodeResourceBuilder);
+                    genericResourceBuilder.setType(resource.getResourceTypeName());
+                    genericResourceBuilder.setInstance(resource.getInstance());
+                    collectionSetResourceBuilder.setGeneric(genericResourceBuilder);
+                }
+            }
+
+            @Override
+            public void visitGroup(AttributeGroup group) {
+                lastGroupName = group.getName();
+
+            }
+
+            @Override
+            public void visitAttribute(CollectionAttribute attribute) {
+                if (attribute.getType().equals(AttributeType.STRING)) {
+                    CollectionSetProtos.StringAttribute.Builder attributeBuilder = CollectionSetProtos.StringAttribute
+                            .newBuilder();
+                    attributeBuilder.setValue(attribute.getStringValue());
+                    attributeBuilder.setName(attribute.getName());
+                    collectionSetResourceBuilder.addString(attributeBuilder);
+                } else {
+                    CollectionSetProtos.NumericAttribute.Builder attributeBuilder = CollectionSetProtos.NumericAttribute
+                            .newBuilder();
+                    attributeBuilder.setGroup(lastGroupName);
+                    attributeBuilder.setName(attribute.getName());
+                    attributeBuilder.setValue(attribute.getNumericValue().doubleValue());
+                    attributeBuilder.setType((attribute.getType() == AttributeType.GAUGE) ? Type.GAUGE : Type.COUNTER);
+                    collectionSetResourceBuilder.addNumeric(attributeBuilder);
+                }
+
+            }
+
+            @Override
+            public void completeAttribute(CollectionAttribute attribute) {
+                // we already set it in visitAttribute
+
+            }
+
+            @Override
+            public void completeGroup(AttributeGroup group) {
+                // group here is part of Numeric, it's already set in numeric
+
+            }
+
+            @Override
+            public void completeResource(CollectionResource resource) {
+                builder.addResource(collectionSetResourceBuilder);
+            }
+
+            @Override
+            public void completeCollectionSet(CollectionSet set) {
+                builder.setTimestamp(collectionSet.getCollectionTimestamp().getTime());
+            }
+
+        });
+
+        return builder.build();
+    }
+

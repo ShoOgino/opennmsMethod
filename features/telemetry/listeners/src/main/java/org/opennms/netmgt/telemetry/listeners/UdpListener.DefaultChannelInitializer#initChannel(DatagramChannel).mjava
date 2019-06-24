@@ -1,0 +1,33 @@
+        @Override
+        protected void initChannel(DatagramChannel ch) throws Exception {
+
+            if (parsers.size() == 1) {
+                final UdpParser parser = parsers.get(0);
+                // If only one parser is defined, we can directly use the handler
+                ch.pipeline().addLast(new SingleDatagramPacketParserHandler(parser));
+            } else {
+                // Otherwise dispatch
+                ch.pipeline().addLast(new SimpleChannelInboundHandler<DatagramPacket>() {
+                    @Override
+                    protected void channelRead0(final ChannelHandlerContext ctx, final DatagramPacket msg) throws Exception {
+                        for (final UdpParser parser : parsers) {
+                            if (BufferUtils.peek(msg.content().nioBuffer(), ((Dispatchable) parser)::handles)) {
+                                new SingleDatagramPacketParserHandler(parser).channelRead0(ctx, msg);
+                                return;
+                            }
+                        }
+                        LOG.warn("Unhandled packet from {}", msg.sender());
+                    }
+                });
+            }
+
+            // Add error handling
+            ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                @Override
+                public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
+                    LOG.warn("Invalid packet: {}", cause.getMessage());
+                    LOG.debug("", cause);
+                }
+            });
+        }
+

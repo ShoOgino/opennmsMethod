@@ -1,0 +1,159 @@
+    @Test
+    @JUnitSnmpAgents(value={
+            @JUnitSnmpAgent(host=PE01_IP, port=161, resource= PE01_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=OSPESS01_IP, port=161, resource= OSPESS01_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=OSPWL01_IP, port=161, resource= OSPWL01_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=ASW01_IP, port=161, resource=ASW01_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=SAMASW01_IP, port=161, resource=SAMASW01_SNMP_RESOURCE),
+            @JUnitSnmpAgent(host=STCASW01_IP, port=161, resource=STCASW01_SNMP_RESOURCE)
+    })
+    public void testTopology() throws Exception {
+        //Default configuration we support 5 protocols,
+        // BRIDGE, CDP, ISIS, LLDP, OSPF
+        assertTrue(m_linkdConfig.useLldpDiscovery());
+        assertTrue(m_linkdConfig.useCdpDiscovery());
+        assertTrue(m_linkdConfig.useOspfDiscovery());
+        assertTrue(m_linkdConfig.useBridgeDiscovery());
+        assertTrue(m_linkdConfig.useIsisDiscovery());
+
+        assertEquals(7, getSupportedProtocolsAsProtocolSupported().size());
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.NODES));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.BRIDGE));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.CDP));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.ISIS));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.LLDP));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.OSPF));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.USERDEFINED));
+
+        //update config to suppoort only BRIDGE discovery
+        m_linkdConfig.getConfiguration().setUseCdpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseOspfDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseLldpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseIsisDiscovery(false);
+        m_linkdConfig.getConfiguration().setMaxBft(6);
+        
+        assertTrue(!m_linkdConfig.useLldpDiscovery());
+        assertTrue(!m_linkdConfig.useCdpDiscovery());
+        assertTrue(!m_linkdConfig.useOspfDiscovery());
+        assertTrue(m_linkdConfig.useBridgeDiscovery());
+        assertTrue(!m_linkdConfig.useIsisDiscovery());
+
+        //Updated configuration will lead to support only BRIDGE updates,
+        m_linkd.reload();
+        assertEquals(3, getSupportedProtocolsAsProtocolSupported().size());
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.NODES));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.BRIDGE));
+        assertTrue(getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.USERDEFINED));
+        assertTrue(!getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.CDP));
+        assertTrue(!getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.ISIS));
+        assertTrue(!getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.LLDP));
+        assertTrue(!getSupportedProtocolsAsProtocolSupported().contains(ProtocolSupported.OSPF));
+        
+        final OnmsNode pe01 = m_nodeDao.findByForeignId("linkd", PE01_NAME);
+        final OnmsNode asw01 = m_nodeDao.findByForeignId("linkd", ASW01_NAME);
+        final OnmsNode ospess01 = m_nodeDao.findByForeignId("linkd", OSPESS01_NAME);
+        final OnmsNode ospwl01 = m_nodeDao.findByForeignId("linkd", OSPWL01_NAME);
+        final OnmsNode samasw01 = m_nodeDao.findByForeignId("linkd", SAMASW01_NAME);
+        final OnmsNode stcasw01 = m_nodeDao.findByForeignId("linkd", STCASW01_NAME);
+
+        assertTrue(m_linkd.scheduleNodeCollection(pe01.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(ospess01.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(asw01.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(samasw01.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(stcasw01.getId()));
+        assertTrue(m_linkd.scheduleNodeCollection(ospwl01.getId()));
+
+        assertEquals(0,m_ipNetToMediaDao.countAll());
+        assertEquals(0,m_bridgeElementDao.countAll());
+        assertEquals(0,m_bridgeStpLinkDao.countAll());
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+
+        assertTrue(m_linkd.runSingleSnmpCollection(pe01.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(asw01.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(ospess01.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(ospwl01.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(samasw01.getId()));
+        assertTrue(m_linkd.runSingleSnmpCollection(stcasw01.getId()));
+        
+        assertEquals(5,m_bridgeElementDao.countAll());
+        m_bridgeElementDao.findAll().stream().forEach(e -> System.err.println(e));
+        assertEquals(0,m_bridgeStpLinkDao.countAll());
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+        assertEquals(116,m_ipNetToMediaDao.countAll());
+        
+
+        m_linkd.runDiscoveryBridgeDomains();
+        checkTopology(asw01,stcasw01,samasw01);
+        List<MacPort> mps = m_bridgeTopologyService.getMacPorts();
+        assertEquals(40, mps.size());
+
+        BridgeOnmsTopologyUpdater topologyUpdater = m_linkd.getBridgeTopologyUpdater();
+        assertNotNull(topologyUpdater);
+        OnmsTopology topology = topologyUpdater.buildTopology();
+        topology.getVertices().stream().forEach(v -> System.err.println(v.getId()));
+        topology.getEdges().stream().forEach(e -> System.err.println(e.getId()));
+        assertEquals(14, topology.getVertices().size());
+        assertEquals(13, topology.getEdges().size());
+        
+        Set<String> protocols= new HashSet<>();
+        protocols.add(ProtocolSupported.BRIDGE.name());
+        OnmsTopologyLogger tl = createAndSubscribe(
+                  ProtocolSupported.BRIDGE.name());
+        assertEquals("BRIDGE:Consumer:Logger", tl.getName());
+        assertEquals(0, tl.getQueue().size());        
+        
+        m_linkd.runTopologyUpdater(ProtocolSupported.BRIDGE);
+        
+        int vertices = 0;
+        int nodes =0;
+        int macs = 0;
+        int edges = 0;
+        int segments = 0;
+        for (OnmsTopologyMessage m: tl.getQueue()) {
+            assertEquals(TopologyUpdater.create(ProtocolSupported.BRIDGE), m.getProtocol());
+            assertEquals(TopologyMessageStatus.UPDATE, m.getMessagestatus());
+            if (m.getMessagebody() instanceof OnmsTopologyVertex) {
+                OnmsTopologyVertex vertex = (OnmsTopologyVertex) m.getMessagebody();
+                assertNotNull(vertex.getId());
+                assertNotNull(vertex.getLabel());
+                assertNotNull(vertex.getIconKey());
+                assertNotNull(vertex.getToolTipText());
+                if (vertex.getAddress() == null) {
+                    segments++;
+                    assertNull(vertex.getNodeid());
+                    assertTrue(vertex.getId().contains("s:"));
+                } else  if (vertex.getNodeid() == null) {
+                    macs++;
+                    assertTrue(vertex.getId().contains("m:"));
+                } else {
+                    nodes++;
+                    assertTrue(vertex.getId().equals(vertex.getNodeid().toString()));
+                }
+                vertices++;
+            } else if (m.getMessagebody() instanceof OnmsTopologyEdge ) {
+                OnmsTopologyEdge edge = (OnmsTopologyEdge) m.getMessagebody();
+                assertNotNull(edge.getId());
+                assertNotNull(edge.getSource().getVertex());
+                assertNotNull(edge.getTarget().getVertex());
+                edges++;
+            } else {
+                assertTrue(false);
+            }
+        }
+        assertEquals(27, tl.getQueue().size());        
+        assertEquals(14, vertices);
+        assertEquals(6, nodes);
+        assertEquals(6, macs);
+        assertEquals(2, segments);
+        assertEquals(13, edges);
+
+        OnmsTopology bridgetopo2 = m_topologyDao.getTopology(ProtocolSupported.BRIDGE.name());
+        assertEquals(14, bridgetopo2.getVertices().size());
+        assertEquals(13, bridgetopo2.getEdges().size());
+
+
+    }
+

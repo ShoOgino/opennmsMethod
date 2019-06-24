@@ -1,0 +1,25 @@
+    @Override
+    public synchronized void handleAlarmSnapshot(List<OnmsAlarm> alarms) {
+        LOG.debug("Got snapshot with {} alarms.", alarms.size());
+        flushDocumentsToIndexToTaskQueue();
+        // Index/update documents as necessary
+        final List<AlarmDocumentDTO> alarmDocuments = alarms.stream()
+                // Only consider updating, if we haven't already updated the alarm since the snapshot was taken
+                .filter(a -> !stateTracker.wasAlarmWithIdUpdated(a.getId()))
+                .map(this::getDocumentIfNeedsIndexing)
+                .flatMap(o -> o.map(Stream::of).orElseGet(Stream::empty))
+                .collect(Collectors.toList());
+        if (!alarmDocuments.isEmpty()) {
+            // Break the list up into small batches limited by the configured batch size
+            for (List<AlarmDocumentDTO> partition : Lists.partition(alarmDocuments, batchSize)) {
+                taskQueue.add(new IndexAlarmsTask(partition));
+            }
+        }
+
+        // Bulk delete alarms that are not yet marked as deleted in ES, and are not present in the given list
+        final Set<Integer> alarmIdsToKeep = new HashSet<>(stateTracker.getUpdatedAlarmIds());
+        alarms.stream().map(OnmsAlarm::getId).forEach(alarmIdsToKeep::add);
+        taskQueue.add(new BulkDeleteTask(alarmIdsToKeep, getCurrentTimeMillis()));
+        alarmDocumentsById.keySet().removeIf(alarmId -> !alarmIdsToKeep.contains(alarmId));
+    }
+

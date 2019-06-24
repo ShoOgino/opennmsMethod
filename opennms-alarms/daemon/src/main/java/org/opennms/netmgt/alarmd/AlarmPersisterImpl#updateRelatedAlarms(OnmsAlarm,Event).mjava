@@ -1,0 +1,31 @@
+    private void updateRelatedAlarms(OnmsAlarm alarm, Event event) {
+        // Retrieve the related alarms as given by the event parameters
+        final Set<OnmsAlarm> relatedAlarms = getRelatedAlarms(event.getParmCollection());
+        // Index these by id
+        final Map<Integer, OnmsAlarm> relatedAlarmsByIds = relatedAlarms.stream()
+                .collect(Collectors.toMap(OnmsAlarm::getId, a -> a));
+
+        // Build sets of the related alarm ids for easy comparison
+        final Set<Integer> relatedAlarmIdsFromEvent = ImmutableSet.copyOf(relatedAlarmsByIds.keySet());
+        final Set<Integer> relatedAlarmIdsFromExistingAlarm = ImmutableSet.copyOf(alarm.getRelatedAlarmIds());
+
+        // Remove alarms that are not referenced in the event -  we treat the event as an
+        // authoritative source of the related alarms rather than using the union of the previously known related alarms
+        // and the event's related alarms
+        Sets.difference(relatedAlarmIdsFromExistingAlarm, relatedAlarmIdsFromEvent)
+                .forEach(alarm::removeRelatedAlarmWithId);
+        // Add new alarms that are referenced in the event, but are not already associated
+        Sets.difference(relatedAlarmIdsFromEvent, relatedAlarmIdsFromExistingAlarm)
+                .forEach(relatedAlarmIdToAdd -> {
+                    final OnmsAlarm related = relatedAlarmsByIds.get(relatedAlarmIdToAdd);
+                    if (related != null) {
+                        if (!formingCyclicGraph(alarm, related)) {
+                            alarm.addRelatedAlarm(related);
+                        } else {
+                            LOG.warn("Alarm with id '{}' , reductionKey '{}' is not added as related alarm for id '{}' as it is forming cyclic graph ",
+                                    related.getId(), related.getReductionKey(), alarm.getId());
+                        }
+                    }
+                });
+    }
+

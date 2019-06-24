@@ -1,0 +1,41 @@
+    @Override
+    public PollStatus poll(final MonitoredService svc, final Map<String, Object> parameters) {
+        if (dhcpd == null) {
+            dhcpd = SERVICE_LOOKUP.lookup(Dhcpd.class, null);
+        }
+
+        // common parameters
+        final int retries = ParameterMap.getKeyedInteger(parameters, "retry", DEFAULT_RETRIES);
+        final int timeout = ParameterMap.getKeyedInteger(parameters, "timeout", DEFAULT_TIMEOUT);
+
+        // DHCP-specific parameters
+        final String macAddress = ParameterMap.getKeyedString(parameters, "macAddress", DEFAULT_MAC_ADDRESS);
+        final boolean relayMode = ParameterMap.getKeyedBoolean(parameters, "relayMode", false);
+        final boolean extendedMode = ParameterMap.getKeyedBoolean(parameters, "extendedMode", false);
+        final String myAddress = ParameterMap.getKeyedString(parameters, "myIpAddress", "127.0.0.1");
+        final String requestIpAddress = ParameterMap.getKeyedString(parameters, "requestIpAddress", "127.0.0.1");
+
+        final TimeoutTracker tracker = new TimeoutTracker(parameters, retries, timeout);
+
+        Transaction transaction = null;
+
+        tracker.reset();
+
+        while (tracker.shouldRetry() && (transaction == null || !transaction.isSuccess())) {
+            try {
+                transaction = dhcpd.executeTransaction(svc.getIpAddr(), macAddress, relayMode, myAddress, extendedMode, requestIpAddress, timeout);
+            } catch (IOException e) {
+                LOG.error("An unexpected exception occurred during DHCP polling", e);
+                return PollStatus.unavailable("An unexpected exception occurred during DHCP polling: " + e.getMessage());
+            }
+            tracker.nextAttempt();
+        }
+
+        return transaction.isSuccess() ?
+                PollStatus.available((double) transaction.getResponseTime()) :
+                PollStatus.unavailable("DHCP service unavailable: " +
+                        "No response received from " + svc.getIpAddr() + " within " + timeout + " and " + retries + " attempt(s). " +
+                        "Relay Mode: " + relayMode + ", Extended Mode " + extendedMode + ", Relay IP address: " + myAddress +
+                        ", Request IP address: " + requestIpAddress + ", MAC address: " + macAddress + ". ");
+    }
+

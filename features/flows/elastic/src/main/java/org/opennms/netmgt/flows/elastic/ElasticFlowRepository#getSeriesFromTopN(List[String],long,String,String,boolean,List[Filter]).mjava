@@ -8,7 +8,7 @@
             // If there are no entries, skip the query
             seriesFuture = CompletableFuture.completedFuture(null);
         } else {
-            final String seriesFromTopNQuery = searchQueryProvider.getSeriesFromTopNQuery(topN, step, timeRangeFilter.getStart(),
+            final String seriesFromTopNQuery = searchQueryProvider.getSeriesFromQuery(topN, step, timeRangeFilter.getStart(),
                     timeRangeFilter.getEnd(), groupByTerm, filters);
             seriesFuture = searchAsync(seriesFromTopNQuery, timeRangeFilter)
                     .thenApply(res -> {
@@ -33,18 +33,8 @@
             // We also want to gather series for terms not part of the Top N
             final String seriesFromOthersQuery = searchQueryProvider.getSeriesFromOthersQuery(topN, step,
                     timeRangeFilter.getStart(), timeRangeFilter.getEnd(), groupByTerm, missingTermIncludedInTopN, filters);
-            seriesFuture = seriesFuture.thenCombine(searchAsync(seriesFromOthersQuery, timeRangeFilter), (ignored,res) -> {
-                final MetricAggregation aggs = res.getAggregations();
-                final TermsAggregation directionAgg = aggs.getTermsAggregation("direction");
-                for (TermsAggregation.Entry directionBucket : directionAgg.getBuckets()) {
-                    final boolean isIngress = isIngress(directionBucket);
-                    final ProportionalSumAggregation sumAgg = directionBucket.getAggregation("bytes", ProportionalSumAggregation.class);
-                    for (ProportionalSumAggregation.DateHistogram dateHistogram : sumAgg.getBuckets()) {
-                        builder.put(new Directional<>(OTHER_APPLICATION_NAME, isIngress), dateHistogram.getTime(), dateHistogram.getValue());
-                    }
-                }
-                return null;
-            });
+            seriesFuture = seriesFuture.thenCombine(searchAsync(seriesFromOthersQuery, timeRangeFilter),
+                    (ignored,res) -> processOthersResult(res, builder));
         }
 
         // Sort the table to ensure that the rows as in the same order as the Top N

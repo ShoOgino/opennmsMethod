@@ -1,40 +1,54 @@
-    private void reduceEvent(OnmsEvent e, OnmsAlarm alarm, Event event) {
-
-        //Always set these
-        alarm.setLastEvent(e);
-        alarm.setLastEventTime(e.getEventTime());
-        alarm.setCounter(alarm.getCounter() + 1);
+    private void reduceEvent(OnmsEvent persistedEvent, OnmsAlarm alarm, Event event) {
+        // Always set these
+        alarm.setLastEvent(persistedEvent);
+        alarm.setLastEventTime(persistedEvent.getEventTime());
+        
+        if (!isResolutionEvent(event)) {
+            incrementCounter(alarm);
+            
+            if (isResolvedAlarm(alarm)) {
+                resetAlarmSeverity(persistedEvent, alarm);
+            }
+        } else {
+            
+            if (isResolvedAlarm(alarm)) {
+                incrementCounter(alarm);
+            } else {
+                alarm.setSeverity(OnmsSeverity.CLEARED);
+            }
+        }
+        alarm.setAlarmType(event.getAlarmData().getAlarmType());
 
         if (!event.getAlarmData().hasUpdateFields()) {
 
             //We always set these even if there are not update fields specified
-            alarm.setLogMsg(e.getEventLogMsg());
+            alarm.setLogMsg(persistedEvent.getEventLogMsg());
         } else {
             for (UpdateField field : event.getAlarmData().getUpdateFieldList()) {
                 String fieldName = field.getFieldName();
 
                 //Always set these, unless specified not to, in order to maintain current behavior
-                if (fieldName.equalsIgnoreCase("LogMsg") && field.isUpdateOnReduction() == false) {
+                if (fieldName.equalsIgnoreCase("LogMsg") && !field.isUpdateOnReduction()) {
                     continue;
                 } else {
-                    alarm.setLogMsg(e.getEventLogMsg());
+                    alarm.setLogMsg(persistedEvent.getEventLogMsg());
                 }
 
                 //Set these others
                 if (field.isUpdateOnReduction()) {
 
                     if (fieldName.toLowerCase().startsWith("distpoller")) {
-                        alarm.setDistPoller(e.getDistPoller());
+                        alarm.setDistPoller(persistedEvent.getDistPoller());
                     } else if (fieldName.toLowerCase().startsWith("ipaddr")) {
-                        alarm.setIpAddr(e.getIpAddr());
+                        alarm.setIpAddr(persistedEvent.getIpAddr());
                     } else if (fieldName.toLowerCase().startsWith("mouseover")) {
-                        alarm.setMouseOverText(e.getEventMouseOverText());
+                        alarm.setMouseOverText(persistedEvent.getEventMouseOverText());
                     } else if (fieldName.toLowerCase().startsWith("operinstruct")) {
-                        alarm.setOperInstruct(e.getEventOperInstruct());
+                        alarm.setOperInstruct(persistedEvent.getEventOperInstruct());
                     } else if (fieldName.equalsIgnoreCase("severity")) {
-                        alarm.setSeverity(OnmsSeverity.valueOf(e.getSeverityLabel()));
+                        resetAlarmSeverity(persistedEvent, alarm);
                     } else if (fieldName.toLowerCase().contains("descr")) {
-                        alarm.setDescription(e.getEventDescr());
+                        alarm.setDescription(persistedEvent.getEventDescr());
                     } else if (fieldName.toLowerCase().startsWith("acktime")) {
                         final String expandedAckTime = m_eventUtil.expandParms(field.getValueExpression(), event);
                         if ("null".equalsIgnoreCase(expandedAckTime) && alarm.isAcknowledged()) {
@@ -72,33 +86,11 @@
                 } else {
                     LOG.warn("reduceEvent: The specified field: {}, is not supported.", fieldName);
                 }
-
-                /* This doesn't work because the properties are not consistent from OnmsEvent to OnmsAlarm
-                    try {
-                        final BeanWrapper ew = PropertyAccessorFactory.forBeanPropertyAccess(e);
-                        final BeanWrapper aw = PropertyAccessorFactory.forBeanPropertyAccess(alarm);
-                        aw.setPropertyValue(fieldName, ew.getPropertyValue(fieldName));
-                    } catch (BeansException be) {                        
-                        LOG.error("reduceEvent", be);
-                        continue;
-                    }
-                 */
-
             }
         }
 
-        Set<OnmsAlarm> containedAlarms = getAlarms(event.getParmCollection());
-        if (containedAlarms != null && !containedAlarms.isEmpty()) {
-            if (alarm instanceof Situation) {
-                for(OnmsAlarm related : containedAlarms) {
-                    // Related Alarms are additive for Situations reduced from Events.
-                    ((Situation)alarm).addAlarm(related);
-                }
-            } else {
-                LOG.warn("reduceEvent: Event {} attempts to add alarms to alarm that is not a Situation: {}.", event.getUei(), alarm);
-            }
-        }
+        updateRelatedAlarms(alarm, event);
 
-        e.setAlarm(alarm);
+        persistedEvent.setAlarm(alarm);
     }
 

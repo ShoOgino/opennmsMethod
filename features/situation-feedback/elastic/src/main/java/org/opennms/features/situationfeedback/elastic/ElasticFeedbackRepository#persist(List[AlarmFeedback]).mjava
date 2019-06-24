@@ -1,0 +1,30 @@
+    @Override
+    public void persist(List<AlarmFeedback> feedback) throws FeedbackException {
+        ensureInitialized();
+        if (LOG.isDebugEnabled()) {
+            for (AlarmFeedback fb : feedback) {
+                LOG.debug("Persisting {} feedback.", fb);
+            }
+        }
+
+        List<FeedbackDocument> feedbackDocuments = feedback.stream().map(FeedbackDocument::from).collect(Collectors.toList());
+        BulkRequest<FeedbackDocument> bulkRequest = new BulkRequest<>(client, feedbackDocuments, (documents) -> {
+            final Bulk.Builder bulkBuilder = new Bulk.Builder();
+            for (FeedbackDocument document : documents) {
+                final String index = indexStrategy.getIndex(TYPE, Instant.ofEpochMilli(document.getTimestamp()));
+                final Index.Builder indexBuilder = new Index.Builder(document).index(index).type(TYPE);
+                bulkBuilder.addAction(indexBuilder.build());
+            }
+            return new BulkWrapper(bulkBuilder);
+        }, bulkRetryCount);
+        // the bulk request considers retries
+        try {
+            bulkRequest.execute();
+        } catch (IOException e) {
+            LOG.error("Failed to persist feedback [{}]: {}", feedback, e.getMessage());
+            throw new FeedbackException("Failed to persist feedback", e);
+        }
+
+        notifyListeners(feedback);
+    }
+

@@ -1,0 +1,40 @@
+    @Test
+    public void canGarbageCollectAlarm() {
+        // Trigger some problem
+        OnmsAlarm trigger = new OnmsAlarm();
+        trigger.setId(1);
+        trigger.setAlarmType(1);
+        trigger.setSeverity(OnmsSeverity.WARNING);
+        trigger.setReductionKey("n1:oops");
+        trigger.setLastEventTime(new Date(100));
+        when(alarmDao.get(trigger.getId())).thenReturn(trigger);
+        dac.getClock().advanceTime( 100, TimeUnit.MILLISECONDS );
+        dac.handleNewOrUpdatedAlarm(trigger);
+        dac.tick();
+
+        final AtomicBoolean gotDelete = new AtomicBoolean();
+        doAnswer(invocation -> {
+            gotDelete.set(true);
+            return null;
+        }).when(alarmDao).delete(trigger);
+        dac.getClock().advanceTime( 1, TimeUnit.MILLISECONDS );
+        dac.handleNewOrUpdatedAlarm(trigger);
+        dac.tick();
+
+        // The alarm should not be immediately deleted
+        assertThat(gotDelete.get(), equalTo(false));
+
+        // Advance the clock and tick
+        dac.getClock().advanceTime( 1, TimeUnit.HOURS );
+        dac.tick();
+
+        // Still not deleted
+        assertThat(gotDelete.get(), equalTo(false));
+
+        // Advance the clock and tick
+        dac.getClock().advanceTime( 3, TimeUnit.DAYS );
+        dac.tick();
+
+        assertThat(gotDelete.get(), equalTo(true));
+    }
+

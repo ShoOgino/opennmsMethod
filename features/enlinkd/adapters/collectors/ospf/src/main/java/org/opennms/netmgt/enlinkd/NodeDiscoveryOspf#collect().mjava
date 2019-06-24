@@ -1,0 +1,121 @@
+    public void collect() {
+
+    	final Date now = new Date(); 
+
+        SnmpAgentConfig peer = getSnmpAgentConfig();
+
+        final OspfIpAddrTableGetter ipAddrTableGetter = new OspfIpAddrTableGetter(peer,
+                                                                                  getLocationAwareSnmpClient(),
+                                                                                  getLocation(),getNodeId());
+        final OspfGeneralGroupTracker ospfGeneralGroup = new OspfGeneralGroupTracker();
+        try {
+            getLocationAwareSnmpClient().walk(peer, ospfGeneralGroup).
+            withDescription("ospfGeneralGroup").
+            withLocation(getLocation()).
+            execute().
+            get();
+       } catch (ExecutionException e) {
+           LOG.info("run: node [{}]: ExecutionException: ospf mib not supported {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       } catch (final InterruptedException e) {
+           LOG.info("run: node [{}]: InterruptedException: ospf mib not supported {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       }
+
+        
+        if (ospfGeneralGroup.getOspfRouterId() == null ) {
+    		LOG.info( "run: node[{}]: ospf mib not supported",
+    				getNodeId());
+            return;
+        } 
+
+        if (ospfGeneralGroup.getOspfRouterId().equals(InetAddressUtils.addr("0.0.0.0"))) {
+    		LOG.info( "run: node[{}]: ospf mib not supported not valid ospf identifier 0.0.0.0",
+    				getNodeId());
+            return;
+        }
+
+        if (Status.get(ospfGeneralGroup.getOspfAdminStat()) == Status.disabled) {
+    		LOG.info( "run: node[{}]: ospf mib not supported ospf status: disabled",
+    				getNodeId());
+            return;
+        }
+
+        m_ospfTopologyService.store(getNodeId(), ipAddrTableGetter.get(ospfGeneralGroup.getOspfElement()));
+
+        final List<OspfLink> links = new ArrayList<>();
+        OspfNbrTableTracker ospfNbrTableTracker = new OspfNbrTableTracker() {
+    
+            public void processOspfNbrRow(final OspfNbrRow row) {
+    		links.add(row.getOspfLink());
+	    }
+        };
+
+        try {
+            getLocationAwareSnmpClient().walk(peer, ospfNbrTableTracker).
+            withDescription("ospfNbrTable").
+            withLocation(getLocation()).
+            execute().
+            get();
+       } catch (ExecutionException e) {
+           LOG.debug("run: node [{}]: ExecutionException: {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       } catch (final InterruptedException e) {
+           LOG.debug("run: node [{}]: InterruptedException: {}", 
+                     getNodeId(), e.getMessage());
+            return;
+       }
+
+        List<OspfLink> localOspfPorts =  new ArrayList<>();
+        OspfIfTableTracker ospfIfTableTracker = new OspfIfTableTracker() {
+            public void processOspfIfRow(final OspfIfRow row) {
+                localOspfPorts.add(row.getOspfLink());
+            }
+        };
+
+        try {
+            getLocationAwareSnmpClient().walk(peer, ospfIfTableTracker).
+            withDescription("ospfIfTable").
+            withLocation(getLocation()).
+            execute().
+            get();
+       } catch (ExecutionException e) {
+           LOG.debug("run: node [{}]: ExecutionException: {}", 
+                    getNodeId(), e.getMessage());
+           return;
+       } catch (final InterruptedException e) {
+           LOG.debug("run: node [{}]: InterruptedException: {}", 
+                    getNodeId(), e.getMessage());
+            return;
+       }
+
+        for (OspfLink link : links) {
+            for (OspfLink localospfport: localOspfPorts) {
+                if (localospfport.getOspfAddressLessIndex() != 0 && link.getOspfRemAddressLessIndex() != 0) {
+                    link.setOspfIpAddr(localospfport.getOspfIpAddr());
+                    link.setOspfAddressLessIndex(localospfport.getOspfAddressLessIndex());
+                    link.setOspfIfIndex(localospfport.getOspfAddressLessIndex());
+                    break;
+                }
+                if (localospfport.getOspfAddressLessIndex() == 0 && link.getOspfRemAddressLessIndex() != 0)
+                    continue;
+                if (localospfport.getOspfAddressLessIndex() != 0 && link.getOspfRemAddressLessIndex() == 0)
+                    continue;
+                localospfport = ipAddrTableGetter.get(localospfport);
+                if (InetAddressUtils.inSameNetwork(localospfport.getOspfIpAddr(),link.getOspfRemIpAddr(),localospfport.getOspfIpMask())) {
+                    link.setOspfIpAddr(localospfport.getOspfIpAddr());
+                    link.setOspfAddressLessIndex(localospfport.getOspfAddressLessIndex());
+                    link.setOspfIpMask(localospfport.getOspfIpMask());
+                    link.setOspfIfIndex(localospfport.getOspfIfIndex());
+                    break;
+                }
+            }
+            m_ospfTopologyService.store(getNodeId(),link);
+        }
+
+        m_ospfTopologyService.reconcile(getNodeId(),now);
+    }
+

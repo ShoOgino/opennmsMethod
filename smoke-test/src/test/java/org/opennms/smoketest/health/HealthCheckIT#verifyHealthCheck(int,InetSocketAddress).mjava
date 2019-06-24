@@ -1,0 +1,36 @@
+    private void verifyHealthCheck(final int expectedHealthCheckServices, final InetSocketAddress sshAddress) {
+        // Ensure we are actually started the sink and are ready to listen for messages
+        await().atMost(5, MINUTES)
+                .pollInterval(5, SECONDS)
+                .until(() -> {
+                    try (final SshClient sshClient = new SshClient(sshAddress, OpenNMSContainer.ADMIN_USER, OpenNMSContainer.ADMIN_PASSWORD)) {
+                        final PrintStream pipe = sshClient.openShell();
+                        pipe.println("health:check");
+                        pipe.println("logout");
+
+                        // Wait for karaf to process the commands
+                        // each health check times out after 5 seconds, so we wait at least that long
+                        int maxWaitTime = expectedHealthCheckServices * 5;
+                        await().atMost(maxWaitTime, SECONDS).until(sshClient.isShellClosedCallable());
+
+                        // Read stdout and verify
+                        final String shellOutput = sshClient.getStdout();
+
+                        // Log what was read, to help debugging issues
+                        LOG.info("log:display");
+                        LOG.info("{}", shellOutput);
+
+                        final int count = StringUtils.countOccurrencesOf(shellOutput, "Success");
+                        final String overallStatus = getOverallStatus(shellOutput);
+                        LOG.info("{} checks are successful and overall status is {}, expected >= {} and \"Everything is awesome\"", count, overallStatus, expectedHealthCheckServices);
+
+                        // We check if at least the number of expected health
+                        // checks succeeded and overall status is "AWESOME". This way we avoid updating this test each time a new health check is added
+                        return count >= expectedHealthCheckServices && overallStatus.contains("awesome");
+                    } catch (Exception ex) {
+                        LOG.error("Error while trying to verify health:check: {}", ex.getMessage());
+                        return false;
+                    }
+                });
+    }
+

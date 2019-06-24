@@ -1,0 +1,46 @@
+    private void startWithModuleAndFacts(ReleaseId releaseId, List<Object> factObjects) {
+        final KieServices ks = KieServices.Factory.get();
+        kieContainer = ks.newKieContainer(releaseId);
+        kieSession = kieContainer.newKieSession(kSessionName);
+
+        if (usePseudoClock) {
+            this.clock = kieSession.getSessionClock();
+        } else {
+            this.clock = null;
+        }
+
+        // Optionally restore any facts
+        factObjects.forEach(factObject -> kieSession.insert(factObject));
+
+        if (onNewKiewSessionCallback != null) {
+            onNewKiewSessionCallback.accept(kieSession);
+        }
+
+        // Save the releaseId
+        releaseIdForContainerUsedByKieSession = releaseId;
+
+        // We're started!
+        started = true;
+
+        // Allow the base classes to seed the context before we start ticking
+        onStart();
+
+        if (!useManualTick) {
+            timer = new Timer();
+            timer.scheduleAtFixedRate(new TimerTask() {
+                @Override
+                public void run() {
+                    lock.lock();
+                    try {
+                        LOG.debug("Firing rules.");
+                        kieSession.fireAllRules();
+                    } catch (Exception e) {
+                        LOG.error("Error occurred while firing rules.", e);
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+            }, TimeUnit.SECONDS.toMillis(1), TimeUnit.SECONDS.toMillis(1));
+        }
+    }
+

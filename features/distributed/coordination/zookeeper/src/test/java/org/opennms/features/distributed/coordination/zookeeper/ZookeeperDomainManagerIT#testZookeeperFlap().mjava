@@ -1,0 +1,35 @@
+    /**
+     * Test ZooKeeper flapping.
+     * <p>
+     * Note: This test will take several seconds to complete due to waiting for ZooKeeper to go up and down.
+     *
+     * @throws Exception
+     */
+    @Test
+    public void testZookeeperFlap() throws Exception {
+        List<CompletableFuture<String>> activeFutures = new ArrayList<>();
+        List<CompletableFuture<String>> standbyFutures = new ArrayList<>();
+        AtomicInteger futureIndex = new AtomicInteger(0);
+
+        manager.register(id, (role, domain) -> {
+            if (role == Role.ACTIVE) {
+                activeFutures.get(futureIndex.get()).complete(domain);
+            } else if (role == Role.STANDBY) {
+                standbyFutures.get(futureIndex.get()).complete(domain);
+            }
+        });
+
+        // There is no asserts here but failure will occur due to timeout exception if one of the active/standby calls
+        // does not happen
+        int numFlaps = 3;
+        for (int i = 0; i < numFlaps; i++) {
+            activeFutures.add(new CompletableFuture<>());
+            standbyFutures.add(new CompletableFuture<>());
+            testServer.restart();
+            activeFutures.get(futureIndex.get()).get(10, TimeUnit.SECONDS);
+            testServer.stop();
+            standbyFutures.get(futureIndex.get()).get(10, TimeUnit.SECONDS);
+            futureIndex.incrementAndGet();
+        }
+    }
+

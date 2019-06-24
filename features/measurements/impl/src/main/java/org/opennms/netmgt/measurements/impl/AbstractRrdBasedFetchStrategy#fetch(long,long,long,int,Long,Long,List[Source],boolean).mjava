@@ -7,8 +7,12 @@
 
         final Map<String, Object> constants = Maps.newHashMap();
 
+        final List<QueryResource> resources = new ArrayList<>();
+
         final Map<Source, String> rrdsBySource = Maps.newHashMap();
         
+        final Map<ResourceId, OnmsResource> resourceCache = new HashMap<>();
+
         for (final Source source : sources) {
             final ResourceId resourceId;
             try {
@@ -16,16 +20,22 @@
             } catch (final IllegalArgumentException ex) {
                 if (relaxed) continue;
                 LOG.error("Ill-formed resource id: {}", source.getResourceId(), ex);
+                resources.add(null);
                 return null;
             }
 
             // Grab the resource
-            final OnmsResource resource = m_resourceDao.getResourceById(resourceId);
+            final OnmsResource resource = resourceCache.computeIfAbsent(resourceId, r -> m_resourceDao.getResourceById(r));
+
             if (resource == null) {
                 if (relaxed) continue;
                 LOG.error("No resource with id: {}", source.getResourceId());
+                resources.add(null);
                 return null;
             }
+
+            final QueryResource resourceInfo = getResourceInfo(resource, source);
+            resources.add(resourceInfo);
 
             // Grab the attribute
             RrdGraphAttribute rrdGraphAttribute = resource.getRrdGraphAttributes().get(source.getAttribute());
@@ -54,6 +64,6 @@
         }
 
         // Fetch
-        return fetchMeasurements(start, end, step, maxrows, rrdsBySource, constants, sources, relaxed);
+        return fetchMeasurements(start, end, step, maxrows, rrdsBySource, constants, sources, new QueryMetadata(resources), relaxed);
     }
 

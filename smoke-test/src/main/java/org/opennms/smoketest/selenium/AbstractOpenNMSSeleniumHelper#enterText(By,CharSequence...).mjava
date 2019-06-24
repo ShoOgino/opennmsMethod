@@ -1,0 +1,61 @@
+    /**
+     * CAUTION: There are a variety of Firefox-specific bugs related to using
+     * {@link WebElement#sendKeys(CharSequence...)}. We're doing this bizarre
+     * sequence of operations to try and work around them.
+     *
+     * @link https://code.google.com/p/selenium/issues/detail?id=2487
+     * @link https://code.google.com/p/selenium/issues/detail?id=8180
+     */
+    public WebElement enterText(final By selector, final CharSequence... text) {
+        final StringBuilder sb = new StringBuilder();
+        for (final CharSequence seq : text) {
+            sb.append(seq);
+        }
+        final String textString = sb.toString();
+        LOG.debug("Enter text: '{}' into selector: '{}'", text, selector);
+
+        // First, attempt to focus on the element before typing
+        scrollToElement(selector);
+        final WebElement el = waitForElement(selector);
+        if (el.isDisplayed() && el.isEnabled()) {
+            el.click();
+        }
+        sleep(500);
+
+        final long end = System.currentTimeMillis() + LOAD_TIMEOUT;
+        boolean found = false;
+        int count = 0;
+
+        final WebDriverWait shortWait = new WebDriverWait(getDriver(), 10);
+
+        do {
+            LOG.debug("enterText({},{}): {}", selector, text, ++count);
+            // Clear the element content and then confirm it's really clear
+            waitForElement(selector).clear();
+            waitForValue(selector, "");
+
+            // Click the element to make sure it's still got the focus
+            waitForElement(selector).click();
+            sleep(500);
+            // Send the keys
+            waitForElement(selector).sendKeys(text);
+            waitForElement(selector).click();
+            sleep(500);
+
+            if (text.length == 1 && text[0] != Keys.ENTER) { // special case, carriage-return for a previously-entered entry
+                try {
+                    final String elementText = waitForElement(shortWait, selector).getText();
+                    final String elementValue = waitForElement(shortWait, selector).getAttribute("value");
+                    found = elementText.contains(textString) || elementValue.contains(textString);
+                } catch (final Exception e) {
+                    LOG.warn("Failed when checking for {} to equal '{}'.", selector, textString, e);
+                }
+            } else {
+                LOG.info("Skipped waiting for {} to equal {}", selector, textString);
+                found = true;
+            }
+        } while (!found && System.currentTimeMillis() < end);
+
+        return getDriver().findElement(selector);
+    }
+

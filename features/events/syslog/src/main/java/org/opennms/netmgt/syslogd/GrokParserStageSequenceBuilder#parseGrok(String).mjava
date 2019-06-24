@@ -64,12 +64,25 @@
 				switch(c) {
 				case '\\':
 					switch(patternType) {
+					case CHAR:
+						throw new UnsupportedOperationException("Cannot support escape sequence directly after a CHAR pattern yet");
+					case HOSTNAME:
+					case HOSTNAMEORIP:
+					case IPADDRESS:
+						// TODO: We need to peek forward to the escaped character and then do the same as the default case
+						// factory.stringUntil(String.valueOf(c), semanticStringToEventBuilder(semanticString));
+						// factory.character(c);
+						// break;
+						throw new UnsupportedOperationException("Cannot support escape sequence directly after a " +
+								patternType + " pattern yet");
 					case NOSPACE:
 						// TODO: We need to peek forward to the escaped character and then do the same as the default case
 						// factory.stringUntil(MatchUntil.WHITESPACE + c, semanticStringToEventBuilder(semanticString));
 						// factory.character(c);
 						// break;
 						throw new UnsupportedOperationException("Cannot support escape sequence directly after a NOSPACE pattern yet");
+					case WHITESPACE:
+						throw new UnsupportedOperationException("Cannot support escape sequence directly after a WHITESPACE pattern yet");
 					case STRING:
 						// TODO: We need to peek forward to the escaped character and then do the same as the default case
 						// factory.stringUntil(String.valueOf(c), semanticStringToEventBuilder(semanticString));
@@ -89,13 +102,22 @@
 					continue;
 				case '%':
 					switch(patternType) {
+					case CHAR:
+						factory.character(semanticStringToField(semanticString));
+						break;
 					case NOSPACE:
 						// This is probably not an intended behavior
 						LOG.warn("NOSPACE pattern followed immediately by another pattern will greedily consume until whitespace is encountered");
 						factory.stringUntilWhitespace(semanticStringToField(semanticString));
 						factory.whitespace();
 						break;
+					case WHITESPACE:
+						factory.stringUntilNonWhitespace(semanticStringToField(semanticString));
+						break;
 					case STRING:
+					case HOSTNAME:
+					case HOSTNAMEORIP:
+					case IPADDRESS:
 						// TODO: Can we handle this case?
 						throw new IllegalArgumentException(String.format("Invalid pattern: %s:%s does not have a trailing delimiter, cannot determine end of string", patternString, semanticString));
 					case INT:
@@ -111,9 +133,20 @@
 					continue;
 				case ' ':
 					switch(patternType) {
+					case CHAR:
+						factory.character(semanticStringToField(semanticString));
+						break;
 					case NOSPACE:
 					case STRING:
 						factory.stringUntilWhitespace(semanticStringToField(semanticString));
+						factory.whitespace();
+						break;
+					case WHITESPACE:
+						factory.stringUntilNonWhitespace(semanticStringToField(semanticString));
+					case HOSTNAME:
+					case HOSTNAMEORIP:
+					case IPADDRESS:
+						factory.hostMatcherForPattern(patternType, semanticStringToField(semanticString));
 						factory.whitespace();
 						break;
 					case INT:
@@ -128,8 +161,15 @@
 					break;
 				default:
 					switch(patternType) {
+					case CHAR:
+						factory.character(semanticStringToField(semanticString));
+						break;
 					case NOSPACE:
 						factory.stringUntil(MatchUntil.WHITESPACE + c, semanticStringToField(semanticString));
+						factory.character(c);
+						break;
+					case WHITESPACE:
+						factory.stringUntilNonWhitespace(semanticStringToField(semanticString));
 						factory.character(c);
 						break;
 					case STRING:
@@ -144,6 +184,12 @@
 						factory.monthString(semanticIntegerToField(semanticString));
 						factory.character(c);
 						break;
+					case HOSTNAME:
+					case HOSTNAMEORIP:
+					case IPADDRESS:
+						factory.hostUntilForPattern(patternType, String.valueOf(c),
+								semanticStringToField(semanticString));
+						factory.character(c);
 					}
 				}
 				pattern = new StringBuilder();
@@ -162,8 +208,14 @@
 
 			switch(patternType) {
 			case NOSPACE:
+			case WHITESPACE:
 			case STRING:
 				factory.terminal().string(semanticStringToField(semanticString));
+				break;
+			case HOSTNAME:
+			case HOSTNAMEORIP:
+			case IPADDRESS:
+				factory.terminal().hostMatcherForPattern(patternType, semanticStringToField(semanticString));
 				break;
 			case INT:
 				factory.terminal().integer(semanticIntegerToField(semanticString));

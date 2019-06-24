@@ -1,0 +1,51 @@
+    private List<AlarmDocumentDTO> findAlarmsWithCompositeAggregation(Function<Integer,String> getNextQuery, TimeRange timeRange) {
+        final List<AlarmDocumentDTO> alarms = new LinkedList<>();
+        Integer afterAlarmWithId = null;
+        while (true) {
+            final String query = getNextQuery.apply(afterAlarmWithId);
+            final Search.Builder search = new Search.Builder(query)
+                    .addType(AlarmDocumentDTO.TYPE);
+            if (timeRange != null) {
+                final List<String> indices = indexSelector.getIndexNames(timeRange.getStart(), timeRange.getEnd());
+                search.addIndices(indices);
+                search.setParameter("ignore_unavailable", "true"); // ignore unknown index
+                LOG.debug("Executing query on {}: {}", indices, query);
+            } else {
+                search.addIndex("opennms-alarms-*");
+                LOG.debug("Executing query on all indices: {}", query);
+            }
+            final SearchResult result;
+            try {
+                result = client.execute(search.build());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            if (!result.isSucceeded()) {
+                throw new RuntimeException(result.getErrorMessage());
+            }
+
+            final CompositeAggregation alarmsById = result.getAggregations().getAggregation("alarms_by_id", CompositeAggregation.class);
+            if (alarmsById == null) {
+                // No results, we're done
+                break;
+            } else {
+                for (CompositeAggregation.Entry entry : alarmsById.getBuckets()) {
+                    final TopHitsAggregation topHitsAggregation = entry.getTopHitsAggregation("latest_alarm");
+                    final List<SearchResult.Hit<AlarmDocumentDTO, Void>> hits = topHitsAggregation.getHits(AlarmDocumentDTO.class);
+                    hits.stream().map(h -> h.source).forEach(alarms::add);
+                }
+
+                if (alarmsById.hasAfterKey()) {
+                    // There are more results to page through
+                    afterAlarmWithId = alarmsById.getAfterKey().get("alarm_id").getAsInt();
+                } else {
+                    // There are no more results to page through
+                    break;
+                }
+            } {
+
+            }
+        }
+        return alarms;
+    }
+

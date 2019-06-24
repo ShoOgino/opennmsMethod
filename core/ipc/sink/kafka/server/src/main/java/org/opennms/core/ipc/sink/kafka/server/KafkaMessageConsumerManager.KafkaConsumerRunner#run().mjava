@@ -7,9 +7,45 @@
                     ConsumerRecords<String, byte[]> records = consumer.poll(100);
                     for (ConsumerRecord<String, byte[]> record : records) {
                         try {
-                            dispatch(module, module.unmarshal(record.value()));
+                            // Parse sink message content from protobuf.
+                            SinkMessageProtos.SinkMessage sinkMessage = SinkMessageProtos.SinkMessage.parseFrom(record.value());
+                            byte[] messageInBytes = sinkMessage.getContent().toByteArray();
+                            // Handle large message where there are multiple chunks of message.
+                            if (sinkMessage.getTotalChunks() > 1) {
+                                String messageId = sinkMessage.getMessageId();
+                                if (largeMessageCache == null) {
+                                    LOG.error("LargeMessageCache config {}={} is invalid", MESSAGEID_CACHE_CONFIG, kafkaConfig.getProperty(MESSAGEID_CACHE_CONFIG));
+                                    continue;
+                                }
+                                ByteString byteString = largeMessageCache.getIfPresent(messageId);
+                                if(byteString != null) {
+                                    largeMessageCache.put(messageId, byteString.concat(sinkMessage.getContent()));
+                                } else {
+                                    largeMessageCache.put(messageId, sinkMessage.getContent());
+                                }
+                                // continue till all chunks arrive.
+                                if (sinkMessage.getTotalChunks() > sinkMessage.getCurrentChunkNumber() + 1) {
+                                    continue;
+                                }
+                                messageInBytes = largeMessageCache.getIfPresent(messageId).toByteArray();
+                                largeMessageCache.invalidate(messageId);
+                            }
+                            // Update metrics.
+                            messageSize.update(messageInBytes.length);
+                            Tracer.SpanBuilder spanBuilder = buildSpanFromSinkMessage(sinkMessage);
+                            // Tracing scope and Metrics Timer context will measure the time to dispatch.
+                            try(Scope scope = spanBuilder.startActive(true);
+                                Timer.Context context = dispatchTime.time()) {
+                                scope.span().setTag(TracerConstants.TAG_MESSAGE_SIZE, messageInBytes.length);
+                                scope.span().setTag(TracerConstants.TAG_TOPIC, topic);
+                                dispatch(module, module.unmarshal(messageInBytes));
+                            }
+
                         } catch (RuntimeException e) {
                             LOG.warn("Unexpected exception while dispatching message", e);
+                        } catch (InvalidProtocolBufferException e) {
+                            LOG.warn("Error parsing procotol buffer in message. The message will be dropped. \n" +
+                                    "Ensure that all components are running the same version of the software.");
                         }
                     }
                 }

@@ -1,0 +1,58 @@
+    /**
+     * Used when applying filters.
+     */
+    public FetchResults(final RowSortedTable<Long, String, Double> table, final long step, final Map<String, Object> constants, final QueryMetadata metadata) {
+        Preconditions.checkNotNull(table, "table argument");
+        Preconditions.checkNotNull(constants, "constants argument");
+
+        m_step = step;
+        m_constants = constants;
+        m_metadata = metadata;
+
+        if (table.size() < 1) {
+            // No rows
+            m_timestamps = new long[0];
+            m_columns = Maps.newHashMapWithExpectedSize(0);
+            return;
+        }
+
+        Long firstIndex = null;
+        Long lastIndex = null;
+        Map<Long, Double> timestampsByIndex = table.column(Filter.TIMESTAMP_COLUMN_NAME);
+        for (Long index : timestampsByIndex.keySet()) {
+            if (firstIndex == null) {
+                firstIndex = index;
+            } else {
+                Preconditions.checkState(index == (lastIndex + 1), "filter timestamps must be contiguous");
+            }
+            lastIndex = index;
+        }
+
+        int numRows = (int)(lastIndex - firstIndex) + 1;
+        m_columns = Maps.newLinkedHashMap(); // preserve ordering
+        m_timestamps = new long[numRows];
+
+        for (String columnName : table.columnKeySet()) {
+            final Map<Long, Double> columnMap = table.column(columnName);
+            if (Filter.TIMESTAMP_COLUMN_NAME.equals(columnName)) {
+                for (int k = 0; k < numRows; k++) {
+                    Double value = columnMap.get((long)k);
+                    Preconditions.checkNotNull(value, "filter timestamps must be contiguous");
+                    m_timestamps[k] = value.longValue();
+                }
+            } else {
+                double column[] = new double[numRows];
+                m_columns.put(columnName, column);
+
+                for (int k = 0; k < numRows; k++) {
+                    Double value = columnMap.get((long)k);
+                    if (value == null) {
+                        column[k] = Double.NaN;
+                    } else {
+                        column[k] = value;
+                    }
+                }
+            }
+        }
+    }
+

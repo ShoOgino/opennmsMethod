@@ -1,0 +1,39 @@
+    // Asynchronously run all checks
+    private void runChecks(Context context, List<HealthCheck> checks, Consumer<HealthCheck> onStartConsumer, Consumer<Response> onFinishConsumer) {
+        Future<Response> currentFuture = null;
+        for (HealthCheck check : checks) {
+            try {
+                if (onStartConsumer != null) {
+                    onStartConsumer.accept(check);
+                }
+                currentFuture = executorService.submit(() -> {
+                    try {
+                        final Response response = check.perform(context);
+                        if (response == null) {
+                            return new Response(Status.Unknown);
+                        }
+                        return response;
+                    } catch (Exception ex) {
+                        // Log the stack trace
+                        LOG.warn("Health check {} failed with exception: {}", check, ex.getMessage(), ex);
+                        return new Response(ex);
+                    }
+                });
+                final Response response = currentFuture.get(context.getTimeout(), TimeUnit.MILLISECONDS);
+                if (onFinishConsumer != null) {
+                    onFinishConsumer.accept(response);
+                }
+            } catch (TimeoutException timeoutException) {
+                if (currentFuture != null) {
+                    currentFuture.cancel(true);
+                }
+                onFinishConsumer.accept(new Response(Status.Timeout, "Health Check did not finish within " + context.getTimeout() + " ms"));
+            } catch (Exception ex) {
+                if (currentFuture != null) {
+                    currentFuture.cancel(true);
+                }
+                onFinishConsumer.accept(new Response(ex));
+            }
+        }
+    }
+

@@ -1,0 +1,59 @@
+    public static Set<BridgeForwardingTableEntry> calculateBFT(
+            BroadcastDomain domain, Bridge bridge)
+            throws BridgeTopologyException {
+
+        if ( domain == null ) {
+            throw new BridgeTopologyException("calculateBFT: domain cannot be null");
+        }
+
+        if ( bridge == null ) {
+            throw new BridgeTopologyException("calculateBFT: bridge cannot be null", domain);
+        }
+        Integer bridgeId = bridge.getNodeId();
+        if ( bridgeId == null ) {
+            throw new BridgeTopologyException("calculateBFT: bridge Id cannot be null", bridge);
+        }
+        Map<Integer, Set<String>> bft = new HashMap<Integer, Set<String>>();
+        Map<Integer, BridgePort> portifindexmap = new HashMap<Integer, BridgePort>();
+
+        Map<Integer,Integer> upperForwardingBridgePorts = getUpperForwardingBridgePorts(domain, bridge,new HashMap<Integer,Integer>(),0);
+        
+        Map<Integer,Integer> bridgeIdtobridgePortOnBridge = new HashMap<Integer, Integer>();
+        
+        for (Integer upperbridgeid: upperForwardingBridgePorts.keySet()) {
+            bridgeIdtobridgePortOnBridge.put(upperbridgeid, bridge.getRootPort());
+        }
+                
+        // 
+        for (SharedSegment segment : domain.getSharedSegments()) {
+            
+           Integer bridgeport = null;
+            
+            if (segment.getBridgeIdsOnSegment().contains(bridgeId)) {
+                BridgePort bport = segment.getBridgePort(bridgeId);
+                portifindexmap.put(bport.getBridgePort(), bport);
+                bridgeport = bport.getBridgePort();
+            } else {
+                bridgeport = getCalculateBFT(domain, segment, bridge, bridgeIdtobridgePortOnBridge,new HashSet<Integer>(),0);
+            }
+
+            if (!bft.containsKey(bridgeport)) {
+                bft.put(bridgeport, new HashSet<String>());
+            }
+            bft.get(bridgeport).addAll(segment.getMacsOnSegment());
+        }
+
+        List<BridgePortWithMacs> links = new ArrayList<BridgePortWithMacs>(domain.getForwarders(bridgeId));        
+        
+        for (Integer bridgePort : bft.keySet()) {
+            BridgePortWithMacs link = BridgePortWithMacs.create(portifindexmap.get(bridgePort), bft.get(bridgePort));
+            links.add(link);
+        }
+        
+        Set<BridgeForwardingTableEntry> entries=new HashSet<BridgeForwardingTableEntry>();
+        links.stream().filter( bfti -> bfti.getMacs().size() > 0).forEach( bfti -> {
+            entries.addAll(BridgeForwardingTableEntry.get(bfti));
+        });
+        return entries;
+    }
+

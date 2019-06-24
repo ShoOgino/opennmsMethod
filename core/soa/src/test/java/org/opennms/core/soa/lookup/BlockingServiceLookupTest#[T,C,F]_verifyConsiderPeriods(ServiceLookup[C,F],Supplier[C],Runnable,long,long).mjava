@@ -1,0 +1,28 @@
+    public static <T, C, F> void verifyConsiderPeriods(ServiceLookup<C, F> serviceLookup, Supplier<C> searchCriteriaSupplier, Runnable registerCallback, long initialDelay, long lookupDelay) throws InterruptedException, ExecutionException, TimeoutException {
+        final C lookupCriteria = searchCriteriaSupplier.get();
+
+        final CompletableFuture<Long> future = new CompletableFuture();
+        CompletableFuture.runAsync(() -> {
+            final long start = System.currentTimeMillis();
+            final T object = serviceLookup.lookup(lookupCriteria, null);
+            assertNotNull(object);
+            final long took = System.currentTimeMillis() - start;
+            future.complete(took);
+        });
+
+        // Wait before making it available
+        new Thread(() -> {
+            try {
+                Thread.sleep(initialDelay);
+                registerCallback.run();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }).start();
+
+        // Wait for the future to complete
+        long took = future.get((initialDelay + lookupDelay) * 2, TimeUnit.MILLISECONDS);
+        assertThat(took, allOf(greaterThanOrEqualTo(initialDelay), lessThanOrEqualTo(initialDelay + lookupDelay * 2)));
+
+    }
+

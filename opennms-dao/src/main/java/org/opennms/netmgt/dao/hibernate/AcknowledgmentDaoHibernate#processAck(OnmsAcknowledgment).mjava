@@ -17,24 +17,46 @@
             try {
                 Acknowledgeable ackable = it.next();
 
+                final boolean isAlarm = ackable instanceof OnmsAlarm;
+                Consumer<OnmsAlarm> callback = null;
+
                 switch (ack.getAckAction()) {
                 case ACKNOWLEDGE:
                     LOG.debug("processAck: Acknowledging ackable: {}...", ackable);
+                    if (isAlarm) {
+                        final String ackUser = ackable.getAckUser();
+                        final Date ackTime = ackable.getAckTime();
+                        callback = (alarm) -> alarmEntityNotifier.didAcknowledgeAlarm(alarm, ackUser, ackTime);
+                    }
                     ackable.acknowledge(ack.getAckUser());
                     LOG.debug("processAck: Acknowledged ackable: {}", ackable);
                     break;
                 case UNACKNOWLEDGE:
                     LOG.debug("processAck: Unacknowledging ackable: {}...", ackable);
+                    if (isAlarm) {
+                        final String ackUser = ackable.getAckUser();
+                        final Date ackTime = ackable.getAckTime();
+                        callback = (alarm) -> alarmEntityNotifier.didUnacknowledgeAlarm(alarm, ackUser, ackTime);
+                    }
                     ackable.unacknowledge(ack.getAckUser());
                     LOG.debug("processAck: Unacknowledged ackable: {}", ackable);
                     break;
                 case CLEAR:
                     LOG.debug("processAck: Clearing ackable: {}...", ackable);
+                    if (isAlarm) {
+                        ((OnmsAlarm) ackable).getRelatedAlarms().forEach(relatedAlarm -> clearRelatedAlarm(relatedAlarm));
+                        final OnmsSeverity previousSeverity = ackable.getSeverity();
+                        callback = (alarm) -> alarmEntityNotifier.didUpdateAlarmSeverity(alarm, previousSeverity);
+                    }
                     ackable.clear(ack.getAckUser());
                     LOG.debug("processAck: Cleared ackable: {}", ackable);
                     break;
                 case ESCALATE:
                     LOG.debug("processAck: Escalating ackable: {}...", ackable);
+                    if (isAlarm) {
+                        final OnmsSeverity previousSeverity = ackable.getSeverity();
+                        callback = (alarm) -> alarmEntityNotifier.didUpdateAlarmSeverity(alarm, previousSeverity);
+                    }
                     ackable.escalate(ack.getAckUser());
                     LOG.debug("processAck: Escalated ackable: {}", ackable);
                     break;
@@ -45,6 +67,10 @@
                 updateAckable(ackable);
                 save(ack);
                 flush();
+
+                if (callback != null) {
+                    callback.accept((OnmsAlarm)ackable);
+                }
             } catch (Throwable t) {
                 LOG.error("processAck: exception while processing: {}; {}", ack, t);
             }

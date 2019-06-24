@@ -1,0 +1,27 @@
+    private CompletableFuture<Health> performHealthCheck(BundleContext bundleContext, Context context) throws InvalidSyntaxException {
+        // Determine attributes (e.g. max length) for visualization
+        final Collection<ServiceReference<HealthCheck>> serviceReferences = bundleContext.getServiceReferences(HealthCheck.class, null);
+        final List<HealthCheck> healthChecks = serviceReferences.stream().map(s -> bundleContext.getService(s)).collect(Collectors.toList());
+        final int maxColorLength = Arrays.stream(Color.values()).map(c -> c.toAnsi()).max(Comparator.comparingInt(String::length)).get().length();
+        final int maxDescriptionLength = healthChecks.stream().map(check -> check.getDescription()).max(Comparator.comparingInt(String::length)).orElse("").length();
+        final int maxStatusLength = Arrays.stream(Status.values()).map(v -> v.name()).max(Comparator.comparingInt(String::length)).get().length() + maxColorLength + "\033[m".length() * 2 + Color.NoColor.toAnsi().length();
+        final String descFormat = String.format(DESCRIPTION_FORMAT, maxDescriptionLength);
+        final String statusFormat = String.format(STATUS_FORMAT, maxStatusLength);
+
+        // Run Health Checks
+        final CompletableFuture<Health> future = healthCheckService
+                .performAsyncHealthCheck(context,
+                        healthCheck -> System.out.print(String.format(descFormat, healthCheck.getDescription())),
+                        response -> {
+                            final Status status = response.getStatus();
+                            final Color statusColor = determineColor(status);
+                            final String statusText = String.format(statusFormat, Colorizer.colorize(status.name(), statusColor));
+                            System.out.print(statusText);
+                            if (response.getMessage() != null) {
+                                System.out.print(" => " + response.getMessage());
+                            }
+                            System.out.println();
+                        });
+        return future;
+    }
+
