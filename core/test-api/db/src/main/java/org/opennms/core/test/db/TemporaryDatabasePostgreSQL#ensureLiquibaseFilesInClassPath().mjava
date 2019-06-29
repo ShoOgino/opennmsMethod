@@ -1,0 +1,38 @@
+    private void ensureLiquibaseFilesInClassPath() throws TemporaryDatabaseException {
+        try {
+            if (!m_migrator.getLiquibaseChangelogs(false).isEmpty()) {
+                return;
+            }
+            
+            String migratorClass = "/" + Migrator.class.getName().replace('.', '/') + ".class";
+            URL migratorUrl = Migrator.class.getResource(migratorClass);
+            if (migratorUrl == null) {
+                throw new TemporaryDatabaseException("Could not find resource for Migrator.class anywhere in the classpath with " + migratorClass);
+            }
+
+            GenericApplicationContext newContext = new GenericApplicationContext(m_migrator.getApplicationContext());
+            m_migrator.setApplicationContext(newContext);
+
+            if ("file".equals(migratorUrl.getProtocol()) && migratorUrl.getPath().endsWith("core/schema/target/classes" + migratorClass)) {
+                URL[] urls = {new URL(migratorUrl.getProtocol(), migratorUrl.getHost(), migratorUrl.getFile().replaceFirst("core/schema/target/classes/.*$", LIQUIBASE_RELATIVE_PATH))};
+                newContext.setClassLoader(new URLClassLoader(urls, newContext.getClassLoader()));
+            }
+            if (!m_migrator.getLiquibaseChangelogs(false).isEmpty()) {
+                return;
+            }
+
+            File liquibase = new File(ConfigurationTestUtils.getTopProjectDirectory(), LIQUIBASE_RELATIVE_PATH);
+            if (!liquibase.exists()) {
+                throw new TemporaryDatabaseException("Could we find liquibase files where we expected: " + liquibase.getAbsolutePath());
+            }
+
+            URL[] urls = {liquibase.toURI().toURL()};
+            newContext.setClassLoader(new URLClassLoader(urls, newContext.getClassLoader()));
+
+            m_migrator.getLiquibaseChangelogs(true);
+        } catch (Exception e) {
+            throw new TemporaryDatabaseException(e.getMessage(), e);
+        }
+
+    }
+
