@@ -1,0 +1,23 @@
+    public CompletableFuture<Host> resolveHostnameForHost(final String host, List<Filter> filters) {
+        final TimeRangeFilter timeRangeFilter = extractTimeRangeFilter(filters);
+
+        if (OTHER_NAME.equals(host)) {
+            return CompletableFuture.completedFuture(Host.forOther().build());
+        }
+
+        final Host.Builder result = Host.from(host);
+
+        final String hostnameQuery = searchQueryProvider.getHostnameByHostQuery(host, filters);
+        return searchAsync(hostnameQuery, timeRangeFilter)
+                .thenApply(res ->  {
+                    final JsonObject hit = res.getFirstHit(JsonObject.class).source;
+                    if (Objects.equals(hit.getAsJsonPrimitive("netflow.src_addr").getAsString(), host)) {
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.src_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withHostname);
+                    } else if (Objects.equals(hit.getAsJsonPrimitive("netflow.dst_addr").getAsString(), host)) {
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.dst_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withHostname);
+                    }
+
+                    return result.build();
+                });
+    }
+
