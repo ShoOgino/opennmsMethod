@@ -1,0 +1,27 @@
+    public CompletableFuture<Conversation> resolveHostnameForConversation(final String convoKey, List<Filter> filters) {
+        final TimeRangeFilter timeRangeFilter = extractTimeRangeFilter(filters);
+
+        if (OTHER_NAME.equals(convoKey)) {
+            return CompletableFuture.completedFuture(Conversation.forOther().build());
+        }
+
+        final ConversationKey key = ConversationKeyUtils.fromJsonString(convoKey);
+        final Conversation.Builder result = Conversation.from(key);
+
+        final String hostnameQuery = searchQueryProvider.getHostnameByConversationQuery(convoKey, filters);
+        return searchAsync(hostnameQuery, timeRangeFilter)
+                .thenApply(res ->  {
+                    final JsonObject hit = res.getFirstHit(JsonObject.class).source;
+                    if (Objects.equals(hit.getAsJsonPrimitive("netflow.src_addr").getAsString(), key.getLowerIp())) {
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.src_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withLowerHostname);
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.dst_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withUpperHostname);
+
+                    } else if (Objects.equals(hit.getAsJsonPrimitive("netflow.dst_addr").getAsString(), key.getLowerIp())) {
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.dst_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withLowerHostname);
+                        Optional.ofNullable(hit.getAsJsonPrimitive("netflow.src_addr_hostname")).map(JsonPrimitive::getAsString).ifPresent(result::withUpperHostname);
+                    }
+
+                    return result.build();
+                });
+    }
+
