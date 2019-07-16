@@ -1,0 +1,42 @@
+    @Override
+    public Response downloadReport(final String format, final String locatorId) {
+        if (Strings.isNullOrEmpty(format)) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .type(MediaType.APPLICATION_JSON_TYPE)
+                    .entity(createErrorObject("entity", "Property 'format' is null or empty").toString())
+                    .build();
+        }
+        if (Strings.isNullOrEmpty(locatorId)) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .type(MediaType.APPLICATION_JSON_TYPE)
+                    .entity(createErrorObject("entity", "Property 'locatorId' is null or empty").toString())
+                    .build();
+        }
+        try {
+            final Integer reportCatalogEntryId = Integer.valueOf(WebSecurityUtils.safeParseInt(locatorId));
+            final StreamingOutput streamingOutput = outputStream -> {
+                reportStoreService.render(reportCatalogEntryId, ReportFormat.valueOf(format), outputStream);
+                outputStream.flush();
+            };
+            final Response.ResponseBuilder responseBuilder = Response.ok()
+                    .header("Pragma", "public")
+                    .header("Cache-Control", "cache")
+                    .header("Cache-Control", "must-revalidate")
+                    .entity(streamingOutput);
+            if ((ReportFormat.PDF == ReportFormat.valueOf(format)) || (ReportFormat.SVG == ReportFormat.valueOf(format)) ) {
+                return responseBuilder.type("application/pdf;charset=UTF-8")
+                        .header("Content-disposition", "inline; filename=" + reportCatalogEntryId.toString() + ".pdf")
+                        .build();
+            }
+            if (ReportFormat.CSV == ReportFormat.valueOf(format)) {
+                responseBuilder.type("text/csv;charset=UTF-8")
+                .header("Content-disposition", "inline; filename=" + reportCatalogEntryId.toString() + ".csv");
+            }
+            return responseBuilder.build();
+        } catch (NumberFormatException e) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .type(MediaType.APPLICATION_JSON_TYPE)
+                        .entity(createErrorObject(e).toString()).build();
+        }
+    }
+
