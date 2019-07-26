@@ -1,0 +1,35 @@
+    @Override
+    public CompletableFuture<Optional<Optional<byte[]>>> getIfStaleAsync(String key, String context, long timestamp) {
+        CompletableFuture<Optional<Optional<byte[]>>> getIfStaleFuture = new CompletableFuture<>();
+
+        getLastUpdatedAsync(key, context).whenComplete((lastUpdated, t) -> {
+            if (t != null) {
+                getIfStaleFuture.completeExceptionally(t);
+                return;
+            }
+
+            if (!lastUpdated.isPresent()) {
+                getIfStaleFuture.complete(Optional.empty());
+                return;
+            }
+
+            // key was found but not stale
+            if (timestamp >= lastUpdated.getAsLong()) {
+                getIfStaleFuture.complete(Optional.of(Optional.empty()));
+                return;
+            }
+
+            // key was found and stale
+            getAsync(key, context).whenComplete((val, th) -> {
+                if (th != null) {
+                    getIfStaleFuture.completeExceptionally(th);
+                    return;
+                }
+
+                getIfStaleFuture.complete(Optional.of(val));
+            });
+        });
+
+        return getIfStaleFuture;
+    }
+
