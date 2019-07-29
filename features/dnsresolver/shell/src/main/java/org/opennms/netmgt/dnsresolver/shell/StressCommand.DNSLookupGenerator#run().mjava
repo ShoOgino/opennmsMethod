@@ -1,0 +1,46 @@
+        @Override
+        public void run() {
+            final RateLimiter rateLimiter = RateLimiter.create(lookupsPerSecondPerThread);
+            while (true) {
+                rateLimiter.acquire(1);
+                final InetAddress addr = InetAddresses.fromInteger(nextIpAddress.incrementAndGet());
+                final CompletableFuture<Optional<String>> future = dnsResolver.reverseLookup(addr);
+                synchronized (pendingFutures) {
+                    pendingFutures.add(future);
+                }
+                future.whenComplete((hostnameFromDns, ex) -> {
+                    synchronized (pendingFutures) {
+                        pendingFutures.remove(future);
+                    }
+                    if (ex == null) {
+                        responseSuccess.mark();
+                    } else {
+                        responseFailed.mark();
+                    }
+                });
+                lookups.mark();
+                if (Thread.interrupted()) {
+                    break;
+                }
+            }
+
+            // Copy the list of pending futures - so they don't change on us
+            final List<CompletableFuture<Optional<String>>> futuresToWaitFor;
+            synchronized (pendingFutures) {
+                futuresToWaitFor = new LinkedList<>(pendingFutures);
+            }
+            System.out.printf("Waiting for %d pending requests...\n", futuresToWaitFor.size());
+
+            try {
+                CompletableFuture.allOf(futuresToWaitFor.toArray(new CompletableFuture[]{})).get(1, TimeUnit.MINUTES);
+                System.out.println("Pending requests completed.");
+            } catch (TimeoutException e) {
+                System.out.println("Requests did not complete in time.");
+            } catch (ExecutionException e) {
+                // One of the futures failed, but that's OK, since they must all have finished
+                System.out.println("Pending requests completed.");
+            } catch (InterruptedException e) {
+                System.out.println("Interrupted while waiting for pending requests.");
+            }
+        }
+

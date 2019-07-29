@@ -6,21 +6,38 @@
 
         LOG.trace("Got packet: {}", packet);
 
-        final BasicOutputBuffer output = new BasicOutputBuffer();
-        try (final BsonBinaryWriter bsonWriter = new BsonBinaryWriter(output)) {
-            bsonWriter.writeStartDocument();
+        final CompletableFuture<TelemetryMessage> future = new CompletableFuture<>();
+        enricher.enrich(packet).whenComplete((enrichment,ex) -> {
+            if (ex != null) {
+                // Enrichment failed
+                future.completeExceptionally(ex);
+                return;
+            }
 
-            bsonWriter.writeName("time");
-            bsonWriter.writeInt64(System.currentTimeMillis());
+            // Serialize
+            final BasicOutputBuffer output = new BasicOutputBuffer();
+            try (final BsonBinaryWriter bsonWriter = new BsonBinaryWriter(output)) {
+                bsonWriter.writeStartDocument();
 
-            bsonWriter.writeName("data");
-            packet.version.datagram.writeBson(bsonWriter);
+                bsonWriter.writeName("time");
+                bsonWriter.writeInt64(System.currentTimeMillis());
 
-            bsonWriter.writeEndDocument();
-        }
+                bsonWriter.writeName("data");
+                packet.version.datagram.writeBson(bsonWriter, enrichment);
 
-        // Build the message to be sent
-        final TelemetryMessage msg = new TelemetryMessage(remoteAddress, output.getByteBuffers().get(0).asNIO());
-        return dispatcher.send(msg);
+                bsonWriter.writeEndDocument();
+            }
+
+            // Build the message to be sent
+            final TelemetryMessage msg = new TelemetryMessage(remoteAddress, output.getByteBuffers().get(0).asNIO());
+            dispatcher.send(msg).whenComplete((any, exx) -> {
+               if (exx != null) {
+                   // Dispatching failed
+                   future.completeExceptionally(exx);
+               }
+               future.complete(any);
+            });
+        });
+        return future;
     }
 

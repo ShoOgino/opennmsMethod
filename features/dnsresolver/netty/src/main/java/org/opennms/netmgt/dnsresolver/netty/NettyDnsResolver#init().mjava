@@ -1,0 +1,47 @@
+    public void init() {
+        numContexts = Math.max(0, numContexts);
+        if (numContexts == 0) {
+            numContexts = Runtime.getRuntime().availableProcessors() * 2;
+        }
+        LOG.debug("Initializing Netty resolver with {} contexts and resolvers: {}", numContexts);
+
+        contexts = new ArrayList<>(numContexts);
+        cache = new DefaultDnsCache();
+        for (int i = 0; i < numContexts; i++) {
+            NettyResolverContext context = new NettyResolverContext(this, cache, i);
+            context.init();
+            contexts.add(context);
+        }
+        iterator = new RandomIterator<>(contexts).iterator();
+
+        // Configure this statically for now, we can expose this as needed
+        final CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
+                .failureRateThreshold(80)
+                .waitDurationInOpenState(Duration.ofSeconds(15))
+                .ringBufferSizeInHalfOpenState(10)
+                .ringBufferSizeInClosedState(100)
+                .recordExceptions(DnsNameResolverTimeoutException.class)
+                .build();
+        circuitBreaker = CircuitBreaker.of("nettyDnsResolver", circuitBreakerConfig);
+
+        circuitBreaker.getEventPublisher()
+                .onStateTransition(e -> {
+                    // Send an event when the circuit breaker's state changes
+                    final Event event = new EventBuilder(CIRCUIT_BREAKER_STATE_CHANGE_EVENT_UEI, NettyDnsResolver.class.getCanonicalName())
+                            .addParam("name", circuitBreaker.getName())
+                            .addParam("fromState", e.getStateTransition().getFromState().toString())
+                            .addParam("toState", e.getStateTransition().getToState().toString())
+                            .getEvent();
+                    eventForwarder.sendNow(event);
+                })
+                .onSuccess(e -> {
+                    lookupsSuccessful.mark();
+                })
+                .onError(e -> {
+                    lookupsFailed.mark();
+                })
+                .onCallNotPermitted(e -> {
+                    lookupsRejectedByCircuitBreaker.mark();
+                });
+    }
+

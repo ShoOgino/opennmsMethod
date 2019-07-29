@@ -1,16 +1,60 @@
-    protected CompletableFuture<?> transmit(final RecordProvider packet, final InetSocketAddress remoteAddress) throws Exception {
+    protected CompletableFuture<?> transmit(final RecordProvider packet, final InetSocketAddress remoteAddress) {
         LOG.trace("Got packet: {}", packet);
 
-        // Return a future which completes when message is parsed and all records are transmitted
-        return CompletableFuture.allOf(packet.getRecords().map(record -> {
-            final ByteBuffer buffer = serialize(this.protocol, record);
+        // Perform the record enrichment and serialization in a thread pool allowing these to be parallelized
+        final CompletableFuture<CompletableFuture[]> futureOfFutures = CompletableFuture.supplyAsync(()-> {
+            return packet.getRecords().map(record -> {
+                final CompletableFuture<TelemetryMessage> future = new CompletableFuture<>();
+                final Timer.Context timerContext = recordEnrichmentTimer.time();
+                // Trigger record enrichment (performing DNS reverse lookups for example)
+                final RecordEnricher recordEnricher = new RecordEnricher(dnsResolver);
+                recordEnricher.enrich(record).whenComplete((enrichment, ex) -> {
+                    timerContext.close();
+                    if (ex != null) {
+                        // Enrichment failed
+                        future.completeExceptionally(ex);
+                        return;
+                    }
+                    // Enrichment was successful, let's serialize
+                    final ByteBuffer buffer = serializeRecords(this.protocol, record, enrichment);
 
-            // Build the message to dispatch
-            final TelemetryMessage msg = new TelemetryMessage(remoteAddress, buffer);
+                    // Build the message to dispatch
+                    final TelemetryMessage msg = new TelemetryMessage(remoteAddress, buffer);
 
-            // Dispatch and retain a reference to the packet
-            // in the case that we are sharing the underlying byte array
-            return dispatcher.send(msg);
-        }).toArray(CompletableFuture[]::new));
+                    // Dispatch
+                    dispatcher.send(msg).whenComplete((b,exx) -> {
+                        if (exx != null) {
+                            future.completeExceptionally(exx);
+                            return;
+                        }
+                        future.complete(b);
+                    });
+
+                    recordsDispatched.mark();
+                });
+                return future;
+            }).toArray(CompletableFuture[]::new);
+        }, executor);
+
+        // Return a future which is completed when all records are finished dispatching (i.e. written to Kafka)
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        futureOfFutures.whenComplete((futures,ex) -> {
+            if (ex != null) {
+                LOG.warn("Error preparing records for dispatch.", ex);
+                future.completeExceptionally(ex);
+                return;
+            }
+            // Dispatch was triggered for all the records, now wait for the dispatching to complete
+            CompletableFuture.allOf(futures).whenComplete((any,exx) -> {
+                if (exx != null) {
+                    LOG.warn("One or more of the records were not successfully dispatched.", exx);
+                    future.completeExceptionally(exx);
+                    return;
+                }
+                // All of the records have been successfully dispatched
+                future.complete(any);
+            });
+        });
+        return future;
     }
 

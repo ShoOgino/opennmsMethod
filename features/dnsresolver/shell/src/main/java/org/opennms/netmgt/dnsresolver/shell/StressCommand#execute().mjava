@@ -1,0 +1,62 @@
+    @Override
+    public Object execute() {
+        // Apply sane lower bounds to all of the configurable options
+        lookupsPerSecondPerThread = Math.max(1, lookupsPerSecondPerThread);
+        numberOfThreads = Math.max(1, numberOfThreads);
+        durationInSeconds = Math.max(1, durationInSeconds);
+        reportIntervalInSeconds = Math.max(1, reportIntervalInSeconds);
+
+        // Display the effective settings and rates
+        double lookupsPerSecond = (double)lookupsPerSecondPerThread * (double)numberOfThreads;
+        System.out.printf("Generating %d DNS lookups per second accross %d threads for %d seconds\n",
+                lookupsPerSecondPerThread, numberOfThreads, durationInSeconds);
+        System.out.printf("Which will yield an effective\n");
+        System.out.printf("\t %.2f lookups per second\n", lookupsPerSecond);
+        System.out.printf("\t %.2f total lookups\n", lookupsPerSecond * durationInSeconds);
+
+        // Setup the reporter
+        ConsoleReporter reporter = ConsoleReporter.forRegistry(metrics)
+                .convertRatesTo(TimeUnit.SECONDS)
+                .convertDurationsTo(TimeUnit.MILLISECONDS)
+                .build();
+
+        // Setup the executor
+        final ThreadFactory threadFactory = new ThreadFactoryBuilder()
+                .setNameFormat("DNS Lookup Generator #%d")
+                .build();
+        final ExecutorService executor = Executors.newFixedThreadPool(numberOfThreads, threadFactory);
+
+        System.out.println("Starting.");
+        try {
+            reporter.start(reportIntervalInSeconds, TimeUnit.SECONDS);
+            for (int i = 0; i < numberOfThreads; i++) {
+                final DNSLookupGenerator generator = new DNSLookupGenerator();
+                executor.execute(generator);
+            }
+            System.out.println("Started.");
+
+            // Wait until we timeout or get interrupted
+            try {
+                Thread.sleep(SECONDS.toMillis(durationInSeconds));
+            } catch (InterruptedException e) { }
+
+            // Stop!
+            try {
+                System.out.println("Stopping.");
+                executor.shutdownNow();
+                if (!executor.awaitTermination(2, TimeUnit.MINUTES)) {
+                    System.err.println("The threads did not stop in time.");
+                } else {
+                    System.out.println("Stopped.");
+                }
+            } catch (InterruptedException e) { }
+        } finally {
+            // Make sure we always stop the reporter
+            reporter.stop();
+        }
+
+        // And display one last report...
+        reporter.report();
+        return null;
+    }
+
