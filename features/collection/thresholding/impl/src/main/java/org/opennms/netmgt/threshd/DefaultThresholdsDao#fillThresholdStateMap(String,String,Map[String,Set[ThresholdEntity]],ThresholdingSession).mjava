@@ -1,0 +1,70 @@
+    private void fillThresholdStateMap(String groupName, String  typeName, Map<String, Set<ThresholdEntity>> thresholdMap, ThresholdingSession thresholdingSession) {
+        boolean merge = !thresholdMap.isEmpty();
+        for (Basethresholddef thresh : getThresholdingConfigFactory().getThresholds(groupName)) {
+            // See if map entry already exists for this datasource; if not, create a new one.
+            if (thresh.getDsType().equals(typeName)) {
+                try {
+                    BaseThresholdDefConfigWrapper wrapper=BaseThresholdDefConfigWrapper.getConfigWrapper(thresh);
+                    Set<ThresholdEntity> thresholdEntitySet = thresholdMap.get(wrapper.getDatasourceExpression());
+                    // Found set for this DS type?
+                    if (thresholdEntitySet == null) {
+                        // Nope, create a new set
+                        thresholdEntitySet = new LinkedHashSet<ThresholdEntity>();
+                        thresholdMap.put(wrapper.getDatasourceExpression(), thresholdEntitySet);
+                    }
+                    try {
+                        ThresholdEntity thresholdEntity = new ThresholdEntity();
+                        thresholdEntity.setEventProxy(m_eventProxy);
+                        thresholdEntity.addThreshold(wrapper, thresholdingSession);
+                        if (merge) {
+                            boolean updated = false;
+                            for (ThresholdEntity e : thresholdEntitySet) {
+                                if (thresholdEntity.getThresholdConfig().equals(e.getThresholdConfig())) {
+                                    e.merge(thresholdEntity);
+                                    updated = true;
+                                }
+                            }
+                            if (!updated) // Does not exist!
+                                thresholdEntitySet.add(thresholdEntity);
+                        } else {
+                            thresholdEntitySet.add(thresholdEntity);
+                        }
+                    } catch (IllegalStateException e) {
+                        LOG.warn("fillThresholdStateMap: Encountered duplicate {} for datasource {}", thresh.getType(), wrapper.getDatasourceExpression(), e);
+                    } 
+                }
+                catch (ThresholdExpressionException e) {
+                    LOG.warn("fillThresholdStateMap: Could not parse threshold expression", e);
+                }
+            }
+        }
+        // Search for deleted configuration
+        if (merge) {
+            LOG.debug("fillThresholdStateMap(merge): checking if definitions that are no longer exist for group {} using type {}", groupName, typeName);
+            for (final Entry<String, Set<ThresholdEntity>> entry : thresholdMap.entrySet()) {
+                final Set<ThresholdEntity> value = entry.getValue();
+                for (final Iterator<ThresholdEntity> thresholdIterator = value.iterator(); thresholdIterator.hasNext();) {
+                    final ThresholdEntity entity = thresholdIterator.next();
+                    boolean found = false;
+                    for (final Basethresholddef thresh : getThresholdingConfigFactory().getThresholds(groupName)) {
+                        BaseThresholdDefConfigWrapper newConfig = null;
+                        try {
+                            newConfig = BaseThresholdDefConfigWrapper.getConfigWrapper(thresh);
+                        } catch (ThresholdExpressionException e) {
+                            LOG.warn("fillThresholdStateMap: Could not parse threshold expression", e);
+                        }
+                        if (newConfig != null && newConfig.equals(entity.getThresholdConfig())) {
+                            found = true;
+                            continue;
+                        }
+                    }
+                    if (!found) {
+                        LOG.info("fillThresholdStateMap(merge): deleting entity {}", entity);
+                        entity.delete();
+                        thresholdIterator.remove();
+                    }
+                }
+            }
+        }
+    }
+
