@@ -1,0 +1,36 @@
+    @Test
+    public void verifySaveFacts() throws Exception {
+
+        DroolsCorrelationEngine droolsCorrelationEngine = new DroolsCorrelationEngine("droolsFusion", new MetricRegistry(), new FileSystemResource(DROOLS_SRC), null);
+        List<Resource> resources = new ArrayList<>();
+        resources.add(new FileSystemResource(DROOLS_SRC));
+        droolsCorrelationEngine.setRulesResources(resources);
+        droolsCorrelationEngine.setAssertBehaviour("identity");
+        droolsCorrelationEngine.setEventProcessingMode("stream");
+        MockEventIpcManager eventIpcManager = new MockEventIpcManager();
+        droolsCorrelationEngine.setEventIpcManager(eventIpcManager);
+        droolsCorrelationEngine.initialize();
+        // Correlate with node lost event.
+        Event event = new EventBuilder(EventConstants.NODE_LOST_SERVICE_EVENT_UEI, "ICMP")
+                .setNodeid(1)
+                .getEvent();
+        droolsCorrelationEngine.correlate(event);
+        // Expect node up event.
+        await().atMost(15, TimeUnit.SECONDS).until(() -> eventIpcManager.getEventAnticipator().getUnanticipatedEvents().size(), Matchers.greaterThanOrEqualTo(1));
+        // save facts.
+        droolsCorrelationEngine.saveFacts();
+        // Verify that it should have atleast 4 objects from the rule
+        List<Object> factObjects = droolsCorrelationEngine.getFactObjects();
+        assertThat(factObjects.size(), Matchers.greaterThanOrEqualTo(4));
+        // Now initialize again.
+        droolsCorrelationEngine.initialize();
+        // Now that facts are loaded and there shouldn't be any facts in factObjects.
+        factObjects = droolsCorrelationEngine.getFactObjects();
+        assertThat(factObjects, Matchers.hasSize(0));
+        // Save facts from engine and Verify that all saved facts are loaded properly.
+        droolsCorrelationEngine.saveFacts();
+        factObjects = droolsCorrelationEngine.getFactObjects();
+        assertThat(factObjects.size(), Matchers.greaterThanOrEqualTo(4));
+
+    }
+

@@ -1,0 +1,69 @@
+    /**
+     * Verifies that we can retrieve the list of sorted events for a given node.
+     *
+     * (This was written to validate that the result set is the same when adding additional
+     * columns to the ORDER BY clause in scope of NMS-10506)
+     *
+     * @throws SQLException on error
+     */
+    @Test
+    public void canEventSortedEventsForNode() throws SQLException {
+        int throttle = 5;
+        int offset = 0;
+        AcknowledgeType ackType = AcknowledgeType.UNACKNOWLEDGED;
+
+        // Initial verification
+        Event[] events = EventFactory.getEventsForNode(node1.getId(), SortStyle.ID, ackType, throttle, offset, null);
+        assertEquals(events.length, 1);
+        assertThat(events[0].uei, equalTo("uei.opennms.org/test"));
+
+        // Save some events
+        // Use a separate transaction for these to ensure they are visible by the JDBC calls used in the EventFactory
+        Date now = new Date();
+        transactionTemplate.execute((a) -> {
+            OnmsEvent event = new OnmsEvent();
+            event.setDistPoller(dbPopulator.getDistPollerDao().whoami());
+            event.setEventUei("uei.opennms.org/test2");
+            event.setEventTime(new Date());
+            event.setEventSource("test");
+            event.setEventCreateTime(now);
+            event.setEventSeverity(OnmsSeverity.CLEARED.getId());
+            event.setEventLog("Y");
+            event.setEventDisplay("Y");
+            event.setNode(node1);
+            dbPopulator.getEventDao().save(event);
+            dbPopulator.getEventDao().flush();
+
+            OnmsEvent event2 = new OnmsEvent();
+            event2.setDistPoller(dbPopulator.getDistPollerDao().whoami());
+            event2.setEventUei("uei.opennms.org/test3");
+            event2.setEventTime(new Date());
+            event2.setEventSource("test");
+            event2.setEventCreateTime(new Date(now.getTime()+1));
+            event2.setEventSeverity(OnmsSeverity.CLEARED.getId());
+            event2.setEventLog("Y");
+            event2.setEventDisplay("Y");
+            event2.setNode(node1);
+            dbPopulator.getEventDao().save(event2);
+            dbPopulator.getEventDao().flush();
+
+            return null;
+        });
+
+        // Query again, we should see 3 events now
+        events = EventFactory.getEventsForNode(node1.getId(), SortStyle.ID, ackType, throttle, offset, null);
+        assertEquals(events.length, 3);
+
+        assertThat(events[0].uei, equalTo("uei.opennms.org/test3"));
+        assertThat(events[1].uei, equalTo("uei.opennms.org/test2"));
+        assertThat(events[2].uei, equalTo("uei.opennms.org/test"));
+
+        // Reverse order
+        events = EventFactory.getEventsForNode(node1.getId(), SortStyle.REVERSE_ID, ackType, throttle, offset, null);
+        assertEquals(events.length, 3);
+
+        assertThat(events[0].uei, equalTo("uei.opennms.org/test"));
+        assertThat(events[1].uei, equalTo("uei.opennms.org/test2"));
+        assertThat(events[2].uei, equalTo("uei.opennms.org/test3"));
+    }
+
