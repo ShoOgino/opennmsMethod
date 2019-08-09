@@ -21,7 +21,7 @@
                     // We want the remainder of the serialization and dispatching to be performed
                     // from one of our executor threads so that we can put back-pressure on the listener
                     // if we can't keep up
-                    executor.execute(() -> {
+                    final Runnable dispatch = () -> {
                         // Let's serialize
                         final ByteBuffer buffer = serializeRecords(this.protocol, record, enrichment);
 
@@ -38,7 +38,16 @@
                         });
 
                         recordsDispatched.mark();
-                    });
+                    };
+
+                    // It's possible that the callback thread is already a thread from the pool, if that's the case
+                    // execute within the current thread. This helps avoid deadlocks.
+                    if (Boolean.TRUE.equals(isParserThread.get())) {
+                        dispatch.run();
+                    } else {
+                        // We're not in one of the parsers threads, execute the dispatch in the pool
+                        executor.execute(dispatch);
+                    }
                 });
                 return future;
             }).toArray(CompletableFuture[]::new);
