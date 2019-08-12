@@ -7,7 +7,7 @@
                 final CompletableFuture<TelemetryMessage> future = new CompletableFuture<>();
                 final Timer.Context timerContext = recordEnrichmentTimer.time();
                 // Trigger record enrichment (performing DNS reverse lookups for example)
-                final RecordEnricher recordEnricher = new RecordEnricher(dnsResolver);
+                final RecordEnricher recordEnricher = new RecordEnricher(dnsResolver, getDnsLookupsEnabled());
                 recordEnricher.enrich(record).whenComplete((enrichment, ex) -> {
                     timerContext.close();
                     if (ex != null) {
@@ -15,22 +15,39 @@
                         future.completeExceptionally(ex);
                         return;
                     }
-                    // Enrichment was successful, let's serialize
-                    final ByteBuffer buffer = serializeRecords(this.protocol, record, enrichment);
+                    // Enrichment was successful
 
-                    // Build the message to dispatch
-                    final TelemetryMessage msg = new TelemetryMessage(remoteAddress, buffer);
+                    // We're currently in the callback thread from the enrichment process
+                    // We want the remainder of the serialization and dispatching to be performed
+                    // from one of our executor threads so that we can put back-pressure on the listener
+                    // if we can't keep up
+                    final Runnable dispatch = () -> {
+                        // Let's serialize
+                        final ByteBuffer buffer = serializeRecords(this.protocol, record, enrichment);
 
-                    // Dispatch
-                    dispatcher.send(msg).whenComplete((b,exx) -> {
-                        if (exx != null) {
-                            future.completeExceptionally(exx);
-                            return;
-                        }
-                        future.complete(b);
-                    });
+                        // Build the message to dispatch
+                        final TelemetryMessage msg = new TelemetryMessage(remoteAddress, buffer);
 
-                    recordsDispatched.mark();
+                        // Dispatch
+                        dispatcher.send(msg).whenComplete((b,exx) -> {
+                            if (exx != null) {
+                                future.completeExceptionally(exx);
+                                return;
+                            }
+                            future.complete(b);
+                        });
+
+                        recordsDispatched.mark();
+                    };
+
+                    // It's possible that the callback thread is already a thread from the pool, if that's the case
+                    // execute within the current thread. This helps avoid deadlocks.
+                    if (Boolean.TRUE.equals(isParserThread.get())) {
+                        dispatch.run();
+                    } else {
+                        // We're not in one of the parsers threads, execute the dispatch in the pool
+                        executor.execute(dispatch);
+                    }
                 });
                 return future;
             }).toArray(CompletableFuture[]::new);
