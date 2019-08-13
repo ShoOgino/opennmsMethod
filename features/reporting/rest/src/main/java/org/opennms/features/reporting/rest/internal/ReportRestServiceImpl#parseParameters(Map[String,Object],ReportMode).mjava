@@ -1,0 +1,56 @@
+    private ReportParameters parseParameters(final Map<String, Object> inputParameters, final ReportMode mode) {
+        final String reportId = (String) inputParameters.get("id");
+        final ReportParameters actualParameters = reportWrapperService.getParameters(reportId);
+        final ReportFormat reportFormat = parseReportFormat((String) inputParameters.get("format"));
+        actualParameters.setReportId(reportId);
+        actualParameters.setFormat(reportFormat);
+
+        // Determine the new values
+        final JSONObject jsonInputParameters = new JSONObject(inputParameters);
+        final ReportParameterBuilder reportParameterBuilder = new ReportParameterBuilder();
+        final JSONArray jsonParameters = jsonInputParameters.getJSONArray("parameters");
+        for (int i=0; i< jsonParameters.length(); i++) {
+            final JSONObject jsonParameter = jsonParameters.getJSONObject(i);
+            final String parameterName = jsonParameter.getString("name");
+            final String parameterType = jsonParameter.getString("type");
+            if (parameterType.equals("string")) {
+                reportParameterBuilder.withString(parameterName, jsonParameter.getString("value"));
+            }
+            if (parameterType.equals("double")) {
+                reportParameterBuilder.withDouble(parameterName, jsonParameter.getDouble("value"));
+            }
+            if (parameterType.equals("integer")) {
+                reportParameterBuilder.withInteger(parameterName, jsonParameter.getInt("value"));
+            }
+            if (parameterType.equals("float")) {
+                reportParameterBuilder.withFloat(parameterName, jsonParameter.getFloat("value"));
+            }
+            if (parameterType.equals("date")) {
+                final ReportDateParm actualDateParm = actualParameters.getParameter(parameterName);
+                final int hours = jsonParameter.getInt("hours");
+                final int minutes = jsonParameter.getInt("minutes");
+                if (actualDateParm.getUseAbsoluteDate() == true || mode == ReportMode.IMMEDIATE) {
+                    if (jsonParameter.has("date")) {
+                        try {
+                            final String dateString = jsonParameter.getString("date");
+                            final Date parsedDate = new SimpleDateFormat("yyyy-MM-dd").parse(dateString);
+                            reportParameterBuilder.withDate(parameterName, parsedDate, hours, minutes);
+                        } catch (ParseException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                } else {
+                    final String interval = jsonParameter.getString("interval");
+                    final int count = jsonParameter.getInt("count");
+                    reportParameterBuilder.withDate(parameterName, interval, count, hours, minutes);
+                }
+            }
+        }
+
+        // Finally apply the new values
+        final ReportParameters mergeWithParameters = reportParameterBuilder.build();
+        actualParameters.apply(mergeWithParameters);
+
+        return actualParameters;
+    }
+
