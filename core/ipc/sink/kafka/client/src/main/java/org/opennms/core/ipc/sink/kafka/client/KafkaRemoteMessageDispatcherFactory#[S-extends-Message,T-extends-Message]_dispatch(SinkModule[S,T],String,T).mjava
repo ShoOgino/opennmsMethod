@@ -4,40 +4,13 @@
             LOG.trace("dispatch({}): sending message {}", topic, message);
             byte[] sinkMessageContent = module.marshal(message);
             String messageId = UUID.randomUUID().toString();
-            int totalChunks = IntMath.divide(sinkMessageContent.length, maxBufferSize, RoundingMode.UP);
-            for (int chunk = 0; chunk < totalChunks; chunk++) {
-                byte[] messageInBytes = wrapMessageToProto(messageId, chunk, totalChunks, sinkMessageContent);
-                final ProducerRecord<String, byte[]> record = new ProducerRecord<>(topic, messageId, messageInBytes);
-                // Add tags to tracer active span.
-                Span activeSpan = getTracer().activeSpan();
-                if (activeSpan != null && (chunk + 1 == totalChunks)) {
-                    activeSpan.setTag(TracerConstants.TAG_TOPIC, topic);
-                    activeSpan.setTag(TracerConstants.TAG_MESSAGE_SIZE, sinkMessageContent.length);
-                }
-                // Keep sending record till it delivers successfully.
-                while (true) {
-                    try {
-                        // From KafkaProducer's JavaDoc: The producer is thread safe and should generally be shared among all threads for best performance.
-                        final Future<RecordMetadata> future = producer.send(record);
-                        // The call to dispatch() is synchronous, so we block until the message was sent
-                        future.get();
-                        break;
-                    } catch (InterruptedException e) {
-                        LOG.warn("Interrupted while sending message to topic {}.", topic, e);
-                        Thread.currentThread().interrupt();
-                        break;
-                    } catch (ExecutionException e) {
-                        // Timeout typically happens when Kafka is Offline or it didn't initialize yet.
-                        // For this case keep sending the message until it delivers, will cause sink messages to buffer.
-                        if (e.getCause() != null && e.getCause() instanceof TimeoutException) {
-                            LOG.warn("Timeout occured while sending message to topic {}, it will be attempted again.", topic);
-                        } else {
-                            LOG.error("Exception occured while sending message to topic {} ", e);
-                            break;
-                        }
-                    }
-                }
-            }
+            final String messageKey = module.getRoutingKey(message).orElse(messageId);
+            // Send this message to Kafka, If partition changed in between sending chunks of a larger message,
+            // try to send message again.
+            boolean partitionChanged = false;
+            do {
+                partitionChanged = sendMessage(topic, messageId, messageKey, sinkMessageContent);
+            } while (partitionChanged);
         }
     }
 

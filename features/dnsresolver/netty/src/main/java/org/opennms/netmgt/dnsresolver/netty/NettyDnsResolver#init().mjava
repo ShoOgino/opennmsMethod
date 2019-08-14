@@ -1,0 +1,61 @@
+    public void init() {
+        numContexts = Math.max(0, numContexts);
+        if (numContexts == 0) {
+            numContexts = Runtime.getRuntime().availableProcessors() * 2;
+        }
+        LOG.debug("Initializing Netty resolver with {} contexts and resolvers: {}", numContexts);
+
+
+        contexts = new ArrayList<>(numContexts);
+
+        // Initialize the cache with the given TTL settings - use Netty's default if the configured values
+        // are less than 0
+        final DefaultDnsCache cacheWithDefaults = new DefaultDnsCache();
+        cache = new DefaultDnsCache(minTtlSeconds < 0 ? cacheWithDefaults.minTtl() : minTtlSeconds,
+                maxTtlSeconds < 0 ? cacheWithDefaults.maxTtl() : maxTtlSeconds,
+                negativeTtlSeconds < 0 ? cacheWithDefaults.negativeTtl() : negativeTtlSeconds);
+        for (int i = 0; i < numContexts; i++) {
+            // Share the same cache across all of the contexts
+            NettyResolverContext context = new NettyResolverContext(this, cache, i);
+            context.init();
+            contexts.add(context);
+        }
+        iterator = new RandomIterator<>(contexts).iterator();
+
+        // Configure this statically for now, we can expose this as needed
+        final CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
+                .failureRateThreshold(breakerFailureRateThreshold)
+                .waitDurationInOpenState(Duration.ofSeconds(breakerWaitDurationInOpenState))
+                .ringBufferSizeInHalfOpenState(breakerRingBufferSizeInHalfOpenState)
+                .ringBufferSizeInClosedState(breakerRingBufferSizeInClosedState)
+                .recordExceptions(DnsNameResolverTimeoutException.class)
+                .build();
+        circuitBreaker = CircuitBreaker.of("nettyDnsResolver", circuitBreakerConfig);
+
+        circuitBreaker.getEventPublisher()
+                .onStateTransition(e -> {
+                    // Send an event when the circuit breaker's state changes
+                    final Event event = new EventBuilder(CIRCUIT_BREAKER_STATE_CHANGE_EVENT_UEI, NettyDnsResolver.class.getCanonicalName())
+                            .addParam("name", circuitBreaker.getName())
+                            .addParam("fromState", e.getStateTransition().getFromState().toString())
+                            .addParam("toState", e.getStateTransition().getToState().toString())
+                            .getEvent();
+                    eventForwarder.sendNow(event);
+                })
+                .onSuccess(e -> {
+                    lookupsSuccessful.mark();
+                })
+                .onError(e -> {
+                    lookupsFailed.mark();
+                })
+                .onCallNotPermitted(e -> {
+                    lookupsRejectedByCircuitBreaker.mark();
+                });
+
+        if (breakerEnabled) {
+            circuitBreaker.transitionToClosedState();
+        } else {
+            circuitBreaker.transitionToDisabledState();
+        }
+    }
+

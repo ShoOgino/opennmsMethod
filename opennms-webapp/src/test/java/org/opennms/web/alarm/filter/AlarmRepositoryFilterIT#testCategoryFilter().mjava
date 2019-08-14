@@ -1,0 +1,39 @@
+    @Test
+    @Transactional
+    @JUnitTemporaryDatabase
+    @SuppressWarnings("deprecation")
+    public void testCategoryFilter() {
+        // get all alarms
+        final Set<OnmsAlarm> allAlarms = Arrays.stream(m_daoAlarmRepo.getMatchingAlarms(AlarmUtil.getOnmsCriteria(new AlarmCriteria(new Filter[0])))).collect(Collectors.toSet());
+
+        // create node to categories map
+        final Map<Integer, Set<String>> nodeCategoriesMap = new TreeMap<>();
+
+        // iterate over all nodes
+        for (final OnmsNode onmsNode : m_nodeDao.findAll()) {
+            // get node's categories
+            nodeCategoriesMap.put(onmsNode.getId(), onmsNode.getCategories().stream().map(c -> c.getName()).collect(Collectors.toSet()));
+        }
+
+        // now iterate over all cetegories
+        final List<OnmsCategory> onmsCategories = m_categoryDao.findAll();
+        for (final OnmsCategory alarmFound : onmsCategories) {
+            // get alarms for given category
+            final AlarmCriteria criteria = getCriteria(new CategoryFilter(alarmFound.getName()));
+            final OnmsAlarm[] alarmsByCategory = m_daoAlarmRepo.getMatchingAlarms(AlarmUtil.getOnmsCriteria(criteria));
+            // check that each alarm has a node with the given category associated
+            for (final OnmsAlarm onmsAlarm : alarmsByCategory) {
+                assertNotNull(onmsAlarm.getNodeId());
+                assertTrue(nodeCategoriesMap.get(onmsAlarm.getNodeId()).contains(alarmFound.getName()));
+                // remote from all alarms
+                allAlarms.remove(onmsAlarm);
+            }
+        }
+
+        // check remaining alarms
+        for (final OnmsAlarm remainingAlarm : allAlarms) {
+            // no node or no categories assigned
+            assertTrue(remainingAlarm.getNodeId() == null || nodeCategoriesMap.get(remainingAlarm.getNodeId()).isEmpty());
+        }
+    }
+

@@ -3,7 +3,7 @@
         // start ES
         elasticSearchRule.startServer();
 
-        final RestClientFactory restClientFactory = new RestClientFactory("http://localhost:" + HTTP_PORT);
+        final RestClientFactory restClientFactory = new RestClientFactory(elasticSearchRule.getUrl());
 
         try (final JestClient jestClient = restClientFactory.createClient()) {
             final MockDocumentEnricherFactory mockDocumentEnricherFactory = new MockDocumentEnricherFactory();
@@ -15,7 +15,9 @@
 
             final FlowRepository elasticFlowRepository = new InitializingFlowRepository(
                     new ElasticFlowRepository(new MetricRegistry(), jestClient, IndexStrategy.MONTHLY, documentEnricher,
-                            classificationEngine, mockTransactionTemplate, new MockNodeDao(), new MockSnmpInterfaceDao(), new MockIdentity(), new MockTracerRegistry(),3, 12000), jestClient);
+                            classificationEngine, mockTransactionTemplate, new MockNodeDao(), new MockSnmpInterfaceDao(),
+                            new MockIdentity(), new MockTracerRegistry(), new IndexSettings(),
+                            3, 12000), jestClient);
             // persist data
             elasticFlowRepository.persist(Lists.newArrayList(getMockFlowWithoutDirection()),
                     FlowDocumentTest.getMockFlowSource());
@@ -23,12 +25,12 @@
             // wait for entries to show up
             with().pollInterval(5, SECONDS).await().atMost(1, MINUTES).until(() -> {
                 final SearchResult searchResult = jestClient.execute(new Search.Builder("").addIndex("netflow-*").build());
-                LOG.info("Response: {} {} ", searchResult.isSucceeded() ? "Success" : "Failure", searchResult.getTotal());
-                return searchResult.getTotal() > 0;
+                LOG.info("Response: {} {} ", searchResult.isSucceeded() ? "Success" : "Failure", SearchResultUtils.getTotal(searchResult));
+                return SearchResultUtils.getTotal(searchResult) > 0;
             });
 
             final SearchResult searchResult = jestClient.execute(new Search.Builder("").addIndex("netflow-*").build());
-            assertNotEquals(new Long(0), searchResult.getTotal());
+            assertNotEquals(0L, SearchResultUtils.getTotal(searchResult));
 
             // check whether the default value is applied
             final JSONParser parser = new JSONParser();

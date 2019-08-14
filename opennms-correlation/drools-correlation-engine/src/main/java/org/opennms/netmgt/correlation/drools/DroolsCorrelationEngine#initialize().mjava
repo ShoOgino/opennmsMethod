@@ -29,6 +29,11 @@
         ruleBaseConfig.setEventProcessingMode(eventProcessingOption);
 
         m_kieBase = kContainer.newKieBase(ruleBaseConfig);
+
+        final KieMarshallers kMarshallers = KieServices.Factory.get().getMarshallers();
+        final ObjectMarshallingStrategy oms = kMarshallers.newSerializeMarshallingStrategy();
+        m_marshaller = kMarshallers.newMarshaller( m_kieBase, new ObjectMarshallingStrategy[]{ oms } );
+
         m_kieSession = m_kieBase.newKieSession();
         m_kieSession.setGlobal("engine", this);
 
@@ -37,7 +42,7 @@
         }
 
         if (m_persistState != null && m_persistState) {
-            unmarshallStateFromDisk(true);
+            unmarshallStateFromDisk();
         }
 
         if (factObjects != null) {
@@ -46,15 +51,22 @@
         }
 
         if (m_isStreaming) {
-            new Thread(() -> {  
+            m_shuttingDownStreamThread.set(false);
+            m_streamThread = new Thread(() -> {
                 Logging.putPrefix(getClass().getSimpleName() + '-' + getName());
                 try {
                     m_kieSession.fireUntilHalt();
                 } catch (Exception e) {
+                    if (m_shuttingDownStreamThread.get()) {
+                        // We're shutting down, don't trigger a reload!
+                        return;
+                    }
                     LOG.error("Exception while running rules, reloading engine ", e);
                     doReload(e);
                 }
-            }, "FireTask").start();
+            }, "FireTask [" + m_name + "]");
+            m_streamThread.start();
         }
+
     }
 

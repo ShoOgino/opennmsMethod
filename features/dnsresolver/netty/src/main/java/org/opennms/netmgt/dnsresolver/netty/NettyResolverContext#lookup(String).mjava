@@ -1,0 +1,36 @@
+    @Override
+    public CompletableFuture<Optional<InetAddress>> lookup(String hostname) {
+        final CompletableFuture<Optional<InetAddress>> future = new CompletableFuture<>();
+        final Future<InetAddress> requestFuture = resolver.resolve(hostname);
+        requestFuture.addListener(responseFuture -> {
+            try {
+                InetAddress addr = (InetAddress)responseFuture.get();
+                future.complete(Optional.ofNullable(addr));
+            } catch (InterruptedException e) {
+                future.completeExceptionally(e);
+            } catch (ExecutionException e) {
+                final DnsNameResolverTimeoutException timeoutException = Throwables.getCausalChain(e).stream()
+                        .filter((DnsNameResolverTimeoutException.class)::isInstance)
+                        .map(ex -> (DnsNameResolverTimeoutException)ex)
+                        .findFirst()
+                        .orElse(null);
+
+                // If the cause is an UnknownHostException, then return an empty result
+                // unless we failed due to a timeout, in this case throw the timeout exception
+                if (e.getCause() != null) {
+                    if (timeoutException != null) {
+                        future.completeExceptionally(timeoutException);
+                    } else if (e.getCause() instanceof UnknownHostException) {
+                        future.complete(Optional.empty());
+                    } else {
+                        // Fail with the cause
+                        future.completeExceptionally(e.getCause());
+                    }
+                } else {
+                    future.completeExceptionally(e);
+                }
+            }
+        });
+        return future;
+    }
+
