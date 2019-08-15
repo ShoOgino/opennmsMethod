@@ -28,58 +28,73 @@
                 // Wrap the request in a CamelRpcRequest and forward it to the Camel route
                 final CompletableFuture<T> future = new CompletableFuture<>();
                 try {
-                    template.asyncCallbackSendBody(endpoint, new CamelRpcRequest<>(module, request, tracingInfoCarrier.getTracingInfoMap()), new Synchronization() {
-                        @Override
-                        public void onComplete(Exchange exchange) {
-                            try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
-                                String responseAsString = exchange.getOut().getBody(String.class);
-                                responseSize.update(responseAsString.getBytes().length);
-                                final T response = module.unmarshalResponse(responseAsString);
-                                if (response.getErrorMessage() != null) {
-                                    future.completeExceptionally(new RemoteExecutionException(response.getErrorMessage()));
-                                    span.setTag(TAG_RPC_FAILED, "true");
-                                    span.log(response.getErrorMessage());
-                                } else {
-                                    future.complete(response);
-                                }
-                            } catch (Throwable ex) {
-                                LOG.error("Unmarshalling a response in RPC module {} failed.", module, ex);
-                                future.completeExceptionally(ex);
-                                span.setTag(TAG_RPC_FAILED, "true");
-                                span.log(ex.getMessage());
-                            }
-                            span.finish();
-                            rpcDuration.update(System.currentTimeMillis() - requestCreationTime);
-                            // Ensure that future log statements on this thread are routed properly
-                            Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
-                        }
+                    // Even though these calls are expected to be async, we've encountered cases where
+                    // they do block. In order to prevent this, we wrap the calls with a timeout.
 
-                        @Override
-                        public void onFailure(Exchange exchange) {
-                            try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
-                                final ExchangeTimedOutException timeoutException = exchange.getException(ExchangeTimedOutException.class);
-                                final DirectConsumerNotAvailableException directConsumerNotAvailableException = exchange.getException(DirectConsumerNotAvailableException.class);
-                                if (timeoutException != null) {
-                                    // Wrap timeout exceptions within a RequestTimedOutException
-                                    future.completeExceptionally(new RequestTimedOutException(exchange.getException()));
-                                    span.setTag(TAG_TIMEOUT, "true");
-                                } else if (directConsumerNotAvailableException != null) {
-                                    // Wrap consumer not available exceptions with a RequestRejectedException
-                                    future.completeExceptionally(new RequestRejectedException(exchange.getException()));
-                                } else {
-                                    future.completeExceptionally(exchange.getException());
+                    // Compute the amount of maximum amount of time we're willing to wait for the call to be dispatched
+                    Long execTimeoutMs = request.getTimeToLiveMs();
+                    if (execTimeoutMs != null) {
+                        // If a TTL is set, the use the minimum value, of the TTL, or our exec timeout
+                        execTimeoutMs = Math.min(execTimeoutMs, rpcExecTimeoutMs);
+                    } else {
+                        execTimeoutMs = rpcExecTimeoutMs;
+                    }
+
+                    timeLimiter.callWithTimeout(() -> {
+                        template.asyncCallbackSendBody(endpoint, new CamelRpcRequest<>(module, request, tracingInfoCarrier.getTracingInfoMap()), new Synchronization() {
+                            @Override
+                            public void onComplete(Exchange exchange) {
+                                try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
+                                    String responseAsString = exchange.getOut().getBody(String.class);
+                                    responseSize.update(responseAsString.getBytes().length);
+                                    final T response = module.unmarshalResponse(responseAsString);
+                                    if (response.getErrorMessage() != null) {
+                                        future.completeExceptionally(new RemoteExecutionException(response.getErrorMessage()));
+                                        span.setTag(TAG_RPC_FAILED, "true");
+                                        span.log(response.getErrorMessage());
+                                    } else {
+                                        future.complete(response);
+                                    }
+                                } catch (Throwable ex) {
+                                    LOG.error("Unmarshalling a response in RPC module {} failed.", module, ex);
+                                    future.completeExceptionally(ex);
+                                    span.setTag(TAG_RPC_FAILED, "true");
+                                    span.log(ex.getMessage());
                                 }
+                                span.finish();
+                                rpcDuration.update(System.currentTimeMillis() - requestCreationTime);
+                                // Ensure that future log statements on this thread are routed properly
+                                Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
                             }
-                            span.setTag(TAG_RPC_FAILED, "true");
-                            span.log(exchange.getException().getMessage());
-                            span.finish();
-                            failedMeter.mark();
-                            rpcDuration.update(System.currentTimeMillis() - requestCreationTime);
-                            // Ensure that future log statements on this thread are routed properly
-                            Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
-                        }
-                    });
-                } catch (IllegalStateException e) {
+
+                            @Override
+                            public void onFailure(Exchange exchange) {
+                                try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
+                                    final ExchangeTimedOutException timeoutException = exchange.getException(ExchangeTimedOutException.class);
+                                    final DirectConsumerNotAvailableException directConsumerNotAvailableException = exchange.getException(DirectConsumerNotAvailableException.class);
+                                    if (timeoutException != null) {
+                                        // Wrap timeout exceptions within a RequestTimedOutException
+                                        future.completeExceptionally(new RequestTimedOutException(exchange.getException()));
+                                        span.setTag(TAG_TIMEOUT, "true");
+                                    } else if (directConsumerNotAvailableException != null) {
+                                        // Wrap consumer not available exceptions with a RequestRejectedException
+                                        future.completeExceptionally(new RequestRejectedException(exchange.getException()));
+                                    } else {
+                                        future.completeExceptionally(exchange.getException());
+                                    }
+                                }
+                                span.setTag(TAG_RPC_FAILED, "true");
+                                span.log(exchange.getException().getMessage());
+                                span.finish();
+                                failedMeter.mark();
+                                rpcDuration.update(System.currentTimeMillis() - requestCreationTime);
+                                // Ensure that future log statements on this thread are routed properly
+                                Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
+                            }
+                        });
+                        return null;
+                    }, execTimeoutMs, TimeUnit.MILLISECONDS, true);
+                } catch (Exception e) {
                     try (MDCCloseable mdc = Logging.withContextMapCloseable(clientContextMap)) {
                         // Wrap ProducerTemplate exceptions with a RequestRejectedException
                         future.completeExceptionally(new RequestRejectedException(e));
