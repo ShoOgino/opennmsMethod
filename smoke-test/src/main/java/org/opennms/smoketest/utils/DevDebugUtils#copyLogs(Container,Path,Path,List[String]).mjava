@@ -5,27 +5,26 @@
             throw new RuntimeException("Failed to create " + targetLogFolder, e);
         }
 
-        // Copying files from the containers seems to block some times
-        // We limit their execution times so we don't block for too long when this happen
-        final ExecutorService executor = Executors.newCachedThreadPool();
-        final TimeLimiter limiter = SimpleTimeLimiter.create(executor);
-
         final Path containerLogOutputFile = targetLogFolder.resolve("container_stdout_stderr");
         try {
-            limiter.runWithTimeout(() -> {
+            LIMITER.runWithTimeout(() -> {
                 try {
                     Files.write(containerLogOutputFile, container.getLogs().getBytes(StandardCharsets.UTF_8));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
             }, 1, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+            LOG.warn("Timeout when copying stdout/stderr from container to file {}.", containerLogOutputFile);
+            // Don't attempt to copy any further files
+            return;
         } catch (Exception e) {
             LOG.info("Failed to copy stdout/stderr from container to file {}: {}", containerLogOutputFile, e.getMessage());
         }
 
         for (String logFile : logFiles) {
             try {
-                limiter.runWithTimeout(() -> {
+                LIMITER.runWithTimeout(() -> {
                     try {
                         container.copyFileFromContainer(sourceLogFolder.resolve(logFile).toString(),
                                 targetLogFolder.resolve(logFile).toString());
@@ -33,11 +32,13 @@
                         throw new RuntimeException(e);
                     }
                 }, 1, TimeUnit.MINUTES);
+            } catch (TimeoutException e) {
+                LOG.warn("Timeout when copying log file {} from container: {}", logFile, e.getMessage());
+                // Don't attempt to copy any further files
+                return;
             } catch (Exception e) {
                 LOG.info("Failed to copy log file {} from container: {}", logFile, e.getMessage());
             }
         }
-
-        executor.shutdownNow();
     }
 
