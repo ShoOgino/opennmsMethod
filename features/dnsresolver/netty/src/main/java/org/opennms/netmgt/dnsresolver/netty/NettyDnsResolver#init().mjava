@@ -3,26 +3,32 @@
         if (numContexts == 0) {
             numContexts = Runtime.getRuntime().availableProcessors() * 2;
         }
-        LOG.debug("Initializing Netty resolver with {} contexts and resolvers: {}", numContexts);
+        LOG.debug("Initializing Netty resolver with {} contexts and nameservers: {}", numContexts, nameservers);
 
+        // Initialize the cache with the given TTL settings - use defaults if the configured values
+        // are less than 0
+        final CaffeineDnsCache cacheWithDefaults = new CaffeineDnsCache();
+        cache = new CaffeineDnsCache(minTtlSeconds < 0 ? cacheWithDefaults.minTtl() : minTtlSeconds,
+                maxTtlSeconds < 0 ? cacheWithDefaults.maxTtl() : maxTtlSeconds,
+                negativeTtlSeconds < 0 ? cacheWithDefaults.negativeTtl() : negativeTtlSeconds,
+                maxCacheSize < 0 ? cacheWithDefaults.maxSize() : maxCacheSize);
+        cache.registerMetrics(metrics);
+
+        final BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
+                .maxConcurrentCalls(bulkheadMaxConcurrentCalls)
+                .maxWaitDuration(Duration.ofMillis(bulkheadMaxWaitDurationMillis))
+                .build();
+        bulkhead = Bulkhead.of("nettyDnsResolver", bulkheadConfig);
 
         contexts = new ArrayList<>(numContexts);
-
-        // Initialize the cache with the given TTL settings - use Netty's default if the configured values
-        // are less than 0
-        final DefaultDnsCache cacheWithDefaults = new DefaultDnsCache();
-        cache = new DefaultDnsCache(minTtlSeconds < 0 ? cacheWithDefaults.minTtl() : minTtlSeconds,
-                maxTtlSeconds < 0 ? cacheWithDefaults.maxTtl() : maxTtlSeconds,
-                negativeTtlSeconds < 0 ? cacheWithDefaults.negativeTtl() : negativeTtlSeconds);
         for (int i = 0; i < numContexts; i++) {
             // Share the same cache across all of the contexts
-            NettyResolverContext context = new NettyResolverContext(this, cache, i);
+            NettyResolverContext context = new NettyResolverContext(this, cache, bulkhead, i);
             context.init();
             contexts.add(context);
         }
         iterator = new RandomIterator<>(contexts).iterator();
 
-        // Configure this statically for now, we can expose this as needed
         final CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
                 .failureRateThreshold(breakerFailureRateThreshold)
                 .waitDurationInOpenState(Duration.ofSeconds(breakerWaitDurationInOpenState))
