@@ -1,0 +1,31 @@
+    public CaffeineCache(long maxSize) {
+        final Caffeine<String, Entries<E>> caffeine = Caffeine.newBuilder()
+                .expireAfter(new Expiry<String, Entries<E>>() {
+                    @Override
+                    public long expireAfterCreate(String key, Entries<E> value, long currentTime) {
+                        // Use the TTL of the first entry added for the key as the initial expiry time
+                        // We'll recompute the expiry if/when subsequent entries are added
+                        return TimeUnit.SECONDS.toNanos(value.ttl());
+                    }
+
+                    @Override
+                    public long expireAfterUpdate(String key, Entries<E> value, long currentTime, long currentDuration) {
+                        // The value has been updated and may now contain an entry with a shorter TTL then what we originally used
+                        // Use the minimum value of the entry TTL and the current expiry duration
+                        return Math.min(TimeUnit.SECONDS.toNanos(value.ttl()), currentDuration);
+                    }
+
+                    @Override
+                    public long expireAfterRead(String key, Entries<E> value, long currentTime, long currentDuration) {
+                        // Don't expire after read
+                        return currentDuration;
+                    }
+                })
+                .recordStats();
+        if (maxSize > 0) {
+            // Apply a size limit, if set
+            caffeine.maximumSize(maxSize);
+        }
+        cache = caffeine.build();
+    }
+
