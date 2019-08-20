@@ -1,0 +1,46 @@
+    private PollableNetwork createPollableNetwork(final DataSource db, final ScheduleTimer scheduler, final PollerConfig pollerConfig, PollContext pollContext, ReadablePollOutagesDao pollOutagesDao) throws UnknownHostException {
+
+        final PollableNetwork pNetwork = new PollableNetwork(pollContext);
+
+        String sql = "select node.nodeId as nodeId, node.nodeLabel as nodeLabel, ipInterface.ipAddr as ipAddr, ifServices.serviceId as serviceId, service.serviceName as serviceName, outages.svcLostEventId as svcLostEventId, events.eventUei as svcLostEventUei, outages.ifLostService as ifLostService, outages.ifRegainedService as ifRegainedService " +
+                "from ifServices " +
+                "join ipInterface on ifServices.ipInterfaceId = ipInterface.id " +
+                "join node on ipInterface.nodeId = node.nodeId " +
+                "join service on ifServices.serviceId = service.serviceId " +
+                "left outer join outages on " +
+                    "ifServices.id = outages.ifServiceId and " +
+                    "ifRegainedService is null " +
+                "left outer join events on outages.svcLostEventId = events.eventid " +
+                "where ifServices.status = 'A'";
+
+
+        Querier querier = new Querier(db, sql) {
+            @Override
+            public void processRow(ResultSet rs) throws SQLException {
+                int nodeId = rs.getInt("nodeId");
+                String nodeLabel = rs.getString("nodeLabel");
+                String ipAddr = rs.getString("ipAddr");
+                String serviceName = rs.getString("serviceName");
+                Date date = rs.getTimestamp("ifLostService");
+                Number svcLostEventId = (Number)rs.getObject("svcLostEventId");
+                String svcLostUei = rs.getString("svcLostEventUei");
+
+                addServiceToNetwork(pNetwork, nodeId, nodeLabel, null, ipAddr,
+                                    serviceName, svcLostEventId, svcLostUei,
+                                    date, scheduler, pollerConfig, pollOutagesDao);
+
+                // schedule.schedule();
+                //MockUtil.println("Created Pollable Service "+svc+" with package "+pkg.getName());
+
+            }
+
+        };
+        querier.execute();
+
+
+        pNetwork.recalculateStatus();
+        pNetwork.propagateInitialCause();
+        pNetwork.resetStatusChanged();
+        return pNetwork;
+    }
+
