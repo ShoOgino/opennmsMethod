@@ -1,0 +1,35 @@
+    @Test
+    public void retriesAndUnblocksWhenJsonStoreAvailable() throws IOException {
+        ReloadableConfigContainer<TestEntity> container =
+                new PollingJsonStoreReloadableConfigContainer<>(jsonStore, key, context, TestEntity.class, 10000,
+                        Retry.of("retryReloading", RetryConfig.custom()
+                                .maxAttempts(10)
+                                .waitDuration(Duration.ofMillis(10))
+                                .build()));
+        AtomicBoolean unblocked = new AtomicBoolean(false);
+
+        // The first attempt to get should block until throwing an exception since the Json store isn't returning
+        // anything
+        try {
+            container.getConfig();
+            fail("Did not time out");
+        } catch (Exception ignore) {
+        }
+
+        // Now try to get again async
+        CompletableFuture.runAsync(() -> {
+            container.getConfig();
+            unblocked.set(true);
+        });
+
+        // Client should currently be blocked since the mock won't respond with any JSON
+        assertThat(unblocked.get(), equalTo(false));
+
+        when(jsonStore.getLastUpdated(key, context)).thenReturn(OptionalLong.of(1));
+        when(jsonStore.get(key, context)).thenReturn(Optional.of(mapper.writeValueAsString(new TestEntity())));
+
+        // Now that the mock is returning JSON the client's get should unblock
+        await().atMost(1, TimeUnit.SECONDS)
+                .until(unblocked::get);
+    }
+
