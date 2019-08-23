@@ -1,0 +1,30 @@
+    @Override
+    public CompletableFuture<Optional<SnmpAgentConfig>> getAgentConfigFromProfiles(InetAddress inetAddress, String location, String oid) {
+
+        CompletableFuture<Optional<SnmpAgentConfig>> future = new CompletableFuture<>();
+        List<SnmpProfile> snmpProfiles = agentConfigFactory.getProfiles();
+        // Get matching profiles for this IpAddress.
+        List<SnmpProfile> matchedProfiles = snmpProfiles.stream()
+                .filter(snmpProfile -> isFilterExpressionValid(inetAddress, snmpProfile.getFilterExpression()))
+                .collect(Collectors.toList());
+        // Run and collect futures.
+        List<CompletableFuture<Optional<SnmpAgentConfig>>> futures = matchedProfiles.stream()
+                .map(matchedProfile -> fitProfile(matchedProfile, inetAddress, location, oid))
+                .collect(Collectors.toList());
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]));
+        //Join all the results.
+        CompletableFuture<List<Optional<SnmpAgentConfig>>> results = allFutures.thenApply(agentConfig -> {
+            return futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+        });
+        //Complete the future with first non-empty agent config.
+        results.whenComplete((configList, throwable) -> {
+            if (throwable == null) {
+                Optional<Optional<SnmpAgentConfig>> configOptional = configList.stream().filter(Optional::isPresent).findFirst();
+                future.complete(configOptional.orElse(Optional.empty()));
+            } else {
+                future.complete(Optional.empty());
+            }
+        });
+        return future;
+    }
+
