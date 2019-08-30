@@ -1,0 +1,48 @@
+    private String benchmark(String methodType,
+                             BiFunction<String, Histogram, CompletableFuture<?>> asyncFunction,
+                             BiConsumer<String, Histogram> syncFunction) throws InterruptedException {
+        System.out.print(String.format("Benchmarking %s performance...", methodType));
+
+        Histogram results = metrics.histogram(String.format("%s times", methodType));
+        AtomicLong totalTime = new AtomicLong(0);
+
+        // Do the benchmark on another thread so we can provide feedback while it is executing
+        CompletableFuture<Boolean> benchmarkFuture = CompletableFuture.supplyAsync(() -> {
+            List<CompletableFuture<?>> futures = new ArrayList<>();
+            long start = System.currentTimeMillis();
+
+            for (int i = 0; i < numberOfRecords; i++) {
+                String key = String.format("%s-%d", KEY, i);
+
+                if (this.async) {
+                    futures.add(asyncFunction.apply(key, results));
+                } else {
+                    syncFunction.accept(key, results);
+                }
+            }
+
+            if (this.async) {
+                try {
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            totalTime.set(System.currentTimeMillis() - start);
+
+            return true;
+        });
+
+        // Give user feedback while the benchmark is running
+        while (!benchmarkFuture.getNow(false)) {
+            System.out.print('.');
+            Thread.sleep(1000);
+        }
+
+        System.out.println("done");
+
+        double throughPut = ((payloadSize * numberOfRecords) / 1024.0) / (totalTime.get() / 1000.0);
+        return String.format("%s throughput: %.2f KB/s", methodType, throughPut);
+    }
+
