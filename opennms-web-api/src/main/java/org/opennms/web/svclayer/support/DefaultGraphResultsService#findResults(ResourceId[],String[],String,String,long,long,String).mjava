@@ -1,5 +1,5 @@
     @Override
-    public GraphResults findResults(ResourceId[] resourceIds, String[] reports, String nodeCriteria, long start, long end, String relativeTime) {
+    public GraphResults findResults(ResourceId[] resourceIds, String[] reports, String generatedId, String nodeCriteria, long start, long end, String relativeTime) {
         if (reports == null) {
             throw new IllegalArgumentException("reports argument cannot be null");
         }
@@ -13,8 +13,9 @@
         graphResults.setRelativeTime(relativeTime);
         graphResults.setRelativeTimePeriods(m_periods);
         graphResults.setReports(reports);
+        graphResults.setNodeCriteria(nodeCriteria);
+        graphResults.setGeneratedId(generatedId);
 
-        // ResourceIds can be empty in case of GraphAll where resources are pulled from node.
         HashMap<ResourceId, List<OnmsResource>> resourcesMap = new HashMap<>();
         for (ResourceId resourceId : resourceIds) {
             LOG.debug("findResults: parent, childType, childName = {}, {}, {}", resourceId.parent, resourceId.type, resourceId.name);
@@ -43,11 +44,12 @@
             }
         }
 
-        if(!Strings.isNullOrEmpty(nodeCriteria)) {
+        // GraphAll case where all resources are fetched from node.
+        if (!Strings.isNullOrEmpty(nodeCriteria)) {
             OnmsNode node = m_nodeDao.get(nodeCriteria);
-            if(node != null) {
+            if (node != null) {
                 OnmsResource nodeResource = m_resourceDao.getResourceForNode(node);
-                if(nodeResource != null) {
+                if (nodeResource != null) {
                     List<OnmsResource> childResources = nodeResource.getChildResources();
                     for (OnmsResource resource : childResources) {
                         try {
@@ -56,6 +58,27 @@
                             LOG.warn(e.getMessage(), e);
                         }
                     }
+                }
+            }
+        }
+        // GraphSelected case where all resources are fetched from generatedId
+        if (!Strings.isNullOrEmpty(generatedId)) {
+            Optional<String> result = m_jsonStore.get(generatedId, RESOURCE_IDS_CONTEXT);
+            if (result.isPresent()) {
+                try {
+                    String[] resourceArray = m_gson.fromJson(result.get(), String[].class);
+                    for (String resourceId : resourceArray) {
+                        try {
+                            OnmsResource resource = m_resourceDao.getResourceById(ResourceId.fromString(resourceId));
+                            if(resource != null) {
+                                graphResults.addGraphResultSet(createGraphResultSet(null, resource, reports, graphResults));
+                            }
+                        } catch (IllegalArgumentException e) {
+                            LOG.warn(e.getMessage(), e);
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.warn("Exception while parsing json string {}", result.get());
                 }
             }
         }
