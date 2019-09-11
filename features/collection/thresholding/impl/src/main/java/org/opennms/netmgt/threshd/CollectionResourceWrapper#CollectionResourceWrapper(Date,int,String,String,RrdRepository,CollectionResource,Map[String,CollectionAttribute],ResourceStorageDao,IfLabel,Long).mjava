@@ -1,0 +1,57 @@
+    /**
+     * <p>Constructor for CollectionResourceWrapper.</p>
+     *
+     * @param interval a long.
+     * @param nodeId a int.
+     * @param hostAddress a {@link java.lang.String} object.
+     * @param serviceName a {@link java.lang.String} object.
+     * @param repository a {@link org.opennms.netmgt.rrd.RrdRepository} object.
+     * @param resource a {@link org.opennms.netmgt.collection.api.CollectionResource} object.
+     * @param attributes a {@link java.util.Map} object.
+     */
+    public CollectionResourceWrapper(Date collectionTimestamp, int nodeId, String hostAddress, String serviceName,
+            RrdRepository repository, CollectionResource resource, Map<String, CollectionAttribute> attributes,
+            ResourceStorageDao resourceStorageDao, IfLabel ifLabelDao, Long sequenceNumber) {
+
+        if (collectionTimestamp == null) {
+            throw new IllegalArgumentException(String.format("%s: Null collection timestamp when thresholding service %s on node %d (%s)", this.getClass().getSimpleName(), serviceName, nodeId, hostAddress));
+        }
+
+        m_collectionTimestamp = collectionTimestamp;
+        m_nodeId = nodeId;
+        m_hostAddress = hostAddress;
+        m_serviceName = serviceName;
+        m_repository = repository;
+        m_resource = resource;
+        m_attributes = attributes;
+        m_resourceStorageDao = resourceStorageDao;
+        m_sequenceNumber = sequenceNumber;
+
+        if (isAnInterfaceResource()) {
+            if (resource instanceof AliasedResource) { // TODO What about AliasedResource's custom attributes?
+                m_iflabel = ((AliasedResource) resource).getInterfaceLabel();
+                m_ifInfo.putAll(((AliasedResource) resource).getIfInfo().getAttributesMap());
+                m_ifInfo.put("domain", ((AliasedResource) resource).getDomain());
+            } else if (resource instanceof IfInfo) {
+                m_iflabel = ((IfInfo) resource).getInterfaceLabel();
+                m_ifInfo.putAll(((IfInfo) resource).getAttributesMap());
+            } else {
+                LOG.info("Can't find ifInfo for {}", resource);
+                m_iflabel = null;
+            }
+            m_ifindex = m_ifInfo.get("snmpifindex");
+        } else if (isLatencyResource() && ifLabelDao != null) {
+            String ipAddress = ((LatencyCollectionResource) resource).getIpAddress();
+            m_iflabel = ifLabelDao.getIfLabel(getNodeId(), addr(ipAddress));
+            if (m_iflabel != null) { // See Bug 3488
+                m_ifInfo.putAll(ifLabelDao.getInterfaceInfoFromIfLabel(getNodeId(), m_iflabel));
+            } else {
+                LOG.info("Can't find ifLabel for latency resource {} on node {}", resource.getInstance(), getNodeId());
+            }
+            m_ifindex = null;
+        } else {
+            m_ifindex = null;
+            m_iflabel = null;
+        }
+    }
+
