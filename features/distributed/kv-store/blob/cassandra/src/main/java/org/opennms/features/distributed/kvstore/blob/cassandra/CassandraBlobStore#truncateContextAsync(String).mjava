@@ -1,0 +1,33 @@
+    @Override
+    public CompletableFuture<Void> truncateContextAsync(String context) {
+        Objects.requireNonNull(context);
+
+        CompletableFuture<Void> truncateFuture = new CompletableFuture<>();
+
+        enumerateContextAsync(context).whenComplete((enumerateResult, enumerateThrowable) -> {
+            if (enumerateThrowable != null) {
+                truncateFuture.completeExceptionally(enumerateThrowable);
+                return;
+            }
+
+            Set<String> keys = enumerateResult.keySet();
+            Iterator<String> keysIterator = keys.iterator();
+            CompletableFuture<?>[] deleteFutures = new CompletableFuture[keys.size()];
+
+            for (int i = 0; i < keys.size(); i++) {
+                deleteFutures[i] = deleteAsync(keysIterator.next(), context);
+            }
+
+            CompletableFuture.allOf(deleteFutures).whenComplete((deleteResult, deleteThrowable) -> {
+                if (deleteThrowable != null) {
+                    truncateFuture.completeExceptionally(deleteThrowable);
+                    return;
+                }
+
+                truncateFuture.complete(deleteResult);
+            });
+        });
+
+        return truncateFuture;
+    }
+
