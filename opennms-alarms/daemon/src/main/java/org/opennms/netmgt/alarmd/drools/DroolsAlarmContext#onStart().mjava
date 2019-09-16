@@ -1,12 +1,9 @@
     @Override
     public void onStart() {
-        final CountDownLatch latch = new CountDownLatch(1);
         final Thread seedThread = new Thread(() -> {
             // Seed the engine with the current set of alarms asynchronously
             // We do this async since we don't want to block the whole system from starting up
             // while we wait on the database (particularly for systems with large amounts of alarms)
-            getLock().lock();
-            latch.countDown();
             try {
                 preHandleAlarmSnapshot();
                 template.execute(new TransactionCallbackWithoutResult() {
@@ -17,22 +14,15 @@
                         LOG.info("Done loading {} alarms.", allAlarms.size());
                         // Leverage the existing snapshot processing function to see the engine
                         handleAlarmSnapshot(allAlarms);
+                        // Seed was submitted as an atomic action
+                        seedSubmittedLatch.countDown();
                     }
                 });
             } finally {
                 postHandleAlarmSnapshot();
-                getLock().unlock();
             }
         });
         seedThread.setName("DroolAlarmContext-InitialSeed");
         seedThread.start();
-
-        try {
-            // Wait until the seed thread has acquired the session lock before returning
-            latch.await();
-        } catch (InterruptedException e) {
-            LOG.warn("Interrupted while waiting for seed thread to acquire session lock. "
-                    + "The engine may not have a complete view of the state on startup.");
-        }
     }
 

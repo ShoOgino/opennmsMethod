@@ -20,27 +20,36 @@
         releaseIdForContainerUsedByKieSession = releaseId;
 
         // We're started!
-        started = true;
+        started.set(true);
 
         // Allow the base classes to seed the context before we start ticking
         onStart();
 
         if (!useManualTick) {
-            timer = new Timer();
-            timer.scheduleAtFixedRate(new TimerTask() {
-                @Override
-                public void run() {
-                    lock.lock();
+            thread = new Thread(() -> {
+                while (started.get()) {
                     try {
-                        LOG.debug("Firing rules.");
-                        kieSession.fireAllRules();
+                        LOG.debug("Firing until halt.");
+                        kieSession.fireUntilHalt();
                     } catch (Exception e) {
-                        LOG.error("Error occurred while firing rules.", e);
-                    } finally {
-                        lock.unlock();
+                        // If we're supposed to be stopped, ignore the exception
+                        if (!started.get()) {
+                            LOG.error("Error occurred while firing rules. Waiting 30 seconds before starting to fire again.", e);
+                            try {
+                                Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+                            } catch (InterruptedException ex) {
+                                LOG.warn("Interrupted while waiting to start firing rules again. Exiting thread.");
+                                return;
+                            }
+                        } else {
+                            LOG.info("Encountered exception while firing rules, but the engine is stopped. Exiting thread.");
+                            return;
+                        }
                     }
                 }
-            }, TimeUnit.SECONDS.toMillis(1), TimeUnit.SECONDS.toMillis(1));
+            });
+            thread.setName("DroolsSession-" + kSessionName);
+            thread.start();
         }
     }
 
