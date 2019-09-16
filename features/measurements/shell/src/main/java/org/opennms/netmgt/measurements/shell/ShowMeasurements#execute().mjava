@@ -1,0 +1,42 @@
+    @Override
+    public Object execute() throws MeasurementException {
+        final ResourceId resourceIdd = ResourceId.fromString(resourceId);
+        final OnmsResource resource = resourceDao.getResourceById(resourceIdd);
+        if (resource == null) {
+            System.out.printf("No resource with ID '%s' found.\n", resourceId);
+            return null;
+        }
+        // Jim, we found the resource.
+
+        // What attributes i.e. ifHCInOctets are associated with this resource?
+        final Map<String, RrdGraphAttribute> attrsByName = resource.getRrdGraphAttributes();
+        System.out.printf("Resource with ID '%s' has attributes: %s\n", resourceId, attrsByName.keySet());
+
+        // Filter the attribute name if 1+ were passed in as options
+        Set<String> filteredAttrNames = attrsByName.keySet();
+        if (attributesSelected != null && !attributesSelected.isEmpty()) {
+            filteredAttrNames = attrsByName.keySet().stream()
+                    .filter(a -> attributesSelected.contains(a))
+                    .collect(Collectors.toSet());
+            System.out.printf("Limiting attributes to: %s\n", filteredAttrNames);
+        }
+
+        QueryRequest queryRequest = new QueryRequest();
+        queryRequest.setStart(start);
+        queryRequest.setEnd(end);
+        queryRequest.setStep(stepMs);
+        for (String attrName : filteredAttrNames) {
+            Source source = new Source();
+            source.setAttribute(attrName);
+            source.setLabel(attrName);
+            source.setAggregation("AVERAGE");
+            source.setResourceId(resourceId);
+            queryRequest.getSources().add(source);
+        }
+        QueryResponse queryResponse = measurementsService.query(queryRequest);
+
+        System.out.println();
+        printResponseAsTable(queryResponse);
+        return null;
+    }
+
