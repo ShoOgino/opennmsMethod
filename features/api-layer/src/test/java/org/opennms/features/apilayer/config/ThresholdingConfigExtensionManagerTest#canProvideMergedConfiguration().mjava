@@ -1,0 +1,87 @@
+    /**
+     * Tests that mapping from API type to OpenNMS type works and multiple configurations provided by extensions are
+     * merged together.
+     */
+    @Test
+    public void canProvideMergedConfiguration() {
+        WriteableThresholdingDao thresholdingDao = mock(WriteableThresholdingDao.class);
+        ThresholdingService thresholdingService = mock(ThresholdingService.class);
+        when(thresholdingService.getThresholdingSetPersister()).thenReturn(mock(ThresholdingSetPersister.class));
+        ThresholdingConfigExtensionManager manager = new ThresholdingConfigExtensionManager(thresholdingDao,
+                thresholdingService);
+
+        // Shouldn't have config yet
+        ThresholdingConfig thresholdingConfig = manager.getObject();
+        assertThat(thresholdingConfig.getGroups(), hasSize(0));
+
+        // Expose an extension
+        ThresholdingConfigExtension ext1 = mock(ThresholdingConfigExtension.class);
+        GroupDefinition groupDef = mock(GroupDefinition.class);
+
+        String groupName = "group name";
+        when(groupDef.getName()).thenReturn(groupName);
+        String rrdRepository = "rrd repository";
+        when(groupDef.getRrdRepository()).thenReturn(rrdRepository);
+
+        Expression expression = mock(Expression.class);
+        String expressionStr = "expression";
+        when(expression.getExpression()).thenReturn(expressionStr);
+        mockBaseThresholddef(expression);
+        when(groupDef.getExpressions()).thenReturn(Collections.singletonList(expression));
+
+        Threshold threshold = mock(Threshold.class);
+        String dsName = "ds name";
+        when(threshold.getDsName()).thenReturn(dsName);
+        mockBaseThresholddef(threshold);
+        when(groupDef.getThresholds()).thenReturn(Collections.singletonList(threshold));
+
+        when(ext1.getGroupDefinitions()).thenReturn(Collections.singletonList(groupDef));
+
+        manager.onBind(ext1, Collections.emptyMap());
+
+        // Should be configuration now
+        thresholdingConfig = manager.getObject();
+        assertThat(thresholdingConfig.getGroups(), hasSize(1));
+        Group extGroup = thresholdingConfig.getGroups().get(0);
+        assertThat(extGroup.getName(), equalTo(groupName));
+        assertThat(extGroup.getRrdRepository(), equalTo(rrdRepository));
+
+        org.opennms.netmgt.config.threshd.Expression extExpression = extGroup.getExpressions().get(0);
+        assertThat(extExpression.getExpression(), equalTo(expressionStr));
+        checkBasethresholddef(extExpression);
+
+        org.opennms.netmgt.config.threshd.Threshold extThreshold = extGroup.getThresholds().get(0);
+        assertThat(extThreshold.getDsName(), equalTo(dsName));
+        checkBasethresholddef(extThreshold);
+
+        // Expose another extension
+        ThresholdingConfigExtension ext2 = mock(ThresholdingConfigExtension.class);
+        GroupDefinition groupDef2 = mock(GroupDefinition.class);
+        String groupName2 = "new group name";
+        when(groupDef2.getName()).thenReturn(groupName2);
+        String rrdRepository2 = "rrd repository 2";
+        when(groupDef2.getRrdRepository()).thenReturn(rrdRepository2);
+        when(groupDef2.getThresholds()).thenReturn(Collections.emptyList());
+        when(groupDef2.getExpressions()).thenReturn(Collections.emptyList());
+        when(ext2.getGroupDefinitions()).thenReturn(Collections.singletonList(groupDef2));
+        manager.onBind(ext2, Collections.emptyMap());
+
+        // Should see the merged results now
+        thresholdingConfig = manager.getObject();
+        List<String> groupNames = thresholdingConfig.getGroups()
+                .stream()
+                .map(Group::getName)
+                .collect(Collectors.toList());
+        assertThat(groupNames, hasItems(groupName, groupName2));
+
+        // Unbind ext2
+        manager.onUnbind(ext2, Collections.emptyMap());
+        thresholdingConfig = manager.getObject();
+        assertThat(thresholdingConfig.getGroups(), hasSize(1));
+
+        // Unbind ext1
+        manager.onUnbind(ext1, Collections.emptyMap());
+        thresholdingConfig = manager.getObject();
+        assertThat(thresholdingConfig.getGroups(), hasSize(0));
+    }
+
