@@ -1,3 +1,5 @@
+    // Verifies that the classification engine is reloaded periodically on sentinel.
+    // See NMS-12259 for more details
     @Test
     public void verifyClassificationEngineReloads() throws IOException {
         final InetSocketAddress sentinelSshAddress = stack.sentinel().getSshAddress();
@@ -11,8 +13,8 @@
         final KarafShell karafShell = new KarafShell(sentinelSshAddress);
         karafShell.runCommand(
                 "config:edit org.opennms.features.flows.classification\n" +
-                "config:property-set sentinel.cache.engine.reloadInterval 5\n" + // 5 Seconds
-                "config:update");
+                        "config:property-set sentinel.cache.engine.reloadInterval 5\n" + // 5 Seconds
+                        "config:update");
 
         // Build the Elastic Rest Client
         final JestClientFactory factory = new JestClientFactory();
@@ -21,6 +23,9 @@
                 .readTimeout(10000)
                 .multiThreaded(true).build());
         try (JestClient client = factory.getObject()) {
+            // Delete flows before doing anything else
+            client.execute(new DeleteIndex.Builder("netflow-*").build());
+
             // Verify nothing is created yet
             await().atMost(2, TimeUnit.MINUTES).pollInterval(5, TimeUnit.SECONDS).until(() -> {
                 final Search query = new Search.Builder("").addIndex("netflow-*").build();
