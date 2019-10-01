@@ -1,0 +1,38 @@
+    @GET
+    @Path("summary")
+    @Produces({MediaType.APPLICATION_JSON})
+    public NotificationSummary getInfo(@Context final SecurityContext securityContext) {
+        final String user = securityContext.getUserPrincipal().getName();
+        final NotificationSummary info = new NotificationSummary();
+        info.setUser(user);
+
+        // All notifications (ack + unack)
+        info.setTotalCount(m_notifDao.countAll());
+
+        // All unack notifications
+        info.setTotalUnacknowledgedCount(m_notifDao.countMatching(new CriteriaBuilder(OnmsNotification.class).isNull("answeredBy").toCriteria()));
+
+        // All unacknowledged notifications for current user
+        info.setUserUnacknowledgedCount(m_notifDao.countMatching(new CriteriaBuilder(OnmsNotification.class).isNull("answeredBy")
+                .alias("usersNotified", "usersNotified").eq("usersNotified.userId", user)
+                .toCriteria()));
+
+        // Determine number of notices not acknowledged and not "assigned to" current user
+        info.setTeamUnacknowledgedCount(m_notifDao.countMatching(new CriteriaBuilder(OnmsNotification.class)
+                .isNull("answeredBy")
+                .alias("usersNotified", "usersNotified", JoinType.LEFT_JOIN)
+                .or(Restrictions.ne("usersNotified.userId", user), Restrictions.isNull("usersNotified.userId"))
+                .toCriteria()));
+
+        // Load newest unacknowledged notifications for user, but only N
+        if (info.getUserUnacknowledgedCount() != 0) {
+            final List<OnmsNotification> newestNotifications = m_notifDao.findMatching(new CriteriaBuilder(OnmsNotification.class).isNull("answeredBy")
+                    .alias("usersNotified", "usersNotified").eq("usersNotified.userId", user)
+                    .orderBy("pageTime", false)
+                    .limit(10)
+                    .toCriteria());
+            info.setUserUnacknowledgedNotifications(new OnmsNotificationCollection(newestNotifications));
+        }
+        return info;
+    }
+
