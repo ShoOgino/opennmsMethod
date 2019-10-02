@@ -1,0 +1,27 @@
+    private List<PolledService> getServicesForPackage(Package pkg) {
+        final ServiceSelector selector = pollerConfig.getServiceSelectorForPackage(pkg);
+        final Collection<OnmsMonitoredService> services = monSvcDao.findMatchingServices(selector);
+        LOG.debug("Found {} services in polling package {}", services.size(), pkg.getName());
+        final List<PolledService> polledServices = new ArrayList<>(services.size());
+        for (final OnmsMonitoredService monSvc : services) {
+            final Service serviceConfig = pollerConfig.getServiceInPackage(monSvc.getServiceName(), pkg);
+
+            // Now locate the associated monitor
+            // TODO: We don't need to repeat this for every package
+            ServiceMonitor serviceMonitor = null;
+            for (final ServiceMonitorLocator locator : pollerConfig.getServiceMonitorLocators(DistributionContext.ALL)) {
+                if (serviceConfig.getName().equals(locator.getServiceName())) {
+                    serviceMonitor  = locator.getServiceMonitor(serviceMonitorRegistry);
+                }
+            }
+            if (serviceMonitor == null) {
+                LOG.warn("No monitor found for service: {}. Skipping.", serviceConfig.getName());
+                continue;
+            }
+
+            LOG.debug("Found service {} in package {}", serviceConfig.getName(), pkg.getName());
+            polledServices.add(new PolledService(monSvc, pkg, serviceConfig, serviceMonitor));
+        }
+        return polledServices;
+    }
+

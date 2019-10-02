@@ -1,0 +1,38 @@
+    /**
+     * One or more polling packages may be assigned to monitoring locations via the UI
+     * From there we retrieve the matching packages stored in etc/poller-configuration.xml
+     * Using the package definition, we retrieve all matching ifservices
+     */
+    public void scheduleAllServices() {
+        final Map<String, List<PolledService>> servicesByPackage = new HashMap<>();
+
+        LOG.info("Scheduling all services...");
+        sessionUtils.withReadOnlyTransaction(() -> {
+            for (OnmsMonitoringLocation loc : monitoringLocationDao.findAll()) {
+                final List<String> pollingPackageNames = loc.getPollingPackageNames();
+                LOG.debug("Location '{}' has polling packages: {}", loc.getLocationName(), pollingPackageNames);
+                for (String pollingPackageName : pollingPackageNames) {
+                    final List<PolledService> servicesForPackage = servicesByPackage.computeIfAbsent(pollingPackageName, (pkgName) -> {
+                        final Package pkg = pollerConfig.getPackage(pollingPackageName);
+                        if (pkg == null) {
+                            LOG.warn("Polling package '{}' is associated with location '{}', but the package was not found." +
+                                    " Using an empty set of services.", pollingPackageName, loc.getLocationName());
+                            return Collections.emptyList();
+                        }
+                        return getServicesForPackage(pkg);
+                    });
+
+                    for (PolledService polledService : servicesForPackage) {
+                        try {
+                            scheduleService(loc.getLocationName(), polledService);
+                        } catch (SchedulerException e) {
+                            LOG.warn("Failed to schedule {}.", polledService, e);
+                        }
+                    }
+                }
+
+            }
+            return null;
+        });
+    }
+

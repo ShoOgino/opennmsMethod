@@ -1,0 +1,60 @@
+    @Override
+    public void execute(JobExecutionContext context) {
+        final JobDataMap dataMap = context.getJobDetail().getJobDataMap();
+
+        final String locationName = (String)dataMap.get(LOCATION_NAME);
+        Objects.requireNonNull(locationName, "location name required!");
+
+        final PolledService svc = (PolledService)dataMap.get(POLLED_SERVICE);
+        Objects.requireNonNull(svc, "svc required!");
+
+        final PollerBackEndNG backend = (PollerBackEndNG)dataMap.get(REMOTE_POLLER_BACKEND);
+        Objects.requireNonNull(svc, "backend required!");
+
+
+        LOG.debug("Poll triggered for {} at {}", svc, locationName);
+
+        // TODO: Use distributed tracing here to add more context around span
+
+        // Issue the call and process the results asynchronously
+        backend.getLocationAwarePollerClient().poll()
+                .withService(toMonitoredService(locationName, svc.getMonitoredService()))
+                .withTimeToLive(svc.getService().getInterval())
+                // HACK to override location
+                .withMonitor(svc.getServiceMonitor())
+                .withAttributes(createParameterMap(svc.getService()))
+                .execute()
+                .whenComplete((res,ex) -> {
+                    if (ex == null) {
+                        LOG.debug("Poll for {} at {} completed successfully: {}", svc, locationName, res);
+                        backend.reportResult(locationName, svc, res.getPollStatus());
+                    } else {
+                        RpcExceptionUtils.handleException(ex, new RpcExceptionHandler<Void>() {
+                            @Override
+                            public Void onInterrupted(Throwable t) {
+                                LOG.warn("Interrupted.");
+                                return null;
+                            }
+
+                            @Override
+                            public Void onTimedOut(Throwable t) {
+                                LOG.warn("RPC timed out.", t);
+                                return null;
+                            }
+
+                            @Override
+                            public Void onRejected(Throwable t) {
+                                LOG.warn("Rejected call.", t);
+                                return null;
+                            }
+
+                            @Override
+                            public Void onUnknown(Throwable t) {
+                                LOG.warn("Unknown exception.", t);
+                                return null;
+                            }
+                        });
+                    }
+                });
+    }
+
