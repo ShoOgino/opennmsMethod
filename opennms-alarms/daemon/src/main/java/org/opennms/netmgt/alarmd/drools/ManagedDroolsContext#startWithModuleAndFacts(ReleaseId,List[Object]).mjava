@@ -22,11 +22,33 @@
         // We're started!
         started.set(true);
 
+        // Schedule the liveness check
+        livenessTimer = new java.util.Timer();
+        livenessTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    if (kieSession != null) {
+                        final Timer.Context ctx = livenessTimerMetric.time();
+                        final CountDownLatch latch = new CountDownLatch(1);
+                        kieSession.submit(kieSession -> {
+                            latch.countDown();
+                            ctx.close();
+                        });
+                        latch.await();
+                    }
+                } catch (Exception e) {
+                    LOG.error("Exception occurred while performing liveness check.", e);
+                }
+            }
+        }, LIVENESS_CHECK_INTERVAL_MS, LIVENESS_CHECK_INTERVAL_MS);
+
         // Allow the base classes to seed the context before we start ticking
         onStart();
 
         if (!useManualTick) {
             thread = new Thread(() -> {
+                fireThreadId.set(Thread.currentThread().getId());
                 while (started.get()) {
                     try {
                         LOG.debug("Firing until halt.");
