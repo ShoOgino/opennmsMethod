@@ -1,0 +1,53 @@
+    private void testNms4930Bft(final boolean disableBridgeVlanDiscovery) throws Exception {
+        final OnmsNode dlink1 = m_nodeDao.findByForeignId("linkd", DLINK1_NAME);
+        m_linkdConfig.getConfiguration().setUseBridgeDiscovery(true);
+        m_linkdConfig.getConfiguration().setDisableBridgeVlanDiscovery(disableBridgeVlanDiscovery);
+        m_linkdConfig.getConfiguration().setUseCdpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseOspfDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseLldpDiscovery(false);
+        m_linkdConfig.getConfiguration().setUseIsisDiscovery(false);
+
+        assertTrue(!m_linkdConfig.useLldpDiscovery());
+        assertTrue(!m_linkdConfig.useCdpDiscovery());
+        assertTrue(!m_linkdConfig.useOspfDiscovery());
+        assertTrue(m_linkdConfig.useBridgeDiscovery());
+        assertTrue(!m_linkdConfig.useIsisDiscovery());
+
+        assertTrue(m_linkd.scheduleNodeCollection(dlink1.getId()));
+
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+
+        assertTrue(m_linkd.runSingleSnmpCollection(dlink1.getId()));
+        assertEquals(0,m_bridgeBridgeLinkDao.countAll());
+        assertEquals(0,m_bridgeMacLinkDao.countAll());
+
+        Set<BridgeForwardingTableEntry> links  = m_linkd.getBridgeTopologyService().useBridgeTopologyUpdateBFT(dlink1.getId());
+
+        assertEquals(59,links.size());
+        for (BridgeForwardingTableEntry link: links) {
+            System.err.println(link.printTopology());
+            if (BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_SELF ==  link.getBridgeDot1qTpFdbStatus()) {
+                continue;
+            }
+            assertEquals(BridgeDot1qTpFdbStatus.DOT1D_TP_FDB_STATUS_LEARNED,link.getBridgeDot1qTpFdbStatus());
+            BridgeMacLink maclink =
+                    BridgeForwardingTableEntry.create(
+                            BridgePort.getFromBridgeForwardingTableEntry(link),
+                            link.getMacAddress(),
+                            BridgeMacLinkType.BRIDGE_LINK);
+            maclink.setBridgeMacLinkLastPollTime(maclink.getBridgeMacLinkCreateTime());
+            m_bridgeMacLinkDao.save(maclink);
+        }
+
+        assertEquals(58,m_bridgeMacLinkDao.countAll());
+
+        for (BridgeMacLink maclink: m_bridgeMacLinkDao.findAll()) {
+            assertNotNull(maclink.getBridgePortIfIndex());
+            assertNotNull(maclink.getBridgePort());
+            assertNotNull(maclink.getNode());
+            assertNotNull(maclink.getMacAddress());
+            System.err.println(maclink.toString());
+        }
+    }
+
