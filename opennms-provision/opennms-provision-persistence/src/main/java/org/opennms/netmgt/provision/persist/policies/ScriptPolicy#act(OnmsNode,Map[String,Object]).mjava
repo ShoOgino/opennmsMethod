@@ -1,0 +1,45 @@
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public OnmsNode act(final OnmsNode node, Map<String, Object> attributes) {
+        try {
+            final CompiledScript compiledScript = compileScript(getScript());
+            if (compiledScript == null) {
+                LOG.warn("No compiled script available for execution.");
+            } else {
+                // For the case where we can run script in transaction, at the end of scan.
+                if (attributes.size() > 0 && attributes.get(RUN_IN_TRANSACTION) != null
+                        && attributes.get(RUN_IN_TRANSACTION).equals(true)) {
+
+                    // Run script in transaction.
+                    return (OnmsNode) m_sessionUtils.withTransaction(() -> {
+                        try {
+                            // Fetch node object again from DB to make it attached.
+                            if (node.getId() != null && node.getId() > 0) {
+                                OnmsNode onmsNode = m_nodeDao.get(node.getId());
+                                return runScript(compiledScript, onmsNode, attributes);
+                            } else {
+                                LOG.warn("Unexpected node {} which is not persisted yet", node);
+                            }
+
+                        } catch (ScriptException e) {
+                            LOG.warn("Error applying ScriptPolicy.", e);
+                        }
+                        return node;
+                    });
+                } else {
+                    runScript(compiledScript, node, attributes);
+                }
+            }
+        } catch (ScriptException e) {
+            LOG.warn("Error while compiling script.", e);
+        } catch (IOException e) {
+            LOG.warn("Error while opening script file {}.", m_script, e);
+        } catch (Exception e) {
+            LOG.warn("Unkown error while applying script.", e);
+        }
+
+        return node;
+    }
+
