@@ -39,6 +39,45 @@
                 }
             }
 
+            // Add ranges from definitions to the includes list.
+            getConfiguration().getDefinitions().forEach(def -> {
+
+                long timeoutFromDef = def.getTimeout().orElse(defaultTimeout);
+                int retriesFromDef = def.getRetries().orElse(defaultRetries);
+
+                for (final IncludeRange ir : def.getIncludeRanges()) {
+
+                    // Validate IP range; if invalid, then log and discard this range
+                    try {
+                        InetAddressUtils.toIpAddrBytes(ir.getBegin());
+                    } catch (Throwable e) {
+                        LOG.warn("Definition: Begin address of discovery range is invalid, discarding: {}", ir.getBegin());
+                        continue;
+                    }
+
+                    try {
+                        InetAddressUtils.toIpAddrBytes(ir.getEnd());
+                    } catch (Throwable e) {
+                        LOG.warn("Definition : End address of discovery range is invalid, discarding: {}", ir.getEnd());
+                        continue;
+                    }
+
+                    long timeout = ir.getTimeout().orElse(timeoutFromDef);
+                    int retries = ir.getRetries().orElse(retriesFromDef);
+
+                    try {
+                        includes.add(new IPPollRange(ir.getForeignSource().orElse(def.getForeignSource()),
+                                                    ir.getLocation().orElse(def.getLocationName()),
+                                                    ir.getBegin(),
+                                                    ir.getEnd(),
+                                                    timeout,
+                                                    retries));
+                    } catch (final UnknownHostException uhE) {
+                        LOG.warn("Definition: Failed to convert address range ({}, {})", ir.getBegin(), ir.getEnd(), uhE);
+                    }
+                }
+            });
+
             return includes;
         } finally {
             getReadLock().unlock();

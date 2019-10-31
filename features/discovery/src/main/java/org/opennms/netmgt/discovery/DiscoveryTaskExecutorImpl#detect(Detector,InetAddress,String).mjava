@@ -1,0 +1,43 @@
+    /**
+     * This calls detection asynchronously for a given detector and returns a completable future.
+     */
+    private CompletableFuture<Boolean> detect(Detector detector, InetAddress inetAddress, String location) {
+
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        try {
+            LOG.info("Attemping to detect '{}' service on IP Address {} at location {}", detector.getName(),
+                    inetAddress.getHostAddress(), location);
+            Map<String, String> attributes = detector.getParameters().stream()
+                    .collect(Collectors.toMap(Parameter::getKey, Parameter::getValue));
+            CompletableFuture<Boolean> result = getLocationAwareDetectorClient().detect()
+                    .withAddress(inetAddress)
+                    .withClassName(detector.getClassName())
+                    .withLocation(location)
+                    .withAttributes(attributes)
+                    .execute();
+            result.whenComplete((response, ex) -> {
+                Logging.withPrefix(Discovery.getLoggingCategory(), new Runnable() {
+                    @Override
+                    public void run() {
+                        if (ex != null) {
+                            // Don't throw exception as Future join won't like.
+                            LOG.error("Exception while detecting '{}' service on IP Address {} at location {} ",
+                                    detector.getName(), inetAddress.getHostAddress(), location, ex);
+                            future.complete(false);
+                        } else {
+                            LOG.info("Service Detection {} for service '{}' on IP Address {} at location {}",
+                                    response ? "succeeded" : "failed", detector.getName(), inetAddress.getHostAddress(), location);
+                            future.complete(response);
+                        }
+                    }
+                });
+
+            });
+        } catch (Exception e) {
+            LOG.error("Exception while detecting {} service on IP Address {} at location {} ",
+                    detector.getName(), inetAddress.getHostAddress(), location, e);
+            future.complete(false);
+        }
+        return future;
+    }
+
