@@ -1,0 +1,34 @@
+    @Test
+    @JUnitHttpServer(basicAuth = true, webapps = @Webapp(context = "/opennms", path = "src/test/resources/loginTestWar"))
+    public void testHeaders() throws UnknownHostException {
+        final int port = JUnitHttpServerExecutionListener.getPort();
+        final Map<String, Object> m = new ConcurrentSkipListMap<String, Object>();
+        final ServiceMonitor monitor = new HttpPostMonitor();
+        final MonitoredService svc = MonitorTestUtils.getMonitoredService(3, "localhost", DnsUtils.resolveHostname("localhost", false), "HTTP");
+
+        if (port > 0) {
+            m.put("port", String.valueOf(port));
+        } else {
+            throw new IllegalStateException("Unable to determine what port the HTTP server started on!");
+        }
+
+        m.put("retry", "0");
+        m.put("timeout", "500");
+        m.put("banner", "");
+        m.put("uri", "/opennms/j_spring_security_check");
+        m.put("payload", "foo");
+        m.put("header0", "Authorization: Basic " + new String(Base64.encodeBase64(("admin:istrator").getBytes())));
+
+        final PollStatus status1 = monitor.poll(svc, m);
+        MockUtil.println("Reason: " + status1.getReason());
+        assertEquals(PollStatus.SERVICE_AVAILABLE, status1.getStatusCode());
+        assertNull(status1.getReason());
+
+        m.put("header0", "Authorization: Basic " + new String(Base64.encodeBase64(("admin:wrong").getBytes())));
+
+        final PollStatus status2 = monitor.poll(svc, m);
+        MockUtil.println("Reason: " + status2.getReason());
+        assertEquals(PollStatus.SERVICE_UNAVAILABLE, status2.getStatusCode());
+        assertNotNull(status2.getReason());
+    }
+
