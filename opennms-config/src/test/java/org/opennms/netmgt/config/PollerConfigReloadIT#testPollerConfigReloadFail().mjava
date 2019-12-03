@@ -1,0 +1,77 @@
+    @Test
+    public void testPollerConfigReloadFail() throws Exception {
+        final File temporaryFile = File.createTempFile("poller-configuration-", ".xml", new File(PollerConfigReloadIT.class.getResource("/etc").getFile()));
+        PollerConfigFactory.setPollerConfigFile(temporaryFile);
+
+        final AtomicBoolean invalid = new AtomicBoolean(false);
+        FilterDaoFactory.setInstance(new FilterDao() {
+            @Override
+            public SortedMap<Integer, String> getNodeMap(String rule) throws FilterParseException {
+                return null;
+            }
+
+            @Override
+            public Map<InetAddress, Set<String>> getIPAddressServiceMap(String rule) throws FilterParseException {
+                return null;
+            }
+
+            @Override
+            public void flushActiveIpAddressListCache() {
+            }
+
+            @Override
+            public List<InetAddress> getIPAddressList(String rule) throws FilterParseException {
+                return null;
+            }
+
+            @Override
+            public boolean isValid(String addr, String rule) throws FilterParseException {
+                return false;
+            }
+
+            @Override
+            public boolean isRuleMatching(String rule) throws FilterParseException {
+                return false;
+            }
+
+            @Override
+            public void validateRule(String rule) throws FilterParseException {
+                if (invalid.get()) {
+                    throw new FilterParseException("Something fishy");
+                }
+            }
+
+            @Override
+            public List<InetAddress> getActiveIPAddressList(String rule) throws FilterParseException {
+                return Lists.newArrayList();
+            }
+        });
+
+        IOUtils.copy(new FileInputStream(PollerConfigReloadIT.class.getResource("/poller-configuration-valid1.xml").getFile()), new FileOutputStream(temporaryFile));
+        long lastModified = temporaryFile.lastModified();
+
+        PollerConfigFactory.init();
+
+        assertEquals("IPADDR IPLIKE 1.*.*.*", PollerConfigFactory.getInstance().getPackage("example1").getFilter().getContent());
+
+        IOUtils.copy(new FileInputStream(PollerConfigReloadIT.class.getResource("/poller-configuration-valid2.xml").getFile()), new FileOutputStream(temporaryFile));
+        temporaryFile.setLastModified(lastModified + 1000);
+
+        invalid.set(true);
+        try {
+            PollerConfigFactory.getInstance().update();
+        } catch (FilterParseException e) {
+            // we expect this
+        }
+
+        assertEquals("IPADDR IPLIKE 1.*.*.*", PollerConfigFactory.getInstance().getPackage("example1").getFilter().getContent());
+
+        IOUtils.copy(new FileInputStream(PollerConfigReloadIT.class.getResource("/poller-configuration-valid2.xml").getFile()), new FileOutputStream(temporaryFile));
+        temporaryFile.setLastModified(lastModified + 2000);
+
+        invalid.set(false);
+        PollerConfigFactory.getInstance().update();
+
+        assertEquals("IPADDR IPLIKE 2.*.*.*", PollerConfigFactory.getInstance().getPackage("example1").getFilter().getContent());
+    }
+
