@@ -1,35 +1,36 @@
     @Override
-    public Stream<CollectionSetWithAgent> handleMessage(TelemetryMessageLogEntry message, TelemetryMessageLog messageLog) {
-        final TelemetryTop.TelemetryStream jtiMsg;
+    public Stream<CollectionSetWithAgent> handleCollectionMessage(TelemetryMessageLogEntry message, TelemetryMessageLog messageLog) {
+        final Telemetry msg;
         try {
-            jtiMsg = TelemetryTop.TelemetryStream.parseFrom(message.getByteArray(), s_registry);
-        } catch (final InvalidProtocolBufferException e) {
+            msg = tryParsingTelemetryMessage(message.getByteArray());
+        } catch (InvalidProtocolBufferException e) {
             LOG.warn("Invalid packet: {}", e);
             return Stream.empty();
         }
 
         CollectionAgent agent = null;
         try {
-            // Attempt to resolve the systemId to an InetAddress
-            final InetAddress inetAddress = InetAddress.getByName(jtiMsg.getSystemId());
+            LOG.debug(" Telemetry message content : {} ", msg);
+            final InetAddress inetAddress = InetAddress.getByName(msg.getNodeIdStr());
             final Optional<Integer> nodeId = interfaceToNodeCache.getFirstNodeId(messageLog.getLocation(), inetAddress);
             if (nodeId.isPresent()) {
-                // NOTE: This will throw a IllegalArgumentException if the
-                // nodeId/inetAddress pair does not exist in the database
+                // NOTE: This will throw a IllegalArgumentException if the nodeId/inetAddress pair does not exist in the database
                 agent = collectionAgentFactory.createCollectionAgent(Integer.toString(nodeId.get()), inetAddress);
             }
         } catch (UnknownHostException e) {
-            LOG.debug("Could not convert system id to address: {}", jtiMsg.getSystemId());
+            LOG.debug("Could not convert system id to address: {}", msg.getNodeIdStr());
         }
 
         if (agent == null) {
-            // We were unable to build the agent by resolving the systemId,
-            // try finding
-            // a node with a matching label
+            // We were unable to build the agent by resolving the systemId, try finding a node with a matching label
             agent = transactionTemplate.execute(new TransactionCallback<CollectionAgent>() {
                 @Override
                 public CollectionAgent doInTransaction(TransactionStatus status) {
-                    final OnmsNode node = Iterables.getFirst(nodeDao.findByLabel(jtiMsg.getSystemId()), null);
+                    OnmsNode node = Iterables.getFirst(nodeDao.findByLabelForLocation(msg.getNodeIdStr(), messageLog.getLocation()), null);
+                    if (node == null) {
+                        // If there is no matching label , Try matching with foreignId
+                        node = Iterables.getFirst(nodeDao.findByForeignIdForLocation(msg.getNodeIdStr(), messageLog.getLocation()), null);
+                    }
                     if (node != null) {
                         final OnmsIpInterface primaryInterface = node.getPrimaryInterface();
                         return collectionAgentFactory.createCollectionAgent(primaryInterface);
@@ -40,7 +41,7 @@
         }
 
         if (agent == null) {
-            LOG.warn("Unable to find node and interface for system id: {}", jtiMsg.getSystemId());
+            LOG.warn("Unable to find node and interface for system id: {}", msg.getNodeIdStr());
             return Stream.empty();
         }
 
@@ -51,7 +52,7 @@
         }
 
         try {
-            final CollectionSet collectionSet = builder.build(agent, jtiMsg, jtiMsg.getTimestamp());
+            final CollectionSet collectionSet = builder.build(agent, msg, msg.getMsgTimestamp());
             return Stream.of(new CollectionSetWithAgent(agent, collectionSet));
 
         } catch (final ScriptException e) {

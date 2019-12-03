@@ -1,0 +1,54 @@
+    @Override
+    public void handleMessage(final TelemetryMessageLogEntry message,
+                              final TelemetryMessageLog messageLog) {
+        LOG.trace("Parsing packet: {}", message);
+        final BsonDocument document = new RawBsonDocument(message.getByteArray());
+
+        // This adapter only cares about peer up/down packets
+        if (!getString(document, "@type")
+                .map(type -> Header.Type.PEER_UP_NOTIFICATION.name().equals(type) ||
+                             Header.Type.PEER_DOWN_NOTIFICATION.name().equals(type))
+                .orElse(false)) {
+            return;
+        }
+
+        // Find the node for the router who has exported the peer status notification
+        final InetAddress exporterAddress = InetAddressUtils.getInetAddress(messageLog.getSourceAddress());
+        final Optional<Integer> exporterNodeId = this.interfaceToNodeCache.getFirstNodeId(messageLog.getLocation(), exporterAddress);
+        if (!exporterNodeId.isPresent()) {
+            LOG.warn("Unable to find node for exporter: {}", exporterAddress);
+            return;
+        }
+
+        final boolean up = getString(document, "@type")
+                .map(type -> Header.Type.PEER_UP_NOTIFICATION.name().equals(type))
+                .orElse(false);
+
+        final String uei = up
+                           ? EventConstants.BMP_PEER_UP
+                           : EventConstants.BMP_PEER_DOWN;
+
+        final Instant timestamp = Instant.ofEpochSecond(getInt64(document, "peer", "timestamp", "epoch").get(),
+                                                        getInt64(document, "peer", "timestamp", "nanos").orElse(0L));
+
+        final EventBuilder event = new EventBuilder(uei, "telemetryd:" + this.adapterConfig.getName(), Date.from(timestamp));
+        event.setNodeid(exporterNodeId.get());
+        event.setInterface(exporterAddress);
+
+        // Extract peer details
+        getInt64(document, "peer", "distinguisher").ifPresent(value -> event.addParam("distinguisher", Long.toString(value)));
+        getString(document, "peer", "address").ifPresent(value -> event.addParam("address", value));
+        getInt64(document, "peer", "as").ifPresent(value -> event.addParam("as", Long.toString(value)));
+        getInt64(document, "peer", "id").ifPresent(value -> event.addParam("id", Long.toString(value)));
+
+        // Extract error details
+        if (!up) {
+            getString(document, "type").ifPresent(value -> event.addParam("type", value));
+            first(getInt64(document, "code").map(code -> "Code " + code),
+                  getString(document, "error"))
+                    .ifPresent(value -> event.addParam("error", value));
+        }
+
+        this.eventForwarder.sendNow(event.getEvent());
+    }
+
