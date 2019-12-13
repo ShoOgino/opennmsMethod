@@ -1,0 +1,28 @@
+    public FieldSpecifier(final ByteBuf buffer) throws InvalidPacketException {
+        final int elementId = uint16(buffer);
+
+        this.informationElementId = elementId & 0x7FFF;
+        this.fieldLength = uint16(buffer);
+
+        if ((elementId & 0x8000) == 0) {
+            this.enterpriseNumber = Optional.empty();
+        } else {
+            long enterpriseNumber = uint32(buffer);
+            this.enterpriseNumber = Optional.of(enterpriseNumber);
+        }
+
+        this.informationElement = InformationElementDatabase.instance
+                .lookup(Protocol.IPFIX, this.enterpriseNumber, this.informationElementId).orElseGet(() -> {
+                    LOG.warn("Undeclared information element: {}", UndeclaredValue.nameFor(this.enterpriseNumber, this.informationElementId));
+                    return UndeclaredValue.parser(this.enterpriseNumber, this.informationElementId);
+                });
+
+        if (this.fieldLength > this.informationElement.getMaximumFieldLength() || this.fieldLength < this.informationElement.getMinimumFieldLength()) {
+            throw new InvalidPacketException(buffer, "Template field '%s' has illegal size: %d (min=%d, max=%d)",
+                    this.informationElement.getName(),
+                    this.fieldLength,
+                    this.informationElement.getMinimumFieldLength(),
+                    this.informationElement.getMaximumFieldLength());
+        }
+    }
+
