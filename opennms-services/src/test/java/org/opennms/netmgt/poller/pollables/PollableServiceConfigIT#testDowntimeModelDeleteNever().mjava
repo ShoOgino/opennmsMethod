@@ -1,0 +1,56 @@
+    @Test
+    public void testDowntimeModelDeleteNever() throws Exception {
+        final MockTimer timer = new MockTimer();
+        timer.setCurrentTime(0);
+
+        final FilterDao fd = mock(FilterDao.class);
+        FilterDaoFactory.setInstance(fd);
+
+        InputStream is = new FileInputStream(new File("src/test/resources/etc/downtime-never-poller-configuration.xml"));
+        PollerConfigFactory factory = new PollerConfigFactory(0, is);
+        PollerConfigFactory.setInstance(factory);
+        IOUtils.closeQuietly(is);
+
+        PersisterFactory persisterFactory = new MockPersisterFactory();
+
+        final MockEventIpcManager eventMgr = new MockEventIpcManager();
+
+        final MockPollContext context = new MockPollContext();
+        context.setEventMgr(eventMgr);
+
+        final PollableNetwork network = new PollableNetwork(context);
+        final PollableNode node = network.createNodeIfNecessary(1, "foo", null);
+        final PollableInterface iface = new PollableInterface(node, InetAddressUtils.UNPINGABLE_ADDRESS);
+        final PollableService svc = new PollableService(iface, "ICMP");
+        final Package pkg = factory.getPackage("DowntimeNever");
+        final Schedule sched = mock(Schedule.class);
+        final ThresholdingService thresholdingService = mock(ThresholdingService.class);
+
+        final PollableServiceConfig psc = new PollableServiceConfig(svc, factory, pkg, timer,
+                                                                    persisterFactory, thresholdingService,
+                                                                    m_locationAwarePollerClient, m_pollOutagesDao);
+
+        svc.setPollConfig(psc);
+        svc.setSchedule(sched);
+
+        svc.updateStatus(PollStatus.down("so down right now"));
+        assertTrue(svc.getStatus().isDown());
+
+        timer.setCurrentTime(5L);
+        assertEquals(20, psc.getInterval());
+
+        timer.setCurrentTime(10L);
+        assertEquals(20, psc.getInterval());
+
+        timer.setCurrentTime(18L);
+        assertEquals(20, psc.getInterval());
+
+        timer.setCurrentTime(25L);
+        assertEquals(20, psc.getInterval());
+
+        timer.setCurrentTime(205L);
+        assertEquals(0, psc.getInterval());
+
+        eventMgr.getEventAnticipator().verifyAnticipated();
+    }
+
