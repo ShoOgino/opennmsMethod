@@ -1,0 +1,50 @@
+    public List<FlowDocument> enrich(final Collection<Flow> flows, final FlowSource source) {
+        if (flows.isEmpty()) {
+            LOG.info("Nothing to enrich.");
+            return Collections.emptyList();
+        }
+
+        return sessionUtils.withTransaction(() -> flows.stream().map(flow -> {
+            final FlowDocument document = FlowDocument.from(flow);
+            // Metadata from message
+            document.setHost(source.getSourceAddress());
+            document.setLocation(source.getLocation());
+
+            // Node data
+            getNodeInfoFromCache(source.getLocation(), source.getSourceAddress(), source.getContextKey(), flow.getNodeIdentifier()).ifPresent(document::setNodeExporter);
+            if (document.getDstAddr() != null) {
+                getNodeInfoFromCache(source.getLocation(), document.getDstAddr(), null, null).ifPresent(document::setNodeDst);
+            }
+            if (document.getSrcAddr() != null) {
+                getNodeInfoFromCache(source.getLocation(), document.getSrcAddr(), null, null).ifPresent(document::setNodeSrc);
+            }
+
+            // Locality
+            if (document.getSrcAddr() != null) {
+                document.setSrcLocality(isPrivateAddress(document.getSrcAddr()) ? Locality.PRIVATE : Locality.PUBLIC);
+            }
+            if (document.getDstAddr() != null) {
+                document.setDstLocality(isPrivateAddress(document.getDstAddr()) ? Locality.PRIVATE : Locality.PUBLIC);
+            }
+
+            if (Locality.PUBLIC.equals(document.getDstLocality()) || Locality.PUBLIC.equals(document.getSrcLocality())) {
+                document.setFlowLocality(Locality.PUBLIC);
+            } else if (Locality.PRIVATE.equals(document.getDstLocality()) || Locality.PRIVATE.equals(document.getSrcLocality())) {
+                document.setFlowLocality(Locality.PRIVATE);
+            }
+
+            final ClassificationRequest classificationRequest = createClassificationRequest(document);
+
+            // Check whether classification is possible
+            if (classificationRequest.isClassifiable()) {
+                // Apply Application mapping
+                document.setApplication(classificationEngine.classify(classificationRequest));
+            }
+
+            // Conversation tagging
+            document.setConvoKey(ConversationKeyUtils.getConvoKeyAsJsonString(document));
+
+            return document;
+        }).collect(Collectors.toList()));
+    }
+
