@@ -1,0 +1,48 @@
+    public GenericGraph transform(GenericGraph sourceGraph) {
+        // Determine vertices that are in focus but also actually known by the source graph
+        final List<VertexRef> vertexRefsInFocus = verticesInFocus.stream().map(v -> new VertexRef(v.getNamespace(), v.getId())).collect(Collectors.toList());
+        final List<GenericVertex> knownVerticesInFocus = sourceGraph.resolveVertexRefs(vertexRefsInFocus);
+
+        // Now build the view
+        final GenericGraphBuilder graphBuilder = GenericGraph.builder()
+                .graphInfo(sourceGraph)
+                .properties(sourceGraph.getProperties())
+                .addVertices(knownVerticesInFocus);
+
+        // Determine all vertices according to szl
+        final List<Vertex> alreadyProcessedVertices = new ArrayList<>();
+        final List<GenericVertex> verticesToProcess = Lists.newArrayList(knownVerticesInFocus);
+        for (int i=0; i<szl; i++) {
+            final List<GenericVertex> tmpVertices = new ArrayList<>();
+            for (GenericVertex eachVertex : verticesToProcess) {
+                final Collection<GenericVertex> neighbors = sourceGraph.getNeighbors(eachVertex);
+                graphBuilder.addVertices(neighbors);
+
+                // Mark for procession
+                for (GenericVertex eachNeighbor : neighbors) {
+                    // but only if not already processed or are processing in this iteration
+                    if (!alreadyProcessedVertices.contains(eachNeighbor) && !verticesToProcess.contains(eachNeighbor)) {
+                        tmpVertices.add(eachNeighbor);
+                    }
+                }
+            }
+            alreadyProcessedVertices.addAll(verticesToProcess);
+            verticesToProcess.clear();
+            verticesToProcess.addAll(tmpVertices);
+        }
+
+        // Add all edges now
+        // First determine all edges
+        final List<GenericEdge> edges = new ArrayList<>();
+        for (GenericVertex eachVertex : graphBuilder.getVertices()) {
+            edges.addAll(sourceGraph.getConnectingEdges(eachVertex));
+        }
+
+        // Second remove all edges which are "on the edge"
+        final List<GenericEdge> edgesToAdd = edges.stream().filter(e -> graphBuilder.getVertex(e.getSource().getId()) != null)
+                .filter(e -> graphBuilder.getVertex(e.getTarget().getId()) != null)
+                .collect(Collectors.toList());
+        graphBuilder.addEdges(edgesToAdd);
+        return graphBuilder.build();
+    }
+
