@@ -1,0 +1,39 @@
+    /**
+     * <p>handleReloadConfigEvent</p>
+     *
+     * @param e a {@link org.opennms.netmgt.xml.event.Event} object.
+     */
+    @EventHandler(uei=EventConstants.RELOAD_DAEMON_CONFIG_UEI)
+    public void handleReloadConfigEvent(IEvent e) {
+        
+        if (isReloadConfigEventTarget(e)) {
+            LOG.info("handleReloadConfigEvent: reloading configuration...");
+            EventBuilder ebldr = null;
+
+            LOG.debug("handleReloadConfigEvent: acquiring lock...");
+            synchronized (m_scheduler) {
+                try {
+                    LOG.debug("handleReloadConfigEvent: lock acquired, unscheduling current reports...");
+                    unscheduleReports();
+                    m_reportDefinitionBuilder.reload();
+                    LOG.debug("handleReloadConfigEvent: config remarshaled, unscheduling current reports...");
+                    LOG.debug("handleReloadConfigEvent: reports unscheduled, rescheduling...");
+                    start();
+                    LOG.debug("handleRelodConfigEvent: reports rescheduled.");
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_SUCCESSFUL_UEI, "Statsd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, "Statsd");
+                } catch (Throwable exception) {
+                    LOG.error("handleReloadConfigurationEvent: Error reloading configuration", exception);
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_FAILED_UEI, "Statsd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, "Statsd");
+                    ebldr.addParam(EventConstants.PARM_REASON, exception.getLocalizedMessage().substring(1, 128));
+                }
+                if (ebldr != null) {
+                    getEventForwarder().sendNow(ebldr.getEvent());
+                }
+            }
+            LOG.debug("handleReloadConfigEvent: lock released.");
+        }
+        
+    }
+

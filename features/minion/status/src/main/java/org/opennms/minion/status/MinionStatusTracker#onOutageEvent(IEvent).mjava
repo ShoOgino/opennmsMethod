@@ -1,0 +1,46 @@
+    @EventHandler(ueis= {
+            OUTAGE_CREATED_EVENT_UEI,
+            OUTAGE_RESOLVED_EVENT_UEI
+    })
+    public void onOutageEvent(final IEvent e) {
+        final boolean isHeartbeat = MINION_HEARTBEAT.equals(e.getService());
+        final boolean isRpc = MINION_RPC.equals(e.getService());
+
+        if (!isHeartbeat && !isRpc) {
+            return;
+        }
+
+        runInLoggingTransaction(() -> {
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Minion {} service event received for node {}: {}", isHeartbeat? "heartbeat":"rpc", e.getNodeid(), e);
+            }
+
+            assertHasNodeId(e);
+
+            final OnmsMinion minion = getMinionForNodeId(e.getNodeid().intValue());
+            final String minionId = minion.getId();
+
+            AggregateMinionStatus status = m_state.get(minionId);
+            if (status == null) {
+                status = AggregateMinionStatus.down();
+            }
+
+            final String uei = e.getUei();
+            if (MINION_HEARTBEAT.equalsIgnoreCase(e.getService())) {
+                if (OUTAGE_CREATED_EVENT_UEI.equals(uei)) {
+                    status = status.heartbeatDown();
+                } else if (OUTAGE_RESOLVED_EVENT_UEI.equals(uei)) {
+                    status = status.heartbeatUp();
+                }
+            } else if (MINION_RPC.equalsIgnoreCase(e.getService())) {
+                if (OUTAGE_CREATED_EVENT_UEI.equals(uei)) {
+                    status = status.rpcDown();
+                } else if (OUTAGE_RESOLVED_EVENT_UEI.equals(uei)) {
+                    status = status.rpcUp();
+                }
+            }
+
+            updateStateIfChanged(minion, status, m_state.get(minionId));
+        });
+    }
+

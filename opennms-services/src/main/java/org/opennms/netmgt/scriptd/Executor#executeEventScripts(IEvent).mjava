@@ -1,0 +1,83 @@
+    private void executeEventScripts(IEvent m_event) {
+
+        IScript[] attachedScripts = m_event.getScript();
+
+        Set<EventScript> mapScripts = null;
+
+        try {
+            mapScripts = m_eventScriptMap.get(m_event.getUei());
+        } catch (Throwable e) {
+            LOG.warn("Unexpected exception: " + e.getMessage(), e);
+        }
+
+        if (attachedScripts.length > 0 || mapScripts != null || m_eventScripts.size() > 0) {
+            LOG.debug("Executing scripts for: {}", m_event.getUei());
+
+            m_scriptManager.registerBean("event", m_event);
+
+            // And the event's node to the script context
+            OnmsNode node = null;
+
+            if (m_event.hasNodeid()) {
+                Long nodeLong = m_event.getNodeid();
+                Integer nodeInt = Integer.valueOf(nodeLong.intValue());
+                node = m_nodeDao.get(nodeInt);
+                m_scriptManager.registerBean("node", node);
+            }
+
+            // execute the scripts attached to the event
+
+            LOG.debug("Executing attached scripts");
+            if (attachedScripts.length > 0) {
+                for (final IScript script : attachedScripts) {
+                    try {
+                        m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent());
+                    } catch (BSFException e) {
+                        LOG.error("Attached script [{}] execution failed", script, e);
+                    }
+                }
+            }
+
+            // execute the scripts mapped to the UEI
+
+            LOG.debug("Executing mapped scripts");
+            if (mapScripts != null) {
+                for (final EventScript script : mapScripts) {
+                    if (script.getContent().isPresent()) {
+                        try {
+                            m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent().get());
+                        } catch (BSFException e) {
+                            LOG.error("UEI-specific event handler script execution failed: {}", m_event.getUei(), e);
+                        }
+                    } else {
+                        LOG.warn("UEI-specific event handler script missing contents: {}", script);
+                    }
+                }
+            }
+
+            // execute the scripts that are not mapped to any UEI
+
+            LOG.debug("Executing global scripts");
+            for (final EventScript script : m_eventScripts) {
+                if (script.getContent().isPresent()) {
+                    try {
+                        m_scriptManager.exec(script.getLanguage(), "", 0, 0, script.getContent().get());
+                    } catch (BSFException e) {
+                        LOG.error("Non-UEI-specific event handler script execution failed : " + script, e);
+                    }
+                } else {
+                    LOG.warn("Non-UEI-specific event handler script missing contents: {}", script);
+                }
+            }
+
+            if (node != null) {
+                m_scriptManager.unregisterBean("node");
+            }
+
+            m_scriptManager.unregisterBean("event");
+
+            LOG.debug("Finished executing scripts for: {}", m_event.getUei());
+        }
+
+    }
+
