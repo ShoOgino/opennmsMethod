@@ -1,0 +1,38 @@
+    @Test
+    public void blocksWhenFull() throws WriteFailedException, IOException, InterruptedException {
+        QueueFileOffHeapDispatchQueue<byte[]> queue = new QueueFileOffHeapDispatchQueue<>(b -> b, b -> b,
+                "blocksWhenFull", Paths.get(folder.newFolder().toURI()), 1, 1, 300);
+
+        // Fill the in-memory queue and the file and force a file check
+        queue.enqueue(new byte[0], "key1");
+        queue.enqueue(new byte[10], "key2");
+        queue.checkFileSize();
+
+        AtomicBoolean didQueue = new AtomicBoolean(false);
+
+        CompletableFuture.runAsync(() -> {
+            // Now try to queue again and verify that we block
+            try {
+                queue.enqueue(new byte[1], "key3");
+                didQueue.set(true);
+            } catch (WriteFailedException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        try {
+            await().pollDelay(10, TimeUnit.MILLISECONDS)
+                    .atMost(100, TimeUnit.MILLISECONDS)
+                    .until(didQueue::get);
+            fail("Dequeue happened but we should have been blocking");
+        } catch (ConditionTimeoutException expected) {
+        }
+
+        // Now dequeue which should free up space in the file
+        queue.dequeue();
+        queue.dequeue();
+        queue.checkFileSize();
+
+        await().atMost(1, TimeUnit.SECONDS).until(didQueue::get);
+    }
+

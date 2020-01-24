@@ -1,0 +1,63 @@
+    /**
+     * On every call to dequeue, if the off-heap queue is configured, we check the file for an entry and drain it to the
+     * in-memory queue provided there is room. We then take exclusively from the head of the in-memory queue which
+     * ensures ordering with respect to the two discrete queues.
+     * <p>
+     * After completely draining the queue on disk we check the existing batch for entries and drain them next.
+     */
+    @Override
+    public Map.Entry<String, T> dequeue() throws InterruptedException {
+        LOG.debug("Dequeueing an entry from queue with current size {}", getSize());
+
+        // If off-heap queueing is enabled we need to first check if there is anything to read off-heap
+        if (offHeapQueue != null) {
+            offHeapLock.lock();
+            try {
+                // Try to move a batch from the off-heap queue to the in-memory queue
+                if (offHeapQueue.size() > 0 && inMemoryQueue.remainingCapacity() >= batchSize) {
+                    LOG.trace("Found an entry off-heap and there was room in-memory, moving it");
+
+                    try {
+                        byte[] entry = offHeapQueue.peek();
+                        if (entry != null) {
+                            offHeapQueue.remove();
+
+                            try {
+                                inMemoryQueue.addAll(unbatchSerializedBatch(new SerializedBatch(entry)));
+                            } catch (ExecutionException e) {
+                                RATE_LIMITED_LOGGER.warn("Exception while deserializing", e);
+                                throw new RuntimeException(e);
+                            }
+
+                            // Since we read off the disk we need to check the file to see the new capacity
+                            checkFileSize();
+                        }
+                    } catch (IOException e) {
+                        RATE_LIMITED_LOGGER.warn("Exception while dequeueing", e);
+                        throw new RuntimeException(e);
+                    }
+                } else if (!batch.isEmpty() && offHeapQueue.isEmpty()) {
+                    // Try to move the batch to the in-memory queue if there is enough room
+                    if (inMemoryQueue.remainingCapacity() >= batch.size()) {
+                        LOG.trace("Found an entry in batch and there was room in-memory, moving it");
+                        inMemoryQueue.addAll(batch.unbatch());
+
+                        // Since we just moved the batch cancel any flush if there was one pending
+                        //
+                        // This is done to prevent a race condition where we were waiting on disk space to flush a batch
+                        // but in the meantime we processed all the on disk entries along with the batched entries
+                        //
+                        // If we didn't prevent that batch from being flushed we would process it twice
+                        fileCapacityLatch.cancelFlush();
+                    }
+                }
+            } finally {
+                offHeapLock.unlock();
+            }
+        }
+
+        LOG.trace("Waiting for an entry from in-memory queue...");
+
+        return inMemoryQueue.take();
+    }
+
