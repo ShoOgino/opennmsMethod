@@ -1,0 +1,112 @@
+    /**
+     * When enqueueing we prefer the in-memory queue unless the file based queue is already utilized. If that fails
+     * (because it is full) we then enqueue via the file based queue provided it is not currently full and has been
+     * configured. If the file based queue is full or not configured we block and wait for capacity.
+     * <p>
+     * We only write to the file based queue when we have a full batch ready. The batch container is then emptied after
+     * being written to disk.
+     */
+    @Override
+    public EnqueueResult enqueue(T message, String key) throws WriteFailedException {
+        enqueueLock.lock();
+        try {
+            Map.Entry<String, T> msgEntry = new AbstractMap.SimpleImmutableEntry<>(key, message);
+
+            LOG.trace("Attempting to enqueue {} with key {} into queue with current size {}", message, key, getSize());
+
+            // Off-heap queueing is not enabled so queue directly to memory
+            if (offHeapQueue == null) {
+                LOG.trace("Enqueueing {} with key {} in-memory since there is no off-heap queue " +
+                        "configured", message, key);
+
+                try {
+                    inMemoryQueue.put(msgEntry);
+                } catch (InterruptedException e) {
+                    throw new WriteFailedException(e);
+                }
+
+                return EnqueueResult.IMMEDIATE;
+            }
+
+            // Off-heap queueing is enabled but we haven't started using it yet so continue trying to fill the in-memory
+            // queue
+            int size = 0;
+            byte[] serializedBatch = null;
+            offHeapLock.lock();
+            try {
+                if (offHeapQueue.size() <= 0 && batch.isEmpty()) {
+                    // If the in-memory queue is full, this offer will fail and we will fall through below to the 
+                    // off-heap
+                    // queueing logic
+                    boolean inMemoryQueueHadSpace = inMemoryQueue.offer(msgEntry);
+
+                    if (inMemoryQueueHadSpace) {
+                        LOG.trace("Enqueueing {} with key {} in-memory", message, key);
+
+                        return EnqueueResult.IMMEDIATE;
+                    }
+                }
+
+                // The in-memory queue is either full or there is already message in the batch or off-heap so we 
+                // continue to
+                // batch
+                LOG.trace("Batching message {} with key {} for off-heap queue", message, key);
+                batch.add(message);
+
+                if (batch.isFull()) {
+                    LOG.trace("Flushing batch off-heap");
+
+                    try {
+                        serializedBatch = batch.toSerializedBatchAndClear();
+                    } catch (Exception e) {
+                        RATE_LIMITED_LOGGER.warn("Failed to flush to off-heap", e);
+                        throw new WriteFailedException(e);
+                    }
+
+                    size = serializedBatch.length + SERIALIZED_OBJECT_HEADER_SIZE_IN_BYTES;
+                    fileCapacityLatch.markFlushNeeded();
+                }
+            } finally {
+                offHeapLock.unlock();
+            }
+
+            if (serializedBatch != null) {
+                try {
+                    // This is a critical blocking call and it has to be done outside the context of any shared lock 
+                    // with
+                    // dequeue() otherwise it will cause a deadlock
+                    //
+                    // After unblocking we will pick up the lock again and double check that we still need to flush 
+                    // and then
+                    // perform that while holding the lock
+                    fileCapacityLatch.waitForCapacity(size);
+
+                    offHeapLock.lock();
+                    try {
+                        if (!fileCapacityLatch.isFlushNeeded()) {
+                            return EnqueueResult.DEFERRED;
+                        }
+
+                        try {
+                            offHeapQueue.add(serializedBatch);
+
+                            // Since we just wrote to disk, we need to check the file again to record the current 
+                            // capacity
+                            checkFileSize();
+                        } catch (IOException e) {
+                            throw new WriteFailedException(e);
+                        }
+                    } finally {
+                        offHeapLock.unlock();
+                    }
+                } catch (InterruptedException e) {
+                    throw new WriteFailedException(e);
+                }
+            }
+
+            return EnqueueResult.DEFERRED;
+        } finally {
+            enqueueLock.unlock();
+        }
+    }
+
