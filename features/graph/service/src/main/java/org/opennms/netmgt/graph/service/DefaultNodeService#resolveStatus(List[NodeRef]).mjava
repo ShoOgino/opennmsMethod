@@ -1,0 +1,34 @@
+    @Override
+    public Map<NodeRef, StatusInfo> resolveStatus(List<NodeRef> nodeRefs) {
+        final Map<Integer, NodeRef> nodeIdNodeRefMap = new HashMap<>();
+        nodeRefs.stream()
+                .filter(nodeRef -> nodeRef.getNodeId() != null)
+                .forEach(nr -> nodeIdNodeRefMap.put(nr.getNodeId(), nr));
+
+        final List<NodeRef> foreignIdNodeRefs = nodeRefs.stream()
+                .filter(nodeRef -> nodeRef.getNodeId() == null)
+                .collect(Collectors.toList());
+        final List<OnmsNode> nodes = loadNodes(foreignIdNodeRefs);
+        for (OnmsNode eachNode : nodes) {
+            for (NodeRef eachRef : nodeRefs) {
+                if (eachRef.matches(eachNode)) {
+                    nodeIdNodeRefMap.put(eachNode.getId(), eachRef);
+                }
+            }
+        }
+        // Alarm summary for each node id
+        final Map<Integer, AlarmSummary> nodeIdToAlarmSummaryMap = getAlarmSummaries(nodeIdNodeRefMap.keySet());
+
+        // Set the result
+        final Map<NodeRef, StatusInfo> resultMap = Maps.newHashMap();
+        for (Integer nodeId : nodeIdNodeRefMap.keySet()) {
+            final AlarmSummary alarmSummary = nodeIdToAlarmSummaryMap.get(nodeId);
+            final StatusInfo status = alarmSummary == null
+                    ? StatusInfo.defaultStatus().build()
+                    : StatusInfo.builder(alarmSummary.getMaxSeverity()).count(alarmSummary.getAlarmCount()).build();
+            final NodeRef nodeRef = nodeIdNodeRefMap.get(nodeId);
+            resultMap.put(nodeRef, status);
+        }
+        return resultMap;
+    }
+
