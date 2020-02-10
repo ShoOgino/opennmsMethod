@@ -67,7 +67,7 @@
         // Take service down, reload graph and verify
         restClient.sendEvent(nodeLostServiceEvent);
         karafShell.runCommand("opennms-graph:force-reload --container application");
-        given().log().ifValidationFails()
+        final Response response = given().log().ifValidationFails()
                 .body(query.toString())
                 .contentType(ContentType.JSON)
                 .post("{container_id}/{namespace}", "application", "application")
@@ -75,18 +75,17 @@
                 .log().ifValidationFails()
                 .statusCode(200)
                 .contentType(ContentType.JSON)
-                .content("vertices", Matchers.hasSize(3))
-                .content("vertices[0].status.severity", Matchers.is("Minor"))
-                .content("vertices[1].status.severity", Matchers.is("Minor"))
-                .content("vertices[2].status.severity", Matchers.is("Normal"))
-                .content("vertices[0].status.count", Matchers.is(1))
-                .content("vertices[1].status.count", Matchers.is(1))
-                .content("vertices[2].status.count", Matchers.is(0));
+                .extract().response();
+        final ApplicationViewResponse applicationViewResponse = new ApplicationViewResponse(response);
+        assertThat(applicationViewResponse.length(), Matchers.is(3));
+        verifyStatus(applicationViewResponse.getVertexByApplicationId(application.getId()), "Minor", 1);
+        verifyStatus(applicationViewResponse.getVertexByNodeId(nodeId1), "Minor", 1);
+        verifyStatus(applicationViewResponse.getVertexByNodeId(nodeId2), "Normal", 0);
 
         // Take node down, reload graph and verify
         restClient.sendEvent(nodeDownEvent);
         karafShell.runCommand("opennms-graph:force-reload --container application");
-        given().log().ifValidationFails()
+        final Response response2 = given().log().ifValidationFails()
                 .body(query.toString())
                 .contentType(ContentType.JSON)
                 .post("{container_id}/{namespace}", "application", "application")
@@ -94,13 +93,12 @@
                 .log().ifValidationFails()
                 .statusCode(200)
                 .contentType(ContentType.JSON)
-                .content("vertices", Matchers.hasSize(3))
-                .content("vertices[0].status.severity", Matchers.is("Major"))
-                .content("vertices[1].status.severity", Matchers.is("Minor"))
-                .content("vertices[2].status.severity", Matchers.is("Major"))
-                .content("vertices[0].status.count", Matchers.is(1))
-                .content("vertices[1].status.count", Matchers.is(1))
-                .content("vertices[2].status.count", Matchers.is(1));
+                .extract().response();
+        final ApplicationViewResponse applicationViewResponse2 = new ApplicationViewResponse(response2);
+        assertThat(applicationViewResponse2.length(), Matchers.is(3));
+        verifyStatus(applicationViewResponse2.getVertexByApplicationId(application.getId()), "Major", 1);
+        verifyStatus(applicationViewResponse2.getVertexByNodeId(nodeId1), "Minor", 1);
+        verifyStatus(applicationViewResponse2.getVertexByNodeId(nodeId2), "Major", 1);
 
         // Finally clean up
         applicationDao.delete(application);
