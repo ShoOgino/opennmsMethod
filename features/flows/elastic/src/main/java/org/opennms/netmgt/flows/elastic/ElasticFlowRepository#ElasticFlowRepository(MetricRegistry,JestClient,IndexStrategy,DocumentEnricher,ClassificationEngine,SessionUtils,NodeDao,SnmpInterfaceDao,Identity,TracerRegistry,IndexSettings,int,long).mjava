@@ -22,11 +22,25 @@
         logMarkingTimer = metricRegistry.timer("logMarking");
         flowsPerLog = metricRegistry.histogram("flowsPerLog");
 
-        // Pre-populate marker cache with values from DB
+        this.markerCache.put(Direction.INGRESS, CacheBuilder.newBuilder()
+                .expireAfterWrite(1, TimeUnit.HOURS)
+                .build());
+
+        this.markerCache.put(Direction.EGRESS, CacheBuilder.newBuilder()
+                .expireAfterWrite(1, TimeUnit.HOURS)
+                .build());
+
         this.sessionUtils.withTransaction(() -> {
-            for (final OnmsNode node : this.nodeDao.findAllHavingFlows()) {
-                this.markerCache.put(node.getId(),
-                        this.snmpInterfaceDao.findAllHavingFlows(node.getId()).stream()
+            for (final OnmsNode node : this.nodeDao.findAllHavingIngressFlows()) {
+                this.markerCache.get(Direction.INGRESS).put(node.getId(),
+                        this.snmpInterfaceDao.findAllHavingIngressFlows(node.getId()).stream()
+                                .map(OnmsSnmpInterface::getIfIndex)
+                                .collect(Collectors.toCollection(Sets::newConcurrentHashSet)));
+            }
+
+            for (final OnmsNode node : this.nodeDao.findAllHavingEgressFlows()) {
+                this.markerCache.get(Direction.EGRESS).put(node.getId(),
+                        this.snmpInterfaceDao.findAllHavingEgressFlows(node.getId()).stream()
                                 .map(OnmsSnmpInterface::getIfIndex)
                                 .collect(Collectors.toCollection(Sets::newConcurrentHashSet)));
             }
