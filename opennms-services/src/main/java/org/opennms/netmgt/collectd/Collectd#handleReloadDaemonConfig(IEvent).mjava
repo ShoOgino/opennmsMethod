@@ -1,0 +1,63 @@
+    private void handleReloadDaemonConfig(IEvent event) {
+        final String collectionDaemonName = "Collectd";
+        boolean isCollection = false;
+        for (IParm parm : event.getParmCollection()) {
+            if (EventConstants.PARM_DAEMON_NAME.equals(parm.getParmName()) && collectionDaemonName.equalsIgnoreCase(parm.getValue().getContent())) {
+                isCollection = true;
+                break;
+            }
+        }
+        if (isCollection) {
+            final String targetFile = ConfigFileConstants.getFileName(ConfigFileConstants.DATA_COLLECTION_CONF_FILE_NAME);
+            boolean isDataCollectionConfig = false;
+            for (IParm parm : event.getParmCollection()) {
+                if (EventConstants.PARM_CONFIG_FILE_NAME.equals(parm.getParmName()) && targetFile.equalsIgnoreCase(parm.getValue().getContent())) {
+                    isDataCollectionConfig = true;
+                    break;
+                }
+            }
+            EventBuilder ebldr = null;
+            if (isDataCollectionConfig) {
+                try {
+                    DataCollectionConfigFactory.reload();
+                    // Preparing successful event
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_SUCCESSFUL_UEI, "Collectd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, collectionDaemonName);
+                    ebldr.addParam(EventConstants.PARM_CONFIG_FILE_NAME, targetFile);
+                } catch (Throwable e) {
+                    // Preparing failed event
+                    LOG.error("handleReloadDaemonConfig: Error reloading/processing datacollection configuration: {}", e.getMessage(), e);
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_FAILED_UEI, "Collectd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, collectionDaemonName);
+                    ebldr.addParam(EventConstants.PARM_CONFIG_FILE_NAME, targetFile);
+                    ebldr.addParam(EventConstants.PARM_REASON, e.getMessage());
+                }
+                finally {
+                    if (ebldr != null) {
+                        getEventIpcManager().sendNow(ebldr.getEvent());
+                    }
+                }
+            } else {
+                final String cfgFile = ConfigFileConstants.getFileName(ConfigFileConstants.COLLECTD_CONFIG_FILE_NAME);
+                try {
+                    m_collectdConfigFactory.reload();
+                    rebuildScheduler();
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_SUCCESSFUL_UEI, "Collectd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, collectionDaemonName);
+                    ebldr.addParam(EventConstants.PARM_CONFIG_FILE_NAME, cfgFile);
+                } catch (Throwable e) {
+                    LOG.error("handleReloadDaemonConfig: Error reloading/processing collectd configuration: {}", e.getMessage(), e);
+                    ebldr = new EventBuilder(EventConstants.RELOAD_DAEMON_CONFIG_FAILED_UEI, "Collectd");
+                    ebldr.addParam(EventConstants.PARM_DAEMON_NAME, collectionDaemonName);
+                    ebldr.addParam(EventConstants.PARM_CONFIG_FILE_NAME, cfgFile);
+                    ebldr.addParam(EventConstants.PARM_REASON, e.getMessage());
+                }
+                finally {
+                    if (ebldr != null) {
+                        getEventIpcManager().sendNow(ebldr.getEvent());
+                    }
+                }
+            }
+        }
+    }
+

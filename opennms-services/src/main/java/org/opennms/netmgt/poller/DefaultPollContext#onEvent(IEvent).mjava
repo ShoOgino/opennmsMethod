@@ -1,0 +1,44 @@
+    /* (non-Javadoc)
+     * @see org.opennms.netmgt.eventd.EventListener#onEvent(org.opennms.netmgt.events.api.model.IEvent)
+     */
+    /** {@inheritDoc} */
+    @Override
+    public void onEvent(final IEvent event) {
+        if (LOG.isDebugEnabled()) {
+            // CAUTION: m_pendingPollEvents.size() is not a constant-time operation
+            LOG.debug("onEvent: Received event: {} uei: {}, dbid: {}, pendingEventCount: {}", event, event.getUei(), event.getDbid(), m_pendingPollEvents.size());
+        }
+
+        for (final PendingPollEvent pollEvent : m_pendingPollEvents) {
+            LOG.trace("onEvent: comparing event to pollEvent: {}", pollEvent);
+            if (EventUtils.eventsMatch(event, pollEvent.getEvent())) {
+                LOG.trace("onEvent: found matching pollEvent, completing pollEvent: {}", pollEvent);
+                // Thread-safe and idempotent
+                pollEvent.complete(event);
+                break;
+            }
+        }
+
+        for (final Iterator<PendingPollEvent> it = m_pendingPollEvents.iterator(); it.hasNext();) {
+            final PendingPollEvent pollEvent = it.next();
+            LOG.trace("onEvent: determining if pollEvent is pending: {}", pollEvent);
+            if (!pollEvent.isPending()) {
+                try {
+                    // Thread-safe and idempotent
+                    processPending(pollEvent);
+                } catch (Throwable e) {
+                    LOG.error("Unexpected exception while processing pollEvent: " + pollEvent, e);
+                }
+                // TODO: Should we remove the task before processing it? This would
+                // reduce the chances that two threads could process the same event
+                // simultaneously, although since the call is now thread-safe and
+                // idempotent, that's not really a problem.
+                it.remove();
+                continue;
+            }
+
+            // If the event was not completed and it is still pending, then don't do anything to it
+        }
+        LOG.debug("onEvent: Finished processing event: {} uei: {}, dbid: {}", event, event.getUei(), event.getDbid());
+    }
+

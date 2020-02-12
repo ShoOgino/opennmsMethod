@@ -1,0 +1,63 @@
+    /**
+     * Process the event. This event is generated when a managed node which
+     * supports SNMP gains a new interface. In this situation the
+     * CollectableService object representing the primary SNMP interface of
+     * the node must be reinitialized. The CollectableService object
+     * associated with the primary SNMP interface for the node will be marked
+     * for reinitialization. Reinitializing the CollectableService object
+     * consists of calling the ServiceCollector.release() method followed by
+     * the ServiceCollector.initialize() method which will refresh attributes
+     * such as the interface key list and number of interfaces (both of which
+     * most likely have changed). Reinitialization will take place the next
+     * time the CollectableService is popped from an interval queue for
+     * collection. If any errors occur scheduling the service no error is
+     * returned.
+     * 
+     * @param event
+     *            The event to process.
+     * @throws InsufficientInformationException
+     */
+    private void handleReinitializePrimarySnmpInterface(IEvent event)
+            throws InsufficientInformationException {
+        EventUtils.checkNodeId(event);
+        EventUtils.checkInterface(event);
+
+        Long nodeid = event.getNodeid();
+        String ipAddress = event.getInterface();
+
+        // Mark the primary SNMP interface for reinitialization in
+        // order to update any modified attributes associated with
+        // the collectable service..
+        //
+        // Iterate over the CollectableService objects in the
+        // updates map and mark any which have the same interface
+        // address for reinitialization
+        //
+        OnmsIpInterface iface = null;
+        synchronized (getCollectableServices()) {
+            Iterator<CollectableService> iter = getCollectableServices().iterator();
+            while (iter.hasNext()) {
+                CollectableService cSvc = iter.next();
+        
+                final InetAddress addr = (InetAddress) cSvc.getAddress();
+                final String addrString = str(addr);
+                LOG.debug("Comparing CollectableService ip address = {} and event ip interface = {}", addrString, ipAddress);
+                if (addrString != null && addrString.equals(ipAddress) && cSvc.getNodeId() == nodeid.intValue()) {
+                    synchronized (cSvc) {
+                    	if (iface == null) {
+                            iface = getIpInterface(nodeid.intValue(), ipAddress);
+                    	}
+                        // Got a match! Retrieve the CollectorUpdates object
+                        // associated
+                        // with this CollectableService.
+                        CollectorUpdates updates = cSvc.getCollectorUpdates();
+        
+                        // Now set the reinitialization flag
+                        updates.markForReinitialization(iface);
+                        LOG.debug("reinitializePrimarySnmpInterfaceHandler: marking {} for reinitialization for service SNMP.", ipAddress);
+                    }
+                }
+            }
+        }
+    }
+
