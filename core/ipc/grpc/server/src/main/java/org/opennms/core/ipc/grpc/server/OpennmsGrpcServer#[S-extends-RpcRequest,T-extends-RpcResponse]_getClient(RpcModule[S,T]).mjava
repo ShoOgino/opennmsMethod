@@ -1,0 +1,68 @@
+    @Override
+    public <S extends RpcRequest, T extends RpcResponse> RpcClient<S, T> getClient(RpcModule<S, T> module) {
+
+        return new RpcClient<S, T>() {
+            @Override
+            public CompletableFuture<T> execute(S request) {
+                if (request.getLocation() == null || request.getLocation().equals(getLocation())) {
+                    // The request is for the current location, invoke it directly
+                    return module.execute(request);
+                }
+                final Map<String, String> loggingContext = Logging.getCopyOfContextMap();
+
+                Span span = getTracer().buildSpan(module.getId()).start();
+                String marshalRequest = module.marshalRequest(request);
+                String rpcId = UUID.randomUUID().toString();
+                CompletableFuture<T> future = new CompletableFuture<T>();
+                Long timeToLive = request.getTimeToLiveMs();
+                timeToLive = (timeToLive != null && timeToLive > 0) ? timeToLive : ttl;
+                long expirationTime = System.currentTimeMillis() + timeToLive;
+                RpcResponseHandlerImpl responseHandler = new RpcResponseHandlerImpl<S, T>(future,
+                        module, rpcId, request.getLocation(), expirationTime, span, loggingContext);
+                rpcResponseMap.put(rpcId, responseHandler);
+                rpcTimeoutQueue.offer(responseHandler);
+                RpcRequestProto.Builder builder = RpcRequestProto.newBuilder()
+                        .setRpcId(rpcId)
+                        .setLocation(request.getLocation())
+                        .setModuleId(module.getId())
+                        .setRpcContent(ByteString.copyFrom(marshalRequest.getBytes()));
+                if (!Strings.isNullOrEmpty(request.getSystemId())) {
+                    builder.setSystemId(request.getSystemId());
+                }
+                addTracingInfo(request, span, builder);
+                RpcRequestProto requestProto = builder.build();
+
+                boolean succeeded = sendRequest(requestProto);
+
+                addMetrics(request, requestProto.getSerializedSize());
+                if (!succeeded) {
+                    RpcClientFactory.markFailed(getRpcMetrics(), request.getLocation(), module.getId());
+                    future.completeExceptionally(new RuntimeException("No minion found at location " + request.getLocation()));
+                    return future;
+                }
+                LOG.debug("RPC request from module: {} with RpcId:{} sent to minion at location {}", module.getId(), rpcId, request.getLocation());
+                return future;
+            }
+
+            private void addMetrics(RpcRequest request, int messageLen) {
+                RpcClientFactory.markRpcCount(getRpcMetrics(), request.getLocation(), module.getId());
+                RpcClientFactory.updateRequestSize(getRpcMetrics(), request.getLocation(), module.getId(), messageLen);
+            }
+
+            private void addTracingInfo(RpcRequest request, Span span, RpcRequestProto.Builder builder) {
+                //Add tags to span.
+                span.setTag(TAG_LOCATION, request.getLocation());
+                if (request.getSystemId() != null) {
+                    span.setTag(TAG_SYSTEM_ID, request.getSystemId());
+                }
+                request.getTracingInfo().forEach(span::setTag);
+                TracingInfoCarrier tracingInfoCarrier = new TracingInfoCarrier();
+                getTracer().inject(span.context(), Format.Builtin.TEXT_MAP, tracingInfoCarrier);
+                // Tracer adds it's own metadata.
+                tracingInfoCarrier.getTracingInfoMap().forEach(builder::putTracingInfo);
+                //Add custom tags from RpcRequest.
+                request.getTracingInfo().forEach(builder::putTracingInfo);
+            }
+        };
+    }
+
