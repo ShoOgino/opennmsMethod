@@ -1,0 +1,45 @@
+    public void onBind(final GraphContainerProviderRegistration containerProviderRegistration, final Map<String, String> properties) {
+        final GraphContainerProvider containerProvider = containerProviderRegistration.getDelegate();
+        final LegacyTopologyConfigurationImpl configuration = new LegacyTopologyConfigurationImpl(properties);
+        if (configuration.isExposeToTopology()) {
+            serviceRegistrations.putIfAbsent(containerProvider, Lists.newArrayList());
+
+            // Expose Meta Topology Provider
+            final GraphContainerInfo containerInfo = containerProvider.getContainerInfo();
+            final String containerId = containerInfo.getId();
+            final Hashtable<String, String> serviceProperties = new Hashtable<>();
+            serviceProperties.put("label", containerInfo.getLabel());
+
+            final MetaTopologyProvider metaTopologyProvider = new LegacyMetaTopologyProvider(configuration, nodeDao, graphService, containerId);
+            final ServiceRegistration<MetaTopologyProvider> metaTopologyProviderServiceRegistration = bundleContext.registerService(MetaTopologyProvider.class, metaTopologyProvider, serviceProperties);
+
+            // Register Search provider
+            metaTopologyProvider.getGraphProviders().forEach(topologyProvider -> {
+                final SearchProvider searchProvider = new LegacyTopologySearchProvider((LegacyTopologyProvider) topologyProvider);
+                final ServiceRegistration<SearchProvider> registeredSearchProviderServiceRegistration = bundleContext.registerService(SearchProvider.class, searchProvider, new Hashtable<>());
+                serviceRegistrations.get(containerProvider).add(registeredSearchProviderServiceRegistration);
+            });
+
+            // Register IconRepository, otherwise icons will not work
+            metaTopologyProvider.getGraphProviders().forEach(topologyProvider -> {
+                final ServiceRegistration<IconRepository> iconRepositoryServiceRegistration = bundleContext.registerService(IconRepository.class, new LegacyIconRepositoryAdapter(topologyProvider), new Hashtable<>());
+                serviceRegistrations.get(containerProvider).add(iconRepositoryServiceRegistration);
+            });
+
+            // If configured, expose Status Provider
+            if (configuration.isExposeStatusProvider()) {
+                metaTopologyProvider.getGraphProviders().forEach(topologyProvider -> {
+                    final LegacyStatusProvider statusProvider = new LegacyStatusProvider(topologyProvider.getNamespace(), alarmDao);
+                    final ServiceRegistration<StatusProvider> statusProviderServiceRegistration = bundleContext.registerService(StatusProvider.class, statusProvider, new Hashtable<>());
+                    final ServiceRegistration<EdgeStatusProvider> edgeStatusProviderServiceRegistration = bundleContext.registerService(EdgeStatusProvider.class, statusProvider, new Hashtable<>());
+                    serviceRegistrations.get(containerProvider).add(statusProviderServiceRegistration);
+                    serviceRegistrations.get(containerProvider).add(edgeStatusProviderServiceRegistration);
+                });
+            }
+
+            // The MetaTopologyProvider is registered last, to avoid missing icons or missing edges.
+            // This way everything is registered before anyone tries to access/select the meta topology
+            serviceRegistrations.get(containerProvider).add(metaTopologyProviderServiceRegistration);
+        }
+    }
+
