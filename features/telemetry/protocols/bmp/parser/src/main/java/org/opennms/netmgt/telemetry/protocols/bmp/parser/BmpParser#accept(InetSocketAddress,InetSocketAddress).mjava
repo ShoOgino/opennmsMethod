@@ -22,22 +22,15 @@
 
             LOG.trace("Got packet: {}", packet);
 
-            final BasicOutputBuffer output = new BasicOutputBuffer();
-            try (final BsonBinaryWriter writer = new BsonBinaryWriter(output)) {
-                writer.writeStartDocument();
+            final Transport.Message.Builder message = Transport.Message.newBuilder()
+                                                                       .setVersion(header.version);
 
-                writer.writeInt32("@version", header.version);
-                writer.writeString("@type", header.type.name());
+            packet.accept(new Serializer(message));
 
-                packet.accept(new Serializer(writer));
-
-                writer.writeEndDocument();
-            }
-
+            final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = dispatcher.send(new TelemetryMessage(remoteAddress, ByteBuffer.wrap(message.build().toByteArray())));
             this.recordsDispatched.mark();
 
-            final TelemetryMessage message = new TelemetryMessage(remoteAddress, output.getByteBuffers().get(0).asNIO());
-            return Optional.of(dispatcher.send(message));
+            return Optional.of(dispatched);
         };
     }
 

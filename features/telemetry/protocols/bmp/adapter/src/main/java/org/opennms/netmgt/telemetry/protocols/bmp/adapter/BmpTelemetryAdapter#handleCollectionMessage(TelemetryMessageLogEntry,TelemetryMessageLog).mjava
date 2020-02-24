@@ -1,15 +1,18 @@
     @Override
-    public Stream<CollectionSetWithAgent> handleCollectionMessage(final TelemetryMessageLogEntry message,
+    public Stream<CollectionSetWithAgent> handleCollectionMessage(final TelemetryMessageLogEntry messageLogEntry,
                                                                   final TelemetryMessageLog messageLog) {
-        LOG.debug("Received {} telemetry messages", messageLog.getMessageList().size());
-
-        LOG.trace("Parsing packet: {}", message);
-        final BsonDocument document = new RawBsonDocument(message.getByteArray());
+        LOG.trace("Parsing packet: {}", messageLogEntry);
+        final Transport.Message message;
+        try {
+            message = Transport.Message.parseFrom(messageLogEntry.getByteArray());
+        } catch (final InvalidProtocolBufferException e) {
+            LOG.error("Invalid message", e);
+            return Stream.empty();
+        }
 
         // This adapter only cares about statistic packets
-        if (!getString(document, "@type")
-                .map(type -> Header.Type.STATISTICS_REPORT.name().equals(type))
-                .orElse(false)) {
+        final Transport.StatisticsReportPacket stats = message.getStatisticsReport();
+        if (stats == null) {
             return Stream.empty();
         }
 
@@ -23,11 +26,7 @@
         final CollectionAgent agent = this.collectionAgentFactory.createCollectionAgent(Integer.toString(exporterNodeId.get()), exporterAddress);
 
         // Extract peer details
-        final String peerAddress = getString(document, "peer", "address").get();
-        final Instant timestamp = Instant.ofEpochSecond(getInt64(document, "peer", "timestamp", "epoch").get(),
-                                                        getInt64(document, "peer", "timestamp", "nanos").orElse(0L));
-        final String as = Long.toString(getInt64(document, "peer", "as").get());
-        final String id = Long.toString(getInt64(document, "peer", "id").get());
+        final String peerAddress = InetAddressUtils.str(address(stats.getPeer().getAddress()));
 
         // Build resource for the peer
         final NodeLevelResource nodeResource = new NodeLevelResource(agent.getNodeId());
@@ -35,28 +34,39 @@
 
         // Build the collection set for the peer
         final CollectionSetBuilder builder = new CollectionSetBuilder(agent);
-        builder.withTimestamp(Date.from(timestamp));
+        builder.withTimestamp(Date.from(timestamp(stats.getPeer().getTimestamp())));
         builder.withStringAttribute(peerResource, "bmp", "address", peerAddress);
-        builder.withStringAttribute(peerResource, "bmp", "as", as);
-        builder.withStringAttribute(peerResource, "bmp", "id", id);
+        builder.withStringAttribute(peerResource, "bmp", "as", Long.toString(stats.getPeer().getAs()));
+        builder.withStringAttribute(peerResource, "bmp", "id", Long.toString(stats.getPeer().getId()));
 
-        final BsonDocument stats = document.getDocument("stats");
-        for (final String key : stats.keySet()) {
-            final BsonDocument metric = stats.getDocument(key);
+        final Function<String, Consumer<Transport.StatisticsReportPacket.Counter>> addCounter = (name) -> (counter) -> {
+            final String identifier = String.format("bmp_%s_%s", peerAddress, name);
+            builder.withIdentifiedNumericAttribute(peerResource, "bmp", name, counter.getCount(), AttributeType.COUNTER, identifier);
+        };
 
-            final String identifier = String.format("bmp_%s_%s", peerAddress, key);
+        final Function<String, Consumer<Transport.StatisticsReportPacket.Gauge>> addGauge = (name) -> (gauge) -> {
+            final String identifier = String.format("bmp_%s_%s", peerAddress, name);
+            builder.withIdentifiedNumericAttribute(peerResource, "bmp", name, gauge.getValue(), AttributeType.COUNTER, identifier);
+        };
 
-            getInt64(metric, "counter").ifPresent(counter -> {
-                Optional.ofNullable(METRIC_ATTRIBUTE_MAP.get(key)).ifPresent(name -> {
-                    builder.withIdentifiedNumericAttribute(peerResource, "bmp", name, counter, AttributeType.COUNTER, identifier);
-                });
-            });
-            getInt64(metric, "gauge").ifPresent(gauge -> {
-                Optional.ofNullable(METRIC_ATTRIBUTE_MAP.get(key)).ifPresent(name -> {
-                    builder.withIdentifiedNumericAttribute(peerResource, "bmp", name, gauge, AttributeType.GAUGE, identifier);
-                });
-            });
-        }
+        Optional.ofNullable(stats.getRejected()).ifPresent(addCounter.apply("rejected"));
+        Optional.ofNullable(stats.getDuplicatePrefix()).ifPresent(addCounter.apply("duplicate_prefix"));
+        Optional.ofNullable(stats.getDuplicateWithdraw()).ifPresent(addCounter.apply("duplicate_withdraw"));
+        Optional.ofNullable(stats.getInvalidUpdateDueToAsConfedLoop()).ifPresent(addCounter.apply("inv_as_confed_loop"));
+        Optional.ofNullable(stats.getInvalidUpdateDueToAsPathLoop()).ifPresent(addCounter.apply("inv_as_path_loop"));
+        Optional.ofNullable(stats.getInvalidUpdateDueToClusterListLoop()).ifPresent(addCounter.apply("inv_cl_loop"));
+        Optional.ofNullable(stats.getInvalidUpdateDueToOriginatorId()).ifPresent(addCounter.apply("inv_originator_id"));
+        Optional.ofNullable(stats.getAdjRibIn()).ifPresent(addGauge.apply("adj_rib_in"));
+        Optional.ofNullable(stats.getAdjRibOut()).ifPresent(addGauge.apply("adj_rib_out"));
+
+        // TODO fooker: Add per AFI counters (perAfiAdjRibIn and perAfiLocRib)
+        // See https://issues.opennms.org/browse/NMS-12553
+
+        Optional.ofNullable(stats.getUpdateTreatAsWithdraw()).ifPresent(addCounter.apply("update_withdraw"));
+        Optional.ofNullable(stats.getPrefixTreatAsWithdraw()).ifPresent(addCounter.apply("prefix_withdraw"));
+        Optional.ofNullable(stats.getDuplicateUpdate()).ifPresent(addCounter.apply("duplicate_update"));
+        Optional.ofNullable(stats.getLocRib()).ifPresent(addGauge.apply("loc_rib"));
+        Optional.ofNullable(stats.getExportRib()).ifPresent(addGauge.apply("export_rib"));
 
         return Stream.of(new CollectionSetWithAgent(agent, builder.build()));
     }

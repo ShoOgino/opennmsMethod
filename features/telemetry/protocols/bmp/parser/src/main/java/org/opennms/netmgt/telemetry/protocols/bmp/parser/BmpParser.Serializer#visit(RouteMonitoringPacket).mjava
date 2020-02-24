@@ -1,86 +1,95 @@
         @Override
         public void visit(final RouteMonitoringPacket packet) {
-            this.writePeerHeader(packet.peerHeader);
+            final Transport.RouteMonitoringPacket.Builder message = this.message.getRouteMonitoringBuilder();
+            message.setPeer(peer(packet.peerHeader));
 
-            this.writer.writeStartArray("withdraw");
             for (final UpdatePacket.Prefix prefix : packet.updateMessage.withdrawRoutes) {
-                this.writer.writeStartDocument();
-                this.writer.writeInt64("length", prefix.length);
-                this.writer.writeString("prefix", prefix.prefix.getHostAddress());
-                this.writer.writeEndDocument();
+                message.addWithdrawBuilder()
+                       .setPrefix(address(prefix.prefix))
+                       .setLength(prefix.length);
             }
-            this.writer.writeEndArray();
 
-            this.writer.writeStartArray("reachable");
             for (final UpdatePacket.Prefix prefix : packet.updateMessage.reachableRoutes) {
-                this.writer.writeStartDocument();
-                this.writer.writeInt64("length", prefix.length);
-                this.writer.writeString("prefix", prefix.prefix.getHostAddress());
-                this.writer.writeEndDocument();
+                message.addReachableBuilder()
+                       .setPrefix(address(prefix.prefix))
+                       .setLength(prefix.length);
             }
-            this.writer.writeEndArray();
 
-            this.writer.writeStartArray("path_attributes");
             for (final UpdatePacket.PathAttribute attribute : packet.updateMessage.pathAttributes) {
-                this.writer.writeStartDocument();
-                this.writer.writeBoolean("optional", attribute.optional);
-                this.writer.writeBoolean("transitive", attribute.transitive);
-                this.writer.writeBoolean("partial", attribute.partial);
-                this.writer.writeBoolean("extended", attribute.extended);
-
-                this.writer.writeString("type", attribute.type.name());
+                final Transport.RouteMonitoringPacket.PathAttribute.Builder attributesBuilder = message.addAttributesBuilder();
+                attributesBuilder.setOptional(attribute.optional)
+                                 .setTransitive(attribute.transitive)
+                                 .setPartial(attribute.partial)
+                                 .setExtended(attribute.extended);
 
                 attribute.attribute.accept(new Attribute.Visitor() {
                     @Override
                     public void visit(final Aggregator aggregator) {
-                        Serializer.this.writer.writeInt64("as", aggregator.as);
-                        Serializer.this.writer.writeString("address", aggregator.address.getHostAddress());
+                        attributesBuilder.getAggregatorBuilder()
+                                         .setAs(aggregator.as)
+                                         .setAddress(address(aggregator.address));
                     }
 
                     @Override
                     public void visit(final AsPath asPath) {
-                        Serializer.this.writer.writeStartArray("segments");
+                        final Transport.RouteMonitoringPacket.PathAttribute.AsPath.Builder asPathBuilder = attributesBuilder.getAsPathBuilder();
                         for (final AsPath.Segment segment : asPath.segments) {
-                            Serializer.this.writer.writeStartDocument();
-                            Serializer.this.writer.writeString("type", segment.type.name());
-                            Serializer.this.writer.writeStartArray("path");
+                            final Transport.RouteMonitoringPacket.PathAttribute.AsPath.Segment.Builder segmentBuilder = asPathBuilder.addSegmentsBuilder();
+                            segmentBuilder.setType(segment.type.map(t -> {
+                                switch (t) {
+                                    case AS_SET:
+                                        return Transport.RouteMonitoringPacket.PathAttribute.AsPath.Segment.Type.AS_SET;
+                                    case AS_SEQUENCE:
+                                        return Transport.RouteMonitoringPacket.PathAttribute.AsPath.Segment.Type.AS_SEQUENCE;
+                                    default:
+                                        throw new IllegalStateException();
+                                }
+                            }));
                             for (final long as : segment.path) {
-                                Serializer.this.writer.writeInt64(as);
+                                segmentBuilder.addPath((int) as);
                             }
-                            Serializer.this.writer.writeEndArray();
-                            Serializer.this.writer.writeEndDocument();
                         }
-                        Serializer.this.writer.writeEndArray();
                     }
 
                     @Override
                     public void visit(final AtomicAggregate atomicAggregate) {
-                        // No data
+                        attributesBuilder.getAtomicAggregateBuilder();
                     }
 
                     @Override
                     public void visit(final LocalPref localPref) {
-                        Serializer.this.writer.writeInt64("preference", localPref.preference);
+                        attributesBuilder.getLocalPrefBuilder()
+                                         .setPreference((int) localPref.preference);
                     }
 
                     @Override
                     public void visit(final MultiExistDisc multiExistDisc) {
-                        Serializer.this.writer.writeInt64("discriminator", multiExistDisc.discriminator);
+                        attributesBuilder.getMultiExitDiscBuilder()
+                                         .setDiscriminator((int) multiExistDisc.discriminator);
                     }
 
                     @Override
                     public void visit(final NextHop nextHop) {
-                        Serializer.this.writer.writeString("address", nextHop.address.getHostAddress());
+                        attributesBuilder.getNextHopBuilder()
+                                         .setAddress(address(nextHop.address));
                     }
 
                     @Override
                     public void visit(final Origin origin) {
-                        Serializer.this.writer.writeString("value", origin.value.name());
+                        attributesBuilder.setOrigin(origin.value.map(v -> {
+                            switch (v) {
+                                case IGP:
+                                    return Transport.RouteMonitoringPacket.PathAttribute.Origin.IGP;
+                                case EGP:
+                                    return Transport.RouteMonitoringPacket.PathAttribute.Origin.EGP;
+                                case INCOMPLETE:
+                                    return Transport.RouteMonitoringPacket.PathAttribute.Origin.INCOMPLETE;
+                                default:
+                                    throw new IllegalStateException();
+                            }
+                        }));
                     }
                 });
-
-                this.writer.writeEndDocument();
             }
-            this.writer.writeEndArray();
         }
 
