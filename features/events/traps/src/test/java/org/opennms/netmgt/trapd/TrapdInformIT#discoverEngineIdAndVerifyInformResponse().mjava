@@ -1,0 +1,49 @@
+    @Test
+    public void discoverEngineIdAndVerifyInformResponse() throws Exception {
+        // Retrieve a v3 user from the configuration
+        m_trapdConfig.getConfig().setUseAddressFromVarbind(true);
+        InetAddress remoteAddr = InetAddress.getByName("10.255.1.1");
+        SecurityLevel securityLevel = SecurityLevel.noAuthNoPriv;
+        final Snmpv3User v3User = m_trapdConfig.getConfig().getSnmpv3UserCollection().stream()
+                .filter(u -> Objects.equals(securityLevel.getSnmpValue(), u.getSecurityLevel()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No existing SNMPv3 user configured with security level: " + securityLevel));
+
+        ScopedPDU scopedPDU = createPDU();
+        Snmp4JAgentConfig agentConfig = createAgentConfig(v3User, scopedPDU);
+        Snmp session = createSession(agentConfig);
+        if(session == null) {
+            Assert.fail("Session couldn't be created");
+        }
+
+        EventBuilder defaultTrapBuilder = new EventBuilder("uei.opennms.org/default/trap", "trapd");
+        defaultTrapBuilder.setInterface(remoteAddr);
+        defaultTrapBuilder.setSnmpVersion("v2c");
+        m_mockEventIpcManager.getEventAnticipator().anticipateEvent(defaultTrapBuilder.getEvent());
+
+        EventBuilder newSuspectBuilder = new EventBuilder(EventConstants.NEW_SUSPECT_INTERFACE_EVENT_UEI, "trapd");
+        newSuspectBuilder.setInterface(remoteAddr);
+        m_mockEventIpcManager.getEventAnticipator().anticipateEvent(newSuspectBuilder.getEvent());
+
+        // Verify authoritative engine Id matches with local Engine Id.
+        byte[] engineId = session.discoverAuthoritativeEngineID(agentConfig.getTarget().getAddress(), 3000);
+        Assert.assertNotNull(engineId);
+        Assert.assertEquals(Snmp4JStrategy.createLocalEngineId(), new OctetString(engineId));
+
+        sendInformVerifyResponse(session, scopedPDU, agentConfig);
+        // Wait until we received the expected events
+        await().until(() -> m_mockEventIpcManager.getEventAnticipator().getAnticipatedEventsReceived(), hasSize(2));
+        m_trapd.onStop();
+        m_trapd.onStart();
+        scopedPDU = createPDU();
+        // Verify authoritative engine Id matches with local Engine Id.
+        engineId = session.discoverAuthoritativeEngineID(agentConfig.getTarget().getAddress(), 3000);
+        Assert.assertNotNull(engineId);
+        Assert.assertEquals(Snmp4JStrategy.createLocalEngineId(), new OctetString(engineId));
+
+        sendInformVerifyResponse(session, scopedPDU, agentConfig);
+        await().until(() -> m_mockEventIpcManager.getEventAnticipator().getAnticipatedEventsReceived(), hasSize(2));
+        closeQuietly(session);
+
+    }
+
