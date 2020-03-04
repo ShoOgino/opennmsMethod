@@ -1,0 +1,30 @@
+    private OpenNMSStack(StackModel model) {
+        RuleChain chain = RuleChain
+                .outerRule(postgreSQLContainer);
+
+        if (model.isElasticsearchEnabled()) {
+            elasticsearchContainer = new ElasticsearchContainer();
+            chain = chain.around(elasticsearchContainer);
+        } else {
+            elasticsearchContainer = null;
+        }
+
+        final boolean shouldEnableKafka = IpcStrategy.KAFKA.equals(model.getIpcStrategy())
+                || model.getOpenNMS().isKafkaProducerEnabled();
+        if (shouldEnableKafka) {
+            kafkaContainer = new KafkaContainer()
+                    // Reduce from the default of 1GB
+                    .withEnv("KAFKA_HEAP_OPTS", "-Xms256m -Xmx256m")
+                    .withNetwork(Network.SHARED)
+                    .withNetworkAliases(OpenNMSContainer.KAFKA_ALIAS);
+            chain = chain.around(kafkaContainer);
+        } else {
+            kafkaContainer = null;
+        }
+
+        opennmsContainer = new OpenNMSContainer(model, model.getOpenNMS());
+        chain = chain.around(opennmsContainer);
+
+        delegateTestRule = chain;
+    }
+

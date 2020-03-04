@@ -1,0 +1,48 @@
+    /**
+     * Runs the given command in the karaf shell.
+     * The optional <code>function</code> verifies the output.
+     *
+     * @param command the command to run, e.g. "features:list"
+     * @param verifyOutputFunction An optional function to verify the output, e.g. to check for certain log messages
+     * @return The shell itself, to run further commands.
+     */
+    public KarafShell runCommand(final String command, Function<String, Boolean> verifyOutputFunction) {
+        await().atMost(5, MINUTES)
+                .pollInterval(5, SECONDS)
+                .until(() -> {
+                    try (final SshClient sshClient = new SshClient(sshAddress, username, password)) {
+                        final PrintStream pipe = sshClient.openShell();
+                        if (command != null) {
+                            pipe.println(command);
+                        }
+                        pipe.println("log:display");
+                        pipe.println("logout");
+
+                        // Wait for karaf to process the commands
+                        await().atMost(10, SECONDS).until(sshClient.isShellClosedCallable());
+
+                        // Read stdout
+                        final String shellOutput = sshClient.getStdout();
+
+                        // Optionally Verify Output
+                        boolean result = true;
+                        if (verifyOutputFunction != null) {
+                            result = verifyOutputFunction.apply(shellOutput);
+                        }
+
+                        // Log output
+                        if (command != null) {
+                            logger.info(command);
+                        }
+                        logger.info("log:display");
+                        logger.info("{}", shellOutput);
+
+                        return result;
+                    } catch (Exception ex) {
+                        logger.error("Error while executing command '{}': {}", command, ex.getMessage());
+                        return false;
+                    }
+                });
+        return this;
+    }
+
