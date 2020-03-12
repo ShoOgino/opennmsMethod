@@ -26,25 +26,39 @@
 
                 LOG.trace("Got packet: {}", packet);
 
-                packet.accept(new Packet.Visitor.Adapter() {
-                    @Override
-                    public void visit(InitiationPacket packet) {
-                        packet.information.first(InformationElement.Type.BGP_ID)
-                                .map(InetAddressUtils::addr)
-                                .ifPresent(_bgpId -> bgpId = _bgpId);
-                    }
-                });
-
+                // Build the message from the received packet
                 final Transport.Message.Builder message = Transport.Message.newBuilder()
                                                                            .setVersion(header.version);
 
-                if (bgpId != null) {
-                    message.setBgpId(address(bgpId));
-                }
-
                 packet.accept(new Serializer(message));
 
-                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = dispatcher.send(new TelemetryMessage(remoteAddress, ByteBuffer.wrap(message.build().toByteArray())));
+                packet.accept(new Packet.Visitor.Adapter() {
+                    @Override
+                    public void visit(final InitiationPacket packet) {
+                        packet.information.first(InformationElement.Type.BGP_ID)
+                                          .map(InetAddressUtils::addr)
+                                          .ifPresent(_bgpId -> bgpId = _bgpId);
+                    }
+                });
+
+                if (bgpId != null) {
+                    message.setBgpId(BmpParser.address(bgpId));
+                }
+
+
+                // Enrich the message with resolved hostnames
+                CompletableFuture<Transport.Message.Builder> enriched = CompletableFuture.completedFuture(message);
+                if (BmpParser.this.dnsLookupsEnabled) {
+                    enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
+                                       .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                }
+
+                // Dispatch the final message
+                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = enriched.thenCompose(msg -> {
+                    final ByteBuffer payload = ByteBuffer.wrap(msg.build().toByteArray());
+                    return BmpParser.this.dispatcher.send(new TelemetryMessage(remoteAddress, payload));
+                });
+
                 BmpParser.this.recordsDispatched.mark();
 
                 return Optional.of(dispatched);
