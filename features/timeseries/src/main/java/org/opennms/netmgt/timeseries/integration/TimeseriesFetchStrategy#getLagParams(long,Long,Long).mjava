@@ -1,0 +1,59 @@
+    /**
+     * Calculates the parameters to use for late aggregation.
+     *
+     * Since we're in the process of transitioning from an RRD-world, most queries won't
+     * contain a specified interval or heartbeat. For this reason, we need to derive sensible
+     * values that will allow users to visualize the data on the graphs without too many NaNs.
+     *
+     * The given step size will be variable based on the time range and the pixel width of the
+     * graph, so we need to derive the interval and heartbeat accordingly.
+     *
+     * Let S = step, I = interval and H = heartbeat, the constraints are as follows:
+     *    0 < S
+     *    0 < I
+     *    0 < H
+     *    S = aI      for some integer a >= 2
+     *    H = bI      for some integer b >= 2
+     *
+     * While achieving these constraints, we also want to optimize for:
+     *    min(|S - S*|)
+     * where S* is the user supplied step and S is the effective step.
+     *
+     */
+    @VisibleForTesting
+    protected static LateAggregationParams getLagParams(long step, Long interval, Long heartbeat) {
+
+        // Limit the step with a lower bound in order to prevent extremely large queries
+        long effectiveStep = Math.max(MIN_STEP_MS, step);
+        if (effectiveStep != step) {
+            LOG.warn("Requested step size {} is too small. Using {}.", step, effectiveStep);
+        }
+
+        // If the interval is specified, and already a multiple of the step then use it as is
+        long effectiveInterval = 0;
+        if (interval != null && interval < effectiveStep && (effectiveStep % interval) == 0) {
+            effectiveInterval = interval;
+        } else {
+            // Otherwise, make sure the step is evenly divisible by the INTERVAL_DIVIDER
+            if (effectiveStep % INTERVAL_DIVIDER != 0) {
+                effectiveStep += effectiveStep % INTERVAL_DIVIDER;
+            }
+            effectiveInterval = effectiveStep / INTERVAL_DIVIDER;
+        }
+
+        // Use the given heartbeat if specified, fall back to the default
+        long effectiveHeartbeat = heartbeat != null ? heartbeat : DEFAULT_HEARTBEAT_MS;
+        if (effectiveInterval < effectiveHeartbeat) {
+            if (effectiveHeartbeat % effectiveInterval != 0) {
+                effectiveHeartbeat += effectiveInterval - (effectiveHeartbeat % effectiveInterval);
+            } else {
+                // Existing heartbeat is valid
+            }
+        } else {
+            effectiveHeartbeat = effectiveInterval + 1;
+            effectiveHeartbeat += effectiveHeartbeat % effectiveInterval;
+        }
+
+        return new LateAggregationParams(effectiveStep, effectiveInterval, effectiveHeartbeat);
+    }
+
