@@ -1,0 +1,58 @@
+        private static Value parseGeneric(final ByteBuf buffer,
+                                          final int lowType,
+                                          final boolean globalLarge,
+                                          final boolean globalAddress) {
+            switch (lowType) {
+                case 0x06: { // Flow spec traffic-rate [RFC5575]
+                    final int global = uint16(buffer);
+                    final long local = uint32(buffer);
+                    return new Value("flow-rate", String.format("%s:%s", global, local));
+                }
+
+                case 0x07: { // Flow spec traffic-action [RFC5575]
+                    skip(buffer, 5);
+                    final int actions = uint8(buffer);
+
+                    final StringBuilder s = new StringBuilder();
+                    if ((actions & 0x02) != 0) { // Terminal action
+                        s.append('S');
+                    }
+                    if ((actions & 0x01) != 0) { // Sample and Logging
+                        s.append('T');
+                    }
+
+                    return new Value("flow-act", s.toString());
+                }
+
+                case 0x08: { // Flow spec redirect AS-2byte format [RFC5575][RFC7674]
+                    final String global = globalLarge
+                                          ? globalAddress
+                                            ? InetAddressUtils.toIpAddrString(bytes(buffer, 4))
+                                            : Long.toString(uint32(buffer))
+                                          : Integer.toString(uint16(buffer));
+                    final String local = globalLarge
+                                         ? Integer.toString(uint16(buffer))
+                                         : Long.toString(uint32(buffer));
+
+                    return new Value("flow-redir", String.format("%s:%s", global, local));
+                }
+
+                case 0x09: { // Flow spec traffic-remarking [RFC5575]
+                    skip(buffer, 5);
+                    final int remark = uint8(buffer);
+                    return new Value("flow-remark", String.format("%s", remark));
+                }
+
+                case 0x0a: { // Layer2 Info Extended Community [RFC4761]
+                    final int encap = uint8(buffer);
+                    final int flags = uint8(buffer);
+                    final int mtu = uint16(buffer);
+                    return new Value("l2info", String.format("%s:%s:%s", encap, flags, mtu));
+                }
+
+                default:
+                    BmpParser.LOG.warn("Unknown Extended Community Attribute: Generic: {}", lowType);
+                    return null;
+            }
+        }
+

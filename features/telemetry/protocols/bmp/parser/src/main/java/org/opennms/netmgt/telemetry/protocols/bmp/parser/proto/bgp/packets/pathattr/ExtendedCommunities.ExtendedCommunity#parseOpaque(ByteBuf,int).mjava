@@ -1,0 +1,107 @@
+        private static Value parseOpaque(final ByteBuf buffer,
+                                         final int lowType) {
+            switch (lowType) {
+                case 0x00: { // BGP Origin Validation State Extended Community [RFC8097]
+                    skip(buffer, 5);
+                    final int state = uint8(buffer);
+
+                    switch (state) {
+                        case 0:
+                            return new Value("valid", "valid");
+                        case 1:
+                            return new Value("valid", "not found");
+                        case 2:
+                            return new Value("valid", "invalid");
+
+                        default:
+                            BmpParser.LOG.warn("Unknown Extended Community Attribute: Opaque: Origin Validation State: {}", state);
+                            return null;
+                    }
+                }
+
+                case 0x01: { // Cost Community [draft-ietf-idr-custom-decision]
+                    final int poi = uint8(buffer); // Point of insertion
+                    final int cid = uint8(buffer); // Community ID
+
+                    final long cost = uint32(buffer);
+
+                    final String value;
+                    switch (poi) {
+                        case 128: // ABSOLUTE_VALUE
+                            value = String.format("abs:%s%s", cid, cost);
+                            break;
+                        case 129: // IGP_COST
+                            value = String.format("igp:%s%s", cid, cost);
+                            break;
+                        case 130: // EXTERNAL_INTERNAL
+                            value = String.format("ext:%s%s", cid, cost);
+                            break;
+                        case 131: // BGP_ID
+                            value = String.format("bgp_id:%s%s", cid, cost);
+                            break;
+
+                        default:
+                            BmpParser.LOG.warn("Unknown Extended Community Attribute: Opaque: Point of Insertion: {}", poi);
+                            return null;
+                    }
+
+                    return new Value("cost", value);
+                }
+
+                case 0x03: { // CP-ORF [RFC7543]
+                    return new Value("cp-orf", "");
+                }
+
+                case 0x06: { // OSPF Route Type [RFC4577]
+                    final long area = uint32(buffer);
+                    final int type = uint8(buffer);
+                    final int options = uint8(buffer);
+
+                    final String value;
+                    switch (type) {
+                        case 1:
+                        case 2: // Intra-Area routes (LSA)
+                            value = String.format("%s:O", area);
+                            break;
+                        case 3: // Intra-Area routes
+                            value = String.format("%s:IA", area);
+                            break;
+                        case 5: // External routes
+                            value = String.format("0:E:%s", options);
+                            break;
+                        case 7: // NSSA routes
+                            value = String.format("%s:N:%s", options);
+                            break;
+
+                        default:
+                            BmpParser.LOG.warn("Unknown Extended Community Attribute: Opaque: OSPF Route Type: {}", type);
+                            return null;
+                    }
+
+                    return new Value("ospf-rt", value);
+                }
+
+                case 0x0b: { // Color Extended Community [RFC5512]
+                    skip(buffer, 2);
+                    final long color = uint32(buffer);
+
+                    return new Value("color", Long.toString(color));
+                }
+
+                case 0x0c: { // Encapsulation Extended Community [RFC5512]
+                    skip(buffer, 4);
+                    final int tunnelType = uint16(buffer);
+
+                    return new Value("encap", Integer.toString(tunnelType));
+                }
+
+                case 0x0d: { // Default Gateway [Yakov_Rekhter]
+                    return new Value("default-gw",  "");
+                }
+
+                default:
+                    BmpParser.LOG.warn("Unknown Extended Community Attribute: Opaque: {}", lowType);
+                    return null;
+            }
+        }
+
