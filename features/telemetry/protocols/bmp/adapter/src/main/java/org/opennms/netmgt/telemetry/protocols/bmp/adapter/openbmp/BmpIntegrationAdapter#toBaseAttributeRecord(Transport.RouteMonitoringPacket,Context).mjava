@@ -1,0 +1,138 @@
+    private BaseAttribute toBaseAttributeRecord(final Transport.RouteMonitoringPacket routeMonitoring,
+                                                final Context context) {
+        final Transport.Peer peer = routeMonitoring.getPeer();
+
+        final BaseAttribute baseAttr = new BaseAttribute();
+        baseAttr.action = BaseAttribute.Action.ADD; // Action is always ADD - attributes are never withdrawn
+        baseAttr.sequence = this.sequence.getAndIncrement();
+        baseAttr.routerHash = context.getRouterHash();
+        baseAttr.routerIp = context.sourceAddress;
+        baseAttr.peerHash = Record.hash(peer.getAddress(), peer.getDistinguisher(), baseAttr.routerHash);
+        baseAttr.peerIp = address(peer.getAddress());
+        baseAttr.peerAsn = uint32(peer.getAs());
+        baseAttr.timestamp = context.timestamp;
+
+        // Derive the origin of the prefix from the path attributes - default to an empty string if not set
+        baseAttr.origin = getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.ORIGIN)
+                .map(attr -> attr.getOrigin().name().toLowerCase()).orElse("");
+
+        // Build the AS path from the path attributes - default to an empty string if not set
+        // See UpdateMsg::parseAttr_AsPath in the OpenBMP collector for the corresponding logic
+        baseAttr.asPathCount = 0;
+
+        baseAttr.asPath = getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.AS_PATH)
+                .map(asPathAttr -> {
+                    final StringBuilder asPath = new StringBuilder();
+
+                    asPathAttr.getAsPath().getSegmentsList().forEach(segment -> {
+                        if (Transport.RouteMonitoringPacket.PathAttribute.AsPath.Segment.Type.AS_SET.equals(segment.getType())) {
+                            asPath.append("{");
+                        }
+                        segment.getPathsList().forEach(segmentPath -> {
+                            asPath.append(segmentPath);
+                            asPath.append(" ");
+                            baseAttr.asPathCount++;
+                            baseAttr.originAs = uint32(segmentPath);
+                        });
+                        if (Transport.RouteMonitoringPacket.PathAttribute.AsPath.Segment.Type.AS_SET.equals(segment.getType())) {
+                            asPath.append("}");
+                        }
+                    });
+
+                    return asPath.toString();
+                })
+                .orElse("");
+
+        // Derive the next hop from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.NEXT_HOP)
+                .map(attr -> attr.getNextHop().getAddress())
+                .ifPresent(nextHop -> {
+                    baseAttr.nextHop = address(nextHop);
+                    baseAttr.nextHopIpv4 = isV4(nextHop);
+                });
+
+        // Derive the Multi Exit Discriminator (MED) from the path attributes (lower values are preferred)
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.MULTI_EXIT_DISC)
+                .map(attr -> attr.getMultiExitDisc().getDiscriminator())
+                .ifPresent(med -> {
+                    baseAttr.med = uint32(med);
+                });
+
+        // Derive the local preference from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.LOCAL_PREF)
+                .map(attr -> attr.getLocalPref().getPreference())
+                .ifPresent(localPref -> {
+                    baseAttr.localPref = uint32(localPref);
+                });
+
+        // Derive the aggregator from the path attributes
+        // See UpdateMsg::parseAttr_Aggegator in the OpenBMP collector for the corresponding logic
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.AGGREGATOR)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getAggregator)
+                .ifPresent(agg -> {
+                    baseAttr.aggregator = String.format("%d %s", agg.getAs(), BmpAdapterTools.addressAsStr(agg.getAddress()));
+                });
+
+        // Derive the community list from the path attributes
+        baseAttr.communityList = getPathAttributesOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.COMMUNITY)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getCommunity)
+                .map(BmpAdapterTools::asAttr)
+                .collect(Collectors.joining(" "));
+
+        // Derive the extended community list from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.EXTENDED_COMMUNITIES)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getExtendedCommunities)
+                .ifPresent(extendedCommunities -> {
+                    baseAttr.extCommunityList = extendedCommunities.getExtendedCommunitiesList().stream()
+                            .map(extendedCommunity -> String.format("%d:%s",
+                                    uint32(extendedCommunity.getType()),
+                                    extendedCommunity.getValue()))
+                            .collect(Collectors.joining(" "));
+                });
+
+        // Derive the cluster list from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.CLUSTER_LIST)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getClusterList)
+                .ifPresent(clusterList -> {
+                    baseAttr.clusterList = clusterList.getClusterIdList().stream()
+                            .map(BmpAdapterTools::addressAsStr)
+                            .collect(Collectors.joining(" "));
+                });
+
+        // Derive the large community list from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.LARGE_COMMUNITIES)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getLargeCommunities)
+                .ifPresent(largeCommunities -> {
+                    baseAttr.largeCommunityList = largeCommunities.getLargeCommunitiesList().stream()
+                            .map(largeCommunity -> String.format("%d:%d:%d",
+                                    uint32(largeCommunity.getGlobalAdministrator()),
+                                    uint32(largeCommunity.getLocalDataPart1()),
+                                    uint32(largeCommunity.getLocalDataPart2())))
+                            .collect(Collectors.joining(" "));
+                });
+
+        // Derive the originator id from the path attributes
+        getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.ORIGINATOR_ID)
+                .map(Transport.RouteMonitoringPacket.PathAttribute::getOriginatorId)
+                .ifPresent(originatorId -> {
+                    baseAttr.originatorId = Long.toString(uint32(originatorId));
+                });
+
+        // Set the atomic flag is the atomic aggregate path attribute is present
+        baseAttr.atomicAgg = getPathAttributeOfType(routeMonitoring, Transport.RouteMonitoringPacket.PathAttribute.ValueCase.ATOMIC_AGGREGATE)
+                .isPresent();
+
+        // Compute hash - fields [ as path, next hop, aggregator, origin, med, local pref, community list, ext community list, peer hash ]
+        baseAttr.hash = Record.hash(baseAttr.asPath,
+                                    Record.nullSafeStr(baseAttr.nextHop),
+                                    baseAttr.aggregator,
+                                    baseAttr.origin,
+                                    Record.nullSafeStr(baseAttr.med),
+                                    Record.nullSafeStr(baseAttr.localPref),
+                                    baseAttr.communityList,
+                                    baseAttr.extCommunityList,
+                                    baseAttr.peerHash);
+
+        return baseAttr;
+    }
+
