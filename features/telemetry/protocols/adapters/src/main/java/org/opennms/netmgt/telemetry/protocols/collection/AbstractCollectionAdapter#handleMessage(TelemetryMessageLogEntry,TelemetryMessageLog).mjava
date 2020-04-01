@@ -1,0 +1,34 @@
+    public final void handleMessage(TelemetryMessageLogEntry message, TelemetryMessageLog messageLog) {
+        handleCollectionMessage(message, messageLog).forEach(result -> {
+            // Locate the matching package definition
+            final PackageDefinition pkg = getPackageFor(adapterConfig, result.getAgent());
+            if (pkg == null) {
+                LOG.warn("No matching package found for message: {}. Dropping.", message);
+                return;
+            }
+
+            // Build the repository from the package definition
+            final RrdRepository repository = new RrdRepository();
+            repository.setStep(pkg.getRrd().getStep());
+            repository.setHeartBeat(repository.getStep() * 2);
+            repository.setRraList(pkg.getRrd().getRras());
+            repository.setRrdBaseDir(new File(pkg.getRrd().getBaseDir()));
+
+            // Persist!
+            final CollectionSet collectionSet = result.getCollectionSet();
+            LOG.trace("Persisting collection set: {} for message: {}", collectionSet, message);
+            final Persister persister = persisterFactory.createPersister(EMPTY_SERVICE_PARAMETERS, repository);
+            collectionSet.visit(persister);
+
+            // Thresholding
+            try {
+                if (isThresholdingEnabled.get()) {
+                    ThresholdingSession session = getSessionForAgent(result.getAgent(), repository);
+                    session.accept(collectionSet);
+                }
+            } catch (ThresholdInitializationException e) {
+                LOG.warn("Failed Thresholding of CollectionSet : {} for agent: {}", e.getMessage(), result.getAgent());
+            }
+        });
+    }
+

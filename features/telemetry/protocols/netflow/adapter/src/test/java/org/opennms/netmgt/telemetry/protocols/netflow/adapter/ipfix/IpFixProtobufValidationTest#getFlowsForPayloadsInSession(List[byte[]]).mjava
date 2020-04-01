@@ -1,0 +1,28 @@
+    private List<Flow> getFlowsForPayloadsInSession(List<byte[]> payloads) {
+        final List<Flow> flows = new ArrayList<>();
+        final Session session = new TcpSession(InetAddress.getLoopbackAddress());
+        for (byte[] payload : payloads) {
+            final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
+            final Header header;
+
+            try {
+                header = new Header(slice(buffer, Header.SIZE));
+                final Packet packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+                packet.getRecords().forEach(rec -> {
+
+                    byte[] message = Utils.buildAndSerialize(Protocol.IPFIX, rec);
+                    try {
+                        FlowMessage flowMessage = FlowMessage.parseFrom(message);
+                        flows.addAll(ipFixConverter.convert(flowMessage));
+                    } catch (InvalidProtocolBufferException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            } catch (InvalidPacketException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        return flows;
+    }
+

@@ -1,0 +1,84 @@
+    /**
+     * Exporter's nodeId is 2
+     * Exporter's metaData myContext:myKey is set to 10.123.123.123
+     *
+     * Message's nat'd endpoint address is 10.10.10.10
+     * Message's bgpIp is 10.123.123.123
+     * Peer addresses in peerUp packet doesn't matter
+     *
+     * ...this should result in an event containing nodeId 2
+     */
+    @JUnitTemporaryDatabase
+    @Test
+    public void testStatusAdapter() {
+        final AdapterDefinition adapterDef = mock(AdapterDefinition.class);
+        final MetricRegistry metricRegistry = mock(MetricRegistry.class);
+        final EventForwarder eventForwarder = mock(EventForwarder.class);
+
+        final BmpPeerStatusAdapter adapter = new BmpPeerStatusAdapter(adapterDef, interfaceToNodeCache, eventForwarder, metricRegistry, nodeDao);
+        adapter.setMetaDataNodeLookup("myContext:myKey");
+
+        final Transport.PeerUpPacket.Builder peerUpPacket = Transport.PeerUpPacket.newBuilder();
+        peerUpPacket.getPeerBuilder()
+                .setType(Transport.Peer.Type.GLOBAL_INSTANCE)
+                .setPeerFlags(Transport.Peer.PeerFlags.newBuilder()
+                        .setIpVersion(Transport.Peer.PeerFlags.IpVersion.IP_V4)
+                        .setLegacyAsPath(false)
+                        .setPolicy(Transport.Peer.PeerFlags.Policy.PRE_POLICY)
+                        .build())
+                .setDistinguisher(0)
+                .setAddress(Transport.IpAddress.newBuilder()
+                        .setV4(ByteString.copyFrom(InetAddressUtils.toIpAddrBytes("192.168.0.5")))
+                        .build())
+                .setAs(UnsignedInteger.valueOf(4200000000L).intValue())
+                .setId(Transport.IpAddress.newBuilder()
+                        .setV4(ByteString.copyFrom(InetAddressUtils.toIpAddrBytes("9.9.9.9")))
+                        .build())
+                .setTimestamp(Timestamp.newBuilder()
+                        .setSeconds(1234567890L)
+                        .setNanos(987654321)
+                        .build());
+        peerUpPacket.setLocalAddress(Transport.IpAddress.newBuilder()
+                .setV4(ByteString.copyFrom(InetAddressUtils.toIpAddrBytes("192.168.0.4")))
+                .build())
+                .setLocalPort(179)
+                .setRemotePort(117799);
+        peerUpPacket.getSendMsgBuilder()
+                .setVersion(4)
+                .setAs(UnsignedInteger.valueOf(4200000023L).intValue())
+                .setHoldTime(200)
+                .setId(Transport.IpAddress.newBuilder()
+                        .setV4(ByteString.copyFrom(InetAddressUtils.toIpAddrBytes("1.1.1.1")))
+                        .build());
+        peerUpPacket.getRecvMsgBuilder()
+                .setVersion(4)
+                .setAs(UnsignedInteger.valueOf(4200000000L).intValue())
+                .setHoldTime(100)
+                .setId(Transport.IpAddress.newBuilder()
+                        .setV4(ByteString.copyFrom(InetAddressUtils.toIpAddrBytes("9.9.9.9")))
+                        .build());
+        peerUpPacket.setSysName("router1")
+                .setSysDesc("Black Ops IV")
+                .setMessage("Gun Game!");
+
+        Transport.Message peerUpMessage = Transport.Message.newBuilder()
+                .setVersion(3)
+                .setPeerUp(peerUpPacket)
+                .setBgpId(address(InetAddressUtils.addr("10.123.123.123")))
+                .build();
+
+        final TelemetryMessageLog messageLog = mock(TelemetryMessageLog.class);
+        when(messageLog.getSystemId()).thenReturn("0xDEADBEEF");
+        when(messageLog.getSourceAddress()).thenReturn("10.10.10.10");
+        when(messageLog.getSourcePort()).thenReturn(666);
+
+        final TelemetryMessageLogEntry messageLogEntry = mock(TelemetryMessageLogEntry.class);
+        when(messageLogEntry.getByteArray()).thenReturn(peerUpMessage.toByteArray());
+        when(messageLogEntry.getTimestamp()).thenReturn(1L);
+        adapter.handleMessage(messageLogEntry, messageLog);
+
+        final ArgumentCaptor<Event> eventCaptor = ArgumentCaptor.forClass(Event.class);
+        verify(eventForwarder).sendNow(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getNodeid(), is(2L));
+    }
+
