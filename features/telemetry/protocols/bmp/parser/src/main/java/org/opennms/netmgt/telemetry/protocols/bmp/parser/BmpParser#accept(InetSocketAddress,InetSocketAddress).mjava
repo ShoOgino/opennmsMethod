@@ -78,8 +78,17 @@
                 // Enrich the message with resolved hostnames
                 CompletableFuture<Transport.Message.Builder> enriched = CompletableFuture.completedFuture(message);
                 if (BmpParser.this.dnsLookupsEnabled) {
-                    enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
-                            .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                    // Limit number of outstanding requests with a bulk-head and put backpressure on the socket
+                    try {
+                        bulkhead.acquirePermission();
+                        // We got permission, let's issue the async lookups
+                        enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
+                                .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                        // Release permission when these complete, successfully or not
+                        enriched.whenComplete((v,e) -> bulkhead.releasePermission());
+                    } catch (BulkheadFullException bfe) {
+                        RATE_LIMITED_LOG.warn("Skipping enrichment. Too many requests already in flight (bulk-head is full).");
+                    }
                 }
 
                 // Dispatch the final message
