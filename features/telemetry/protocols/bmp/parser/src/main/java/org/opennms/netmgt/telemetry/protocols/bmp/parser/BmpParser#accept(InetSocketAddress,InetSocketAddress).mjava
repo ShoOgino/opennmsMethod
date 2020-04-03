@@ -2,7 +2,16 @@
     public Handler accept(final InetSocketAddress remoteAddress,
                           final InetSocketAddress localAddress) {
         return new Handler() {
+            private static final int ADD_PATH_CAP = 69;
             private InetAddress bgpId;
+            private Map<InetAddress, PeerInfo> peerInfoMap = new HashMap<>();
+
+            private PeerAccessor peerAccessor = peerHeader -> {
+                if (peerHeader == null || peerHeader.id == null) {
+                    return Optional.empty();
+                }
+                return Optional.ofNullable(peerInfoMap.get(peerHeader.id));
+            };
 
             @Override
             public Optional<CompletableFuture<?>> parse(ByteBuf buffer) throws Exception {
@@ -18,13 +27,19 @@
 
                 final Packet packet;
                 if (buffer.isReadable(header.payloadLength())) {
-                    packet = header.parsePayload(slice(buffer, header.payloadLength()));
+                    packet = header.parsePayload(slice(buffer, header.payloadLength()), peerAccessor);
                 } else {
                     buffer.resetReaderIndex();
                     return Optional.empty();
                 }
 
                 LOG.trace("Got packet: {}", packet);
+
+                // Build the message from the received packet
+                final Transport.Message.Builder message = Transport.Message.newBuilder()
+                        .setVersion(header.version);
+
+                packet.accept(new Serializer(message));
 
                 packet.accept(new Packet.Visitor.Adapter() {
                     @Override
@@ -35,17 +50,54 @@
                     }
                 });
 
-                final Transport.Message.Builder message = Transport.Message.newBuilder()
-                                                                           .setVersion(header.version);
+                packet.accept(new Packet.Visitor.Adapter() {
+                    @Override
+                    public void visit(PeerUpPacket packet) {
+                        packet.sendOpenMessage.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                            ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
+                            int afi = uint16(b);
+                            int safi = uint8(b);
+                            int sendReceive = uint8(b);
+                            peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, true);
+                        });
+
+                        packet.recvOpenMessage.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                            ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
+                            int afi = uint16(b);
+                            int safi = uint8(b);
+                            int sendReceive = uint8(b);
+                            peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, false);
+                        });
+                    }
+                });
 
                 if (bgpId != null) {
-                    message.setBgpId(address(bgpId));
+                    message.setBgpId(BmpParser.address(bgpId));
                 }
 
-                packet.accept(new Serializer(message));
+                // Enrich the message with resolved hostnames
+                CompletableFuture<Transport.Message.Builder> enriched = CompletableFuture.completedFuture(message);
+                if (BmpParser.this.dnsLookupsEnabled) {
+                    // Limit number of outstanding requests with a bulk-head and put backpressure on the socket
+                    try {
+                        bulkhead.acquirePermission();
+                        // We got permission, let's issue the async lookups
+                        enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
+                                .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                        // Release permission when these complete, successfully or not
+                        enriched.whenComplete((v,e) -> bulkhead.releasePermission());
+                    } catch (BulkheadFullException bfe) {
+                        RATE_LIMITED_LOG.warn("Skipping enrichment. Too many requests already in flight (bulk-head is full).");
+                    }
+                }
 
-                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = dispatcher.send(new TelemetryMessage(remoteAddress, ByteBuffer.wrap(message.build().toByteArray())));
-                BmpParser.this.recordsDispatched.mark();
+                // Dispatch the final message
+                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = enriched.thenCompose(msg -> {
+                    final ByteBuffer payload = ByteBuffer.wrap(msg.build().toByteArray());
+                    final CompletableFuture<AsyncDispatcher.DispatchStatus> status = BmpParser.this.dispatcher.send(new TelemetryMessage(remoteAddress, payload));
+                    BmpParser.this.recordsDispatched.mark();
+                    return status;
+                });
 
                 return Optional.of(dispatched);
             }
