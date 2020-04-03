@@ -35,6 +35,12 @@
 
                 LOG.trace("Got packet: {}", packet);
 
+                // Build the message from the received packet
+                final Transport.Message.Builder message = Transport.Message.newBuilder()
+                        .setVersion(header.version);
+
+                packet.accept(new Serializer(message));
+
                 packet.accept(new Packet.Visitor.Adapter() {
                     @Override
                     public void visit(InitiationPacket packet) {
@@ -65,17 +71,33 @@
                     }
                 });
 
-                final Transport.Message.Builder message = Transport.Message.newBuilder()
-                        .setVersion(header.version);
-
                 if (bgpId != null) {
-                    message.setBgpId(address(bgpId));
+                    message.setBgpId(BmpParser.address(bgpId));
                 }
 
-                packet.accept(new Serializer(message));
+                // Enrich the message with resolved hostnames
+                CompletableFuture<Transport.Message.Builder> enriched = CompletableFuture.completedFuture(message);
+                if (BmpParser.this.dnsLookupsEnabled) {
+                    // Limit number of outstanding requests with a bulk-head and put backpressure on the socket
+                    try {
+                        bulkhead.acquirePermission();
+                        // We got permission, let's issue the async lookups
+                        enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
+                                .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                        // Release permission when these complete, successfully or not
+                        enriched.whenComplete((v,e) -> bulkhead.releasePermission());
+                    } catch (BulkheadFullException bfe) {
+                        RATE_LIMITED_LOG.warn("Skipping enrichment. Too many requests already in flight (bulk-head is full).");
+                    }
+                }
 
-                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = dispatcher.send(new TelemetryMessage(remoteAddress, ByteBuffer.wrap(message.build().toByteArray())));
-                BmpParser.this.recordsDispatched.mark();
+                // Dispatch the final message
+                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = enriched.thenCompose(msg -> {
+                    final ByteBuffer payload = ByteBuffer.wrap(msg.build().toByteArray());
+                    final CompletableFuture<AsyncDispatcher.DispatchStatus> status = BmpParser.this.dispatcher.send(new TelemetryMessage(remoteAddress, payload));
+                    BmpParser.this.recordsDispatched.mark();
+                    return status;
+                });
 
                 return Optional.of(dispatched);
             }
