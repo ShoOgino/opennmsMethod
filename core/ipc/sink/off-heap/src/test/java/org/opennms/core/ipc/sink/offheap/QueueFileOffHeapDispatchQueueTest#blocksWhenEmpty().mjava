@@ -1,0 +1,36 @@
+    @Test
+    public void blocksWhenEmpty() throws IOException, WriteFailedException {
+        DispatchQueue<String> queue = new QueueFileOffHeapDispatchQueue<>(String::getBytes, String::new,
+                "blocksWhenEmpty", Paths.get(folder.newFolder().toURI()), 1, 1, 10000);
+
+        AtomicReference<String> atomicString = new AtomicReference<>(null);
+        AtomicBoolean receivedValue = new AtomicBoolean(false);
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                atomicString.set(queue.dequeue().getValue());
+                receivedValue.set(true);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        assertThat(atomicString.get(), is(nullValue()));
+
+        String payload = "a";
+
+        try {
+            await().pollDelay(10, TimeUnit.MILLISECONDS)
+                    .atMost(100, TimeUnit.MILLISECONDS)
+                    .until(receivedValue::get);
+            fail("Dequeue did not block");
+        } catch (ConditionTimeoutException expected) {
+        }
+
+        queue.enqueue(payload, "key");
+
+        await().pollDelay(10, TimeUnit.MILLISECONDS)
+                .atMost(1, TimeUnit.SECONDS)
+                .until(() -> Objects.equals(payload, atomicString.get()));
+    }
+

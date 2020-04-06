@@ -1,0 +1,50 @@
+    /**
+     * Exporter's nodeId is 2
+     * Exporter's metaData myContext:myKey is set to 10.123.123.123
+     *
+     * Message's nat'd endpoint address is 10.10.10.10
+     * Message's bgpIp is 10.123.123.123
+     *
+     * ...this should result in the node's primary interface address 192.168.2.1 since 10.123.123.123 does not exists in database
+     */
+    @JUnitTemporaryDatabase
+    @Test
+    public void testTelemetryAdapter() {
+        final AdapterDefinition adapterDef = mock(AdapterDefinition.class);
+        final MetricRegistry metricRegistry = mock(MetricRegistry.class);
+        final BmpTelemetryAdapter adapter = new BmpTelemetryAdapter(adapterDef, metricRegistry, nodeDao, transactionTemplate);
+        adapter.setMetaDataNodeLookup("myContext:myKey");
+        adapter.setInterfaceToNodeCache(interfaceToNodeCache);
+        adapter.setCollectionAgentFactory(collectionAgentFactory);
+
+        final Transport.StatisticsReportPacket.Builder statisticsReport = Transport.StatisticsReportPacket.newBuilder()
+                .setAdjRibIn(Transport.StatisticsReportPacket.Gauge.newBuilder()
+                        .setValue(1))
+                .setAdjRibOut(Transport.StatisticsReportPacket.Gauge
+                        .newBuilder()
+                        .setValue(1))
+                .setPeer(Transport.Peer.newBuilder()
+                        .setAddress(address(InetAddressUtils.addr("20.20.20.20")))
+                        .setId(address(InetAddressUtils.addr("20.20.20.20"))));
+
+        final Transport.Message statisticsMessage = Transport.Message.newBuilder()
+                .setVersion(3)
+                .setStatisticsReport(statisticsReport)
+                .setBgpId(address(InetAddressUtils.addr("10.123.123.123")))
+                .build();
+
+        final TelemetryMessageLog messageLog = mock(TelemetryMessageLog.class);
+
+        when(messageLog.getSystemId()).thenReturn("0xDEADBEEF");
+        when(messageLog.getSourceAddress()).thenReturn("10.10.10.10");
+        when(messageLog.getSourcePort()).thenReturn(666);
+
+        final TelemetryMessageLogEntry messageLogEntry = mock(TelemetryMessageLogEntry.class);
+        when(messageLogEntry.getByteArray()).thenReturn(statisticsMessage.toByteArray());
+        when(messageLogEntry.getTimestamp()).thenReturn(1L);
+        final List<CollectionSetWithAgent> collectionSetWithAgentStream = adapter.handleCollectionMessage(messageLogEntry, messageLog).collect(Collectors.toList());
+        assertThat(collectionSetWithAgentStream.size(), is(1));
+        assertThat(collectionSetWithAgentStream.get(0).getAgent().getNodeId(), is(2));
+        assertThat(collectionSetWithAgentStream.get(0).getAgent().getAddress(), is(InetAddressUtils.addr("192.168.2.1")));
+    }
+

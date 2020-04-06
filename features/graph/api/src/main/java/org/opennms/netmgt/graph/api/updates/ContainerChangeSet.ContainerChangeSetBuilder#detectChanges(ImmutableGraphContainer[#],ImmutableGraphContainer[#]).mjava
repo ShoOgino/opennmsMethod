@@ -1,0 +1,60 @@
+        private void detectChanges(final ImmutableGraphContainer<?> oldGraphContainer, final ImmutableGraphContainer<?> newGraphContainer) {
+            // no old container exists, add all graphs
+            if (oldGraphContainer == null && newGraphContainer != null) {
+                newGraphContainer.getGraphs().forEach(g -> graphAdded(g));
+            }
+
+            // no new graph container exists, remove all
+            if (oldGraphContainer != null && newGraphContainer == null) {
+                oldGraphContainer.getGraphs().forEach(g -> graphRemoved(g));
+            }
+
+            // nothing to do if they are the same :)
+            if (oldGraphContainer == newGraphContainer) {
+                return;
+            }
+
+            // both containers exists, so calculate changes
+            if (oldGraphContainer != null && newGraphContainer != null) {
+                // Before changes can be calculated, ensure the containers share the same id, otherwise
+                // we should bail, as this is theoretical/technical possible, but does not make sense from the
+                // domain view the container reflects.
+                if (!oldGraphContainer.getId().equalsIgnoreCase(newGraphContainer.getId())) {
+                    throw new IllegalStateException("Cannot detect changes between different containers");
+                }
+
+                // Detect changes
+                final List<String> oldNamespaces = oldGraphContainer.getNamespaces();
+                final List<String> newNamespaces = newGraphContainer.getNamespaces();
+
+                // Detect removed graphs
+                final List<String> removedNamespaces = new ArrayList<>(oldNamespaces);
+                removedNamespaces.removeAll(newNamespaces);
+                removedNamespaces.forEach(ns -> {
+                    final ImmutableGraph removedGraph = oldGraphContainer.getGraph(ns);
+                    graphRemoved(removedGraph);
+                });
+
+                // Detect added graphs
+                final List<String> addedNamespaces = new ArrayList<>(newNamespaces);
+                addedNamespaces.removeAll(oldNamespaces);
+                addedNamespaces.forEach(ns -> {
+                    final ImmutableGraph addedGraph = newGraphContainer.getGraph(ns);
+                    graphAdded(addedGraph);
+                });
+
+                // Detect changes
+                final List<String> sharedNamespaces = new ArrayList<>(newNamespaces);
+                sharedNamespaces.removeAll(addedNamespaces);
+                sharedNamespaces.removeAll(removedNamespaces);
+                sharedNamespaces.forEach(ns -> {
+                    final ImmutableGraph oldGraph = oldGraphContainer.getGraph(ns);
+                    final ImmutableGraph newGraph = newGraphContainer.getGraph(ns);
+                    final ChangeSet changeSet = ChangeSet.builder(oldGraph, newGraph).withDate(changeSetDate).build();
+                    if (changeSet.hasChanges()) {
+                        graphChanged(changeSet);
+                    }
+                });
+            }
+        }
+

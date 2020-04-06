@@ -1,0 +1,39 @@
+    @Override
+    public org.opennms.features.topology.api.topo.StatusProvider map(LegacyStatusProvider extension) {
+        return new org.opennms.features.topology.api.topo.StatusProvider() {
+
+            @Override
+            public String getNamespace() {
+                // This is not ideal, but technically the namespace is not required for the StatusProvider
+                // So this returns null.
+                return null;
+            }
+
+            @Override
+            public boolean contributesTo(String namespace) {
+                return extension.canCalculate(namespace);
+            }
+
+            @Override
+            public Map<? extends VertexRef, ? extends Status> getStatusForVertices(BackendGraph graph, Collection<VertexRef> vertices, Criteria[] criteria) {
+                final Map<VertexRef, Status> statusMap = new HashMap<>();
+                vertices.forEach(vertexRef -> {
+                    final Vertex vertex = graph.getVertex(vertexRef, criteria);
+                    if (vertex instanceof LegacyVertex) {
+                        final LegacyVertex legacyVertex = (LegacyVertex) vertex;
+                        final ImmutableVertex apiVertex = ImmutableVertex
+                                .newBuilder(legacyVertex.getNamespace(), legacyVertex.getId())
+                                .properties(legacyVertex.getProperties())
+                                .build();
+                        final StatusInfo apiStatus = extension.calculateStatus(apiVertex);
+                        final Status status = convert(apiStatus);
+                        statusMap.put(vertexRef, status);
+                    } else {
+                        statusMap.put(vertexRef, new DefaultStatus(OnmsSeverity.INDETERMINATE.getLabel(), 0));
+                    }
+                });
+                return statusMap;
+            }
+        };
+    }
+

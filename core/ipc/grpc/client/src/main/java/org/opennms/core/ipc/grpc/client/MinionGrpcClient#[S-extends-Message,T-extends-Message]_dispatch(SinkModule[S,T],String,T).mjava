@@ -1,0 +1,28 @@
+    @Override
+    public <S extends Message, T extends Message> void dispatch(SinkModule<S, T> module, String metadata, T message) {
+
+        try (Logging.MDCCloseable mdc = Logging.withPrefixCloseable(MessageConsumerManager.LOG_PREFIX)) {
+            byte[] sinkMessageContent = module.marshal(message);
+            String messageId = UUID.randomUUID().toString();
+            SinkMessage.Builder sinkMessageBuilder = SinkMessage.newBuilder()
+                    .setMessageId(messageId)
+                    .setLocation(minionIdentity.getLocation())
+                    .setModuleId(module.getId())
+                    .setContent(ByteString.copyFrom(sinkMessageContent));
+
+            if (module.getId().equals(HEARTBEAT_MODULE_ID)) {
+                if (rpcStream == null || sinkStream == null || hasChangedToReadyState()) {
+                    initializeSinkStub();
+                    initializeRpcStub();
+                }
+            }
+            setTagsForSink(sinkMessageBuilder);
+            // If module has asyncpolicy, keep attempting to send message.
+            if (module.getAsyncPolicy() != null) {
+                sendBlockingSinkMessage(sinkMessageBuilder.build());
+            } else {
+                sendSinkMessage(sinkMessageBuilder.build());
+            }
+        }
+    }
+

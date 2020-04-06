@@ -1,0 +1,27 @@
+        @SuppressWarnings("unchecked")
+        private void sendResponse(String rpcId, RpcResponse response, RpcModule module) {
+            try {
+                String responseTopic = kafkaRpcTopicProvider.getResponseTopic(module.getId());
+                final String responseAsString = module.marshalResponse(response);
+                final byte[] messageInBytes = responseAsString.getBytes();
+                int totalChunks = IntMath.divide(messageInBytes.length, maxBufferSize, RoundingMode.UP);
+
+                // Divide the message in chunks and send each chunk as a different message with the same key.
+                RpcMessageProto.Builder builder = RpcMessageProto.newBuilder()
+                        .setRpcId(rpcId);
+                builder.setTotalChunks(totalChunks);
+
+                for (int chunk = 0; chunk < totalChunks; chunk++) {
+                    // Calculate remaining bufferSize for each chunk.
+                    int bufferSize = KafkaRpcConstants.getBufferSize(messageInBytes.length, maxBufferSize, chunk);
+                    ByteString byteString = ByteString.copyFrom(messageInBytes, chunk * maxBufferSize, bufferSize);
+                    RpcMessageProto rpcMessage = builder.setCurrentChunkNumber(chunk)
+                            .setRpcContent(byteString)
+                            .build();
+                    sendMessageToKafka(rpcMessage, responseTopic, responseAsString);
+                }
+            } catch (Throwable t) {
+                LOG.error("Marshalling response in RPC module {} failed.", module, t);
+            }
+        }
+

@@ -1,0 +1,58 @@
+    private void processRpcRequest(RpcRequestProto requestProto) {
+        long currentTime = requestProto.getExpirationTime();
+        if (requestProto.getExpirationTime() < currentTime) {
+            LOG.debug("ttl already expired for the request id = {}, won't process.", requestProto.getRpcId());
+            return;
+        }
+        String moduleId = requestProto.getModuleId();
+        if (Strings.isNullOrEmpty(moduleId)) {
+            return;
+        }
+        LOG.debug("Received RPC request with RpcID:{} for module {}", requestProto.getRpcId(), requestProto.getModuleId());
+        RpcModule<RpcRequest, RpcResponse> rpcModule = registerdModules.get(moduleId);
+        if (rpcModule == null) {
+            return;
+        }
+        //Build child span from rpcMessage and start minion span.
+        Tracer.SpanBuilder spanBuilder = buildSpanFromRpcMessage(requestProto);
+        Span minionSpan = spanBuilder.start();
+        setTagsForRpc(requestProto, minionSpan);
+
+        RpcRequest rpcRequest = rpcModule.unmarshalRequest(requestProto.getRpcContent().toStringUtf8());
+        CompletableFuture<RpcResponse> future = rpcModule.execute(rpcRequest);
+        future.whenComplete((res, ex) -> {
+            final RpcResponse rpcResponse;
+            if (ex != null) {
+                // An exception occurred, store the exception in a new response
+                LOG.warn("An error occured while executing a call in {}.", rpcModule.getId(), ex);
+                rpcResponse = rpcModule.createResponseWithException(ex);
+                minionSpan.log(ex.getMessage());
+                minionSpan.setTag(TAG_RPC_FAILED, Boolean.TRUE.toString());
+            } else {
+                // No exception occurred, use the given response
+                rpcResponse = res;
+            }
+            minionSpan.finish();
+            // Construct response using the same rpcId;
+            String responseAsString = rpcModule.marshalResponse(rpcResponse);
+            RpcResponseProto responseProto = RpcResponseProto.newBuilder()
+                    .setRpcId(requestProto.getRpcId())
+                    .setSystemId(minionIdentity.getId())
+                    .setLocation(requestProto.getLocation())
+                    .setModuleId(requestProto.getModuleId())
+                    .setRpcContent(ByteString.copyFrom(responseAsString, StandardCharsets.UTF_8))
+                    .build();
+            if (getChannelState().equals(ConnectivityState.READY)) {
+                try {
+                    sendRpcResponse(responseProto);
+                    LOG.debug("Request with RpcId:{} for module {} handled successfully, and response was sent",
+                            responseProto.getRpcId(), responseProto.getModuleId());
+                } catch (Throwable e) {
+                    LOG.error("Error while sending RPC response {}", responseProto, e);
+                }
+            } else {
+                LOG.warn("gRPC IPC server is not in ready state");
+            }
+        });
+    }
+

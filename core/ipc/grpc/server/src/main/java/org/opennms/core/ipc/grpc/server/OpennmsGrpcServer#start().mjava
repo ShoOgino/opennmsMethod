@@ -1,0 +1,37 @@
+    public void start() throws IOException {
+        try (Logging.MDCCloseable mdc = Logging.withPrefixCloseable(RpcClientFactory.LOG_PREFIX)) {
+            properties = ConfigUtils.getPropertiesFromConfig(configAdmin, GRPC_SERVER_PID);
+            int port = PropertiesUtils.getProperty(properties, GRPC_SERVER_PORT, DEFAULT_GRPC_PORT);
+            int maxInboundMessageSize = PropertiesUtils.getProperty(properties, GRPC_MAX_INBOUND_SIZE, DEFAULT_MESSAGE_SIZE);
+            ttl = PropertiesUtils.getProperty(properties, GRPC_TTL_PROPERTY, DEFAULT_GRPC_TTL);
+            boolean tlsEnabled = PropertiesUtils.getProperty(properties, TLS_ENABLED, false);
+
+            NettyServerBuilder serverBuilder = NettyServerBuilder.forAddress(new InetSocketAddress(port))
+                    .addService(new OpennmsIpcService())
+                    .maxInboundMessageSize(maxInboundMessageSize);
+            if (tlsEnabled) {
+                SslContextBuilder sslContextBuilder = getSslContextBuilder();
+                if (sslContextBuilder != null) {
+                    serverBuilder.sslContext(sslContextBuilder.build());
+                    LOG.info("TLS enabled for gRPC");
+                }
+            }
+            server = serverBuilder.build();
+            rpcTimeoutExecutor.execute(this::handleRpcTimeouts);
+            rpcMetricsReporter = JmxReporter.forRegistry(getRpcMetrics())
+                    .inDomain(JMX_DOMAIN_RPC)
+                    .build();
+            rpcMetricsReporter.start();
+            sinkMetricsReporter = JmxReporter.forRegistry(getRpcMetrics())
+                    .inDomain(SINK_METRIC_CONSUMER_DOMAIN)
+                    .build();
+            sinkMetricsReporter.start();
+            server.start();
+            // Initialize tracer from tracer registry.
+            if (tracerRegistry != null) {
+                tracerRegistry.init(identity.getId());
+            }
+            LOG.info("OpenNMS gRPC server started");
+        }
+    }
+

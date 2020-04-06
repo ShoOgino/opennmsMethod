@@ -1,0 +1,31 @@
+        @Override
+        public void sendResponse(String message) {
+
+            try (Logging.MDCCloseable mdc = Logging.withContextMapCloseable(loggingContext)) {
+                if (message != null) {
+                    T response = rpcModule.unmarshalResponse(message);
+                    if (response.getErrorMessage() != null) {
+                        span.log(response.getErrorMessage());
+                        RpcClientFactory.markFailed(getRpcMetrics(), this.location, rpcModule.getId());
+                        responseFuture.completeExceptionally(new RemoteExecutionException(response.getErrorMessage()));
+                    } else {
+                        responseFuture.complete(response);
+                    }
+                    isProcessed = true;
+                    RpcClientFactory.updateResponseSize(getRpcMetrics(), this.location, rpcModule.getId(), message.getBytes().length);
+                } else {
+                    span.setTag(TAG_TIMEOUT, "true");
+                    RpcClientFactory.markFailed(getRpcMetrics(), this.location, rpcModule.getId());
+                    responseFuture.completeExceptionally(new RequestTimedOutException(new TimeoutException()));
+                }
+                RpcClientFactory.updateDuration(getRpcMetrics(), this.location, rpcModule.getId(), System.currentTimeMillis() - requestCreationTime);
+                rpcResponseMap.remove(rpcId);
+                span.finish();
+            } catch (Throwable e) {
+                LOG.error("Error while processing RPC response {}", message, e);
+            }
+            if (isProcessed) {
+                LOG.debug("RPC Response from module: {} handled successfully for RpcId:{}.", rpcId, rpcModule.getId());
+            }
+        }
+
