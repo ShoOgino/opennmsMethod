@@ -1,0 +1,61 @@
+    private void handlePeerDownNotification(final Transport.Message message,
+                                            final Transport.PeerDownPacket peerDown,
+                                            final Context context) {
+        final Transport.Peer bgpPeer = peerDown.getPeer();
+
+        final Peer peer = new Peer();
+        peer.action = Peer.Action.DOWN;
+        peer.sequence = sequence.getAndIncrement();
+        peer.name = !Strings.isNullOrEmpty(bgpPeer.getHostname())
+                    ? bgpPeer.getHostname()
+                    : addressAsStr(bgpPeer.getAddress());
+        peer.hash = Record.hash(bgpPeer.getAddress(),
+                bgpPeer.getDistinguisher(),
+                context.routerHashId);
+        peer.routerHash = context.routerHashId;
+        peer.remoteBgpId = address(bgpPeer.getId());
+        peer.routerIp = context.sourceAddress;
+        peer.timestamp = timestamp(bgpPeer.getTimestamp());
+        peer.remoteAsn = uint32(bgpPeer.getAs());
+        peer.remoteIp = address(bgpPeer.getAddress());
+        peer.peerRd = asAttr((int) bgpPeer.getDistinguisher());
+        peer.remotePort = null;
+        peer.localAsn = null;
+        peer.localIp = null;
+        peer.localPort = null;
+        peer.localBgpId = null;
+        peer.infoData = null;
+        peer.advertisedCapabilities = null;
+        peer.receivedCapabilities = null;
+        peer.remoteHolddown = null;
+        peer.advertisedHolddown = null;
+        peer.bmpReason = peerDown.getReasonCase().getNumber() - 1;
+
+        switch (peerDown.getReasonCase().getNumber()) {
+            case 2:
+                peer.bgpErrorCode = peerDown.getLocalBgpNotification().getCode();
+                peer.bgpErrorSubcode = peerDown.getLocalBgpNotification().getSubcode();
+                break;
+            case 4:
+                peer.bgpErrorCode = peerDown.getRemoteBgpNotification().getCode();
+                peer.bgpErrorSubcode = peerDown.getRemoteBgpNotification().getSubcode();
+                break;
+            default:
+                peer.bgpErrorCode = null;
+                peer.bgpErrorSubcode = null;
+        }
+
+        if (peer.bgpErrorCode != null && peer.bgpErrorSubcode != null) {
+            peer.errorText = Error.from(peer.bgpErrorCode, peer.bgpErrorSubcode).getErrorText();
+        }
+
+        peer.l3vpn = bgpPeer.getType() == Transport.Peer.Type.RD_INSTANCE;
+        peer.prePolicy = bgpPeer.hasPeerFlags() && bgpPeer.getPeerFlags().getPolicy() == Transport.Peer.PeerFlags.Policy.PRE_POLICY;
+        peer.ipv4 = isV4(bgpPeer.getAddress());
+        peer.locRib = bgpPeer.getType() == Transport.Peer.Type.LOC_RIB_INSTANCE;
+        peer.locRibFiltered = bgpPeer.hasLocRibFlags() && bgpPeer.getLocRibFlags().getFiltered();
+        peer.tableName = "";
+
+        this.messageHandler.handle(new Message(context.collectorHashId, Type.PEER, ImmutableList.of(peer)));
+    }
+

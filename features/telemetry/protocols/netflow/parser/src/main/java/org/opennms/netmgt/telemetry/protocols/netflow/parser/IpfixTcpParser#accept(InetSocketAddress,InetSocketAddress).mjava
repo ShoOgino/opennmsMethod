@@ -3,28 +3,37 @@
                           final InetSocketAddress localAddress) {
         final TcpSession session = new TcpSession(remoteAddress.getAddress());
 
-        return buffer -> {
-            buffer.markReaderIndex();
+        return new Handler() {
+            @Override
+            public Optional<CompletableFuture<?>> parse(final ByteBuf buffer) throws Exception {
+                buffer.markReaderIndex();
 
-            final Header header;
-            if (buffer.isReadable(Header.SIZE)) {
-                header = new Header(slice(buffer, Header.SIZE));
-            } else {
-                buffer.resetReaderIndex();
-                return Optional.empty();
+                final Header header;
+                if (buffer.isReadable(Header.SIZE)) {
+                    header = new Header(slice(buffer, Header.SIZE));
+                } else {
+                    buffer.resetReaderIndex();
+                    return Optional.empty();
+                }
+
+                final Packet packet;
+                if (buffer.isReadable(header.payloadLength())) {
+                    packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+                } else {
+                    buffer.resetReaderIndex();
+                    return Optional.empty();
+                }
+
+                detectClockSkew(header.exportTime * 1000L, session.getRemoteAddress());
+
+                return Optional.of(IpfixTcpParser.this.transmit(packet, remoteAddress));
             }
 
-            final Packet packet;
-            if (buffer.isReadable(header.payloadLength())) {
-                packet = new Packet(session, header, slice(buffer, header.payloadLength()));
-            } else {
-                buffer.resetReaderIndex();
-                return Optional.empty();
-            }
+            @Override
+            public void active() {}
 
-            detectClockSkew(header.exportTime * 1000L, session.getRemoteAddress());
-
-            return Optional.of(this.transmit(packet, remoteAddress));
+            @Override
+            public void inactive() {}
         };
     }
 

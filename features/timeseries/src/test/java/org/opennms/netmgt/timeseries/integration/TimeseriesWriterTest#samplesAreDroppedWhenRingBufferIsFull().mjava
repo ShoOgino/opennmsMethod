@@ -1,0 +1,43 @@
+    /**
+     * Fills the ring buffer and locks all of the writer threads to verify
+     * that samples additional samples are dropped.
+     */
+    @Test
+    public void samplesAreDroppedWhenRingBufferIsFull() throws Exception {
+        Resource x = new Resource("x");
+        int ringBufferSize = 1024;
+        int numWriterThreads = 8;
+
+        Lock lock = new ReentrantLock();
+        LockedTimeseriesStorage timeseriesStorage = new LockedTimeseriesStorage(lock);
+        MetricRegistry registry = new MetricRegistry();
+        TimeseriesWriter writer = new TimeseriesWriter(1, ringBufferSize, numWriterThreads, registry);
+        when(storageManager.get()).thenReturn(timeseriesStorage);
+        writer.setTimeSeriesStorage(storageManager);
+        writer.setTimeSeriesMetaDataDao(Mockito.mock(TimeSeriesMetaDataDao.class));
+
+        lock.lock();
+        for (int i = 0; i < ringBufferSize; i++) {
+            Sample s = new Sample(Timestamp.now(), x, "y", MetricType.COUNTER, new Counter(i));
+            writer.insert(Lists.newArrayList(s));
+        }
+
+        // The ring buffer should be full, and all of the threads should be locked
+        Thread.sleep(250);
+        assertEquals(numWriterThreads, timeseriesStorage.getNumThreadsLocked());
+
+        // Attempt to insert another batch of samples
+        for (int i = 0; i < 8; i++) {
+            Sample s = new Sample(Timestamp.now(), x, "y", MetricType.COUNTER, new Counter(i));
+            writer.insert(Lists.newArrayList(s));
+        };
+
+        // Unlock the writer threads and wait for the ring buffer to drain
+        lock.unlock();
+        writer.destroy();
+
+        // Verify the number of inserted samples
+        assertEquals(0, timeseriesStorage.getNumThreadsLocked());
+        assertEquals(ringBufferSize, timeseriesStorage.getNumSamplesInserted());
+    }
+
