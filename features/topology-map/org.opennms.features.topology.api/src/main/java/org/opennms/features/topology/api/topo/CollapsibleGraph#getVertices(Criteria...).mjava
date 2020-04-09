@@ -1,0 +1,74 @@
+    @Override
+    public List<Vertex> getVertices(Criteria... criteria) {
+        // Otherwise consider vertices szl and focus nodes
+        Set<VertexRef> focusNodes = getFocusNodes(criteria);
+        int maxSemanticZoomLevel = getMaxSemanticZoomLevel(criteria);
+
+        // Clear the existing semantic zoom level values
+        m_semanticZoomLevels.clear();
+        int semanticZoomLevel = 0;
+
+        // If we didn't find any matching nodes among the focus nodes...
+        if (focusNodes.size() < 1) {
+            // ...then return an empty list of vertices, but include collapsed vertices
+            collapseVertices(Collections.emptySet(), getCollapsibleCriteria(criteria, false));
+        }
+
+
+        Map<VertexRef, Set<VertexRef>> neighborMap = new HashMap<>();
+        List<Edge> edges = m_delegate.getEdges(criteria);
+        for(Edge edge : edges) {
+            VertexRef src = edge.getSource().getVertex();
+            VertexRef tgt = edge.getTarget().getVertex();
+            Set<VertexRef> srcNeighbors = neighborMap.get(src);
+            if (srcNeighbors == null) {
+                srcNeighbors = new HashSet<>();
+                neighborMap.put(src, srcNeighbors);
+            }
+            srcNeighbors.add(tgt);
+
+            Set<VertexRef> tgtNeighbors = neighborMap.get(tgt);
+            if (tgtNeighbors == null) {
+                tgtNeighbors = new HashSet<>();
+                neighborMap.put(tgt, tgtNeighbors);
+            }
+            tgtNeighbors.add(src);
+        }
+
+        Set<Vertex> processed = new HashSet<>();
+        Set<VertexRef> neighbors = new HashSet<>();
+        Set<VertexRef> workingSet = new HashSet<>(focusNodes);
+        // Put a limit on the SZL in case we infinite loop for some reason
+        while (semanticZoomLevel <= maxSemanticZoomLevel && workingSet.size() > 0) {
+            neighbors.clear();
+
+            for(VertexRef vertexRef : workingSet) {
+                // Only consider Vertex if it is actually not filtered by the criteria (which it might)
+                Vertex vertex = getVertex(vertexRef, criteria);
+                if (vertex != null) {
+                    if (m_semanticZoomLevels.containsKey(vertexRef)) {
+                        throw new IllegalStateException("Calculating semantic zoom level for vertex that has already been calculated: " + vertexRef.toString());
+                    }
+                    m_semanticZoomLevels.put(vertexRef, semanticZoomLevel);
+                    Set<VertexRef> refs = neighborMap.get(vertexRef);
+                    if (refs != null) {
+                        neighbors.addAll(refs);
+                    }
+                    processed.add(vertex);
+                }
+            }
+
+            neighbors.removeAll(processed);
+
+            workingSet.clear();
+            workingSet.addAll(neighbors);
+
+            // Increment the semantic zoom level
+            semanticZoomLevel++;
+        }
+
+        processed = collapseVertices(processed, getCollapsedCriteria(criteria));
+
+        return new ArrayList<Vertex>(processed);
+    }
+

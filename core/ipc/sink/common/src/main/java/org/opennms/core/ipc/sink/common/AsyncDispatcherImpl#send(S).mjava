@@ -2,7 +2,7 @@
     public CompletableFuture<DispatchStatus> send(S message) {
         CompletableFuture<DispatchStatus> sendFuture = new CompletableFuture<>();
 
-        if (!asyncPolicy.isBlockWhenFull() && dispatchQueue.isFull()) {
+        if (!asyncPolicy.isBlockWhenFull() && atomicResultQueue.isFull()) {
             droppedCounter.inc();
             sendFuture.completeExceptionally(new RuntimeException("Dispatch queue full"));
             return sendFuture;
@@ -10,15 +10,15 @@
 
         try {
             String newId = UUID.randomUUID().toString();
-            DispatchQueue.EnqueueResult result = dispatchQueue.enqueue(message, newId);
-            
-            LOG.trace("Result of enqueueing for Id {} was {}", newId, result);
+            atomicResultQueue.enqueue(message, newId, result -> {
+                LOG.trace("Result of enqueueing for Id {} was {}", newId, result);
 
-            if (result == DispatchQueue.EnqueueResult.DEFERRED) {
-                sendFuture.complete(DispatchStatus.QUEUED);
-            } else {
-                futureMap.put(newId, sendFuture);
-            }
+                if (result == DispatchQueue.EnqueueResult.DEFERRED) {
+                    sendFuture.complete(DispatchStatus.QUEUED);
+                } else {
+                    futureMap.put(newId, sendFuture);
+                }
+            });
         } catch (WriteFailedException e) {
             sendFuture.completeExceptionally(e);
         }

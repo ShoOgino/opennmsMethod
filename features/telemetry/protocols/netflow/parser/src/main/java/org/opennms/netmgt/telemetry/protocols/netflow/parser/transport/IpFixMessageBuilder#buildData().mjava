@@ -1,0 +1,231 @@
+    public byte[] buildData() {
+
+        values.forEach(this::addField);
+
+        first(octetDeltaCount,
+                postOctetDeltaCount,
+                layer2OctetDeltaCount,
+                postLayer2OctetDeltaCount,
+                transportOctetDeltaCount)
+                .ifPresent(bytes -> {
+                    numBytes = bytes;
+                    builder.setNumBytes(setLongValue(bytes));
+                });
+
+        first(destinationIPv6Address,
+                destinationIPv4Address).ifPresent(ipAddress -> {
+            builder.setDstAddress(ipAddress.getHostAddress());
+            enrichment.getHostnameFor(ipAddress).ifPresent(builder::setDstHostname);
+        });
+
+        first(destinationIPv6PrefixLength,
+                destinationIPv4PrefixLength)
+                .ifPresent(prefixLen -> builder.setDstMaskLen(setIntValue(prefixLen.intValue())));
+
+
+        first(ipNextHopIPv6Address,
+                ipNextHopIPv4Address,
+                bgpNextHopIPv6Address,
+                bgpNextHopIPv4Address).ifPresent(ipAddress -> {
+            builder.setNextHopAddress(ipAddress.getHostAddress());
+            enrichment.getHostnameFor(ipAddress).ifPresent(builder::setNextHopHostname);
+        });
+
+        first(sourceIPv6Address,
+                sourceIPv4Address).ifPresent(ipAddress -> {
+            builder.setSrcAddress(ipAddress.getHostAddress());
+            enrichment.getHostnameFor(ipAddress).ifPresent(builder::setSrcHostname);
+        });
+
+        first(sourceIPv6PrefixLength,
+                sourceIPv4PrefixLength)
+                .ifPresent(prefixLen -> builder.setSrcMaskLen(setIntValue(prefixLen.intValue())));
+
+        first(vlanId,
+                postVlanId,
+                dot1qVlanId,
+                dot1qCustomerVlanId,
+                postDot1qVlanId,
+                postDot1qCustomerVlanId)
+                .ifPresent(vlanId -> builder.setVlan(setIntValue(vlanId.intValue())));
+
+        long timeStamp = this.exportTime  != null ? exportTime * 1000 : 0;
+        builder.setTimestamp(timeStamp);
+
+        // Set first switched
+        Long flowStartDeltaMicroseconds = this.flowStartDeltaMicroseconds != null ?
+                this.flowStartDeltaMicroseconds + timeStamp : null;
+        Long systemInitTimeMilliseconds = this.systemInitTimeMilliseconds != null ?
+                this.systemInitTimeMilliseconds.toEpochMilli() : null;
+        Long flowStartSysUpTime = this.flowStartSysUpTime != null && systemInitTimeMilliseconds != null ?
+                this.flowStartSysUpTime + systemInitTimeMilliseconds : null;
+
+        Optional<Long> firstSwitchedInMilli = first(flowStartSeconds,
+                flowStartMilliseconds,
+                flowStartMicroseconds,
+                flowStartNanoseconds).map(Instant::toEpochMilli);
+        if (firstSwitchedInMilli.isPresent()) {
+            builder.setFirstSwitched(setLongValue(firstSwitchedInMilli.get()));
+        } else {
+            first(flowStartDeltaMicroseconds,
+                    flowStartSysUpTime).ifPresent(firstSwitched -> {
+                        builder.setFirstSwitched(setLongValue(firstSwitched));
+                    }
+            );
+        }
+
+        // Set lastSwitched
+        Long flowEndDeltaMicroseconds = this.flowEndDeltaMicroseconds != null ?
+                this.flowEndDeltaMicroseconds + timeStamp : null;
+        Long flowEndSysUpTime = this.flowEndSysUpTime != null && systemInitTimeMilliseconds != null ?
+                this.flowEndSysUpTime + systemInitTimeMilliseconds : null;
+
+        Optional<Long> lastSwitchedInMilli = first(flowEndSeconds,
+                flowEndMilliseconds,
+                flowEndMicroseconds,
+                flowEndNanoseconds).map(Instant::toEpochMilli);
+
+        if(lastSwitchedInMilli.isPresent()) {
+            builder.setLastSwitched(setLongValue(lastSwitchedInMilli.get()));
+        } else {
+            first(flowEndDeltaMicroseconds,
+                    flowEndSysUpTime).ifPresent(lastSwitchedValue -> {
+                builder.setLastSwitched(setLongValue(lastSwitchedValue));
+            });
+        }
+
+        first(packetDeltaCount,
+                postPacketDeltaCount,
+                transportPacketDeltaCount).ifPresent(packets -> {
+            builder.setNumPackets(setLongValue(packets));
+            this.numPackets = packets;
+        });
+
+        SamplingAlgorithm samplingAlgorithm = SamplingAlgorithm.UNASSIGNED;
+        final Integer deprecatedSamplingAlgorithm = first(this.samplingAlgorithm,
+                samplerMode)
+                .map(Long::intValue).orElse(null);
+        if (deprecatedSamplingAlgorithm != null) {
+            if (deprecatedSamplingAlgorithm == 1) {
+                samplingAlgorithm = SamplingAlgorithm.SYSTEMATIC_COUNT_BASED_SAMPLING;
+            }
+            if (deprecatedSamplingAlgorithm == 2) {
+                samplingAlgorithm = SamplingAlgorithm.RANDOM_N_OUT_OF_N_SAMPLING;
+            }
+        }
+
+        final Integer selectorAlgorithm = this.selectorAlgorithm != null ? this.selectorAlgorithm.intValue() : null;
+
+        if (selectorAlgorithm != null) {
+            switch (selectorAlgorithm) {
+                case 0:
+                    samplingAlgorithm = SamplingAlgorithm.UNASSIGNED;
+                    break;
+                case 1:
+                    samplingAlgorithm = SamplingAlgorithm.SYSTEMATIC_COUNT_BASED_SAMPLING;
+                    break;
+                case 2:
+                    samplingAlgorithm = SamplingAlgorithm.SYSTEMATIC_TIME_BASED_SAMPLING;
+                    break;
+                case 3:
+                    samplingAlgorithm = SamplingAlgorithm.RANDOM_N_OUT_OF_N_SAMPLING;
+                    break;
+                case 4:
+                    samplingAlgorithm = SamplingAlgorithm.UNIFORM_PROBABILISTIC_SAMPLING;
+                    break;
+                case 5:
+                    samplingAlgorithm = SamplingAlgorithm.PROPERTY_MATCH_FILTERING;
+                    break;
+                case 6:
+                case 7:
+                case 8:
+                    samplingAlgorithm = SamplingAlgorithm.HASH_BASED_FILTERING;
+                    break;
+                case 9:
+                    samplingAlgorithm = SamplingAlgorithm.FLOW_STATE_DEPENDENT_INTERMEDIATE_FLOW_SELECTION_PROCESS;
+                    break;
+            }
+        }
+        builder.setSamplingAlgorithm(samplingAlgorithm);
+
+        final Double deprecatedSamplingInterval = first(
+                samplingInterval,
+                samplerRandomInterval)
+                .map(Long::doubleValue).orElse(null);
+
+        if (deprecatedSamplingInterval != null) {
+            builder.setSamplingInterval(setDoubleValue(deprecatedSamplingInterval));
+        } else {
+            if (selectorAlgorithm != null) {
+                switch (selectorAlgorithm) {
+                    case 0:
+                        break;
+                    case 1:
+                        Double samplingInterval = this.samplingFlowInterval != null ?
+                                samplingFlowInterval.doubleValue() : 1.0;
+                        Double samplingSpacing = samplingFlowSpacing != null ?
+                                samplingFlowSpacing.doubleValue() : 0.0;
+                        Double samplingIntervalValue = samplingInterval + samplingSpacing / samplingInterval;
+                        builder.setSamplingInterval(setDoubleValue(samplingIntervalValue));
+                        break;
+                    case 2:
+                        Double flowSamplingTimeInterval = this.flowSamplingTimeInterval != null ?
+                                this.flowSamplingTimeInterval.doubleValue() : 1.0;
+                        Double flowSamplingTimeSpacing = this.flowSamplingTimeSpacing != null ?
+                                this.flowSamplingTimeSpacing.doubleValue() : 0.0;
+                        samplingIntervalValue = flowSamplingTimeInterval + flowSamplingTimeSpacing / flowSamplingTimeSpacing;
+                        builder.setSamplingInterval(setDoubleValue(samplingIntervalValue));
+                        break;
+                    case 3:
+                        Double samplingSize = this.samplingSize != null ?
+                                this.samplingSize.doubleValue() : 1.0;
+                        Double samplingPopulation = this.samplingPopulation != null ?
+                                this.samplingPopulation.doubleValue() : 1.0;
+                        samplingIntervalValue = samplingPopulation / samplingSize;
+                        builder.setSamplingInterval(setDoubleValue(samplingIntervalValue));
+                        break;
+                    case 4:
+                        Double samplingProbability = this.samplingProbability != null ?
+                                this.samplingProbability.doubleValue() : 1.0;
+                        builder.setSamplingInterval(setDoubleValue(1.0 / samplingProbability));
+                        break;
+                    case 5:
+                    case 6:
+                    case 7:
+                        UnsignedLong hashSelectedRangeMin = this.hashSelectedRangeMin != null ?
+                                UnsignedLong.fromLongBits(this.hashSelectedRangeMin) : UnsignedLong.ZERO;
+                        UnsignedLong hashSelectedRangeMax = this.hashSelectedRangeMax != null ?
+                                UnsignedLong.fromLongBits(this.hashSelectedRangeMax) : UnsignedLong.MAX_VALUE;
+                        UnsignedLong hashOutputRangeMin = this.hashOutputRangeMin != null ?
+                                UnsignedLong.fromLongBits(this.hashOutputRangeMin) : UnsignedLong.ZERO;
+                        UnsignedLong hashOutputRangeMax = this.hashOutputRangeMax != null ?
+                                UnsignedLong.fromLongBits(this.hashOutputRangeMax) : UnsignedLong.MAX_VALUE;
+                        samplingIntervalValue = (hashOutputRangeMax.minus(hashOutputRangeMin)).dividedBy(hashSelectedRangeMax.minus(hashSelectedRangeMin)).doubleValue();
+                        builder.setSamplingInterval(setDoubleValue(samplingIntervalValue));
+                        break;
+                    case 8:
+                    case 9:
+                    default:
+                        builder.setSamplingInterval(setDoubleValue(Double.NaN));
+                }
+            } else {
+                builder.setSamplingInterval(setDoubleValue(1.0));
+            }
+        }
+
+        // Build delta switched
+        Long firstSwitched = builder.hasFirstSwitched() ? builder.getFirstSwitched().getValue() : null;
+        Long lastSwitched = builder.hasLastSwitched() ? builder.getLastSwitched().getValue() : null;
+
+        Timeout timeout = new Timeout(flowActiveTimeout, flowInactiveTimeout);
+        timeout.setFirstSwitched(firstSwitched);
+        timeout.setLastSwitched(lastSwitched);
+        timeout.setNumBytes(this.numBytes);
+        timeout.setNumPackets(this.numPackets);
+        Long deltaSwitched = timeout.getDeltaSwitched();
+        getUInt64Value(deltaSwitched).ifPresent(builder::setDeltaSwitched);
+
+        builder.setNetflowVersion(NetflowVersion.IPFIX);
+        return builder.build().toByteArray();
+    }
+

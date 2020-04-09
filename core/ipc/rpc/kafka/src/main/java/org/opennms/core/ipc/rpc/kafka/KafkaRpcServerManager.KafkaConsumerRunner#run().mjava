@@ -5,10 +5,9 @@
                 LOG.info("subscribed to topic {}", topic);
                 while (!closed.get()) {
                     ConsumerRecords<String, byte[]> records = consumer.poll(java.time.Duration.ofMillis(Long.MAX_VALUE));
-                    for (ConsumerRecord<String, byte[]> record : records) {  
+                    for (ConsumerRecord<String, byte[]> record : records) {
                         try {
-                            RpcMessageProtos.RpcMessage rpcMessage = RpcMessageProtos.RpcMessage
-                                                                          .parseFrom(record.value());
+                            RpcMessageProto rpcMessage = RpcMessageProto.parseFrom(record.value());
                             String rpcId = rpcMessage.getRpcId();
                             long expirationTime = rpcMessage.getExpirationTime();
                             if (expirationTime < System.currentTimeMillis()) {
@@ -25,7 +24,7 @@
                             if (hasSystemId) {
                                 // directed RPC, there may be more than one request with same request Id, cache and allow only one.
                                 boolean messageProcessed = handleDirectedRPC(rpcMessage);
-                                if(messageProcessed) {
+                                if (messageProcessed) {
                                     continue;
                                 }
                             }
@@ -34,7 +33,7 @@
                             if (rpcMessage.getTotalChunks() > 1) {
                                 // Handle multiple chunks
                                 boolean allChunksReceived = handleChunks(rpcMessage);
-                                if(!allChunksReceived) {
+                                if (!allChunksReceived) {
                                     continue;
                                 }
                                 rpcContent = messageCache.get(rpcId);
@@ -42,32 +41,16 @@
                                 messageCache.remove(rpcId);
                                 currentChunkCache.remove(rpcId);
                             }
-                            //Build child span from rpcMessage and start minion span.
-                            Tracer.SpanBuilder spanBuilder = buildSpanFromRpcMessage(rpcMessage);
-                            Span minionSpan = spanBuilder.start();
-
-                            RpcRequest request = module.unmarshalRequest(rpcContent.toStringUtf8());
-                            setTagsOnMinion(rpcMessage, request, minionSpan);
-
-                            CompletableFuture<RpcResponse> future = module.execute(request);
-                            future.whenComplete((res, ex) -> {
-                                final RpcResponse response;
-                                if (ex != null) {
-                                    // An exception occurred, store the exception in a new response
-                                    LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
-                                    response = module.createResponseWithException(ex);
-                                    minionSpan.log(ex.getMessage());
-                                    minionSpan.setTag(TAG_RPC_FAILED, "true");
-                                } else {
-                                    // No exception occurred, use the given response
-                                    response = res;
-                                }
-                                // Finish minion Span
-                                minionSpan.finish();
-                                sendResponse(rpcId, response);
-                            });
+                            final RpcModule module = modulesById.get(rpcMessage.getModuleId());
+                            if (module == null) {
+                                continue;
+                            }
+                            // Should have complete message by this point.
+                            final ByteString requestMessage = rpcContent;
+                            // Handle unmarshalling and execution in a separate thread.
+                            requestExecutor.execute(() -> handleRequest(rpcMessage, requestMessage, module));
                         } catch (InvalidProtocolBufferException e) {
-                             LOG.error("error while parsing the request", e);
+                            LOG.error("error while parsing the request", e);
                         }
                     }
                 }

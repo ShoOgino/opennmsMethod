@@ -1,0 +1,21 @@
+    private void dispatchSinkMessage(SinkMessage sinkMessage) {
+        SinkModule<?, Message> sinkModule = sinkModulesById.get(sinkMessage.getModuleId());
+        if (sinkModule != null && sinkMessage.getContent() != null) {
+            Message message = sinkModule.unmarshal(sinkMessage.getContent().toByteArray());
+
+            MessageConsumerManager.updateMessageSize(getSinkMetrics(), sinkMessage.getLocation(),
+                    sinkMessage.getModuleId(), sinkMessage.getSerializedSize());
+            Timer dispatchTime = MessageConsumerManager.getDispatchTimerMetric(getSinkMetrics(),
+                    sinkMessage.getLocation(), sinkMessage.getModuleId());
+
+            Tracer.SpanBuilder spanBuilder = buildSpanFromSinkMessage(sinkMessage);
+
+            try (Scope scope = spanBuilder.startActive(true);
+                 Timer.Context context = dispatchTime.time()) {
+                scope.span().setTag(TracerConstants.TAG_MESSAGE_SIZE, sinkMessage.getSerializedSize());
+                scope.span().setTag(TracerConstants.TAG_THREAD, Thread.currentThread().getName());
+                dispatch(sinkModule, message);
+            }
+        }
+    }
+

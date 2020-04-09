@@ -1,0 +1,29 @@
+        @SuppressWarnings("unchecked")
+        private void handleRequest(RpcMessageProto rpcRequestProto, ByteString rpcContent, RpcModule module) {
+
+            //Build child span from rpcMessage and start minion span.
+            Tracer.SpanBuilder spanBuilder = buildSpanFromRpcMessage(rpcRequestProto);
+            Span minionSpan = spanBuilder.start();
+
+            RpcRequest request = module.unmarshalRequest(rpcContent.toStringUtf8());
+            setTagsOnMinion(rpcRequestProto, request, minionSpan);
+            // Modules may run the execution in their own thread pool.
+            CompletableFuture<RpcResponse> future = module.execute(request);
+            future.whenComplete((res, ex) -> {
+                final RpcResponse response;
+                if (ex != null) {
+                    // An exception occurred, store the exception in a new response
+                    LOG.warn("An error occured while executing a call in {}.", module.getId(), ex);
+                    response = module.createResponseWithException(ex);
+                    minionSpan.log(ex.getMessage());
+                    minionSpan.setTag(TAG_RPC_FAILED, "true");
+                } else {
+                    // No exception occurred, use the given response
+                    response = res;
+                }
+                // Finish minion Span
+                minionSpan.finish();
+                sendResponse(rpcRequestProto.getRpcId(), response, module);
+            });
+        }
+

@@ -1,0 +1,88 @@
+    @Override
+    public void save(final ImmutableGraphContainer graphContainer) {
+        sessionUtils.withTransaction(() -> {
+            final GenericGraphContainer persistedGraphContainer = findContainerById(graphContainer.getId());
+            final GenericGraphContainer genericGraphContainer = graphContainer.asGenericGraphContainer();
+            if (persistedGraphContainer == null) {
+                LOG.debug("Graph Container (id: {}) is new. Persisting...", graphContainer.getId());
+                final GraphContainerEntity graphContainerEntity = genericToEntityMapper.toEntity(genericGraphContainer);
+                graphContainerDao.save(graphContainerEntity);
+                LOG.debug("Graph Container (id: {}) persisted.", graphContainer.getId());
+            } else {
+                LOG.debug("Graph Container (id: {}) exists. Calculating change set...", graphContainer.getId());
+
+                // The Changes are calculated on the Generic conversion of the input and persisted graph
+                // In order to apply the changes here, they must again be converted to the actual implementation of the persisted graph (entity).
+                ContainerChangeSet containerChangeSet = ContainerChangeSet.builder(persistedGraphContainer, genericGraphContainer).build();
+                if (containerChangeSet.hasChanges()) {
+                    final GraphContainerEntity graphContainerEntity = graphContainerDao.findContainerById(graphContainer.getId());
+
+                    // Graph removal and addition is easy, simply remove or delete
+                    containerChangeSet.getGraphsRemoved().forEach(genericGraph -> {
+                        GraphEntity entity = graphContainerEntity.getGraph(genericGraph.getNamespace());
+                        graphContainerEntity.getGraphs().remove(entity);
+                    });
+                    containerChangeSet.getGraphsAdded().forEach(genericGraph -> {
+                        final GraphEntity newGraphEntity = genericToEntityMapper.toEntity((GenericGraph) genericGraph);
+                        graphContainerEntity.getGraphs().add(newGraphEntity);
+                    });
+
+                    // Graph updates are more complex, as the changes were calculated on the generic version and now must be
+                    // applied to the persistedEntity
+                    containerChangeSet.getGraphsUpdated().forEach(changeSet -> {
+                        final GraphEntity graphEntity = graphContainerEntity.getGraph(changeSet.getNamespace());
+
+                        // Update Graph details
+                        if (changeSet.getGraphInfo() != null) {
+                            final GraphInfo graphInfo = changeSet.getGraphInfo();
+                            graphEntity.setProperty(GenericProperties.NAMESPACE, String.class, graphInfo.getNamespace());
+                            graphEntity.setProperty(GenericProperties.LABEL, String.class, graphInfo.getLabel());
+                            graphEntity.setProperty(GenericProperties.DESCRIPTION, String.class, graphInfo.getDescription());
+                        }
+
+                        // Update Focus
+                        if (changeSet.hasFocusChanged()) {
+                            final Focus focus = changeSet.getFocus();
+                            final FocusEntity focusEntity = graphEntity.getDefaultFocus();
+                            focusEntity.setType(focus.getId());
+                            focusEntity.setSelection(focus.getVertexIds());
+                        }
+
+                        // Update Edges
+                        changeSet.getEdgesRemoved().forEach(edge -> {
+                            final EdgeEntity edgeEntity = graphEntity.getEdgeByProperty(GenericProperties.ID, edge.getId());
+                            graphEntity.removeEdge(edgeEntity);
+                        });
+                        changeSet.getEdgesAdded().forEach(edge -> {
+                            final EdgeEntity edgeEntity = genericToEntityMapper.toEntity((GenericEdge) edge, graphEntity);
+                            graphEntity.addEdge(edgeEntity);
+                        });
+                        changeSet.getEdgesUpdated().forEach(edge -> {
+                            final EdgeEntity edgeEntity = graphEntity.getEdgeByProperty(GenericProperties.ID, edge.getId());
+                            final List<PropertyEntity> propertyEntities = genericToEntityMapper.convertToPropertyEntities(((GenericEdge) edge).getProperties());
+                            edgeEntity.mergeProperties(propertyEntities);
+                        });
+
+                        // Update Vertices
+                        changeSet.getVerticesRemoved().forEach(vertex -> {
+                            final VertexEntity vertexEntity = graphEntity.getVertexByProperty(GenericProperties.ID, vertex.getId());
+                            graphEntity.removeVertex(vertexEntity);
+                        });
+                        changeSet.getVerticesAdded().forEach(vertex -> {
+                            final VertexEntity vertexEntity = genericToEntityMapper.toEntity((GenericVertex) vertex);
+                            graphEntity.addVertex(vertexEntity);
+                        });
+                        changeSet.getVerticesUpdated().forEach(vertex -> {
+                            final VertexEntity vertexEntity = graphEntity.getVertexByProperty(GenericProperties.ID, vertex.getId());
+                            final List<PropertyEntity> propertyEntities = genericToEntityMapper.convertToPropertyEntities(((GenericVertex) vertex).getProperties());
+                            vertexEntity.mergeProperties(propertyEntities);
+                        });
+                    });
+                    graphContainerDao.update(graphContainerEntity);
+                }
+                LOG.debug("Graph Container (id: {}) updated.", graphContainer.getId());
+            }
+            return null;
+        });
+    }
+

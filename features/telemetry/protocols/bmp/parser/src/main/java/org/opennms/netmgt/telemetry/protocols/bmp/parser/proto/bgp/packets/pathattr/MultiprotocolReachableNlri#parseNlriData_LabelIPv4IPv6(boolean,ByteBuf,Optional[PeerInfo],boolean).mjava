@@ -1,0 +1,54 @@
+    static List<UpdatePacket.Prefix> parseNlriData_LabelIPv4IPv6(boolean isIPv4, final ByteBuf buffer, final Optional<PeerInfo> peerInfo, boolean isVPN) throws Exception {
+        final boolean addPathCapabilityEnabled = peerInfo.isPresent() ? peerInfo.get().isAddPathEnabled(isIPv4 ? BGP_AFI_IPV4 : BGP_AFI_IPV6, isVPN ? BGP_SAFI_MPLS : BGP_SAFI_NLRI_LABEL) : false;
+        return BufferUtils.repeatRemaining(buffer, b -> {
+            final UpdatePacket.Prefix tuple = new UpdatePacket.Prefix();
+
+            if (addPathCapabilityEnabled && !isVPN && b.readableBytes() >= 4) {
+                tuple.pathId = BufferUtils.uint32(b);
+            } else {
+                tuple.pathId = 0;
+            }
+
+            tuple.length = BufferUtils.uint8(b);
+            int byteCount = tuple.length / 8 + (tuple.length % 8 > 0 ? 1 : 0);
+
+            final List<String> labels = decodeLabel(b);
+            tuple.labels = String.join(",", labels);
+
+            byteCount = byteCount - (labels.size() * 3);
+            tuple.length = tuple.length - (8 * 3 * labels.size());
+
+            if (isVPN && byteCount >= 8) {
+                final int type = BufferUtils.uint16(b);
+                switch (type) {
+                    case 0:
+                        // Administrator subfield: 2 bytes, ASN
+                        // Assigned Number subfield: 4 bytes, Number space number
+                        BufferUtils.skip(b, 6);
+                        break;
+                    case 1:
+                        // Administrator subfield: 4 bytes, IP Address
+                        // Assigned Number subfield: 2 bytes, Number space number
+                        BufferUtils.skip(b, 6);
+                        break;
+                    case 2:
+                        // Administrator subfield: 4 bytes, 4-byte ASN
+                        // Assigned Number subfield: 2 bytes, Number space number
+                        BufferUtils.skip(b, 6);
+                        break;
+                }
+                byteCount -= 8;
+                tuple.length -= 64;
+            }
+
+            if (byteCount > 0) {
+                final byte[] prefixBytes = BufferUtils.bytes(b, byteCount);
+                tuple.prefix = isIPv4 ? InetAddressUtils.getInetAddress(Arrays.copyOf(prefixBytes, 4)) : InetAddressUtils.getInetAddress(Arrays.copyOf(prefixBytes, 16));
+            } else {
+                tuple.prefix = InetAddressUtils.addr(isIPv4 ? "0.0.0.0" : "::");
+            }
+
+            return tuple;
+        });
+    }
+
