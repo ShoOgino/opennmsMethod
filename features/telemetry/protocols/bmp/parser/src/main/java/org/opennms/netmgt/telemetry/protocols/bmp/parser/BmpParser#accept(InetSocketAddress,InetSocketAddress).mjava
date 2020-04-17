@@ -3,9 +3,10 @@
                           final InetSocketAddress localAddress) {
         return new Handler() {
             private static final int ADD_PATH_CAP = 69;
-            private InetAddress bgpId;
-            private Map<InetAddress, PeerInfo> peerInfoMap = new HashMap<>();
 
+            private InetAddress bgpId;
+
+            private final Map<InetAddress, PeerInfo> peerInfoMap = new HashMap<>();
             private PeerAccessor peerAccessor = peerHeader -> {
                 if (peerHeader == null || peerHeader.id == null) {
                     return Optional.empty();
@@ -14,7 +15,7 @@
             };
 
             @Override
-            public Optional<CompletableFuture<?>> parse(ByteBuf buffer) throws Exception {
+            public Optional<CompletableFuture<?>> parse(final ByteBuf buffer) throws Exception {
                 buffer.markReaderIndex();
 
                 final Header header;
@@ -27,7 +28,7 @@
 
                 final Packet packet;
                 if (buffer.isReadable(header.payloadLength())) {
-                    packet = header.parsePayload(slice(buffer, header.payloadLength()), peerAccessor);
+                    packet = header.parsePayload(slice(buffer, header.payloadLength()), this.peerAccessor);
                 } else {
                     buffer.resetReaderIndex();
                     return Optional.empty();
@@ -53,21 +54,21 @@
                 packet.accept(new Packet.Visitor.Adapter() {
                     @Override
                     public void visit(PeerUpPacket packet) {
-                        packet.sendOpenMessage.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                        packet.sendOpenMessage.ifPresent(msg -> msg.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
                             ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
                             int afi = uint16(b);
                             int safi = uint8(b);
                             int sendReceive = uint8(b);
                             peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, true);
-                        });
+                        }));
 
-                        packet.recvOpenMessage.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                        packet.recvOpenMessage.ifPresent(msg -> msg.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
                             ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
                             int afi = uint16(b);
                             int safi = uint8(b);
                             int sendReceive = uint8(b);
                             peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, false);
-                        });
+                        }));
                     }
                 });
 
