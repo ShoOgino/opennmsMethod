@@ -1,0 +1,26 @@
+    private void doPipeline(List<org.opennms.netmgt.flows.persistence.model.FlowDocument> flows, NephronOptions options) {
+        Pipeline.registerCoders(p);
+
+        // Build a stream from the given set of flows
+        long timestampOffsetMillis = TimeUnit.MINUTES.toMillis(1);
+        TestStream.Builder<org.opennms.netmgt.flows.persistence.model.FlowDocument> flowStreamBuilder = TestStream.create(new FlowDocumentProtobufCoder());
+        for (org.opennms.netmgt.flows.persistence.model.FlowDocument flow : flows) {
+            flowStreamBuilder = flowStreamBuilder.addElements(TimestampedValue.of(flow,
+                    new Instant(flow.getLastSwitched().getValue() + timestampOffsetMillis)));
+        }
+        TestStream<org.opennms.netmgt.flows.persistence.model.FlowDocument> flowStream = flowStreamBuilder.advanceWatermarkToInfinity();
+
+        // Build the pipeline
+        options.setElasticUrl(elasticSearchRule.getUrl());
+        // Must match!
+        options.setElasticIndexStrategy(org.opennms.nephron.elastic.IndexStrategy.MONTHLY);
+        options.setElasticFlowIndex("aggflowsnetflow_agg");
+
+        p.apply(flowStream)
+                .apply(new Pipeline.CalculateFlowStatistics(options))
+                .apply(new Pipeline.WriteToElasticsearch(options));
+
+        // Run the pipeline until completion
+        p.run().waitUntilFinish();
+    }
+

@@ -1,0 +1,32 @@
+    @Before
+    public void setUp() throws MalformedURLException, ExecutionException, InterruptedException {
+        MockLogAppender.setupLogging(true, "DEBUG");
+        final MockDocumentEnricherFactory mockDocumentEnricherFactory = new MockDocumentEnricherFactory();
+        final DocumentEnricher documentEnricher = mockDocumentEnricherFactory.getEnricher();
+
+        final MetricRegistry metricRegistry = new MetricRegistry();
+        final RestClientFactory restClientFactory = new RestClientFactory(elasticSearchRule.getUrl());
+        final JestClient client = restClientFactory.createClient();
+        final IndexSettings settings = new IndexSettings();
+        settings.setIndexPrefix("flows");
+        final IndexSelector rawIndexSelector = new IndexSelector(settings, RawFlowQueryService.INDEX_NAME,
+                IndexStrategy.MONTHLY, 120000);
+        final RawFlowQueryService rawFlowRepository = new RawFlowQueryService(client, rawIndexSelector);
+        final AggregatedFlowQueryService aggFlowRepository = mock(AggregatedFlowQueryService.class);
+        final SmartQueryService smartQueryService = new SmartQueryService(metricRegistry, rawFlowRepository, aggFlowRepository);
+        smartQueryService.setForceType(SmartQueryService.QueryServiceType.RAW); // Always use RAW values for these tests
+        flowRepository = new ElasticFlowRepository(metricRegistry, client, IndexStrategy.MONTHLY, documentEnricher,
+                new MockSessionUtils(), new MockNodeDao(), new MockSnmpInterfaceDao(),
+                new MockIdentity(), new MockTracerRegistry(), new MockDocumentForwarder(), settings,
+                smartQueryService);
+
+        final RawIndexInitializer initializer = new RawIndexInitializer(client, settings);
+
+        // Here we load the flows by building the documents ourselves,
+        // so we must initialize the repository manually
+        initializer.initialize();
+
+        // The repository should be empty
+        assertThat(flowRepository.getFlowCount(Collections.singletonList(new TimeRangeFilter(0, 0))).get(), equalTo(0L));
+    }
+

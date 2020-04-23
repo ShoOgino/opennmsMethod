@@ -1,0 +1,45 @@
+    @Before
+    public void setUp() throws MalformedURLException, FlowException, ExecutionException, InterruptedException {
+        MockLogAppender.setupLogging(true, "DEBUG");
+        final MockDocumentEnricherFactory mockDocumentEnricherFactory = new MockDocumentEnricherFactory();
+        final DocumentEnricher documentEnricher = mockDocumentEnricherFactory.getEnricher();
+
+        final ClassificationEngine classificationEngine = mockDocumentEnricherFactory.getClassificationEngine();
+
+        final MetricRegistry metricRegistry = new MetricRegistry();
+        final RestClientFactory restClientFactory = new RestClientFactory(elasticSearchRule.getUrl());
+        final JestClient client = restClientFactory.createClient();
+        final IndexSettings rawIndexSettings = new IndexSettings();
+        rawIndexSettings.setIndexPrefix("flows");
+        final IndexSettings aggIndexSettings = new IndexSettings();
+        aggIndexSettings.setIndexPrefix("aggflows");
+
+        // Here we load the flows by building the documents ourselves,
+        // so we must initialize the repository manually
+        final RawIndexInitializer initializer = new RawIndexInitializer(client, rawIndexSettings);
+        initializer.initialize();
+
+        final IndexSelector rawIndexSelector = new IndexSelector(rawIndexSettings, RawFlowQueryService.INDEX_NAME,
+                IndexStrategy.MONTHLY, 120000);
+        rawFlowQueryService = new RawFlowQueryService(client, rawIndexSelector);
+
+        final AggregateIndexInitializer aggIndexInitializer = new AggregateIndexInitializer(client, aggIndexSettings);
+        aggIndexInitializer.initialize();
+
+        final IndexSelector aggIndexSelector = new IndexSelector(aggIndexSettings, AggregatedFlowQueryService.INDEX_NAME,
+                IndexStrategy.MONTHLY, 120000);
+        aggFlowQueryService = new AggregatedFlowQueryService(client, aggIndexSelector);
+
+        SmartQueryService smartQueryService = new SmartQueryService(metricRegistry, rawFlowQueryService, aggFlowQueryService);
+        smartQueryService.setTimeRangeDurationAggregateThresholdMs(1);
+
+        flowRepository = new ElasticFlowRepository(metricRegistry, client, IndexStrategy.MONTHLY, documentEnricher,
+            new MockSessionUtils(), new MockNodeDao(), new MockSnmpInterfaceDao(),
+            new MockIdentity(), new MockTracerRegistry(), documentForwarder, rawIndexSettings,
+                smartQueryService);
+        flowRepository.setEnableFlowForwarding(true);
+
+        // The repository should be empty
+        assertThat(flowRepository.getFlowCount(Collections.singletonList(new TimeRangeFilter(0, 0))).get(), equalTo(0L));
+    }
+
