@@ -1,0 +1,110 @@
+        // complete the construction of the metric family
+        public void finishMetricFamily() {
+            if (finishedMetricFamily != null) {
+                return;
+            }
+
+            MetricFamily.Builder metricFamilyBuilder = new MetricFamily.Builder();
+            metricFamilyBuilder.setName(name);
+            metricFamilyBuilder.setHelp(help);
+            metricFamilyBuilder.setType(type);
+
+            // need to convert the samples to metrics
+            // We know if the family is a counter or a gauge, all samples are full metrics
+            // so we can convert them easily one-for-one.
+            // For summary metrics, we need to combine all quantile samples, sum, and count.
+            // For histogram metrics, we need to combine all bucket samples, sum, and count.
+
+            Map<Map<String, String>, Metric.Builder<?>> builders = new LinkedHashMap<>();
+
+            for (TextSample textSample : textSamples) {
+                try {
+                    switch (type) {
+                        case COUNTER:
+                            builders.put(textSample.getLabels(),
+                                    new Counter.Builder().setName(name)
+                                            .setValue(Util.convertStringToDouble(textSample.getValue()))
+                                            .addLabels(textSample.getLabels()));
+                            break;
+                        case GAUGE:
+                            builders.put(textSample.getLabels(),
+                                    new Gauge.Builder().setName(name)
+                                            .setValue(Util.convertStringToDouble(textSample.getValue()))
+                                            .addLabels(textSample.getLabels()));
+                            break;
+                        case SUMMARY:
+                            // Get the builder that we are using to build up the current metric. Remember we need to
+                            // get the builder for this specific metric identified with a unique set of labels.
+
+                            // First we need to remove any existing quantile label since it isn't a "real" label.
+                            // This is to ensure our lookup uses all but only "real" labels.
+                            String quantileValue = textSample.getLabels().remove("quantile"); // may be null
+
+                            Summary.Builder sBuilder = (Summary.Builder) builders.get(textSample.getLabels());
+                            if (sBuilder == null) {
+                                sBuilder = new Summary.Builder();
+                                builders.put(textSample.getLabels(), sBuilder);
+                            }
+                            sBuilder.setName(name);
+                            sBuilder.addLabels(textSample.getLabels());
+                            if (textSample.getName().endsWith("_count")) {
+                                sBuilder.setSampleCount((long)Util.convertStringToDouble(textSample.getValue()));
+                            } else if (textSample.getName().endsWith("_sum")) {
+                                sBuilder.setSampleSum(Util.convertStringToDouble(textSample.getValue()));
+                            } else {
+                                // This must be a quantile sample
+                                if (quantileValue == null) {
+                                    log.debug("Summary quantile sample is missing the 'quantile' label: {}",
+                                            textSample.getLine());
+                                }
+                                sBuilder.addQuantile(Util.convertStringToDouble(quantileValue),
+                                        Util.convertStringToDouble(textSample.getValue()));
+                            }
+                            break;
+                        case HISTOGRAM:
+                            // Get the builder that we are using to build up the current metric. Remember we need to
+                            // get the builder for this specific metric identified with a unique set of labels.
+
+                            // First we need to remove any existing le label since it isn't a "real" label.
+                            // This is to ensure our lookup uses all but only "real" labels.
+                            String bucket = textSample.getLabels().remove("le"); // may be null
+
+                            Histogram.Builder hBuilder = (Histogram.Builder) builders.get(textSample.getLabels());
+                            if (hBuilder == null) {
+                                hBuilder = new Histogram.Builder();
+                                builders.put(textSample.getLabels(), hBuilder);
+                            }
+                            hBuilder.setName(name);
+                            hBuilder.addLabels(textSample.getLabels());
+                            if (textSample.getName().endsWith("_count")) {
+                                hBuilder.setSampleCount((long)Util.convertStringToDouble(textSample.getValue()));
+                            } else if (textSample.getName().endsWith("_sum")) {
+                                hBuilder.setSampleSum(Util.convertStringToDouble(textSample.getValue()));
+                            } else {
+                                // This must be a bucket sample
+                                if (bucket == null) {
+                                    throw new Exception("Histogram bucket sample is missing the 'le' label");
+                                }
+                                hBuilder.addBucket(Util.convertStringToDouble(bucket),
+                                        (long)Util.convertStringToDouble(textSample.getValue()));
+                            }
+                            break;
+                    }
+                } catch (Exception e) {
+                    log.debug("Error processing sample. This metric sample will be ignored: {}",
+                            textSample.getLine(), e);
+                }
+            }
+
+            // now that we've combined everything into individual metric builders, we can build all our metrics
+            for (Metric.Builder<?> builder : builders.values()) {
+                try {
+                    metricFamilyBuilder.addMetric(builder.build());
+                } catch (Exception e) {
+                    log.debug("Error building metric for metric family [%s] - it will be ignored", name, e);
+                }
+            }
+
+            finishedMetricFamily = metricFamilyBuilder.build();
+        }
+

@@ -1,0 +1,34 @@
+    /**
+     * Groups the metrics by instance using the given group-by expression.
+     * If no expression is set, all the metrics belong to a single group with instance name 'node'
+     */
+    private static Map<String, List<Metric>> groupMetrics(Group group, List<Metric> metrics) {
+        final Map<String, List<Metric>> metricsByInstance = new LinkedHashMap<>();
+        if (group.getGroupByExp() == null) {
+            metricsByInstance.put("node", metrics);
+            return metricsByInstance;
+        }
+
+        final ExpressionParser parser = new SpelExpressionParser();
+        final Expression exp = parser.parseExpression(group.getGroupByExp());
+        for (Metric metric : metrics) {
+            final StandardEvaluationContext context = new StandardEvaluationContext(metric);
+            try {
+                final String instance = exp.getValue(context, String.class);
+                LOG.trace("Rule '{}' on {} returned instance: {}", group.getGroupByExp(), metric, instance);
+                if (instance == null) {
+                    LOG.info("Rule '{}' on {} did not produce an instance. Result will be ignored.", group.getGroupByExp(), metric);
+                    continue;
+                }
+
+                // Insert or append
+                List<Metric> metricsInInstance = metricsByInstance.computeIfAbsent(instance, k -> new LinkedList<>());
+                metricsInInstance.add(metric);
+            } catch (Exception e) {
+                LOG.warn("Failed to evaluate expression '{}' in the group named '{}'. The metric will not be included.",
+                        group.getGroupByExp(), group.getName(), e);
+            }
+        }
+        return metricsByInstance;
+    }
+
