@@ -1,0 +1,50 @@
+    @Override
+    public Stream<CollectionSetWithAgent> handleCollectionMessage(final TelemetryMessageLogEntry message, final TelemetryMessageLog messageLog) {
+        final String messageText = new String(message.getByteArray());
+        LOG.trace("plaintext message: {}", messageText);
+        final String[] lines = messageText.split("\n");
+
+        CollectionAgent agent = null;
+        try {
+            final InetAddress inetAddress = InetAddressUtils.addr(messageLog.getSourceAddress());
+            final Optional<Integer> nodeId = interfaceToNodeCache.getFirstNodeId(messageLog.getLocation(), inetAddress);
+            if (nodeId.isPresent()) {
+                // NOTE: This will throw a IllegalArgumentException if the nodeId/inetAddress pair does not exist in the database
+                agent = collectionAgentFactory.createCollectionAgent(Integer.toString(nodeId.get()), inetAddress);
+            }
+        } catch (final RuntimeException e) {
+            LOG.warn("Unable to determine source address from message log.", e);
+            return Stream.empty();
+        }
+
+        if (agent == null) {
+            LOG.warn("Unable to determine collection agent from location={} and address={}", messageLog.getLocation(), messageLog.getSourceAddress());
+            return Stream.empty();
+        }
+
+        final ScriptedCollectionSetBuilder builder = getCollectionBuilder();
+        if (builder == null) {
+            LOG.error("Error compiling script '{}'. See logs for details.", this.getScript());
+            return Stream.empty();
+        }
+
+        final List<CollectionSetWithAgent> collectionSets = new ArrayList<>();
+
+        for (final String line : lines) {
+            final String[] entry = line.split(" ", 3);
+            if (entry.length != 3) {
+                LOG.warn("Unparseable graphite plaintext message: {}", line);
+            } else {
+                final GraphiteMetric metric = new GraphiteMetric(entry[0], entry[1], Long.valueOf(entry[2], 10));
+                try {
+                    final CollectionSet collectionSet = builder.build(agent, metric, metric.getTimestamp());
+                    collectionSets.add(new CollectionSetWithAgent(agent, collectionSet));
+                } catch (final ScriptException e) {
+                    LOG.warn("Dropping metric, unable to create collection set: {}", metric, e);
+                }
+            }
+        }
+
+        return collectionSets.stream();
+    }
+
