@@ -1,0 +1,68 @@
+    /**
+     * Retrieve traffic summaries (totals) from aggregated flow statistics.
+     *
+     * @param N limit on number of entities in the top K that we want to query
+     * @param includeOther true to include the delta between top-n summaries and the total traffic as an additional entry
+     * @param filters filter criteria - see Filter
+     * @param groupedBy grouped by context to query - see GroupedBy
+     * @param type type descriptor for the entity we want to extract from the document
+     * @param <T> entity future
+     * @return a future for a list containing the summary for the different entities
+     */
+    private <T> CompletableFuture<List<TrafficSummary<T>>> getTopNSummary(int N, boolean includeOther, List<Filter> filters,
+                                                                          GroupedBy groupedBy, Types.Type<T> type) {
+        CompletableFuture<List<TrafficSummary<T>>> summaryFutures;
+        if (N > 0) {
+            final String query = searchQueryProvider.getTopNQuery(N, groupedBy, type.getKey(), filters);
+            summaryFutures = searchAsync(query, Filter.find(filters, TimeRangeFilter.class).orElse(null))
+                    .thenApply(searchResult -> {
+                        final MetricAggregation aggs = searchResult.getAggregations();
+                        if (aggs == null) {
+                            // No results
+                            return Collections.emptyList();
+                        }
+                        final TermsAggregation byKeyAgg = aggs.getTermsAggregation("by_key");
+                        if (byKeyAgg == null) {
+                            // No results
+                            return Collections.emptyList();
+                        }
+
+                        List<TrafficSummary<T>> trafficSummaries = new ArrayList<>(N);
+                        for (TermsAggregation.Entry bucket : byKeyAgg.getBuckets()) {
+                            SumAggregation ingress = bucket.getSumAggregation("bytes_ingress");
+                            SumAggregation egress = bucket.getSumAggregation("bytes_egress");
+
+                            trafficSummaries.add(TrafficSummary.<T>builder()
+                                    .withEntity(type.toEntity(bucket.getKeyAsString()))
+                                    .withBytesIn(ingress.getSum().longValue())
+                                    .withBytesOut(egress.getSum().longValue())
+                                    .build());
+                        }
+                        return trafficSummaries;
+                    });
+        } else {
+            summaryFutures = CompletableFuture.completedFuture(Collections.emptyList());
+        }
+
+        if (!includeOther) {
+            return summaryFutures;
+        }
+
+        CompletableFuture<TrafficSummary<T>> totalTrafficFuture = getOtherTraffic(groupedBy.getParent(), type.getOtherEntity(), filters);
+        return summaryFutures.thenCombine(totalTrafficFuture, (topK,total) -> {
+            BytesInOut totalBytes = total.getBytesInOut();
+            BytesInOut bytesFromTopK = BytesInOut.sum(topK);
+
+            // Determine the remainder of bytes not represented by the top K
+            BytesInOut otherBytes = totalBytes.minus(bytesFromTopK);
+
+            List<TrafficSummary<T>> newTopK = new ArrayList<>(topK);
+            newTopK.add(TrafficSummary.<T>builder()
+                    .withEntity(type.getOtherEntity())
+                    .withBytesIn(otherBytes.getBytesIn())
+                    .withBytesOut(otherBytes.getBytesOut())
+                    .build());
+            return newTopK;
+        });
+    }
+
