@@ -7,6 +7,8 @@
         LOG.info("Attempting to re-scan node with Id {}", m_nodeId);
         final OnmsNode node = m_provisionService.getNode(m_nodeId);
         if (node != null) {
+            m_span.setTag(NODE_ID, node.getId());
+            m_span.setTag(LOCATION, node.getLocation().getLocationName());
             OnmsIpInterface iface = m_provisionService.getPrimaryInterfaceForNode(node);
             if (iface == null) { // NMS-6380, a discovered node added with wrong SNMP settings doesn't have a primary interface yet.
                 iface = node.getIpInterfaces().isEmpty() ? null : node.getIpInterfaces().iterator().next();
@@ -18,10 +20,17 @@
                 LOG.info("The node with ID {} does not have any IP addresses", m_nodeId);
             } else {
                 phase.getBuilder().addSequence(
-                    new NodeInfoScan(node, iface.getIpAddress(), node.getForeignSource(), node.getLocation(), createScanProgress(), m_agentConfigFactory, m_provisionService, node.getId()),
-                    new IpInterfaceScan(node.getId(), iface.getIpAddress(), node.getForeignSource(), node.getLocation(), m_provisionService),
-                    new NodeScan(node.getId(), node.getForeignSource(), node.getForeignId(), node.getLocation(), m_provisionService, m_eventForwarder, m_agentConfigFactory, m_taskCoordinator)
-                );
+                    new NodeInfoScan(node, iface.getIpAddress(), node.getForeignSource(), node.getLocation(), createScanProgress(), m_agentConfigFactory, m_provisionService, node.getId(), m_span),
+                    new IpInterfaceScan(node.getId(), iface.getIpAddress(), node.getForeignSource(), node.getLocation(), m_provisionService, m_span),
+                    new NodeScan(node.getId(), node.getForeignSource(), node.getForeignId(), node.getLocation(), m_provisionService, m_eventForwarder, m_agentConfigFactory, m_taskCoordinator, m_span),
+                        new RunInBatch() {
+                            @Override
+                            public void run(BatchTask batch) {
+                                LOG.info("Done re-scanning node with Id {}", m_nodeId);
+                                m_span.finish();
+                            }
+                        });
+
             }
         } else {
             LOG.info("Can't find node with ID {}", m_nodeId);
