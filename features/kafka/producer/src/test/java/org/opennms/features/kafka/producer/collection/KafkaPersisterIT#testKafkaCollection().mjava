@@ -4,15 +4,34 @@
         OnmsNode node = databasePopulator.getNode5();
         CollectionAgent agent = new MockCollectionAgent(node.getId(), "test", InetAddress.getLocalHost());
         NodeLevelResource nodeResource = new NodeLevelResource(node.getId());
+
         CollectionSet collectionSet = new CollectionSetBuilder(agent).withTimestamp(new Date(2))
                 .withNumericAttribute(nodeResource, "group1", "node5", 105, AttributeType.GAUGE)
                 .withNumericAttribute(nodeResource, "group2", "node5", 1050, AttributeType.GAUGE).build();
+
+        LatencyCollectionResource latencyCollectionResource = new LatencyCollectionResource("ICMP", IP_ADDRESS, LOCATION);
+        LatencyCollectionAttributeType attributeType = new LatencyCollectionAttributeType("ICMP", "ICMP");
+        latencyCollectionResource.addAttribute(new LatencyCollectionAttribute(latencyCollectionResource, attributeType, "ICMP", 204.0));
+        CollectionSet responseTimeCollectionSet = new SingleResourceCollectionSet(latencyCollectionResource, new Date());
         persister.visitCollectionSet(collectionSet);
+        persister.visitCollectionSet(responseTimeCollectionSet);
         
-        await().atMost(1, TimeUnit.MINUTES).pollInterval(15, TimeUnit.SECONDS).until(() -> kafkaConsumer.getCollectionSet(), not(nullValue()));
-        assertThat(kafkaConsumer.getCollectionSet().getResource(0).getNode().getNodeId(), equalTo(node.getId().longValue()));
-        assertThat(kafkaConsumer.getCollectionSet().getResource(0).getNumericCount(), equalTo(2));
-        assertThat(kafkaConsumer.getCollectionSet().getResource(0).getNumeric(1).getValue(), equalTo(1050.0));
+        await().atMost(1, TimeUnit.MINUTES).pollInterval(15, TimeUnit.SECONDS).until(() -> kafkaConsumer.getCollectionSetValues().size(), equalTo(2));
+        List<CollectionSetProtos.CollectionSetResource> resources = kafkaConsumer.getCollectionSetValues().stream().map(CollectionSetProtos.CollectionSet::getResourceList).flatMap(Collection::stream).collect(Collectors.toList());
+        Optional<CollectionSetProtos.CollectionSetResource> responseTimeResource = resources.stream().filter(CollectionSetProtos.CollectionSetResource::hasResponse).findFirst();
+        responseTimeResource.ifPresent(resource -> {
+                    assertThat(resource.getResponse().getInstance(), equalTo(IP_ADDRESS));
+                    assertThat(resource.getResponse().getLocation(), equalTo(LOCATION));
+                    assertThat(resource.getNumeric(0).getValue(), equalTo(204.0));
+                }
+        );
+        Optional<CollectionSetProtos.CollectionSetResource> nodeLevelResource = resources.stream().filter(CollectionSetProtos.CollectionSetResource::hasNode).findFirst();
+        nodeLevelResource.ifPresent(resource -> {
+                    assertThat(resource.getNode().getNodeId(), equalTo(node.getId().longValue()));
+                    assertThat(resource.getNumericList().size(), equalTo(2));
+                    assertThat(resource.getNumeric(0).getValue(), isOneOf(105.0, 1050.0));
+                }
+        );
 
     }
 

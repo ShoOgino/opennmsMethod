@@ -2,7 +2,6 @@
     public void persist(final Collection<Flow> flows, final FlowSource source) throws FlowException {
         // Track the number of flows per call
         flowsPerLog.update(flows.size());
-
         if (flows.isEmpty()) {
             LOG.info("Received empty flows from {} @ {}. Nothing to do.", source.getSourceAddress(), source.getLocation());
             return;
@@ -15,13 +14,18 @@
         } catch (Exception e) {
             throw new FlowException("Failed to enrich one or more flows.", e);
         }
+
         if(enableFlowForwarding) {
-            LOG.debug("Forwarding {} flow documents", flowDocuments.size());
+            LOG.debug("Forwarding {} flow documents.", flowDocuments.size());
             flowDocuments.stream().map(FlowDocument::buildEnrichedFlow).forEach(enrichedFlowForwarder::forward);
         }
+
+        if (skipElasticsearchPersistence) {
+            RATE_LIMITED_LOGGER.error("Flow persistence disabled. Dropping {} flow documents.", flowDocuments.size());
+            return;
+        }
+
         LOG.debug("Persisting {} flow documents.", flowDocuments.size());
-
-
         final Tracer tracer = getTracer();
         try (final Timer.Context ctx = logPersistingTimer.time();
              Scope scope = tracer.buildSpan(TRACER_FLOW_MODULE).startActive(true)) {

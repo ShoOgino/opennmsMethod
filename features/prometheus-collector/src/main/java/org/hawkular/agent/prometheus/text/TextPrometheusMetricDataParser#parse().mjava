@@ -1,0 +1,121 @@
+    @Override
+    public MetricFamily parse() throws IOException {
+
+        // determine the first line we should process. If we were previously called, we already
+        // read a line - start from that last line read. Otherwise, prime the pump and read
+        // the first line from the stream.
+        String line;
+        if (lastLineReadFromStream != null) {
+            line = lastLineReadFromStream;
+            lastLineReadFromStream = null;
+        } else {
+            line = readLine(getInputStream());
+        }
+
+        if (line == null) {
+            return null;
+        }
+
+        // do a quick check to see if we are getting passed in binary format rather than text
+        if (!line.isEmpty() && !new String(new char[] { line.charAt(0) }).matches("\\p{ASCII}*")) {
+            throw new IOException("Doesn't look like the metric data is in text format");
+        }
+
+        ParserContext context = new ParserContext();
+
+        while (line != null) {
+            line = line.trim();
+
+            try {
+                if (line.isEmpty()) {
+                    // ignore blank lines
+                } else if (line.charAt(0) == '#') {
+                    String[] parts = line.split("[ \t]+", 4); // 0 is #, 1 is HELP or TYPE, 2 is metric name, 3 is doc
+                    if (parts.length < 2) {
+                        // ignore line - probably a comment
+                    } else if (parts[1].equals("HELP")) {
+                        if (!parts[2].equals(context.name)) {
+                            // we are hitting a new metric family
+                            if (!context.name.isEmpty()) {
+                                // break and we'll finish the metric family we previously were building up
+                                this.lastLineReadFromStream = line;
+                                break;
+                            }
+                            // start anew
+                            context.clear();
+                            context.name = parts[2];
+                            context.type = MetricType.GAUGE; // default in case we don't get a TYPE
+                            context.allowedNames.add(parts[2]);
+                        }
+
+                        if (parts.length == 4) {
+                            context.help = unescapeHelp(parts[3]);
+                        } else {
+                            context.help = "";
+                        }
+                    } else if (parts[1].equals("TYPE")) {
+                        if (!parts[2].equals(context.name)) {
+                            if (!context.name.isEmpty()) {
+                                // break and we'll finish the metric family we previously were building up
+                                this.lastLineReadFromStream = line;
+                                break;
+                            }
+                            // start anew
+                            context.clear();
+                            context.name = parts[2];
+                        }
+                        context.type = MetricType.valueOf(parts[3].toUpperCase());
+                        context.allowedNames.clear();
+                        switch (context.type) {
+                            case COUNTER:
+                                context.allowedNames.add(context.name);
+                                break;
+                            case GAUGE:
+                                context.allowedNames.add(context.name);
+                                break;
+                            case SUMMARY:
+                                context.allowedNames.add(context.name + "_count");
+                                context.allowedNames.add(context.name + "_sum");
+                                context.allowedNames.add(context.name);
+                                break;
+                            case HISTOGRAM:
+                                context.allowedNames.add(context.name + "_count");
+                                context.allowedNames.add(context.name + "_sum");
+                                context.allowedNames.add(context.name + "_bucket");
+                                break;
+                        }
+                    } else {
+                        // ignore other tokens - probably a comment
+                    }
+                } else {
+                    // parse the sample line that contains a single metric (or part of a metric as in summary/histo)
+                    TextSample sample = parseSampleLine(line);
+                    if (!context.allowedNames.contains(sample.getName())) {
+                        if (!context.name.isEmpty()) {
+                            // break and we'll finish the metric family we previously were building up
+                            this.lastLineReadFromStream = line;
+                            break;
+                        }
+                        context.clear();
+                        log.debug("Ignoring an unexpected metric: {}", line);
+                    } else {
+                        // add the sample to the family we are building up
+                        context.textSamples.add(sample);
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Failed to process line - it will be ignored: {}", line);
+            }
+
+            // go to the next line
+            line = readLine(getInputStream());
+        }
+
+        if (!context.name.isEmpty()) {
+            // finish the metric family we previously were building up
+            context.finishMetricFamily();
+        }
+
+        return context.finishedMetricFamily;
+    }
+
