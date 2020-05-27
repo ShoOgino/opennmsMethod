@@ -1,0 +1,29 @@
+    public static SortedMap<Long, List<Double>> generateSamples(final AbstractRRD rrd) {
+        final NavigableSet<AbstractRRA> rras = rrd.getRras()
+                                                  .stream()
+                                                  .filter(AbstractRRA::hasAverageAsCF)
+                                                  .collect(Collectors.toCollection(() -> new TreeSet<>((rra1, rra2) -> rra1.getPdpPerRow().compareTo(rra2.getPdpPerRow()))));
+        final SortedMap<Long, List<Double>> collected = new TreeMap<>();
+
+        for (final AbstractRRA rra : rras) {
+            NavigableMap<Long, List<Double>> samples = generateSamples(rrd, rra);
+
+            final AbstractRRA lowerRra = rras.lower(rra);
+            if (lowerRra != null) {
+                final long lowerRraStart = rrd.getLastUpdate() - lowerRra.getPdpPerRow() * rrd.getStep() * lowerRra.getRows().size();
+                final long rraStep = rra.getPdpPerRow() * rrd.getStep();
+                samples = samples.headMap((int) Math.ceil(((double) lowerRraStart) / ((double) rraStep)) * rraStep, false);
+            }
+
+            final AbstractRRA higherRra = rras.higher(rra);
+            if (higherRra != null) {
+                final long higherRraStep = higherRra.getPdpPerRow() * rrd.getStep();
+                samples = samples.tailMap((int) Math.ceil(((double) samples.firstKey()) / ((double) higherRraStep)) * higherRraStep, true);
+            }
+
+            collected.putAll(samples);
+        }
+
+        return collected;
+    }
+
