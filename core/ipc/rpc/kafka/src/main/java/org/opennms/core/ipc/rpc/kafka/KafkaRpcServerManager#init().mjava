@@ -12,21 +12,21 @@
         producer = Utils.runWithGivenClassLoader(() -> new KafkaProducer<String, byte[]>(kafkaConfig), KafkaProducer.class.getClassLoader());
         // Configurable cache config.
         maxBufferSize = KafkaRpcConstants.getMaxBufferSize(kafkaConfig);
+        int maxConcurrentCalls = PropertiesUtils.getProperty(kafkaConfig, MAX_CONCURRENT_CALLS_PROPERTY, KafkaRpcConstants.MAX_CONCURRENT_CALLS);
+        int maxWaitDuration = PropertiesUtils.getProperty(kafkaConfig, MAX_DURATION_BULK_HEAD, KafkaRpcConstants.MAX_WAIT_DURATION_BULK_HEAD);
+        metrics.register(AVAILABLE_CONCURRENT_CALLS, (Gauge<Integer>) () -> bulkhead.getMetrics().getAvailableConcurrentCalls());
+        metrics.register(MAX_ALLOWED_CONCURRENT_CALLS, (Gauge<Integer>) () -> bulkhead.getMetrics().getMaxAllowedConcurrentCalls());
+        metrics.register(ACTIVE_RPC_REQUESTS,  (Gauge<Integer>) () -> activeThreads.get());
+
         kafkaRpcTopicProvider = new KafkaTopicProvider(Boolean.parseBoolean(kafkaConfig.getProperty(SINGLE_TOPIC_FOR_ALL_MODULES)));
         // Thread to expire RpcId from rpcIdQueue.
-        delayQueueExecutor.execute(() -> {
-            while (true) {
-                try {
-                    RpcId rpcId = rpcIdQueue.take();
-                    messageCache.remove(rpcId.getRpcId());
-                    currentChunkCache.remove(rpcId.getRpcId());
-                } catch (InterruptedException e) {
-                    LOG.error("Delay Queue has been interrupted ", e);
-                    break;
-                }
-            }
-        });
+        delayQueueExecutor.execute(this::removeRpcIdFromDelayQueue);
         tracerRegistry.init(minionIdentity.getLocation() + "@" + minionIdentity.getId());
 
+        BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
+                .maxConcurrentCalls(maxConcurrentCalls)
+                .maxWaitDuration(java.time.Duration.ofMillis(maxWaitDuration))
+                .build();
+        bulkhead = Bulkhead.of("ipc-rpc-kafka", bulkheadConfig);
     }
 
