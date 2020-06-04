@@ -1,0 +1,31 @@
+    @Override
+    public Scope getScopeForInterfaceByIfIndex(final Integer nodeId, final int ifIndex) {
+        if (nodeId == null) {
+            return EmptyScope.EMPTY;
+        }
+
+        return this.sessionUtils.withReadOnlyTransaction(() -> {
+            final OnmsSnmpInterface snmpInterface = this.snmpInterfaceDao.findByNodeIdAndIfIndex(nodeId, ifIndex);
+            if (snmpInterface == null) {
+                return EmptyScope.EMPTY;
+            }
+
+            ArrayList<Scope> scopes = new ArrayList<>();
+
+            // SNMP interface facts
+            scopes.add(new ObjectScope<>(snmpInterface)
+                    .map(INTERFACE, "if-alias", (i) -> Optional.ofNullable(i.getIfAlias()))
+                    .map(INTERFACE, "if-description", (i) -> Optional.ofNullable(i.getIfDescr()))
+                    .map(INTERFACE, "phy-addr", (i) -> Optional.ofNullable(i.getPhysAddr())));
+
+            // IP interface facts w/ meta-data extracted from IP interface
+            Optional.ofNullable(snmpInterface.getPrimaryIpInterface())
+                    .ifPresent(ipInterface -> {
+                        scopes.add(transform(ipInterface.getMetaData()));
+                        scopes.add(mapIpInterfaceKeys(ipInterface));
+                    });
+
+            return new FallbackScope(scopes);
+        });
+    }
+
