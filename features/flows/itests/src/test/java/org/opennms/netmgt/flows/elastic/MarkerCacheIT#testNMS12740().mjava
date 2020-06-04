@@ -1,5 +1,7 @@
     @Test
-    public void testMarkerCache() throws Exception {
+    public void testNMS12740() throws Exception {
+        Assert.assertFalse(OnmsSnmpInterface.INGRESS_AND_EGRESS_REQUIRED);
+
         stubFor(post("/_bulk")
                 .willReturn(aResponse()
                         .withStatus(200)
@@ -18,7 +20,6 @@
                         .withExpireAfterWrite(300)
                         .build());
 
-
         final JestClientFactory factory = new JestClientFactory();
         factory.setHttpClientConfig(new HttpClientConfig.Builder("http://localhost:" + wireMockRule.port()).build());
 
@@ -32,12 +33,13 @@
             Assert.assertThat(nodeDao.findAllHavingFlows(), is(empty()));
             Assert.assertThat(snmpInterfaceDao.findAllHavingFlows(1), is(empty()));
 
-            elasticFlowRepository.persist(Lists.newArrayList(getMockFlow(Flow.Direction.INGRESS)), getMockFlowSource());
+            elasticFlowRepository.persist(Lists.newArrayList(getMockFlow(Flow.Direction.EGRESS)), getMockFlowSource());
 
-            Assert.assertThat(nodeDao.findAllHavingFlows(), contains(hasProperty("id", is(1))));
-            Assert.assertThat(snmpInterfaceDao.findAllHavingFlows(1), containsInAnyOrder(
-                    hasProperty("ifIndex", is(2)),
-                    hasProperty("ifIndex", is(3))));
+            Assert.assertEquals(0,snmpInterfaceDao.findAllHavingIngressFlows(2).size());
+            Assert.assertEquals(0, snmpInterfaceDao.findAllHavingEgressFlows(2).size());
+
+            // the following call resulted to two wrong entries before, since the wrong query returned entries from other nodes with egress flows
+            Assert.assertEquals(0, snmpInterfaceDao.findAllHavingFlows(2).size());
         }
     }
 
