@@ -1,9 +1,25 @@
     @Override
     protected Response doUpdate(final SecurityContext securityContext, final UriInfo uriInfo, final String key, final OnmsMonitoringLocation targetObject) {
+        final boolean sendEvent = !comparePollingPackageNames(m_dao.get(key), targetObject);
+
         if (!key.equals(targetObject.getLocationName())) {
             throw getException(Status.BAD_REQUEST, "The ID of the object doesn't match the ID of the path: {} != {}", targetObject.getLocationName(), key);
         }
+
+        m_dao.clear();
+
         getDao().saveOrUpdate(targetObject);
+
+        if (sendEvent) {
+            final EventBuilder eventBuilder = new EventBuilder(EventConstants.POLLER_PACKAGE_LOCATION_ASSOCIATION_CHANGED_EVENT_UEI, "ReST");
+            eventBuilder.addParam(EventConstants.PARM_LOCATION, targetObject.getLocationName());
+            try {
+                m_eventProxy.send(eventBuilder.getEvent());
+            } catch (final EventProxyException e) {
+                LOG.warn("Failed to send Event on polling package modification " + e.getMessage(), e);
+            }
+        }
+
         return Response.noContent().build();
     }
 
