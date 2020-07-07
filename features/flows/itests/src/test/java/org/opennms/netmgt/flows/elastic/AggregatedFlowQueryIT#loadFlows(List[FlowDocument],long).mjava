@@ -1,0 +1,49 @@
+    private void loadFlows(final List<FlowDocument> flowDocuments, long expectedNumFlowSummaries) throws FlowException {
+        final List<Flow> flows = new ArrayList<>();
+        for (FlowDocument flow : flowDocuments) {
+            TestFlow testFlow = new TestFlow(flow);
+            flow.setFlow(testFlow);
+            flows.add(testFlow);
+        }
+        flowRepository.persist(flows, new FlowSource("test", "127.0.0.1", null));
+
+        // Retrieve all the flows we just persisted
+        await().atMost(60, TimeUnit.SECONDS).until(() -> rawFlowQueryService.getFlowCount(Collections.singletonList(
+                new TimeRangeFilter(0, System.currentTimeMillis()))).get(), equalTo(Long.valueOf(flows.size())));
+
+        // Pass those same flows through the pipeline and persist the aggregations
+        NephronOptions options = PipelineOptionsFactory.as(NephronOptions.class);
+        doPipeline(documentForwarder.getFlows().stream()
+                .map( flow -> {
+                    flow.setExporterNodeInfo(new NodeInfo() {
+                        @Override
+                        public Integer getNodeId() {
+                            return 1;
+                        }
+
+                        @Override
+                        public String getForeignId() {
+                            return "SomeFID";
+                        }
+
+                        @Override
+                        public String getForeignSource() {
+                            return "SomeFS";
+                        }
+
+                        @Override
+                        public List<String> getCategories() {
+                            return Collections.emptyList();
+                        }
+                    });
+                    return FlowDocumentBuilder.buildFlowDocument(flow);
+                })
+                .collect(Collectors.toList()), options);
+
+        // Count the number aggregated flows we persisted
+        // Wait for these to be present to ensure the tests have a consistent view of the data
+        // This value will need to be updated if/when the flow aggregation logic changes
+        await().atMost(60, TimeUnit.SECONDS).until(() -> aggFlowQueryService.getFlowCount(Collections.singletonList(
+                new TimeRangeFilter(0, System.currentTimeMillis()))).get(), equalTo(expectedNumFlowSummaries));
+    }
+

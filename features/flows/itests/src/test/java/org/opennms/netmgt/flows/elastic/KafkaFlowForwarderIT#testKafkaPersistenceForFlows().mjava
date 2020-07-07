@@ -1,0 +1,39 @@
+    @Test(timeout = 60000)
+    public void testKafkaPersistenceForFlows() throws Exception {
+        // start ES
+        elasticSearchRule.startServer();
+        final RestClientFactory restClientFactory = new RestClientFactory(elasticSearchRule.getUrl());
+        final MockDocumentEnricherFactory mockDocumentEnricherFactory = new MockDocumentEnricherFactory();
+        NodeDao nodeDao = mockDocumentEnricherFactory.getNodeDao();
+        nodeDao.saveOrUpdate(createOnmsNode(1, null, null));
+        nodeDao.saveOrUpdate(createOnmsNode(2, "fs", "fid"));
+        final InterfaceToNodeCache interfaceToNodeCache = mockDocumentEnricherFactory.getInterfaceToNodeCache();
+        interfaceToNodeCache.setNodeId("SomeLocation", InetAddressUtils.addr("192.168.1.2"), 1);
+        interfaceToNodeCache.setNodeId("SomeLocation", InetAddressUtils.addr("192.168.2.2"), 2);
+        interfaceToNodeCache.setNodeId("SomeLocation", InetAddressUtils.addr("192.168.1.1"), 3);
+        final DocumentEnricher documentEnricher = mockDocumentEnricherFactory.getEnricher();
+        try (final JestClient jestClient = restClientFactory.createClient()) {
+            final ElasticFlowRepository elasticFlowRepository = new ElasticFlowRepository(new MetricRegistry(),
+                    jestClient, IndexStrategy.MONTHLY, documentEnricher,
+                    new MockSessionUtils(), new MockNodeDao(), new MockSnmpInterfaceDao(),
+                    new MockIdentity(), new MockTracerRegistry(), flowForwarder, new IndexSettings(),
+                    mock(SmartQueryService.class));
+            elasticFlowRepository.setEnableFlowForwarding(true);
+            elasticFlowRepository.persist(Lists.newArrayList(FlowDocumentTest.getMockFlow()), FlowDocumentTest.getMockFlowSource());
+        }
+        KafkaConsumerRunner kafkaConsumerRunner = new KafkaConsumerRunner(kafkaConfig, topicName);
+        Executors.newSingleThreadExecutor().execute(kafkaConsumerRunner);
+        await().atMost(30, TimeUnit.SECONDS).pollInterval(5, TimeUnit.SECONDS).until(() ->
+                getFlowDocuments().size(), Matchers.greaterThan(0));
+        getFlowDocuments().forEach(flowDocument -> {
+            assertEquals(FlowDocumentTest.getMockFlow().getSrcAddr(), flowDocument.getSrcAddress());
+            assertEquals(FlowDocumentTest.getMockFlow().getDstAddr(), flowDocument.getDstAddress());
+            assertEquals(1, flowDocument.getSrcNode().getNodeId());
+            assertEquals(2, flowDocument.getDestNode().getNodeId());
+            assertEquals("", flowDocument.getSrcNode().getForeginId());
+            assertEquals("fid", flowDocument.getDestNode().getForeginId());
+        });
+        elasticSearchRule.stopServer();
+        kafkaConsumerRunner.destroy();
+    }
+

@@ -1,0 +1,63 @@
+    /**
+     * This will iterate over a set of metrics that are produced by the
+     * {@link #createPrometheusMetricDataParser() parser} and will notify the {@link #getWalker() walker}
+     * of each metric found.
+     */
+    public void walk() {
+        // tell the walker we are starting
+        walker.walkStart();
+
+        int totalMetrics = 0;
+        int familyIndex = 0;
+
+        try {
+            PrometheusMetricDataParser<T> parser = createPrometheusMetricDataParser();
+            T metricFamily = parser.parse(); // prime the pump
+
+            while (metricFamily != null) {
+                org.hawkular.agent.prometheus.types.MetricFamily convertedMetricFamily = convert(metricFamily);
+
+                // let the walker know we are traversing a new family of metrics
+                walker.walkMetricFamily(convertedMetricFamily, familyIndex++);
+
+                // walk through each metric in the family
+                int metricIndex = 0;
+
+                for (org.hawkular.agent.prometheus.types.Metric metric : convertedMetricFamily.getMetrics()) {
+                    switch (convertedMetricFamily.getType()) {
+                        case COUNTER:
+                            walker.walkCounterMetric(convertedMetricFamily, (Counter) metric, metricIndex);
+                            break;
+
+                        case GAUGE:
+                            walker.walkGaugeMetric(convertedMetricFamily, (Gauge) metric, metricIndex);
+                            break;
+
+                        case SUMMARY:
+                            walker.walkSummaryMetric(convertedMetricFamily,
+                                    ((org.hawkular.agent.prometheus.types.Summary) metric), metricIndex);
+                            break;
+
+                        case HISTOGRAM:
+                            walker.walkHistogramMetric(convertedMetricFamily,
+                                    ((org.hawkular.agent.prometheus.types.Histogram) metric), metricIndex);
+                            break;
+                    }
+
+                    metricIndex++;
+                }
+
+                // finished processing the metrics for the current family
+                totalMetrics += convertedMetricFamily.getMetrics().size();
+
+                // go to the next metric family
+                metricFamily = parser.parse();
+            }
+        } catch (Exception e) {
+            log.debug("Error while processing binary data", e);
+        }
+
+        // tell the walker we have finished
+        walker.walkFinish(familyIndex, totalMetrics);
+    }
+
