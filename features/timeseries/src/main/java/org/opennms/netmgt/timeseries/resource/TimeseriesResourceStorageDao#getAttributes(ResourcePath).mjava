@@ -1,0 +1,50 @@
+    @Override
+    public Set<OnmsAttribute> getAttributes(ResourcePath path) {
+        Set<OnmsAttribute> attributes = Sets.newHashSet();
+
+        // Fetch the resource-level attributes in parallel
+        Future<Map<String, String>> stringAttributes = ForkJoinPool.commonPool()
+                .submit(getResourceAttributesCallable(path));
+
+        // Gather the list of metrics available under the resource path
+        Set<Metric> metrics = searchFor(path, 0);
+        for (Metric metric : metrics) {
+            final String resourceId = metric.getFirstTagByKey(IntrinsicTagNames.resourceId).getValue();
+            final ResourcePath resultPath = toResourcePath(resourceId);
+            if (!path.equals(resultPath)) {
+                // The paths don't match exactly, but it is possible that they differ only by leading/trailing whitespace
+                // so we perform a closer inspection
+                if (!Arrays.stream(path.elements())
+                        .map(String::trim)
+                        .collect(Collectors.toList())
+                        .equals(Arrays.asList(resultPath.elements()))) {
+                    // This shouldn't happen
+                    LOG.warn("Encountered non-child resource {} when searching for {} with depth {}. " +
+                            "Ignoring resource.", resourceId, path, 0);
+                    continue;
+                }
+            }
+
+            if (ResourceTypeUtils.isResponseTime(resourceId)) {
+                // Use the last part of the resource id as the dsName
+                // Store the resource id in the rrdFile field
+                attributes.add(new RrdGraphAttribute(toMetricName(resourceId), "", resourceId));
+            } else {
+                // Use the metric name as the dsName
+                // Store the resource id in the rrdFile field
+                attributes.add(new RrdGraphAttribute(metric.getFirstTagByKey(IntrinsicTagNames.name).getValue(), "", resourceId));
+            }
+        }
+
+        // Add the resource level attributes to the result set
+        try {
+            stringAttributes.get().entrySet().stream()
+                    .map(e -> new StringPropertyAttribute(e.getKey(), e.getValue()))
+                    .forEach(attributes::add);
+        } catch (InterruptedException|ExecutionException e) {
+            throw Throwables.propagate(e);
+        }
+
+        return attributes;
+    }
+
