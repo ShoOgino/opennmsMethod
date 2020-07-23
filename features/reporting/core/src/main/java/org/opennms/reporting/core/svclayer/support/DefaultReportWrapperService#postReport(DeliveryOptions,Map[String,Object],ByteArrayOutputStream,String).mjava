@@ -1,0 +1,27 @@
+    private static void postReport(final DeliveryOptions deliveryOptions, final Map<String, Object> reportParameters, final ByteArrayOutputStream outputStream, final String fileName) {
+        final String url = deliveryOptions.getWebhookUrl();
+        final String substitutedUrl = substituteUrl(url, deliveryOptions, reportParameters);
+        try (final ByteArrayInputStream inputStream = new ByteArrayInputStream(outputStream.toByteArray());
+             final CloseableHttpClient client = HttpClients.createDefault();
+        ) {
+            // Build Request
+            LOG.debug("Posting generated report with name {} to endpoint {} (input was {})", fileName, substitutedUrl, url);
+            final HttpEntity entity = MultipartEntityBuilder.create()
+                    .addBinaryBody("file", inputStream, ContentType.DEFAULT_BINARY, fileName)
+                    .build();
+            final HttpPost httpPost = new HttpPost(substitutedUrl);
+            httpPost.setEntity(entity);
+
+            // Execute request and ensure it succeeded
+            try (CloseableHttpResponse response = client.execute(httpPost)) {
+                LOG.debug("Request performed. Received response: {}", response);
+                final int statusCode = response.getStatusLine().getStatusCode();
+                if (statusCode < 200 || statusCode > 299) {
+                    throw new IOException("Expected status code of >= 200 and <= 299 but received: " + statusCode + ". Reason: " + response.getStatusLine().getReasonPhrase());
+                }
+            }
+        } catch (IOException ex) {
+            LOG.error("Error while posting data to endpoint {}: {}", url, ex.getMessage(), ex);
+        }
+    }
+

@@ -1,0 +1,26 @@
+    @Override
+    public Response perform(Context context) throws InterruptedException, ExecutionException, TimeoutException {
+        final String hostnameToLookup = "www.opennms.com";
+        final InetAddress ipAddressToReverseLookup = InetAddressUtils.getInetAddress("1.1.1.1");
+
+        final CircuitBreaker.State cbState = dnsResolver.getCircuitBreaker().getState();
+        if (!CircuitBreaker.State.CLOSED.equals(cbState)) {
+            return new Response(Status.Failure, "Expected circuit breaker to be CLOSED, but was: " + cbState);
+        }
+
+        final Optional<InetAddress> addr = dnsResolver.lookup(hostnameToLookup)
+                .get(context.getTimeout(), TimeUnit.SECONDS);
+        if (!addr.isPresent()) {
+            return new Response(Status.Failure, String.format("Lookup failed for '%s'. No A or AAAA records.", hostnameToLookup));
+        }
+
+        final Optional<String> hostname = dnsResolver.reverseLookup(ipAddressToReverseLookup)
+                .get(context.getTimeout(), TimeUnit.SECONDS);
+        if (!hostname.isPresent()) {
+            return new Response(Status.Failure, String.format("Reverse failed for '%s'. No PTR record.", ipAddressToReverseLookup));
+        }
+
+        return new Response(Status.Success, String.format("%s is at %s (cache %d/%d)", hostnameToLookup, addr.get().getHostAddress(),
+                dnsResolver.getCache().getSize(), dnsResolver.getMaxCacheSize()));
+    }
+

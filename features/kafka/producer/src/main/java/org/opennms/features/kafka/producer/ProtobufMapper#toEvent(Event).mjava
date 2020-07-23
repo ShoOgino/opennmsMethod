@@ -6,11 +6,10 @@
                 .setId(event.getDbid())
                 .setUei(event.getUei())
                 .setSource(event.getSource())
-                .setSeverity(toSeverity(OnmsSeverity.get(event.getSeverity())))
-                .setLabel(eventConfDao.getEventLabel(event.getUei()));
-        if (event.getDescr() != null) {
-            builder.setDescription(event.getDescr());
-        }
+                .setSeverity(toSeverity(OnmsSeverity.get(event.getSeverity())));
+
+        getString(eventConfDao.getEventLabel(event.getUei())).ifPresent(builder::setLabel);
+        getString(event.getDescr()).ifPresent(builder::setDescription);
 
         if (event.getLogmsg() != null) {
             builder.setLogMessage(event.getLogmsg().getContent());
@@ -22,19 +21,28 @@
                 LOG.warn("An error occurred when building node criteria for node with id: {}." +
                         " The node foreign source and foreign id (if set) will be missing from the event with id: {}.",
                         event.getNodeid(), event.getDbid(), e);
+                // We only include the node id in the node criteria in when forwarding events
+                // since the event does not currently contain the fs:fid or a reference to the node object.
                 builder.setNodeCriteria(OpennmsModelProtos.NodeCriteria.newBuilder()
                         .setId(event.getNodeid()));
             }
-            // We only include the node id in the node criteria in when forwarding events
-            // since the event does not currently contain the fs:fid or a reference to the node object.
-            builder.setNodeCriteria(OpennmsModelProtos.NodeCriteria.newBuilder()
-                    .setId(event.getNodeid()));
         }
-        if (event.getInterface() != null) {
-            builder.setIpAddress(event.getInterface());
+
+        getString(event.getInterface()).ifPresent(builder::setIpAddress);
+
+        for (Parm parm : event.getParmCollection()) {
+            if (parm.getParmName() == null || parm.getValue() == null) {
+                continue;
+            }
+            String value = parm.getValue().getContent() == null ? "" : parm.getValue().getContent();
+            builder.addParameter(OpennmsModelProtos.EventParameter.newBuilder()
+                    .setName(parm.getParmName())
+                    .setValue(value));
+
         }
 
         setTimeIfNotNull(event.getTime(), builder::setTime);
+        setTimeIfNotNull(event.getCreationTime(), builder::setCreateTime);
 
         return builder;
     }

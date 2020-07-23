@@ -1,0 +1,23 @@
+    private void submitOrRun(KieSession.AtomicAction atomicAction) {
+        if (fireThreadId.get() == Thread.currentThread().getId()) {
+            // This is the fire thread! Let's execute the action immediately instead of deferring it.
+            atomicAction.execute(getKieSession());
+        } else {
+            // Submit the action for execution
+            // Track the number of atomic actions waiting to be executed
+            final long numActionsInFlight = atomicActionsInFlight.incrementAndGet();
+            if (numActionsInFlight > MAX_NUM_ACTIONS_IN_FLIGHT) {
+                RATE_LIMITED_LOGGER.error("Dropping action - number of actions in flight exceed {}! " +
+                        "Alarms in Drools context will not match those in the database until the next successful sync.", MAX_NUM_ACTIONS_IN_FLIGHT);
+                atomicActionsDropped.mark();
+                atomicActionsInFlight.decrementAndGet();
+                return;
+            }
+            getKieSession().submit(kieSession -> {
+                atomicAction.execute(kieSession);
+                atomicActionsInFlight.decrementAndGet();
+            });
+            atomicActionsQueued.mark();
+        }
+    }
+

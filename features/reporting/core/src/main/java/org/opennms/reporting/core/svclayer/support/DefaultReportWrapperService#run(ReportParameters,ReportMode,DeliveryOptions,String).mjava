@@ -9,24 +9,38 @@
                 try {
                     out = new ByteArrayOutputStream();
                     bout = new BufferedOutputStream(out);
-                    if (!deliveryOptions.getPersist()) {
+
+                    final Map<String, Object> reportParameters = parameters.getReportParms(mode);
+                    if (!deliveryOptions.isPersist()) {
                         try {
-                            getReportService(reportId).runAndRender(parameters.getReportParms(mode), reportId, deliveryOptions.getFormat(), bout);
+                            getReportService(reportId).runAndRender(reportParameters, reportId, deliveryOptions.getFormat(), bout);
+                            if (deliveryOptions.isSendMail() && deliveryOptions.getMailTo().length() != 0) {
+                                mailReport(deliveryOptions, out);
+                            }
+                            if (deliveryOptions.isWebhook()) {
+                                postReport(deliveryOptions, reportParameters, out, deliveryOptions.getInstanceId() + "." + deliveryOptions.getFormat().name().toLowerCase());
+                            }
                         } catch (final ReportException reportException) {
                             logError(reportId, reportException);
                         }
-                        mailReport(deliveryOptions, out);
                     } else {
-                        final String outputPath = getReportService(reportId).run(parameters.getReportParms(mode), reportId);
+                        final String outputPath = getReportService(reportId).run(reportParameters, reportId);
                         final ReportCatalogEntry catalogEntry = new ReportCatalogEntry();
                         catalogEntry.setReportId(reportId);
                         catalogEntry.setTitle(deliveryOptions.getInstanceId());
                         catalogEntry.setLocation(outputPath);
                         catalogEntry.setDate(new Date());
                         m_reportStoreService.save(catalogEntry);
-                        if (deliveryOptions.getSendMail() && deliveryOptions.getMailTo().length() != 0) {
+
+                        if (deliveryOptions.isSendMail() || deliveryOptions.isWebhook()) {
                             getReportService(reportId).render(reportId, outputPath, deliveryOptions.getFormat(), bout);
-                            mailReport(deliveryOptions, out);
+                            if (deliveryOptions.isSendMail() && deliveryOptions.getMailTo().length() != 0) {
+                                mailReport(deliveryOptions, out);
+                            }
+                            if (deliveryOptions.isWebhook()) {
+                                final String fileName = Paths.get(catalogEntry.getLocation()).getFileName().toString().replaceAll("jrprint", "");
+                                postReport(deliveryOptions, reportParameters, out, fileName + deliveryOptions.getFormat().name().toLowerCase());
+                            }
                         }
                     }
                 } catch (final Exception e) {

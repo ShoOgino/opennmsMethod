@@ -1,0 +1,59 @@
+        private synchronized boolean interfaceInPackage(String iface, org.opennms.netmgt.config.threshd.Package pkg) {
+            final InetAddress ifaceAddr = InetAddressUtils.addr(iface);
+            boolean filterPassed = false;
+
+            // get list of IPs in this package
+            java.util.List<InetAddress> ipList = pkgIpMap.get(pkg);
+            if (ipList != null && ipList.size() > 0) {
+                filterPassed = ipList.contains(ifaceAddr);
+            }
+
+
+            LOG.debug("interfaceInPackage: Interface {} passed filter for package {}?: {}", filterPassed, iface,
+                    pkg.getName());
+
+            if (!filterPassed)
+                return false;
+
+            //
+            // Ensure that the interface is in the specific list or
+            // that it is in the include range and is not excluded
+            //
+            boolean has_specific = false;
+            boolean has_range_include = false;
+            boolean has_range_exclude = false;
+
+            has_range_include = pkg.getIncludeRanges().size() == 0 && pkg.getSpecifics().size() == 0;
+
+            for (IncludeRange rng : pkg.getIncludeRanges()) {
+                if (InetAddressUtils.isInetAddressInRange(iface, rng.getBegin(), rng.getEnd())) {
+                    has_range_include = true;
+                    break;
+                }
+            }
+
+            byte[] addr = InetAddressUtils.toIpAddrBytes(iface);
+
+            for (String spec : pkg.getSpecifics()) {
+                byte[] speca = InetAddressUtils.toIpAddrBytes(spec);
+                if (new ByteArrayComparator().compare(speca, addr) == 0) {
+                    has_specific = true;
+                    break;
+                }
+            }
+
+            final Iterator<String> eurl = pkg.getIncludeUrls().iterator();
+            while (!has_specific && eurl.hasNext()) {
+                has_specific = interfaceInUrl(iface, eurl.next());
+            }
+
+            for (ExcludeRange rng : pkg.getExcludeRanges()) {
+                if (InetAddressUtils.isInetAddressInRange(iface, rng.getBegin(), rng.getEnd())) {
+                    has_range_exclude = true;
+                    break;
+                }
+            }
+
+            return has_specific || (has_range_include && !has_range_exclude);
+        }
+

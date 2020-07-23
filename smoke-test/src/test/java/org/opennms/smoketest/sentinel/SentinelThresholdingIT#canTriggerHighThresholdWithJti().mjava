@@ -1,0 +1,32 @@
+    @Test
+    public void canTriggerHighThresholdWithJti() throws InterruptedException, IOException {
+        // The package send may contain a node, which must be created in order to have the adapter store it to newts
+        // so we check if this is the case and afterwards create the requisition
+        final InetSocketAddress opennmsHttpAddress = stack.opennms().getWebAddress();
+        OnmsNode onmsNode = AbstractAdapterIT.createRequisition(getRequisitionToCreate(), opennmsHttpAddress,
+                stack.postgres().getDaoFactory());
+        // Verify that no existing highThresholdExceeded alarm exists for the node
+        assertThat(getAlarmUeisForNode(onmsNode.getId()), not(hasItem(HIGH_THRESHOLD_EVENT_UEI)));
+
+        // If a new requisition was created, also probably new nodes are available.
+        // However, sentinel may not know about it yet, so we manually sync the InterfaceToNodeCache in order to
+        // "see" the new nodes and interfaces.
+        final InetSocketAddress sentinelSshAddress = stack.sentinel().getSshAddress();
+        new KarafShell(sentinelSshAddress).runCommand("opennms:sync-node-cache");
+
+        final InetSocketAddress minionListenerAddress = stack.minion().getNetworkProtocolAddress(NetworkProtocol.JTI);
+        sendTriggerHighThresholdMessages(minionListenerAddress);
+
+        LOG.info("Waiting for high threshold alarm...");
+        await().atMost(1, TimeUnit.MINUTES).pollInterval(5, TimeUnit.SECONDS)
+                .until(() -> getAlarmUeisForNode(onmsNode.getId()), hasItem(HIGH_THRESHOLD_EVENT_UEI));
+
+        sendClearHighThresholdMessages(minionListenerAddress);
+
+        LOG.info("Waiting for alarm to clear...");
+        await().atMost(1, TimeUnit.MINUTES).pollInterval(5, TimeUnit.SECONDS)
+                .until(() -> getAlarmsForNode(onmsNode.getId())
+                        .contains(new AbstractMap.SimpleImmutableEntry<>(HIGH_THRESHOLD_EVENT_UEI,
+                                OnmsSeverity.CLEARED)));
+    }
+

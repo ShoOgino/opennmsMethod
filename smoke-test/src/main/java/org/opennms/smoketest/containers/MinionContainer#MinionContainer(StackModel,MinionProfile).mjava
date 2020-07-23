@@ -2,21 +2,13 @@
         super("minion");
         this.model = Objects.requireNonNull(model);
         this.profile = Objects.requireNonNull(profile);
-        this.overlay = writeOverlay();
-        withExposedPorts(MINION_SSH_PORT, MINION_SYSLOG_PORT, MINION_SNMP_TRAP_PORT, MINION_TELEMETRY_FLOW_PORT, MINION_TELEMETRY_IPFIX_TCP_PORT, MINION_TELEMETRY_JTI_PORT, MINION_TELEMETRY_NXOS_PORT)
+
+        GenericContainer container = withExposedPorts(MINION_DEBUG_PORT, MINION_SSH_PORT, MINION_SYSLOG_PORT, MINION_SNMP_TRAP_PORT, MINION_TELEMETRY_FLOW_PORT, MINION_TELEMETRY_IPFIX_TCP_PORT, MINION_TELEMETRY_JTI_PORT, MINION_TELEMETRY_NXOS_PORT, MINION_JETTY_PORT)
                 .withCreateContainerCmdModifier(cmd -> {
                     final CreateContainerCmd createCmd = (CreateContainerCmd)cmd;
                     TestContainerUtils.setGlobalMemAndCpuLimits(createCmd);
                     TestContainerUtils.exposePortsAsUdp(createCmd, MINION_SNMP_TRAP_PORT, MINION_TELEMETRY_FLOW_PORT, MINION_TELEMETRY_JTI_PORT, MINION_TELEMETRY_NXOS_PORT);
-                    if (profile.isIcmpSupportEnabled()) {
-                        // Run as root when ICMP is enabled
-                        createCmd.withUser("root");
-                    }
                 })
-                .withEnv("MINION_LOCATION", profile.getLocation())
-                .withEnv("MINION_ID", profile.getId())
-                .withEnv("OPENNMS_BROKER_URL", "failover:tcp://" + OpenNMSContainer.ALIAS + ":61616")
-                .withEnv("OPENNMS_HTTP_URL", "http://" + OpenNMSContainer.ALIAS + ":8980/opennms")
                 .withEnv("OPENNMS_HTTP_USER", "admin")
                 .withEnv("OPENNMS_HTTP_PASS", "admin")
                 .withEnv("OPENNMS_BROKER_USER", "admin")
@@ -25,9 +17,15 @@
                 .withNetwork(Network.SHARED)
                 .withNetworkAliases(ALIAS)
                 .withCommand("-c")
-                .waitingFor(new WaitForMinion(this))
-                .addFileSystemBind(overlay.toString(),
-                        "/opt/minion-etc-overlay", BindMode.READ_ONLY, SelinuxContext.SINGLE);
+                .waitingFor(new WaitForMinion(this));
+
+        container.addFileSystemBind(writeMinionConfig(profile).toString(),
+                "/opt/minion/minion-config.yaml", BindMode.READ_ONLY, SelinuxContext.SINGLE);
+
+        if (profile.isJvmDebuggingEnabled()) {
+            withEnv("KARAF_DEBUG", "true");
+            withEnv("JAVA_DEBUG_PORT", "*:" + MINION_DEBUG_PORT);
+        }
 
         // Help make development/debugging easier
         DevDebugUtils.setupMavenRepoBind(this, "/opt/minion/.m2");

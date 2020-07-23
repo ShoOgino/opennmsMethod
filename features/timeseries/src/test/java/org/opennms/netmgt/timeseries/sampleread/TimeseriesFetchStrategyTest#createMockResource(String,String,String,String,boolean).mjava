@@ -1,0 +1,78 @@
+    public Source createMockResource(final String label, final String attr, final String ds, final String node, boolean expect) throws StorageException {
+        OnmsResourceType nodeType = EasyMock.createMock(OnmsResourceType.class);
+        expect(nodeType.getName()).andReturn("nodeSource").anyTimes();
+        expect(nodeType.getLabel()).andReturn("nodeSourceTypeLabel").anyTimes();
+        EasyMock.replay(nodeType);
+
+        OnmsResourceType type = EasyMock.createMock(OnmsResourceType.class);
+        expect(type.getName()).andReturn("newtsTypeName").anyTimes();
+        expect(type.getLabel()).andReturn("newtsTypeLabel").anyTimes();
+        EasyMock.replay(type);
+
+        final int nodeId = node.hashCode();
+        final String newtsResourceId = "response:" + node + ":" + attr;
+        final ResourceId parentId = ResourceId.get("nodeSource", "NODES:" + nodeId);
+        final ResourceId resourceId = parentId.resolve("responseTime", node);
+        OnmsResource parent = resources.get(parentId);
+        if (parent == null) {
+            parent = new OnmsResource("NODES:" + nodeId, ""+nodeId, nodeType, Sets.newHashSet(), ResourcePath.get("foo"));
+            final OnmsNode entity = new OnmsNode();
+            entity.setId(nodeId);
+            entity.setForeignSource("NODES");
+            entity.setForeignId(""+nodeId);
+            entity.setLabel(""+nodeId);
+            parent.setEntity(entity);
+            resources.put(parentId, parent);
+        }
+        OnmsResource resource = resources.get(resourceId);
+        if (resource == null) {
+            resource = new OnmsResource(attr, label, type, Sets.newHashSet(), ResourcePath.get("foo"));
+            resource.setParent(parent);
+            resources.put(resourceId, resource);
+        }
+        Set<OnmsAttribute> attributes = resource.getAttributes();
+        attributes.add(new RrdGraphAttribute(attr, "", newtsResourceId));
+
+        List<Sample> results = new ArrayList<>();
+
+        Resource res = new Resource(newtsResourceId);
+        Row<Measurement> row = new Row<Measurement>(Timestamp.fromEpochSeconds(0), res);
+        Measurement measurement = new Measurement(Timestamp.fromEpochSeconds(0), res, label, 0.0d);
+        row.addElement(measurement);
+
+
+        String name = ds != null ? ds : attr;
+        ImmutableMetric metric = ImmutableMetric.builder()
+                .intrinsicTag(IntrinsicTagNames.resourceId, newtsResourceId)
+                .intrinsicTag(IntrinsicTagNames.name, name)
+                .build();
+        Sample sample = ImmutableSample.builder()
+                .metric(metric)
+                .time(Instant.ofEpochMilli(START_TIME))
+                .value(33.0)
+                .build();
+
+        results.add(sample);
+
+        TimeSeriesFetchRequest request = ImmutableTimeSeriesFetchRequest.builder()
+                .metric(metric)
+                .aggregation(Aggregation.AVERAGE)
+                .start(Instant.ofEpochMilli(START_TIME))
+                .end(Instant.ofEpochMilli(END_TIME))
+                .step(Duration.ofMillis(STEP))
+                .build();
+
+        if (expect) {
+            when(timeSeriesStorage.getTimeseries(request)).thenReturn(results);
+        }
+
+        final Source source = new Source();
+        source.setAggregation("AVERAGE");
+        source.setAttribute(attr);
+        source.setDataSource(ds);
+        source.setLabel(label);
+        source.setResourceId(resourceId.toString());
+        source.setTransient(false);
+        return source;
+    }
+

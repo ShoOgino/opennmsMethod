@@ -1,8 +1,10 @@
     public static Alarm toAlarm(OnmsAlarm alarm) {
-        return alarm == null ? null : ImmutableAlarm.newBuilder()
+        if (alarm == null) {
+            return null;
+        }
+        final ImmutableAlarm.Builder builder = ImmutableAlarm.newBuilder()
                 .setReductionKey(alarm.getReductionKey())
                 .setId(alarm.getId())
-                .setNode(toNode(alarm.getNode()))
                 .setManagedObjectInstance(alarm.getManagedObjectInstance())
                 .setManagedObjectType(alarm.getManagedObjectType())
                 .setAttributes(alarm.getDetails())
@@ -14,8 +16,30 @@
                 .setLogMessage(alarm.getLogMsg())
                 .setDescription(alarm.getDescription())
                 .setLastEventTime(alarm.getLastEventTime())
-                .setFirstEventTime(alarm.getFirstEventTime())
-                .setLastEvent(toEvent(alarm.getLastEvent()))
-                .build();
+                .setFirstEventTime(alarm.getFirstEventTime());
+
+        try {
+            if (alarm.getNode() != null) {
+                builder.setNode(nodeCache.get(new NodeKey(alarm.getNode())));
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to load node for alarm with id: {}", alarm.getId(), e);
+        }
+
+        try {
+            builder.setLastEvent(toEvent(alarm.getLastEvent()));
+        } catch (RuntimeException e) {
+            // We are only interested in catching org.hibernate.ObjectNotFoundExceptions, but this code runs in OSGi
+            // which has a different class for this loaded then what is being thrown
+            // Resort to comparing the name instead
+            if (ObjectNotFoundException.class.getCanonicalName().equals(e.getClass().getCanonicalName())) {
+                LOG.debug("The last event for alarm with id {} was deleted before we could perform the mapping." +
+                        " Last event will be null.", alarm.getId());
+            } else {
+                // Rethrow
+                throw e;
+            }
+        }
+        return builder.build();
     }
 

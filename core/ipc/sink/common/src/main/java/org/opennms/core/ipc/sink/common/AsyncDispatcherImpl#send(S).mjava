@@ -1,30 +1,28 @@
     @Override
-    public CompletableFuture<S> send(S message) {
-         
-        // Check if OffHeap is enabled and if local queue is full or if OffHeap not Empty then write message to OffHeap.
-        if (useOffHeap && (asyncPolicy.getQueueSize() == getQueueSize() ||
-                ((offHeapAdapter != null) && !offHeapAdapter.isOffHeapEmpty()))) {
-            // Start drain thread before the first write to OffHeapQueue.
-            if (offHeapAdapter == null) {
-                this.offHeapAdapter = new OffHeapAdapter();
-                offHeapAdapterExecutor.execute(offHeapAdapter);
-                LOG.info("started drain thread for {}", sinkModule.getId());
-            }
-            try {
-                return offHeapAdapter.writeMessage(message);
-            } catch (WriteFailedException e) {
-                rateLimittedLogger.error("OffHeap write failed ", e);
-            }
+    public CompletableFuture<DispatchStatus> send(S message) {
+        CompletableFuture<DispatchStatus> sendFuture = new CompletableFuture<>();
+
+        if (!asyncPolicy.isBlockWhenFull() && atomicResultQueue.isFull()) {
+            droppedCounter.inc();
+            sendFuture.completeExceptionally(new RuntimeException("Dispatch queue full"));
+            return sendFuture;
         }
+
         try {
-            return CompletableFuture.supplyAsync(() -> {
-                syncDispatcher.send(message);
-                return message;
-            }, executor);
-        } catch (RejectedExecutionException ree) {
-            final CompletableFuture<S> future = new CompletableFuture<>();
-            future.completeExceptionally(ree);
-            return future;
+            String newId = UUID.randomUUID().toString();
+            atomicResultQueue.enqueue(message, newId, result -> {
+                LOG.trace("Result of enqueueing for Id {} was {}", newId, result);
+
+                if (result == DispatchQueue.EnqueueResult.DEFERRED) {
+                    sendFuture.complete(DispatchStatus.QUEUED);
+                } else {
+                    futureMap.put(newId, sendFuture);
+                }
+            });
+        } catch (WriteFailedException e) {
+            sendFuture.completeExceptionally(e);
         }
+
+        return sendFuture;
     }
 

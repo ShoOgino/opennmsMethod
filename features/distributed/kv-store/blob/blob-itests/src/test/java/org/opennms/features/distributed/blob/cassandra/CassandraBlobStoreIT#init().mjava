@@ -1,0 +1,26 @@
+    public void init() throws IOException {
+        if (cassandraUnit.getSession().isClosed()) {
+            cassandraSession = getSession(cassandraUnit.getCluster().connect());
+        } else if (cassandraSession == null) {
+            cassandraSession = getSession(cassandraUnit.getSession());
+        }
+
+        blobStore = new CassandraBlobStore(() -> {
+            cassandraSession.execute(String.format("USE %s;", KEYSPACE));
+            return cassandraSession;
+        }, () -> schema -> {
+            InetSocketAddress cassandraAddress = cassandraUnit.getSession()
+                    .getCluster()
+                    .getMetadata()
+                    .getAllHosts()
+                    .iterator()
+                    .next()
+                    .getSocketAddress();
+            SchemaManager sm = new SchemaManager(KEYSPACE, cassandraAddress.getHostName(),
+                    cassandraAddress.getPort(), "cassandra", "cassandra", false);
+            sm.create(schema::getInputStream);
+        });
+
+        serializingBlobStore = new SerializingBlobStore<>(blobStore, String::getBytes, String::new);
+    }
+

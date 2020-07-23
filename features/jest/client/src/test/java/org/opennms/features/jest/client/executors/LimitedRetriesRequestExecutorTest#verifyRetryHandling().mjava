@@ -1,0 +1,35 @@
+    @Test
+    public void verifyRetryHandling() throws IOException {
+        final int retryCount = 5;
+        final int attempts = retryCount + 1;
+        final int timeout = 1000;
+
+        // Spy on the executor
+        final LimitedRetriesRequestExecutor originalRequestExecutor = new LimitedRetriesRequestExecutor(timeout, retryCount);
+        final RequestExecutor requestExecutor = Mockito.spy(originalRequestExecutor);
+
+        // Create client manually as we want to spy on it
+        final JestClientFactory factory = new JestClientFactory();
+        factory.setHttpClientConfig(new HttpClientConfig.Builder("http://192.168.2.0:9200").build());
+        JestClient clientDelegate = spy(factory.getObject());
+        final JestClient client = Mockito.spy(new OnmsJestClient(clientDelegate, requestExecutor));
+
+        // Verify
+        final long startTime = System.currentTimeMillis();
+        try {
+            client.execute(new Search.Builder("").build());
+            Assert.fail("Request should not have been successful");
+        } catch (Exception ex) {
+            final long executionTime = System.currentTimeMillis() - startTime;
+            
+            // Expected an exception, verify execution of methods
+            Mockito.verify(requestExecutor, Mockito.times(1)).execute(Mockito.any(), Mockito.any());
+            Mockito.verify(client, Mockito.times(1)).execute(Mockito.any());
+            Mockito.verify(clientDelegate, Mockito.times(attempts)).execute(Mockito.any());
+
+            // Ensure that we actually waited
+            Assert.assertThat(executionTime, CoreMatchers.allOf(
+                    Matchers.greaterThan(timeout * retryCount * 1L)));
+        }
+    }
+

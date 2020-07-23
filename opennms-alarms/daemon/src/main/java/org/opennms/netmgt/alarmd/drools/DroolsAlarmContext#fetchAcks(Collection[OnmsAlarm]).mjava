@@ -1,0 +1,54 @@
+    /**
+     * Fetches an {@link OnmsAcknowledgment ack} via the {@link #acknowledgmentDao ack DAO} for all the given alarms.
+     * For any alarm for which an ack does not exist, a default ack is generated.
+     */
+    private Map<Integer, OnmsAcknowledgment> fetchAcks(Collection<OnmsAlarm> alarms) {
+        if (alarms.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        final Set<OnmsAcknowledgment> acks = new HashSet<>();
+
+        // Update acks depending on if we are interested in one or many alarms
+        if (alarms.size() == 1) {
+            acknowledgmentDao.findLatestAckForRefId(alarms.iterator()
+                    .next()
+                    .getId())
+                    .ifPresent(acks::add);
+        } else {
+            // Calculate the creation time of the earliest alarm
+            final Date earliestAlarm  = alarms.stream()
+                    .map(OnmsAlarm::getFirstEventTime)
+                    .filter(Objects::nonNull)
+                    .min(Comparator.naturalOrder())
+                    .orElseGet(() -> {
+                        // We didn't find any dates - either the set is empty (in which case this function
+                        // wouldn't be called) or all the dates are null (which they shouldn't be.)
+                        // Let's log an error, and return some date for sanity
+                        final LocalDateTime oneMonthAgoLdt = LocalDateTime.now().minusMonths(1);
+                        final Date oneMonthAgo = Date.from(oneMonthAgoLdt.atZone(ZoneId.systemDefault()).toInstant());
+                        LOG.error("Could not find minimum alarm creation time for alarms: {}. Using: {}", alarms, oneMonthAgo);
+                        return oneMonthAgo;
+                    });
+            acks.addAll(acknowledgmentDao.findLatestAcks(earliestAlarm));
+        }
+
+        // Handle all the alarms for which an ack could be found
+        Map<Integer, OnmsAcknowledgment> acksById =
+                acks.stream().collect(Collectors.toMap(OnmsAcknowledgment::getRefId, ack -> ack));
+
+        // Handle all the alarms that no ack could be found for by generating a default ack
+        acksById.putAll(alarms.stream()
+                .filter(alarm -> !acksById.containsKey(alarm.getId()))
+                .collect(Collectors.toMap(OnmsAlarm::getId, alarm -> {
+                    // For the purpose of making rule writing easier, we fake an
+                    // Un-Acknowledgment for Alarms that have never been Acknowledged.
+                    OnmsAcknowledgment ack = new OnmsAcknowledgment(alarm, DefaultAlarmService.DEFAULT_USER,
+                            alarm.getFirstEventTime());
+                    ack.setAckAction(AckAction.UNACKNOWLEDGE);
+                    ack.setId(0);
+                    return ack;
+                })));
+
+        return acksById;
+    }
+

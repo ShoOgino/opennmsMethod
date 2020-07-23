@@ -1,0 +1,48 @@
+    // Verifies that a generated Report can be send to an HTTP Endpoint
+    @Test
+    public void verifyWebhookDelivery() throws IOException {
+        // Setup the Http Endpoint
+        RestAssured.baseURI = webhookEndpointContainer.getBaseUrlExternal().toString();
+        RestAssured.port = webhookEndpointContainer.getWebPort();
+
+        // Verify nothing was posted yet
+        given().basePath("/files").get()
+            .then()
+            .statusCode(200)
+            .body("size()", is(0));
+
+        // Trigger Delivery of the report
+        new ReportTemplateTab(getDriver()).open()
+            .select(EarlyMorningReport.name)
+            .deliverReport(new DeliveryOptions()
+                .format(Formats.PDF)
+                .postToEndpoint("http://opennms-dummy-http-endpoint:8080/files?instanceId=:instanceId")
+            );
+
+        // Ensure it was posted
+        await().atMost(2, MINUTES).pollInterval(10, SECONDS).until(
+            () -> {
+                final String response = given().basePath("/files").get()
+                        .then()
+                        .statusCode(200)
+                        .extract().response().asString();
+                final JSONArray array = new JSONArray(response);
+                if (array.length() == 1) {
+                    // Read PDF
+                    final String filename = array.getJSONObject(0).getString("name");
+                    final InputStream input = given().basePath("/files/" + filename).get()
+                        .then()
+                        .statusCode(200)
+                        .contentType("application/pdf")
+                        .extract().body().asInputStream();
+                    final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                    ByteStreams.copy(input, outputStream);;
+                    final byte[] receivedBytes = outputStream.toByteArray();
+                    if (receivedBytes.length > 0) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+    }
+

@@ -1,0 +1,25 @@
+    @Test(timeout = 60000)
+    public void testNodeInfoScanWithProfile() throws InterruptedException {
+        URL url =  getClass().getResource("/snmp-config1.xml");
+        try (InputStream configStream = url.openStream()) {
+            // Make default scan fail by setting wrong read community.
+            snmpPeerFactory = new ProxySnmpAgentConfigFactoryExtension(configStream);
+            SnmpPeerFactory.setFile(new File(url.getFile()));
+            initializeProvisionService();
+            FilterDao filterDao = Mockito.mock(FilterDao.class);
+            when(filterDao.isValid(Mockito.anyString(), Mockito.contains("IPLIKE"))).thenReturn(true);
+            SnmpProfileMapper profileMapper = new SnmpProfileMapperImpl(filterDao, snmpPeerFactory, locationAwareSnmpClient);
+            when(provisionService.getSnmpProfileMapper()).thenReturn(profileMapper);
+
+            nodeInfoScan = new NodeInfoScan(node, InetAddressUtils.getInetAddress("192.0.1.206"),
+                    "fs", monitoringLocation, scanProgress, snmpPeerFactory, provisionService, 1, null);
+            TaskCoordinator taskCoordinator = new DefaultTaskCoordinator("TaskTest");
+            BatchTask batchTask = new BatchTask(taskCoordinator, null);
+            nodeInfoScan.run(batchTask);
+            batchTask.schedule();
+            await().atMost(30, TimeUnit.SECONDS).until(node::getSysObjectId, is(".1.3.6.1.4.1.8072.3.2.255"));
+        } catch (IOException e) {
+            fail();
+        }
+    }
+

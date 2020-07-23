@@ -1,0 +1,56 @@
+    @Override
+    public CompletableFuture<byte[]> renderPngForPanel(Dashboard dashboard, Panel panel, int width, int height, long from, long to, String utcOffset, Map<String, String> variables) {
+        final HttpUrl.Builder builder = baseUrl.newBuilder()
+                .addPathSegment("render")
+                .addPathSegment("d-solo")
+                .addPathSegment(dashboard.getUid())
+                .addPathSegments(dashboard.getMeta().getSlug());
+
+        // Query parameters
+        builder.addQueryParameter("panelId", Integer.toString(panel.getId()))
+                .addQueryParameter("from", Long.toString(from))
+                .addQueryParameter("to", Long.toString(to))
+                .addQueryParameter("width", Integer.toString(width))
+                .addQueryParameter("height", Integer.toString(height))
+                // Set a render timeout equal to the client's read timeout
+                .addQueryParameter("timeout", Integer.toString(config.getReadTimeoutSeconds()))
+                .addQueryParameter("theme", "light"); // Use the light theme
+        if (!Strings.isNullOrEmpty(utcOffset)) {
+            builder.addQueryParameter("tz", utcOffset);
+        }
+        variables.forEach((k,v) -> builder.addQueryParameter("var-"+ k, v));
+
+        final Request request = new Request.Builder()
+                .url(builder.build())
+                .addHeader("Authorization", "Bearer " + config.getApiKey())
+                .build();
+
+        final CompletableFuture<byte[]> future = new CompletableFuture<>();
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                future.completeExceptionally(e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                try (ResponseBody responseBody = response.body()) {
+                    if (!response.isSuccessful()) {
+                        try {
+                            future.completeExceptionally(new IOException("Request failed: " + extractMessageFromErrorResponse(response)));
+                        } catch (IOException e) {
+                            future.completeExceptionally(new IOException("Could not extract message from error response", e));
+                        }
+                    }
+
+                    try (InputStream is = responseBody.byteStream()) {
+                        future.complete(inputStreamToByteArray(is));
+                    } catch (IOException e) {
+                        future.completeExceptionally(e);
+                    }
+                }
+            }
+        });
+        return future;
+    }
+

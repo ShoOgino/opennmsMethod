@@ -1,0 +1,57 @@
+    public Inet4Header(final ByteBuf buffer) throws InvalidPacketException {
+        final int version_ihl = BufferUtils.uint8(buffer);
+        if (version_ihl >> 4 != 0x04) {
+            // First four bits must be 0x04
+            throw new InvalidPacketException(buffer, "Expected IPv4 Header");
+        }
+
+        final int ihl = (version_ihl & ((1 << 4) - 1)) * 4;
+
+        this.tos = BufferUtils.uint8(buffer);
+        this.totalLength = BufferUtils.uint16(buffer);
+        BufferUtils.skip(buffer, 2); // Identifier
+        BufferUtils.skip(buffer, 2); // Flags and fragment offset
+        BufferUtils.skip(buffer, 1); // TTL
+        this.protocol = BufferUtils.uint8(buffer);
+        BufferUtils.skip(buffer, 2); // Checksum
+
+        try {
+            this.srcAddress = (Inet4Address) Inet4Address.getByAddress(BufferUtils.bytes(buffer, 4));
+            this.dstAddress = (Inet4Address) Inet4Address.getByAddress(BufferUtils.bytes(buffer, 4));
+        } catch (final UnknownHostException e) {
+            // This only happens if byte array length is != 4
+            throw Throwables.propagate(e);
+        }
+
+        BufferUtils.skip(buffer, ihl - 20); // Padding / Options
+
+        // Almost all protocols have their port fields directly following the IP header
+        switch (this.protocol) {
+            case 6: // TCP
+                this.srcPort = BufferUtils.uint16(buffer);
+                this.dstPort = BufferUtils.uint16(buffer);
+                BufferUtils.skip(buffer, 8); // SeqNum and AckNum
+                this.tcpFlags = BufferUtils.uint16(buffer) & ((1 << 9) - 1);
+                break;
+
+            case 17: // UDP
+            case 132: // SCTP
+                this.srcPort = BufferUtils.uint16(buffer);
+                this.dstPort = BufferUtils.uint16(buffer);
+                this.tcpFlags = null;
+                break;
+
+            case 1: // ICMP
+            case 58: // ICMP6
+                this.srcPort = 0;
+                this.dstPort = BufferUtils.uint16(buffer);
+                this.tcpFlags = null;
+                break;
+
+            default:
+                this.srcPort = null;
+                this.dstPort = null;
+                this.tcpFlags = null;
+        }
+    }
+

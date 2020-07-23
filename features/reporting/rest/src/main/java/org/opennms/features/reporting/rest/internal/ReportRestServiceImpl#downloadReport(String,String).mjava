@@ -1,0 +1,68 @@
+    @Override
+    public Response downloadReport(final String format, final String locatorId) {
+        if (Strings.isNullOrEmpty(locatorId)) {
+            return Response.status(Status.BAD_REQUEST)
+                    .type(MediaType.APPLICATION_JSON_TYPE)
+                    .entity(createErrorObject("entity", "Property 'locatorId' is null or empty").toString())
+                    .build();
+        }
+        final Integer reportCatalogEntryId = WebSecurityUtils.safeParseInt(locatorId);
+        final ReportCatalogEntry reportCatalogEntry = reportCatalogDao.get(reportCatalogEntryId);
+        if (reportCatalogEntry == null) {
+            return Response.status(Status.NOT_FOUND).build();
+        }
+        // Some reports are persisted as jrprint and must be reran to download/view
+        boolean mustRender = reportCatalogEntry.getLocation().endsWith("jrprint") || reportCatalogEntry.getLocation().endsWith("xml");
+        if (mustRender) { // the format should be set if we need to re-render the report
+            if (Strings.isNullOrEmpty(format)) {
+                return Response.status(Status.BAD_REQUEST)
+                        .type(MediaType.APPLICATION_JSON_TYPE)
+                        .entity(createErrorObject("entity", "Property 'format' is null or empty").toString())
+                        .build();
+            }
+        }
+        try {
+            final String suffix = reportCatalogEntry.getLocation().substring(reportCatalogEntry.getLocation().lastIndexOf(".") + 1).toLowerCase();
+            final ReportFormat reportFormat = mustRender ? parseReportFormat(format) : parseReportFormat(suffix);
+            final String filename = mustRender ? reportCatalogEntryId.toString() + "." + reportFormat.name().toLowerCase() : Paths.get(reportCatalogEntry.getLocation()).getFileName().toString();
+            final StreamingOutput streamingOutput = mustRender
+                    // Rerender
+                    ?   outputStream -> {
+                            reportStoreService.render(reportCatalogEntryId, reportFormat, outputStream);
+                            outputStream.flush();
+                        }
+                    // Just download
+                    :   outputStream -> {
+                            try (FileInputStream input = new FileInputStream(new File(reportCatalogEntry.getLocation()))){
+                                ByteStreams.copy(input, outputStream);
+                            }
+                            outputStream.flush();
+                        };
+            final Response.ResponseBuilder responseBuilder = Response.ok()
+                    .header("Pragma", "public")
+                    .header("Cache-Control", "cache")
+                    .header("Cache-Control", "must-revalidate")
+                    .entity(streamingOutput);
+            if (ReportFormat.PDF == reportFormat || ReportFormat.SVG == reportFormat ) {
+                return responseBuilder.type("application/pdf;charset=UTF-8")
+                        .header("Content-disposition", "inline; filename=" + filename)
+                        .build();
+            }
+            if (ReportFormat.HTML == reportFormat) {
+                responseBuilder.type("text/html;charset=UTF-8")
+                .header("Content-disposition", "inline; filename=" + filename);
+            }
+            if (ReportFormat.CSV == reportFormat) {
+                responseBuilder.type("text/csv;charset=UTF-8")
+                .header("Content-disposition", "inline; filename=" + filename);
+            }
+            return responseBuilder.build();
+        } catch (NumberFormatException e) {
+            return Response.status(Status.BAD_REQUEST)
+                        .type(MediaType.APPLICATION_JSON_TYPE)
+                        .entity(createErrorObject(e).toString()).build();
+        } catch (SchedulerContextException ex) {
+            return createErrorResponse(Status.BAD_REQUEST, createErrorObject(ex.getContext(), ex.getRawMessage()));
+        }
+    }
+

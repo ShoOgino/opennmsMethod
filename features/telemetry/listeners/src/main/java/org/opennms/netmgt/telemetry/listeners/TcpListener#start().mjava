@@ -26,18 +26,37 @@
                                         super.channelRead(ctx, msg);
                                     }
                                 })
-                                .addLast(new SimpleChannelInboundHandler<ByteBuf>() {
+                                .addLast(new ByteToMessageDecoder() {
+                                    @Override
+                                    protected void decode(final ChannelHandlerContext ctx,
+                                                          final ByteBuf in,
+                                                          final List<Object> out) throws Exception {
+                                        session.parse(in)
+                                               .ifPresent(out::add);
+                                    }
+
+                                    @Override
+                                    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+                                        super.channelActive(ctx);
+                                        session.active();
+                                    }
+
+                                    @Override
+                                    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+                                        super.channelInactive(ctx);
+                                        session.inactive();
+                                    }
+                                })
+                                .addLast(new SimpleChannelInboundHandler<CompletableFuture<?>>() {
                                     @Override
                                     protected void channelRead0(final ChannelHandlerContext ctx,
-                                                                final ByteBuf msg) throws Exception {
-                                        session.parse(ReferenceCountUtil.retain(msg).nioBuffer())
-                                                .handle((result, ex) -> {
-                                                    ReferenceCountUtil.release(msg);
-                                                    if (ex != null) {
-                                                        ctx.fireExceptionCaught(ex);
-                                                    }
-                                                    return result;
-                                                });;
+                                                                final CompletableFuture<?> future) throws Exception {
+                                        future.handle((result, ex) -> {
+                                            if (ex != null) {
+                                                ctx.fireExceptionCaught(ex);
+                                            }
+                                            return result;
+                                        });
                                     }
                                 })
                                 .addLast(new ChannelInboundHandlerAdapter() {
@@ -45,6 +64,8 @@
                                     public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
                                         LOG.warn("Invalid packet: {}", cause.getMessage());
                                         LOG.debug("", cause);
+
+                                        session.inactive();
 
                                         ctx.close();
                                     }

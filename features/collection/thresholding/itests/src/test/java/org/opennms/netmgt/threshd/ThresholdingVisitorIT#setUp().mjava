@@ -1,0 +1,50 @@
+    @Before
+    public void setUp() throws Exception {
+        // Clear the states between every test
+        MockSession.getSession().getThresholdStateMonitor().reinitializeStates();
+
+        // Resets Counters Cache Data
+        CollectionResourceWrapper.s_cache.clear();
+
+        MockLogAppender.setupLogging();
+
+        m_fileAnticipator = new FileAnticipator();
+        m_hrStorageProperties = new HashMap<Integer, File>();
+
+        m_resourceStorageDao = new FilesystemResourceStorageDao();
+        m_resourceStorageDao.setRrdDirectory(new File(m_fileAnticipator.getTempDir(), "snmp"));
+
+        m_filterDao = EasyMock.createMock(FilterDao.class);
+        EasyMock.expect(m_filterDao.getActiveIPAddressList((String)EasyMock.anyObject())).andReturn(Collections.singletonList(addr("127.0.0.1"))).anyTimes();
+        m_filterDao.flushActiveIpAddressListCache();
+        EasyMock.expectLastCall().anyTimes();
+        FilterDaoFactory.setInstance(m_filterDao);
+        EasyMock.replay(m_filterDao);
+
+        m_anticipator = new EventAnticipator();
+        eventMgr = new MockEventIpcManager();
+        eventMgr.setEventAnticipator(m_anticipator);
+        eventMgr.setSynchronous(true);
+        EventIpcManager eventdIpcMgr = (EventIpcManager)eventMgr;
+        EventIpcManagerFactory.setIpcManager(eventdIpcMgr);
+        
+        DateFormat formatter = new SimpleDateFormat("dd-MMM-yyyy HH:mm:ss");
+        final StringBuilder sb = new StringBuilder("<?xml version=\"1.0\"?>");
+        sb.append("<outages>");
+        sb.append("<outage name=\"junit outage\" type=\"specific\">");
+        sb.append("<time begins=\"");
+        sb.append(formatter.format(new Date(System.currentTimeMillis() - 3600000)));
+        sb.append("\" ends=\"");
+        sb.append(formatter.format(new Date(System.currentTimeMillis() + 3600000)));
+        sb.append("\"/>");
+        sb.append("<interface address=\"match-any\"/>");
+        sb.append("</outage>");
+        sb.append("</outages>");
+        File file = new File("target/poll-outages.xml");
+        FileWriter writer = new FileWriter(file);
+        writer.write(sb.toString());
+        writer.close();
+        m_pollOutagesDao.overrideConfig(new FileSystemResource(file).getInputStream());
+        initFactories("/threshd-configuration.xml","/test-thresholds.xml");
+        m_anticipatedEvents = new ArrayList<>();
+    }

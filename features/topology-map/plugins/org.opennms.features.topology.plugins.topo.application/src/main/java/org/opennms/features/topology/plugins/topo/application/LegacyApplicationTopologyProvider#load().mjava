@@ -1,0 +1,41 @@
+    private void load() {
+        graph.resetContainer();
+
+        final GenericGraph genericGraph = graphService.getGraph(ApplicationGraph.NAMESPACE);
+        final ApplicationGraph applicationGraph = new ApplicationGraph(genericGraph);
+        for (ApplicationVertex eachApplicationVertex : applicationGraph.getVertices()) {
+            LegacyApplicationVertex applicationVertex = new LegacyApplicationVertex(eachApplicationVertex);
+            graph.addVertices(applicationVertex);
+        }
+        for (SimpleDomainEdge edge : applicationGraph.getEdges()) {
+            final VertexRef sourceRef = new DefaultVertexRef(edge.getSource().getNamespace(), edge.getSource().getId());
+            final VertexRef targetRef = new DefaultVertexRef(edge.getTarget().getNamespace(), edge.getTarget().getId());
+            final String id = String.format("connection:%s:%s", edge.getSource().getId(), edge.getTarget().getId());
+            final AbstractEdge convertedEdge = new AbstractEdge(edge.getNamespace(), id, sourceRef, targetRef);
+            graph.addEdges(convertedEdge);
+        }
+
+        // recreate children relationship.
+        // Assumption: each application can have many services, each service can have 1 application
+        for (ApplicationVertex serviceVertex : applicationGraph.getVertices()) {
+            if(serviceVertex.getVertexType() == ApplicationVertexType.Service) {
+                // this should return exactly one edge:
+                // the one connecting the service to its application
+                final SimpleDomainEdge edge = applicationGraph.getConnectingEdges(serviceVertex).stream().findFirst()
+                        .orElseThrow(()-> new IllegalStateException("corrupt graph, each service should be connected to an application"));
+                // find the other side of the edge:
+                org.opennms.netmgt.graph.api.VertexRef parentRef = Stream.of(edge.getSource(), edge.getTarget())
+                        .filter(ref -> !ref.equals(serviceVertex.getVertexRef())).findFirst().get();
+                LegacyApplicationVertex parent = (LegacyApplicationVertex) graph.getVertex(new DefaultVertexRef(parentRef.getNamespace(), parentRef.getId()));
+                LegacyApplicationVertex child = (LegacyApplicationVertex) graph.getVertex(new DefaultVertexRef(serviceVertex.getNamespace(), serviceVertex.getId()));
+                if (parent == null) {
+                    throw new IllegalStateException("Parent vertex [namespace='"+ parentRef.getNamespace() +"', id='" + parentRef.getId() +"'] was not found in graph.");
+                }
+                if (child == null) {
+                    throw new IllegalStateException("Child vertex [namespace='"+ serviceVertex.getNamespace() +"', id='" + serviceVertex.getId() +"'] was not found in graph.");
+                }
+                parent.addChildren(child);
+            }
+        }
+    }
+

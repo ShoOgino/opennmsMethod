@@ -1,0 +1,31 @@
+    @Override
+    public GrafanaPanelDatasource createDatasource() throws JRException {
+        final String queryString = getQueryString();
+        LOG.debug("Create datasource for query '{}'", queryString);
+        final GrafanaQuery grafanaQuery = new GrafanaQuery(queryString);
+        LOG.debug("Parsed query: {}", grafanaQuery);
+
+        final GrafanaClient client;
+        final String grafanaEndpointUid = getStringParameterOrProperty(GRAFANA_ENDPOINT_UID_PARM);
+        if (Strings.isNullOrEmpty(grafanaEndpointUid)) {
+            LOG.debug("No Grafana endpoint UID was set, using server configuration from the user's environment.");
+            final GrafanaServerConfiguration config = GrafanaServerConfiguration.fromEnv();
+            client = new GrafanaClientImpl(config);
+        } else {
+            final GrafanaEndpointService grafanaEndpointService = SERVICE_LOOKUP.lookup(GrafanaEndpointService.class, null);
+            final GrafanaEndpoint grafanaEndpointDefinition = grafanaEndpointService.getEndpointByUid(grafanaEndpointUid);
+            if (grafanaEndpointDefinition == null) {
+                throw new IllegalArgumentException("No endpoint definition found for UID: " + grafanaEndpointUid);
+            }
+            final GrafanaClientFactory grafanaClientFactory = SERVICE_LOOKUP.lookup(GrafanaClientFactory.class, null);
+            client = grafanaClientFactory.createClient(grafanaEndpointDefinition);
+        }
+
+        try {
+            final Dashboard dashboard = client.getDashboardByUid(grafanaQuery.getDashboardUid());
+            return new GrafanaPanelDatasource(client, dashboard, grafanaQuery);
+        } catch (IOException e) {
+            throw new JRException(e);
+        }
+    }
+

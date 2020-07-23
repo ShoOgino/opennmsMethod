@@ -1,0 +1,56 @@
+    @Test
+    public void verifyImmutabilityOfPredefinedGroup() {
+        // The predefined group and its rules should not be able to be altered.
+        GroupDTO predefinedGroup = getGroup(1);
+        assertThat(predefinedGroup.getName(), is(Groups.SYSTEM_DEFINED));
+        assertThat(userDefinedGroup.getName(), is(Groups.USER_DEFINED));
+
+        // try to add new rule to group
+        final RuleDTO httpRule = builder().withName("http").withGroup(predefinedGroup).withDstPort("80")
+                .withProtocol("tcp").build();
+        given().contentType(ContentType.JSON)
+                .accept(ContentType.JSON)
+                .body(httpRule)
+                .post().then().assertThat().statusCode(400);
+
+        // try to add existing rule to predefined group
+        RuleDTO rule = saveAndRetrieveRule(builder().withName("http").withGroup(userDefinedGroup).withDstPort("80")
+                .withProtocol("tcp").build());
+        rule.setGroup(predefinedGroup);
+        given().contentType(ContentType.JSON)
+                .body(rule)
+                .log().all()
+                .put(Integer.toString(rule.getId()))
+                .then().assertThat()
+                .log().all()
+                .statusCode(400);
+
+        // try to delete a rule in predefined group
+        rule = given()
+                .param("groupFilter", predefinedGroup.getId())
+                .param("limit", 1)
+                .get()
+                .then()
+                .extract().response().body().jsonPath().getList(".", RuleDTO.class).get(0);
+        given().delete(Integer.toString(rule.getId())).then().statusCode(400);
+
+        // try to modify group parameters
+        GroupDTO updatedGroup = given().contentType(ContentType.JSON)
+                .accept(ContentType.JSON)
+                .body(new GroupDTOBuilder()
+                        .withId(predefinedGroup.getId())
+                        .withName("new name")
+                        .withDescription("new description")
+                        .withEnabled(false)
+                        .withReadOnly(false)
+                        .build())
+                .put("/groups/"+predefinedGroup.getId())
+                .then().assertThat().statusCode(200)
+                .extract().response().as(GroupDTO.class);
+        assertThat(updatedGroup.getId(), is(predefinedGroup.getId()));
+        assertThat(updatedGroup.getName(), is(predefinedGroup.getName()));
+        assertThat(updatedGroup.getDescription(), is(predefinedGroup.getDescription()));
+        assertThat(updatedGroup.isEnabled(), is(false));
+
+    }
+

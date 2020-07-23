@@ -1,0 +1,24 @@
+	private List<MonitoredServiceStatusEntity> getAlarmStatusForServices(final List<OnmsMonitoredService> services) {
+		Objects.requireNonNull(services);
+		// Avoid querying the database if unnecessary
+		if (services.isEmpty()) {
+			return Lists.newArrayList();
+		}
+		// Build query based on reduction keys
+		final Set<String> reductionKeys = services.stream().flatMap(service -> ReductionKeyHelper.getReductionKeys(service).stream()).collect(Collectors.toSet());
+		final StringBuilder sqlBuilder = new StringBuilder();
+		sqlBuilder.append("select distinct alarm.node.id, min(alarm.lastEventTime), max(alarm.severity), (count(*) - count(alarm.alarmAckTime)) ");
+		sqlBuilder.append("from OnmsAlarm alarm ");
+		sqlBuilder.append("where alarm.severity > 3 and alarm.alarmAckTime is null and alarm.reductionKey in :keys ");
+		sqlBuilder.append("group by alarm.node.id");
+
+		// Convert to object
+		final List<Object[][]> nodeIdToSeverityMapping = (List<Object[][]>) getHibernateTemplate().findByNamedParam(sqlBuilder.toString(), new String[]{"keys"}, new Object[]{reductionKeys.toArray()});
+		final List<MonitoredServiceStatusEntity> entityList = new ArrayList<>();
+		for (Object[] eachRow : nodeIdToSeverityMapping) {
+			MonitoredServiceStatusEntity entity = new MonitoredServiceStatusEntity((Integer)eachRow[0], (Date) eachRow[1], (OnmsSeverity) eachRow[2], (Long) eachRow[3]);
+			entityList.add(entity);
+		}
+		return entityList;
+	}
+

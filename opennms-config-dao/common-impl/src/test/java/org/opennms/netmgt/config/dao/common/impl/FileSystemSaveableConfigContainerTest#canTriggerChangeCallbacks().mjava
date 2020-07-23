@@ -1,0 +1,44 @@
+    @Test
+    public void canTriggerChangeCallbacks() throws IOException {
+        AtomicInteger callbackCalled = new AtomicInteger(0);
+        AtomicReference<TestEntity> callbackValue = new AtomicReference<>();
+
+        File xmlFile = tempFolder.newFile("test.xml");
+        TestEntity testEntity = new TestEntity();
+        testEntity.setTestValues(Arrays.asList("Hello", "World"));
+        Files.write(xmlFile.toPath(), JaxbUtils.marshal(testEntity).getBytes());
+
+        // Create the container and verify it initialized with the content on the filesystem
+        SaveableConfigContainer<TestEntity> container = new FileSystemSaveableConfigContainer<>(TestEntity.class,
+                "test", Collections.singleton(e -> {
+                    callbackCalled.incrementAndGet();
+                    callbackValue.set(e);
+                    
+        }), xmlFile);
+        
+        // When the container initialized our callback should have been called for the first time
+        await().atMost(100, TimeUnit.MILLISECONDS)
+                .pollDelay(10, TimeUnit.MILLISECONDS)
+                .until(() -> callbackCalled.get() == 1 && Objects.equals(callbackValue.get(), testEntity));
+        
+        // If we reload now, there should not be any callback triggered
+        container.reload();
+        
+        // Wait for a bit to make sure the callback isn't called
+        try {
+            await().atMost(100, TimeUnit.MILLISECONDS)
+                    .pollDelay(10, TimeUnit.MILLISECONDS)
+                    .until(() -> callbackCalled.get() != 1 || !Objects.equals(callbackValue.get(), testEntity));
+            fail("Callback should not have been called");
+        } catch (Exception ignore) {}
+        
+        // Now make sure that a save also triggers the callback
+        TestEntity fromContainer = container.getConfig();
+        fromContainer.setTestValues(Arrays.asList("new", "values"));
+        container.saveConfig();
+
+        await().atMost(100, TimeUnit.MILLISECONDS)
+                .pollDelay(10, TimeUnit.MILLISECONDS)
+                .until(() -> callbackCalled.get() == 2 && Objects.equals(callbackValue.get(), fromContainer));
+    }
+

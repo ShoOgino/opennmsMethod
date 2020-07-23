@@ -1,0 +1,34 @@
+    @Override
+    public ImmutableGraph<?, ?> loadGraph() {
+        final GraphInfo graphInfo = getGraphInfo();
+        final BackendGraph currentGraph = delegate.getDefaultGraphProvider().getCurrentGraph();
+        final GenericGraph.GenericGraphBuilder builder = GenericGraph.builder();
+        builder.graphInfo(graphInfo)
+                .id(currentGraph.getNamespace())
+                .property(GenericProperties.Enrichment.RESOLVE_NODES, true)
+                .property(GenericProperties.Enrichment.DEFAULT_STATUS, true);
+
+        currentGraph.getVertices().forEach(legacyVertex -> {
+            final LegacyVertex domainVertex = new LegacyVertex(legacyVertex);
+            final GenericVertex genericVertex = domainVertex.asGenericVertex();
+            builder.addVertex(genericVertex);
+        });
+
+        currentGraph.getEdges().forEach(legacyEdge -> {
+            final LegacyEdge domainEdge = new LegacyEdge(legacyEdge);
+            final GenericEdge genericEdge = domainEdge.asGenericEdge();
+            builder.addEdge(genericEdge);
+        });
+
+        final Set<org.opennms.netmgt.graph.api.VertexRef> focus = delegate.getDefaultGraphProvider().getDefaults().getCriteria().stream()
+                .filter(c -> VertexHopCriteria.class.isAssignableFrom(c.getClass()))
+                .map(c -> (VertexHopCriteria) c)
+                .flatMap(c -> c.getVertices().stream())
+                .map(v -> new org.opennms.netmgt.graph.api.VertexRef(v.getNamespace(), v.getId()))
+                .collect(Collectors.toSet());
+        builder.focus(new Focus(FocusStrategy.SELECTION, Lists.newArrayList(focus)));
+
+        final GenericGraph graph = builder.build();
+        return graph;
+    }
+

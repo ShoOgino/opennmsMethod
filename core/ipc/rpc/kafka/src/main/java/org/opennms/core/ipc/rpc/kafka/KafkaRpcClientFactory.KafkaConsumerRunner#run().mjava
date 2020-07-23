@@ -3,61 +3,53 @@
             Logging.putPrefix(RpcClientFactory.LOG_PREFIX);
             if (topics.isEmpty()) {
                 // kafka consumer needs to subscribe to at least one topic for the consumer.poll to work.
-                while (!topicAdded.get()) {
-                    try {
-                        firstTopicAdded.await(1, TimeUnit.SECONDS);
-                    } catch (InterruptedException e) {
-                        LOG.info("Interrupted before first topic was added. Terminating Kafka RPC consumer thread.");
-                        return;
-                    }
-                }
+                waitTillFirstTopicIsAdded();
                 LOG.info("First topic is added, consumer will be started.");
             }
+
             while (!closed.get()) {
-                if (topicAdded.get()) {
-                    synchronized (topics) {
-                        // Topic subscriptions are not incremental. This list will replace the current assignment (if there is one).
-                        LOG.info("Subscribing Kafka RPC consumer to topics named: {}", topics);
-                        consumer.subscribe(topics);
-                        topicAdded.set(false);
-                    }
-                }
                 try {
-                    ConsumerRecords<String, byte[]> records = consumer.poll(Long.MAX_VALUE);
+                    //Subscribe to new topics when added.
+                    subscribeToTopics();
+
+                    ConsumerRecords<String, byte[]> records = consumer.poll(java.time.Duration.ofMillis(Long.MAX_VALUE));
+
                     for (ConsumerRecord<String, byte[]> record : records) {
                         // Get Response callback from key and send rpc content to callback.
                         ResponseCallback responseCb = rpcResponseMap.get(record.key());
                         if (responseCb != null) {
-                            RpcMessageProtos.RpcMessage rpcMessage = RpcMessageProtos.RpcMessage
-                                    .parseFrom(record.value());
+                            RpcMessageProto rpcMessage = RpcMessageProto.parseFrom(record.value());
                             ByteString rpcContent = rpcMessage.getRpcContent();
+                            String rpcId = rpcMessage.getRpcId();
                             // For larger messages which get split into multiple chunks, cache them until all of them arrive.
                             if (rpcMessage.getTotalChunks() > 1) {
-                                String rpcId = rpcMessage.getRpcId();
-                                ByteString byteString = messageCache.get(rpcId);
-                                if (byteString != null) {
-                                    messageCache.put(rpcId, byteString.concat(rpcMessage.getRpcContent()));
-                                } else {
-                                    messageCache.put(rpcId, rpcMessage.getRpcContent());
-                                }
-                                if (rpcMessage.getTotalChunks() != rpcMessage.getCurrentChunkNumber() + 1) {
+                                boolean allChunksReceived = handleChunks(rpcMessage);
+                                if (!allChunksReceived) {
                                     continue;
                                 }
                                 rpcContent = messageCache.get(rpcId);
                             }
                             if (LOG.isTraceEnabled()) {
-                                LOG.trace("Received RPC response for id {}",  rpcMessage.getRpcId());
+                                LOG.trace("Received RPC response for id {}", rpcMessage.getRpcId());
                             }
-                            responseCb.sendResponse(rpcContent.toStringUtf8());
+                            final String rpcMessageContent = rpcContent.toStringUtf8();
+                            responseHandlerExecutor.execute(() ->
+                                    responseCb.sendResponse(rpcMessageContent));
+                            // Remove rpcId from the maps so that duplicate response will not be handled.
+                            rpcResponseMap.remove(rpcId);
+                            messageCache.remove(rpcId);
+                            currentChunkCache.remove(rpcId);
                         } else {
-                            LOG.warn("Received a response for request with ID:{}, but no outstanding request was found with this id, The request may have timed out.",
-                                    record.key());
+                            LOG.debug("Received a response for request with ID:{}, but no outstanding request was found with this id." +
+                                    "The request may have timed out or the response may be a duplicate.", record.key());
                         }
                     }
                 } catch (InvalidProtocolBufferException e) {
                     LOG.error("error while parsing response", e);
                 } catch (WakeupException e) {
-                    LOG.info(" consumer got wakeup exception, closed = {} ", closed.get(), e);
+                    LOG.info("consumer got wakeup exception, closed = {} ", closed.get(), e);
+                } catch (Throwable e) {
+                    LOG.error("Unexpected error in kafka consumer.", e);
                 }
             }
             // Close consumer when while loop is closed.

@@ -1,0 +1,60 @@
+    /**
+     * Tests removal of one IP address with multiple definitions with profile labels and location set.
+     * @throws IOException
+     */
+    @Test
+    public void testRemovalOfIpAddressWithMultipleProfilesShouldModifyRange() throws IOException {
+
+        String snmpConfigXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+                "<snmp-config retry=\"3\" timeout=\"800\" read-community=\"public\" write-community=\"private\" xmlns=\"http://xmlns.opennms.org/xsd/config/snmp\">\n" +
+                "    <definition version=\"v1\" timeout=\"1200\" profile-label=\"profile3\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"1500\" profile-label=\"profile2\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.2.15\" end=\"192.168.2.35\"/>\n" +
+                "    </definition>\n" +
+                "</snmp-config>\n" +
+                "";
+
+        String expectedConfig = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+                "<snmp-config retry=\"3\" timeout=\"800\" read-community=\"public\" write-community=\"private\" xmlns=\"http://xmlns.opennms.org/xsd/config/snmp\">\n" +
+                "    <definition version=\"v1\" timeout=\"1200\" profile-label=\"profile3\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.24\"/>\n" +
+                "        <range begin=\"192.168.1.26\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"1500\" profile-label=\"profile2\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.2.15\" end=\"192.168.2.35\"/>\n" +
+                "    </definition>\n" +
+                "</snmp-config>\n" +
+                "";
+        SnmpPeerFactory.setInstance(new SnmpPeerFactory(new StringResource(snmpConfigXml)));
+        assertXmlEquals(snmpConfigXml, SnmpPeerFactory.getInstance().getSnmpConfigAsString());
+
+        // Should fetch config from the definition with profile3
+        SnmpAgentConfig snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.25"), "MINION");
+        assertEquals("profile3", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(1200, snmpAgentConfig.getTimeout());
+
+        // Deletion of the IP Address from definitions should fall back to default
+        boolean success = SnmpPeerFactory.getInstance().removeFromDefinition(InetAddress.getByName("192.168.1.25"), "MINION", "test");
+        assertTrue("Remove from definition should be successful", success);
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.25"), "MINION");
+        assertTrue("Should fall back to default config", snmpAgentConfig.isDefault());
+        assertNull("Profile label shouldn't be set for default config", snmpAgentConfig.getProfileLabel());
+        assertEquals(800, snmpAgentConfig.getTimeout());
+
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.2.25"), "MINION");
+        assertEquals("profile2", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(1500, snmpAgentConfig.getTimeout());
+
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.35"), "MINION");
+        assertEquals("profile3", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(1200, snmpAgentConfig.getTimeout());
+
+        String actualConfig = SnmpPeerFactory.getInstance().getSnmpConfigAsString();
+        assertXmlEquals(expectedConfig, actualConfig);
+    }
+

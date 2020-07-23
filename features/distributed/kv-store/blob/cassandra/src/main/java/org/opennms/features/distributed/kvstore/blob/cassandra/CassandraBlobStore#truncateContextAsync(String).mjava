@@ -1,0 +1,30 @@
+    @Override
+    public CompletableFuture<Void> truncateContextAsync(String context) {
+        Objects.requireNonNull(context);
+
+        CompletableFuture<Void> truncateFuture = new CompletableFuture<>();
+
+        // The below ends up doing deletes synchronously so we move processing off of the Cassandra session thread and
+        // onto our own
+        enumerateContextAsync(context).whenCompleteAsync((enumerateResult, enumerateThrowable) -> {
+            if (enumerateThrowable != null) {
+                truncateFuture.completeExceptionally(enumerateThrowable);
+                return;
+            }
+
+            // It would be nice to fire off a bunch of deleteAsync here instead of sync deletes, however that has the
+            // tendency to overwhelm the Cassandra connection pool therefore we will just tie this thread up until we
+            // are done deleting synchronously
+            enumerateResult.keySet().forEach(key -> {
+                try {
+                    delete(key, context);
+                } catch (Exception e) {
+                    truncateFuture.completeExceptionally(e);
+                }
+            });
+            truncateFuture.complete(null);
+        }, asyncDeleteExecutor);
+
+        return truncateFuture;
+    }
+

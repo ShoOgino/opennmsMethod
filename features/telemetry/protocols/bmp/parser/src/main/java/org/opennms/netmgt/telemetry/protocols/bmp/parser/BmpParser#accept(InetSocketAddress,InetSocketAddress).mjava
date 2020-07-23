@@ -1,0 +1,127 @@
+    @Override
+    public Handler accept(final InetSocketAddress remoteAddress,
+                          final InetSocketAddress localAddress) {
+        return new Handler() {
+            private static final int ADD_PATH_CAP = 69;
+
+            private InetAddress bgpId;
+
+            private final Map<InetAddress, PeerInfo> peerInfoMap = new HashMap<>();
+            private PeerAccessor peerAccessor = peerHeader -> {
+                if (peerHeader == null || peerHeader.id == null) {
+                    return Optional.empty();
+                }
+                return Optional.ofNullable(peerInfoMap.get(peerHeader.id));
+            };
+
+            @Override
+            public Optional<CompletableFuture<?>> parse(final ByteBuf buffer) throws Exception {
+                buffer.markReaderIndex();
+
+                final Header header;
+                if (buffer.isReadable(Header.SIZE)) {
+                    header = new Header(slice(buffer, Header.SIZE));
+                } else {
+                    buffer.resetReaderIndex();
+                    return Optional.empty();
+                }
+
+                final Packet packet;
+                if (buffer.isReadable(header.payloadLength())) {
+                    packet = header.parsePayload(slice(buffer, header.payloadLength()), this.peerAccessor);
+                } else {
+                    buffer.resetReaderIndex();
+                    return Optional.empty();
+                }
+
+                LOG.trace("Got packet: {}", packet);
+
+                // Build the message from the received packet
+                final Transport.Message.Builder message = Transport.Message.newBuilder()
+                        .setVersion(header.version);
+
+                packet.accept(new Serializer(message));
+
+                packet.accept(new Packet.Visitor.Adapter() {
+                    @Override
+                    public void visit(InitiationPacket packet) {
+                        packet.information.first(InformationElement.Type.BGP_ID)
+                                .map(InetAddressUtils::addr)
+                                .ifPresent(_bgpId -> bgpId = _bgpId);
+                    }
+                });
+
+                packet.accept(new Packet.Visitor.Adapter() {
+                    @Override
+                    public void visit(PeerUpPacket packet) {
+                        packet.sendOpenMessage.ifPresent(msg -> msg.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                            ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
+                            int afi = uint16(b);
+                            int safi = uint8(b);
+                            int sendReceive = uint8(b);
+                            peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, true);
+                        }));
+
+                        packet.recvOpenMessage.ifPresent(msg -> msg.capabilities.stream().filter(c -> c.getCode() == ADD_PATH_CAP).forEach(c -> {
+                            ByteBuf b = Unpooled.wrappedBuffer(c.getValue().toByteArray());
+                            int afi = uint16(b);
+                            int safi = uint8(b);
+                            int sendReceive = uint8(b);
+                            peerInfoMap.computeIfAbsent(packet.peerHeader.id, k -> new PeerInfo()).addPathCapability(afi, safi, sendReceive, false);
+                        }));
+                    }
+                });
+
+                if (bgpId != null) {
+                    message.setBgpId(BmpParser.address(bgpId));
+                }
+
+                // Enrich the message with resolved hostnames
+                CompletableFuture<Transport.Message.Builder> enriched = CompletableFuture.completedFuture(message);
+                if (BmpParser.this.dnsLookupsEnabled) {
+                    // Limit number of outstanding requests with a bulk-head and put backpressure on the socket
+                    try {
+                        bulkhead.acquirePermission();
+                        // We got permission, let's issue the async lookups
+                        enriched = enriched.thenCompose(BmpParser.this.resolvePeer(packet))
+                                .thenCompose(BmpParser.this.resolveSysName(packet, remoteAddress.getAddress()));
+                        // Release permission when these complete, successfully or not
+                        enriched.whenComplete((v,e) -> bulkhead.releasePermission());
+                    } catch (BulkheadFullException bfe) {
+                        RATE_LIMITED_LOG.warn("Skipping enrichment. Too many requests already in flight (bulk-head is full).");
+                    }
+                }
+
+                // Dispatch the final message
+                final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatched = new CompletableFuture<>();
+                enriched.whenComplete((msg,e) -> {
+                    final ByteBuffer payload = ByteBuffer.wrap(msg.build().toByteArray());
+                    final CompletableFuture<AsyncDispatcher.DispatchStatus> dispatchFuture = BmpParser.this.dispatcher.send(new TelemetryMessage(remoteAddress, payload));
+                    BmpParser.this.recordsDispatched.mark();
+
+                    dispatchFuture.whenComplete((status, ex) -> {
+                        if (ex != null) {
+                            dispatched.completeExceptionally(ex);
+                        } else {
+                            dispatched.complete(status);
+                        }
+                    });
+                });
+
+                return Optional.of(dispatched);
+            }
+
+            @Override
+            public void active() {
+                BmpParser.this.connections.add(remoteAddress.getAddress());
+                BmpParser.this.sendHeartbeat(HeartbeatMode.CHANGE);
+            }
+
+            @Override
+            public void inactive() {
+                BmpParser.this.connections.remove(remoteAddress.getAddress());
+                BmpParser.this.sendHeartbeat(HeartbeatMode.CHANGE);
+            }
+        };
+    }
+

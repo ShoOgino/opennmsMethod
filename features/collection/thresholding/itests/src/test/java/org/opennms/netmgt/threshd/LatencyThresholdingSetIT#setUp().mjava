@@ -1,0 +1,48 @@
+    @Before
+    public void setUp() throws Exception {
+        BeanUtils.setStaticApplicationContext(m_context);
+
+        // Resets Counters Cache Data
+        CollectionResourceWrapper.s_cache.clear();
+
+        MockLogAppender.setupLogging();
+
+        m_fileAnticipator = new FileAnticipator();
+
+        m_resourceStorageDao = new FilesystemResourceStorageDao();
+        m_resourceStorageDao.setRrdDirectory(m_fileAnticipator.getTempDir());
+
+        // Use a mock FilterDao that always returns 127.0.0.1 in the active IP list
+        FilterDao filterDao = EasyMock.createMock(FilterDao.class);
+        EasyMock.expect(filterDao.getActiveIPAddressList((String)EasyMock.anyObject())).andReturn(Collections.singletonList(addr("127.0.0.1"))).anyTimes();
+        filterDao.flushActiveIpAddressListCache();
+        EasyMock.expectLastCall().anyTimes();
+        FilterDaoFactory.setInstance(filterDao);
+        EasyMock.replay(filterDao);
+
+        mockIfInfo = new HashMap<>();
+        m_ifLabelDao = EasyMock.createMock(IfLabel.class);
+
+
+        DateFormat formatter = new SimpleDateFormat("dd-MMM-yyyy HH:mm:ss");
+        final StringBuilder sb = new StringBuilder("<?xml version=\"1.0\"?>");
+        sb.append("<outages>");
+        sb.append("<outage name=\"junit outage\" type=\"specific\">");
+        sb.append("<time begins=\"");
+        sb.append(formatter.format(new Date(System.currentTimeMillis() - 3600000)));
+        sb.append("\" ends=\"");
+        sb.append(formatter.format(new Date(System.currentTimeMillis() + 3600000)));
+        sb.append("\"/>");
+        sb.append("<interface address=\"match-any\"/>");
+        sb.append("</outage>");
+        sb.append("</outages>");
+        File file = new File("target/poll-outages.xml");
+        FileWriter writer = new FileWriter(file);
+        writer.write(sb.toString());
+        writer.close();
+        m_pollOutagesDao.overrideConfig(new FileSystemResource(file).getInputStream());
+        initFactories("/threshd-configuration.xml","/test-thresholds.xml");
+        m_anticipatedEvents = new ArrayList<>();
+        // Update the thresholding service to use the mock event manager
+        m_thresholdingService.setEventProxy(m_eventIpcManager);
+    }

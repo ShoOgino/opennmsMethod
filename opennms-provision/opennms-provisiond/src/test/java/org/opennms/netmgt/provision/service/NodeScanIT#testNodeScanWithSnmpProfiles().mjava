@@ -1,0 +1,33 @@
+    @Test(timeout=60000)
+    @JUnitSnmpAgent(host="192.0.2.201", port=161, resource = "classpath:/snmpProfileTestData.properties")
+    public void testNodeScanWithSnmpProfiles() throws Exception {
+
+        // This has profiles with valid config.
+        URL url =  getClass().getResource("/snmp-config1.xml");
+        try (InputStream configStream = url.openStream()) {
+            SnmpPeerFactory snmpPeerFactory = new ProxySnmpAgentConfigFactory(configStream);
+            // This is to not override snmp-config from etc
+            SnmpPeerFactory.setFile(new File(url.getFile()));
+            m_provisioner.setAgentConfigFactory(snmpPeerFactory);
+            LocationAwareSnmpClient locationAwareSnmpClient = m_provisionService.getLocationAwareSnmpClient();
+            FilterDao filterDao = Mockito.mock(FilterDao.class);
+            when(filterDao.isValid(Mockito.anyString(), Mockito.contains("IPLIKE"))).thenReturn(true);
+            SnmpProfileMapper profileMapper = new SnmpProfileMapperImpl(filterDao, snmpPeerFactory, locationAwareSnmpClient);
+            m_provisionService.setSnmpProfileMapper(profileMapper);
+            m_provisioner.start();
+            m_provisioner.importModelFromResource(m_resourceLoader.getResource("classpath:/testScanWithoutSnmpService.xml"),
+                    Boolean.TRUE.toString());
+
+            final List<OnmsNode> nodes = getNodeDao().findAll();
+            assertEquals(1, nodes.size());
+            // Verify node and it's location.
+            OnmsNode node = nodes.get(0);
+            assertEquals("Hyderabad", node.getLocation().getLocationName());
+            assertEquals(1, node.getIpInterfaces().size());
+            m_scheduledExecutor.resume();
+            // Verify that snmp data is updated for the node i.e. means agent has been detected.
+            await().atMost(30, TimeUnit.SECONDS).until(node::getSysObjectId, is(".1.3.6.1.4.1.8072.3.2.255"));
+        }
+        m_scheduledExecutor.pause();
+    }
+

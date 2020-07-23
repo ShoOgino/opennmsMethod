@@ -1,0 +1,67 @@
+    /**
+     * Tests removal of an IP Address which has different definition at a location and with default location
+     * @throws IOException
+     */
+    @Test
+    public void testRemovalOfIpAddressWithMultipleProfilesWithDifferentLocations() throws IOException {
+
+        String snmpConfigXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+                "<snmp-config retry=\"3\" timeout=\"800\" read-community=\"public\" write-community=\"private\" xmlns=\"http://xmlns.opennms.org/xsd/config/snmp\">\n" +
+                "    <definition version=\"v1\" timeout=\"1200\" profile-label=\"profile2\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"1500\" profile-label=\"profile3\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"2000\" profile-label=\"profile4\" location=\"Apex\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "</snmp-config>\n" +
+                "";
+
+        String expectedConfig = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+                "<snmp-config retry=\"3\" timeout=\"800\" read-community=\"public\" write-community=\"private\" xmlns=\"http://xmlns.opennms.org/xsd/config/snmp\">\n" +
+                "    <definition version=\"v1\" timeout=\"1200\" profile-label=\"profile2\" location=\"MINION\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.24\"/>\n" +
+                "        <range begin=\"192.168.1.26\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"1500\" profile-label=\"profile3\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "    <definition version=\"v1\" timeout=\"2000\" profile-label=\"profile4\" location=\"Apex\" >\n" +
+                "        <range begin=\"192.168.1.15\" end=\"192.168.1.35\"/>\n" +
+                "    </definition>\n" +
+                "</snmp-config>\n" +
+                "";
+        SnmpPeerFactory.setInstance(new SnmpPeerFactory(new StringResource(snmpConfigXml)));
+        assertXmlEquals(snmpConfigXml, SnmpPeerFactory.getInstance().getSnmpConfigAsString());
+
+        // Should fetch config from the definition with profile3
+        SnmpAgentConfig snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.25"), "MINION");
+        assertEquals("profile2", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(1200, snmpAgentConfig.getTimeout());
+
+        // Deletion of the IP Address from definitions should fall back to default
+        boolean success = SnmpPeerFactory.getInstance().removeFromDefinition(InetAddress.getByName("192.168.1.25"), "MINION", "test");
+        assertTrue("Remove from definition should be successful", success);
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.25"), "MINION");
+        assertFalse("Should fall back to config from default location", snmpAgentConfig.isDefault());
+        assertEquals("profile3", snmpAgentConfig.getProfileLabel());
+        assertEquals(1500, snmpAgentConfig.getTimeout());
+
+
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.35"), "MINION");
+        assertEquals("profile2", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(1200, snmpAgentConfig.getTimeout());
+
+        snmpAgentConfig = SnmpPeerFactory.getInstance().getAgentConfig(InetAddress.getByName("192.168.1.35"), "Apex");
+        assertEquals("profile4", snmpAgentConfig.getProfileLabel());
+        assertFalse("Should not be default config", snmpAgentConfig.isDefault());
+        assertEquals(2000, snmpAgentConfig.getTimeout());
+
+        String actualConfig = SnmpPeerFactory.getInstance().getSnmpConfigAsString();
+        assertXmlEquals(expectedConfig, actualConfig);
+    }
+

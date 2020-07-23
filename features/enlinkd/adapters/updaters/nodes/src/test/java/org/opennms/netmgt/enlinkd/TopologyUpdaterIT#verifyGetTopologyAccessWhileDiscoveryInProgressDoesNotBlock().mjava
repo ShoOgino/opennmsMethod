@@ -1,0 +1,62 @@
+    // See NMS-12443 for more details
+    @Test
+    public void verifyGetTopologyAccessWhileDiscoveryInProgressDoesNotBlock() throws ExecutionException, InterruptedException, TimeoutException {
+        final TopologyService service = Mockito.mock(TopologyService.class);
+        final TopologyUpdater updater = new TopologyUpdater(service, topologyDao, nodeTopologyService) {
+
+            @Override
+            public OnmsTopologyProtocol getProtocol() {
+                return OnmsTopologyProtocol.create("BRIDGE");
+            }
+
+            @Override
+            public String getName() {
+                return "Test Topology Updater";
+            }
+
+            @Override
+            public OnmsTopology buildTopology() {
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    throw Throwables.propagate(e);
+                }
+                final OnmsTopology onmsTopology = new OnmsTopology();
+                final Set<OnmsTopologyVertex> vertexSet = Sets.newHashSet();
+                vertexSet.add(OnmsTopologyVertex.create("v1", "Vertex 1","127.0.0.1", "defaultKey"));
+                vertexSet.add(OnmsTopologyVertex.create("v2", "Vertex 2", "127.0.0.1", "defaultKey"));
+                onmsTopology.setVertices(vertexSet);
+                return onmsTopology;
+            }
+        };
+
+        final ExecutorService executorService = Executors.newFixedThreadPool(2);
+        final Runnable discoveryRunnable = () -> {
+            long start = System.currentTimeMillis();
+            LoggerFactory.getLogger("DISCOVERY").info("Start: {}", new Date());
+            updater.runDiscovery();
+            LoggerFactory.getLogger("DISCOVERY").info("Took {} ms", (System.currentTimeMillis() - start));
+        };
+        Future<?> future1 = executorService.submit(discoveryRunnable);
+
+        // Verify access to getTopology works, even if it is still discovering
+        Future<OnmsTopology> future2 = executorService.submit(() -> updater.getTopology());
+        OnmsTopology topology = future2.get(1, TimeUnit.SECONDS); // should not block and return immediately
+        Assert.assertThat(topology, Matchers.is(Matchers.not(Matchers.nullValue())));
+        Assert.assertThat(topology.getVertices(), Matchers.hasSize(0));
+        Assert.assertThat(topology.getEdges(), Matchers.hasSize(0));
+
+        // Wait until discovery is done
+        future1.get();
+
+        // Verify updated value is now available
+        future2 = executorService.submit(() -> updater.getTopology());
+        topology = future2.get(1, TimeUnit.SECONDS); // should not block and return immediately
+        Assert.assertThat(topology, Matchers.is(Matchers.not(Matchers.nullValue())));
+        Assert.assertThat(topology.getVertices(), Matchers.hasSize(2));
+        Assert.assertThat(topology.getEdges(), Matchers.hasSize(0));
+
+        // Shutdown thread pool
+        executorService.shutdown();
+    }
+

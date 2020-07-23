@@ -1,0 +1,35 @@
+    private void dispatchFromQueue() {
+        while (true) {
+            try {
+                LOG.trace("Asking dispatch queue for the next entry...");
+                Map.Entry<String, S> messageEntry = atomicResultQueue.dequeue();
+                LOG.trace("Received message entry from dispatch queue {}", messageEntry);
+                activeDispatchers.incrementAndGet();
+                LOG.trace("Sending message {} via sync dispatcher", messageEntry);
+                syncDispatcher.send(messageEntry.getValue());
+                LOG.trace("Successfully sent message {}", messageEntry);
+
+                if (messageEntry.getKey() != null) {
+                    LOG.trace("Attempting to complete future for message {}", messageEntry);
+                    CompletableFuture<DispatchStatus> messageFuture = futureMap.remove(messageEntry.getKey());
+
+                    if (messageFuture != null) {
+                        messageFuture.complete(DispatchStatus.DISPATCHED);
+                        LOG.trace("Completed future for message {}", messageEntry);
+                    } else {
+                        RATE_LIMITED_LOGGER.warn("No future found for message {}", messageEntry);
+                        missedFutures.incrementAndGet();
+                    }
+                } else {
+                    LOG.trace("Dequeued an entry with a null key");
+                }
+
+                activeDispatchers.decrementAndGet();
+            } catch (InterruptedException e) {
+                break;
+            } catch (Exception e) {
+                RATE_LIMITED_LOGGER.warn("Encountered exception while taking from dispatch queue", e);
+            }
+        }
+    }
+

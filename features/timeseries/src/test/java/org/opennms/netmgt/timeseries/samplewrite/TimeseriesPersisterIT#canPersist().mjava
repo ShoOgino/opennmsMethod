@@ -1,0 +1,48 @@
+    @Test
+    public void canPersist() throws InterruptedException, StorageException {
+        ServiceParameters params = new ServiceParameters(Collections.emptyMap());
+        RrdRepository repo = new RrdRepository();
+        // Only the last element of the path matters here
+        repo.setRrdBaseDir(Paths.get("a","path","that","ends","with","snmp").toFile());
+        Persister persister = persisterFactory.createPersister(params, repo);
+
+        int nodeId = 1;
+        CollectionAgent agent = mock(CollectionAgent.class);
+        when(agent.getStorageResourcePath()).thenReturn(ResourcePath.get(Integer.toString(nodeId)));
+        NodeLevelResource nodeLevelResource = new NodeLevelResource(nodeId);
+
+        // Build a collection set with a single sample
+        Instant now = Instant.now();
+        CollectionSet collectionSet = new CollectionSetBuilder(agent)
+                .withNumericAttribute(nodeLevelResource, "metrics", "metric", 900, AttributeType.GAUGE)
+                .withTimestamp(Date.from(now))
+                .build();
+
+        // Persist
+        collectionSet.visit(persister);
+
+        // Wait for the sample(s) to be flushed
+        Thread.sleep(5 * 1000);
+
+        // Fetch the (persisted) sample
+        Resource resource = new Resource("snmp:1:metrics");
+        Instant end = Instant.now();
+
+        ImmutableMetric metric = ImmutableMetric.builder()
+                .intrinsicTag(IntrinsicTagNames.resourceId, resource.getId())
+                .intrinsicTag(IntrinsicTagNames.name, "metric")
+                .build();
+        TimeSeriesFetchRequest request = ImmutableTimeSeriesFetchRequest.builder()
+                .start(now)
+                .end(end)
+                .metric(metric)
+                .aggregation(Aggregation.NONE)
+                .step(Duration.ofMillis(1))
+                .build();
+        List<Sample> samples = this.storage.get().getTimeseries(request);
+
+        assertEquals(1, samples.size());
+        Sample row = samples.get(0);
+        assertEquals(900, row.getValue(), 0.00001);
+    }
+

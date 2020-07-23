@@ -1,0 +1,68 @@
+    private ReportParameters parseParameters(final Map<String, Object> inputParameters, final ReportMode mode) {
+        final String reportId = (String) inputParameters.get("id");
+        final ReportParameters actualParameters = reportWrapperService.getParameters(reportId);
+        final ReportFormat reportFormat = parseReportFormat((String) inputParameters.get("format"));
+        actualParameters.setReportId(reportId);
+        actualParameters.setFormat(reportFormat);
+
+        // Determine the new values
+        final JSONObject jsonInputParameters = new JSONObject(inputParameters);
+        final ReportParameterBuilder reportParameterBuilder = new ReportParameterBuilder();
+        final JSONArray jsonParameters = jsonInputParameters.getJSONArray("parameters");
+        for (int i=0; i< jsonParameters.length(); i++) {
+            final JSONObject jsonParameter = jsonParameters.getJSONObject(i);
+            if (!jsonParameter.has("name") || !jsonParameter.has("type")) {
+                continue;
+            }
+            final String parameterName = jsonParameter.getString("name");
+            final String parameterType = jsonParameter.getString("type");
+            final Object parameterValue = jsonParameter.has("value") ? jsonParameter.get("value") : null;
+            if (parameterType.equals("string")) {
+                if (!(parameterValue instanceof String)) {
+                    throw new SchedulerContextException(parameterName, "Provided value ''{0}'' is not a string.", parameterValue);
+                }
+                reportParameterBuilder.withString(parameterName, jsonParameter.getString("value"));
+            } else if (parameterType.equals("double")) {
+                final Double doubleValue = parseDouble(parameterName, parameterValue);
+                reportParameterBuilder.withDouble(parameterName, doubleValue);
+            } else if (parameterType.equals("integer")) {
+                final Integer integerValue = parseInteger(parameterName, parameterValue);
+                reportParameterBuilder.withInteger(parameterName, integerValue);
+            } else if (parameterType.equals("float")) {
+                final Float floatValue = parseFloat(parameterName, parameterValue);
+                reportParameterBuilder.withFloat(parameterName, floatValue);
+            } else if (parameterType.equals("date")) {
+                final int hours = jsonParameter.has("hours") ? parseInteger(parameterName + "Hours", jsonParameter.get("hours")) : 0;
+                final int minutes = jsonParameter.has("minutes") ? parseInteger(parameterName + "Minutes", jsonParameter.get("minutes")) : 0;
+                final ReportDateParm actualDateParm = actualParameters.getParameter(parameterName);
+                if (actualDateParm.getUseAbsoluteDate() == true || mode == ReportMode.IMMEDIATE) {
+                    if (jsonParameter.has("date")) {
+                        final String dateString = jsonParameter.getString("date");
+                        try {
+                            final Date parsedDate = new SimpleDateFormat("yyyy-MM-dd").parse(dateString);
+                            reportParameterBuilder.withDate(parameterName, parsedDate, hours, minutes);
+                        } catch (ParseException e) {
+                            throw new SchedulerContextException(parameterName, "The provided value ''{0}'' cannot be parsed as a date. Expected format is yyyy-MM-dd", dateString);
+                        }
+                    }
+                } else {
+                    final String interval = jsonParameter.getString("interval");
+                    final int count = jsonParameter.getInt("count");
+                    reportParameterBuilder.withDate(parameterName, interval, count, hours, minutes);
+                }
+            } else if(parameterType.equals("timezone")) {
+                final ZoneId zoneId = parseTimezone(parameterName, jsonParameter.has("value") ? jsonParameter.getString("value") : "");
+                reportParameterBuilder.withTimezone(parameterName, zoneId);
+            } else {
+                throw new SchedulerContextException(parameterName, "Unknown type ''{0}''. Supported types are: ''{1}''",
+                        parameterType, Lists.newArrayList("string", "integer", "float", "double", "date"));
+            }
+        }
+
+        // Finally apply the new values
+        final ReportParameters mergeWithParameters = reportParameterBuilder.build();
+        actualParameters.apply(mergeWithParameters);
+
+        return actualParameters;
+    }
+

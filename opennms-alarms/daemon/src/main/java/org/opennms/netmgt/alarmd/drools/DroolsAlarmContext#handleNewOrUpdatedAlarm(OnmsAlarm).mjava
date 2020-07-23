@@ -4,8 +4,14 @@
             LOG.debug("Ignoring new/updated alarm. Drools session is stopped.");
             return;
         }
-        tryWithLock(alarm.getId(), alarm.getReductionKey(),
-                (id, rkey) -> handleNewOrUpdatedAlarms(Collections.singleton(alarm)),
-                "Add or update");
+        eagerlyInitializeAlarm(alarm);
+
+        // Retrieve the acks from the database for the set of the alarms we've been given
+        final Map<Integer, OnmsAcknowledgment> acksByRefId = fetchAcks(Collections.singletonList(alarm));
+
+        executeAtomicallyWhenTransactionComplete(kieSession -> {
+            handleNewOrUpdatedAlarmForAtomic(kieSession, alarm, acksByRefId.get(alarm.getId()));
+            stateTracker.trackNewOrUpdatedAlarm(alarm.getId(), alarm.getReductionKey());
+        });
     }
 

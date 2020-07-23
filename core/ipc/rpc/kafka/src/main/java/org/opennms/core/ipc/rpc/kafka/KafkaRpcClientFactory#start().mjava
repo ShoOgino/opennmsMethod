@@ -10,22 +10,20 @@
             kafkaConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getCanonicalName());
 
             // Find all of the system properties that start with 'org.opennms.core.ipc.rpc.kafka.' and add them to the config.
-            KafkaConfigProvider kafkaConfigProvider = new OnmsKafkaConfigProvider(KafkaRpcConstants.KAFKA_CONFIG_SYS_PROP_PREFIX);
+            KafkaConfigProvider kafkaConfigProvider = new OnmsKafkaConfigProvider(KafkaRpcConstants.KAFKA_RPC_CONFIG_SYS_PROP_PREFIX);
             kafkaConfig.putAll(kafkaConfigProvider.getProperties());
             producer = new KafkaProducer<>(kafkaConfig);
             LOG.info("initializing the Kafka producer with: {}", kafkaConfig);
             // Start consumer which handles all the responses.
-            KafkaConsumer<String, byte[]> kafkaConsumer = new KafkaConsumer<>(kafkaConfig);
-            kafkaConsumerRunner = new KafkaConsumerRunner(kafkaConsumer);
-            executor.execute(kafkaConsumerRunner);
+            startKafkaConsumer();
+            LOG.info("started  kafka consumer with : {}", kafkaConfig);
             // Initialize metrics reporter.
-            metricsReporter = JmxReporter.forRegistry(metrics).
+            metricsReporter = JmxReporter.forRegistry(getMetrics()).
                     inDomain(JMX_DOMAIN_RPC).build();
             metricsReporter.start();
             // Initialize tracer from tracer registry.
             tracerRegistry.init(SystemInfoUtils.getInstanceId());
             tracer = tracerRegistry.getTracer();
-            LOG.info("started  kafka consumer with : {}", kafkaConfig);
             // Start a new thread which handles timeouts from delayQueue and calls response callback.
             timerExecutor.execute(() -> {
                 while (true) {
@@ -33,7 +31,7 @@
                         ResponseCallback responseCb = delayQueue.take();
                         if (!responseCb.isProcessed()) {
                             LOG.warn("RPC request with id {} timedout ", responseCb.getRpcId());
-                            responseCb.sendResponse(null);
+                            responseHandlerExecutor.execute(() -> responseCb.sendResponse(null));
                         }
                     } catch (InterruptedException e) {
                         LOG.info("interrupted while waiting for an element from delayQueue", e);

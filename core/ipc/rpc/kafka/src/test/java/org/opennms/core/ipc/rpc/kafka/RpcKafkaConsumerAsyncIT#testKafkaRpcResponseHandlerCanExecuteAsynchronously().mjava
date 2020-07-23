@@ -1,0 +1,20 @@
+    @Test
+    public void testKafkaRpcResponseHandlerCanExecuteAsynchronously() throws ExecutionException, InterruptedException {
+
+        ThreadLockingEchoClient client = new ThreadLockingEchoClient(rpcClientFactory, echoRpcModule);
+        CompletableFuture<Integer> runLockedFuture = client.getRunLocker().waitForThreads(NTHREADS);
+        List<CompletableFuture<EchoResponse>> futures = new ArrayList<>();
+        for (int i = 0; i < NTHREADS; i++) {
+            EchoRequest request = new EchoRequest("ping");
+            request.setTimeToLiveMs(15000L);
+            request.setSystemId(minionIdentity.getId());
+            request.setLocation(REMOTE_LOCATION_NAME);
+            futures.add(client.execute(request));
+        }
+        // Wait for all the threads calling run() to be locked
+        runLockedFuture.get();
+        // Release and verify that all the futures return
+        client.getRunLocker().release();
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[NTHREADS])).get();
+    }
+

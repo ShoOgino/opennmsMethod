@@ -1,0 +1,62 @@
+    private void handleNewOrUpdatedAlarmForAtomic(KieSession kieSession, OnmsAlarm alarm, OnmsAcknowledgment ack) {
+        final AlarmAndFact alarmAndFact = alarmsById.get(alarm.getId());
+        if (alarmAndFact == null) {
+            LOG.debug("Inserting alarm into session: {}", alarm);
+            final FactHandle fact = kieSession.insert(alarm);
+            alarmsById.put(alarm.getId(), new AlarmAndFact(alarm, fact));
+        } else {
+            // Updating the fact doesn't always give us to expected results so we resort to deleting it
+            // and adding it again instead
+            LOG.trace("Deleting alarm from session (for re-insertion): {}", alarm);
+            kieSession.delete(alarmAndFact.getFact());
+            // Reinsert
+            LOG.trace("Re-inserting alarm into session: {}", alarm);
+            final FactHandle fact = kieSession.insert(alarm);
+            alarmsById.put(alarm.getId(), new AlarmAndFact(alarm, fact));
+        }
+
+        // Ack
+        final AlarmAcknowledgementAndFact acknowledgmentFact = acknowledgementsByAlarmId.get(alarm.getId());
+        if (acknowledgmentFact == null) {
+            LOG.debug("Inserting first alarm acknowledgement into session: {}", ack);
+            final FactHandle fact = kieSession.insert(ack);
+            acknowledgementsByAlarmId.put(alarm.getId(), new AlarmAcknowledgementAndFact(ack, fact));
+        } else {
+            FactHandle fact = acknowledgmentFact.getFact();
+            LOG.trace("Updating acknowledgment in session: {}", ack);
+            kieSession.update(fact, ack);
+            acknowledgementsByAlarmId.put(alarm.getId(), new AlarmAcknowledgementAndFact(ack, fact));
+        }
+
+        if (alarm.isSituation()) {
+            final OnmsAlarm situation = alarm;
+            final Map<Integer, AlarmAssociationAndFact> associationFacts = alarmAssociationById.computeIfAbsent(situation.getId(), (sid) -> new HashMap<>());
+            for (AlarmAssociation association : situation.getAssociatedAlarms()) {
+                Integer alarmId = association.getRelatedAlarm().getId();
+                AlarmAssociationAndFact associationFact = associationFacts.get(alarmId);
+                if (associationFact == null) {
+                    LOG.debug("Inserting alarm association into session: {}", association);
+                    final FactHandle fact = kieSession.insert(association);
+                    associationFacts.put(alarmId, new AlarmAssociationAndFact(association, fact));
+                } else {
+                    FactHandle fact = associationFact.getFact();
+                    LOG.trace("Updating alarm association in session: {}", associationFact);
+                    kieSession.update(fact, association);
+                    associationFacts.put(alarmId, new AlarmAssociationAndFact(association, fact));
+                }
+            }
+            // Remove Fact for any Alarms no longer in the Situation
+            Set<Integer> deletedAlarmIds = associationFacts.values().stream()
+                    .map(fact -> fact.getAlarmAssociation().getRelatedAlarm().getId())
+                    .filter(alarmId -> !situation.getRelatedAlarmIds().contains(alarmId))
+                    .collect(Collectors.toSet());
+            deletedAlarmIds.forEach(alarmId -> {
+                final AlarmAssociationAndFact associationAndFact = associationFacts.remove(alarmId);
+                if (associationAndFact != null) {
+                    LOG.debug("Deleting AlarmAssociationAndFact from session: {}", associationAndFact.getAlarmAssociation());
+                    kieSession.delete(associationAndFact.getFact());
+                }
+            });
+        }
+    }
+

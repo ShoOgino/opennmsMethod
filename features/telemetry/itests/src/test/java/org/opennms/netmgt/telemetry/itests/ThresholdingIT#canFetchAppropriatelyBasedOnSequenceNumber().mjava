@@ -1,0 +1,86 @@
+    @Test
+    public void canFetchAppropriatelyBasedOnSequenceNumber() throws Exception {
+        AtomicInteger fetchCounter = new AtomicInteger(0);
+        // Hook into the blob store so we can see when fetches happen
+        noOpBlobStore.addListener(new AbstractAsyncKeyValueStore<byte[]>() {
+            @Override
+            public long put(String key, byte[] value, String context, Integer ttlInSeconds) {
+                return 0;
+            }
+
+            @Override
+            public Optional<byte[]> get(String key, String context) {
+                fetchCounter.incrementAndGet();
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<Optional<byte[]>> getIfStale(String key, String context, long timestamp) {
+                fetchCounter.incrementAndGet();
+                return Optional.empty();
+            }
+
+            @Override
+            public OptionalLong getLastUpdated(String key, String context) {
+                fetchCounter.incrementAndGet();
+                return null;
+            }
+
+            @Override
+            public String getName() {
+                return "test";
+            }
+
+            @Override
+            public Map<String, byte[]> enumerateContext(String context) {
+                return Collections.emptyMap();
+            }
+
+            @Override
+            public void delete(String key, String context) {
+            }
+        });
+
+        // Need to act as in distributed mode to test the fetch behavior
+        ((ThresholdingServiceImpl) thresholdingService).setDistributed(true);
+        
+        // Use our custom configuration
+        updateDaoWithConfig(getConfig(port));
+
+        // Start the daemon
+        telemetryd.start();
+
+        // Load custom threshd configuration
+        initThreshdFactories("/threshd-configuration.xml", "/thresholds.xml");
+        threshdDao.rebuildPackageIpListMap();
+
+        // Send an initial message with seq 0
+        sendTelemetryMessage("192.0.2.1", "ge_0_0_3", 1, 1, 0, 0);
+
+        // We should have fetched since this is the first message
+        await().atMost(5, TimeUnit.SECONDS).until(() -> fetchCounter.get() == 1);
+
+        // Wait one second before sending the next message (RRDs require at least a one second step)
+        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+
+        // Send a message with seq 1
+        sendTelemetryMessage("192.0.2.1", "ge_0_0_3", 1, 1, 5, 1);
+
+        // We shouldn't have fetched since we dealt with the last sequence num so lets wait a bit to make sure no fetch
+        // happens
+        try {
+            await().atMost(5, TimeUnit.SECONDS).until(() -> fetchCounter.get() != 1);
+            fail("Fetched when we shouldn't have");
+        } catch (Exception ignore) {
+        }
+
+        // Wait one second before sending the next message (RRDs require at least a one second step)
+        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+
+        // Send message with seq 3
+        sendTelemetryMessage("192.0.2.1", "ge_0_0_3", 1, 1, 20, 3);
+
+        // We should have fetched again since the sequence number changed by more than one
+        await().atMost(5, TimeUnit.SECONDS).until(() -> fetchCounter.get() == 2);
+    }
+

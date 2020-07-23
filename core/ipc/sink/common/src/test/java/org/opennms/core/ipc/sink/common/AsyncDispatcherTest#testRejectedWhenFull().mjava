@@ -1,5 +1,10 @@
     @Test(timeout=3*60*1000)
     public void testRejectedWhenFull() throws Exception {
+        // Set up the dispatch queue
+        DispatchQueueFactory dispatchQueueFactory = new QueueFileOffHeapDispatchQueueFactory(NUM_THREADS, NUM_THREADS, null,
+                folder.newFolder().toPath().toString());
+        DispatchQueueServiceLoader.setDispatchQueue(dispatchQueueFactory);
+        
         when(module.getAsyncPolicy()).thenReturn(new AsyncPolicy() {
             @Override
             public int getQueueSize() {
@@ -16,39 +21,53 @@
                 return false;
             }
         });
-        final AsyncDispatcher<MyMessage> asyncDispatcher = threadLockingDispatcherFactory.createAsyncDispatcher(module);
 
-        final AtomicBoolean allThreadsLocked = new AtomicBoolean(false);
-        ThreadLockingSyncDispatcher<MyMessage> threadLockingSyncDispatcher = threadLockingDispatcherFactory.getThreadLockingSyncDispatcher();
-        threadLockingSyncDispatcher.waitForThreads(NUM_THREADS).thenRun(() -> {
-            allThreadsLocked.set(true);
-        });
-
-        final List<CompletableFuture<MyMessage>> futures = new ArrayList<>();
-        for (int i = 0; i < NUM_THREADS + QUEUE_SIZE; i++) {
-            futures.add(asyncDispatcher.send(new MyMessage()));
+        final AsyncDispatcher<MyMessage> asyncDispatcher = blockableDispatcherFactory.createAsyncDispatcher(module);
+        BlockableSyncDispatcher<MyMessage> blockableSyncDispatcher = blockableDispatcherFactory.getBlockableSyncDispatcher();
+        final List<CompletableFuture<AsyncDispatcher.DispatchStatus>> futures = new ArrayList<>();
+        
+        // Get all the dispatch threads parked and fill up the queue
+        // Since we might get some rejects if we send too many message too quickly, we will break the sending up into
+        // two chunks separated by checking to make sure the queue has capacity again
+        blockableSyncDispatcher.block();
+        for (int i = 0; i < NUM_THREADS; i++) {
+            futures.add(asyncDispatcher.send(new MyMessage(Integer.toString(i))));
         }
 
-        // All of the dispatcher thread should be locked, and
-        await().atMost(1, MINUTES).until(() -> allThreadsLocked.get());
-        // No additional thread should be waiting
-        assertEquals(0, threadLockingSyncDispatcher.getNumExtraThreadsWaiting());
+        // Wait for the initial messages to be accepted by the thread pool
+        await().atMost(1, MINUTES).until(asyncDispatcher::getQueueSize, equalTo(0));
+        
+        for (int i = NUM_THREADS; i < NUM_THREADS * 2; i++) {
+            futures.add(asyncDispatcher.send(new MyMessage(Integer.toString(i))));
+        }
+        
         // The queue should be full
-        assertEquals(QUEUE_SIZE, asyncDispatcher.getQueueSize());
+        assertEquals(NUM_THREADS, asyncDispatcher.getQueueSize());
+        // All the dispatch threads should be blocked
+        await().atMost(1, MINUTES).until(blockableSyncDispatcher::getBlockedThreadCount, equalTo(NUM_THREADS));
 
         // The next dispatch should return a failed future
-        CompletableFuture<MyMessage> future = asyncDispatcher.send(new MyMessage());
+        CompletableFuture<AsyncDispatcher.DispatchStatus> future = asyncDispatcher.send(
+                new MyMessage(Integer.toString(NUM_THREADS * 2)));
         assertTrue("future should have failed!", future.isCompletedExceptionally());
 
         // Release the threads!
-        threadLockingSyncDispatcher.release();
+        blockableSyncDispatcher.unblock();
+
         // Wait for the queue to be drained
         await().atMost(1, MINUTES).until(() -> asyncDispatcher.getQueueSize(), equalTo(0));
-        await().atMost(1, MINUTES).until(() -> threadLockingDispatcherFactory.getNumMessageDispatched(),
-                greaterThan(QUEUE_SIZE));
+        await().atMost(1, MINUTES).until(() -> blockableSyncDispatcher.getNumMessageDispatched(),
+                equalTo(NUM_THREADS * 2));
 
         // All of our futures should be successfully resolved
         CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[]{}));
+        
+        // All but one of the messages (the rejected one) should have been dispatched
+        List<MyMessage> actuallyDispatched = blockableSyncDispatcher.getDispatchedMessages();
+        assertThat(actuallyDispatched, hasSize(NUM_THREADS * 2));
+        for (int i = 0; i < NUM_THREADS * 2; i++) {
+            assertThat(actuallyDispatched, hasItem(new MyMessage(Integer.toString(i))));
+        }
 
         asyncDispatcher.close();
     }

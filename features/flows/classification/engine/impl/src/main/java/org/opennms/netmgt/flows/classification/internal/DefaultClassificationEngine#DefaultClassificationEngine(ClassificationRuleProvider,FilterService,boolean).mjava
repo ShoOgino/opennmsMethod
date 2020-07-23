@@ -1,6 +1,37 @@
-    public DefaultClassificationEngine(ClassificationRuleProvider ruleProvider, FilterService filterService, boolean initialize) {
+    public DefaultClassificationEngine(final ClassificationRuleProvider ruleProvider, final FilterService filterService, final boolean initialize) {
         this.ruleProvider = Objects.requireNonNull(ruleProvider);
         this.filterService = Objects.requireNonNull(filterService);
+        this.portClassifiersCache = CacheBuilder.newBuilder().build(new CacheLoader<Integer, List<Classifier>>() {
+            @Override
+            public List<Classifier> load(Integer port) throws Exception {
+                final List<RuleDefinition> ruleDefinitions = rulePortList.get(port);
+                final List<Classifier> classifiers = ruleDefinitions.stream().map(rule -> {
+                    if (!ruleClassifierMap.containsKey(rule)) {
+                        final DefaultRuleDefinition portRule = new DefaultRuleDefinition();
+                        portRule.setName(rule.getName());
+                        portRule.setProtocol(rule.getProtocol());
+                        portRule.setSrcAddress(rule.getSrcAddress());
+                        portRule.setDstAddress(rule.getDstAddress());
+                        portRule.setExporterFilter(rule.getExporterFilter());
+                        portRule.setGroupPosition(rule.getGroupPosition());
+                        portRule.setPosition(rule.getPosition());
+
+                        // If none, the value of either src or dst port may be empty, as the filtering already occurred
+                        // through the index of the rule in the classifierPortList.
+                        if (rule.hasDstPortDefinition()) {
+                            portRule.setDstPort(rule.getDstPort());
+                        }
+                        if (rule.hasSrcPortDefinition()) {
+                            portRule.setSrcPort(rule.getSrcPort());
+                        }
+                        ruleClassifierMap.put(rule, new CombinedClassifier(portRule, filterService));
+                    }
+                    return ruleClassifierMap.get(rule);
+                }).collect(Collectors.toList());
+                return classifiers;
+            }
+        });
+
         if (initialize) {
             this.reload();
         }

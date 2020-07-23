@@ -1,0 +1,23 @@
+    @Override
+    public boolean isServiceDetected(final InetAddress address, final List<SnmpAgentConfig> agentConfigList) {
+
+        List<CompletableFuture<Boolean>> futures = agentConfigList.stream()
+                .map(agentConfig -> runServiceDetection(address, agentConfig))
+                .collect(Collectors.toList());
+        // Combine all futures.
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[futures.size()]));
+        CompletableFuture<List<Boolean>> futureList = allFutures.thenApply(result -> {
+            return futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+        });
+        //Resolve the future.
+        CompletableFuture<Boolean> future = futureList.thenApply((results) -> {
+            return results.stream().anyMatch(result -> result);
+        });
+        try {
+            return future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            LOG.error("SNMP Service detection encountered an error for IPAddress {} ", address, e);
+            throw new RuntimeException(e);
+        }
+    }
+

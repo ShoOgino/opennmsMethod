@@ -1,0 +1,85 @@
+    void updateSnmpData(final OnmsNode node, final HostnameResolver hostnameResolver) {
+        
+        try {
+
+            m_systemGroup = new SystemGroup(m_address);
+
+            final Set<SnmpInstId> ipAddrs = new TreeSet<>();
+            final Set<InetAddress> ipAddresses = new HashSet<>();
+
+            for(final OnmsIpInterface iface : node.getIpInterfaces()) {
+            	final InetAddress addr = iface.getIpAddress();
+
+            	if (addr != null && addr instanceof Inet4Address) {
+            		ipAddrs.add(new SnmpInstId(InetAddressUtils.toOid(addr)));
+            	}
+
+            	ipAddresses.add(addr);
+            }
+
+            m_ipAddrTable = new IpAddrTable(m_address, ipAddrs);
+            m_ipAddressTable = IpAddressTable.createTable(m_address, ipAddresses);
+
+            AggregateTracker tracker = new AggregateTracker(Lists.newArrayList(m_systemGroup, m_ipAddrTable, m_ipAddressTable));
+            final SnmpAgentConfig agentConfig = SnmpPeerFactory.getInstance().getAgentConfig(m_address, MonitoringLocationUtils.getLocationNameOrNullIfDefault(node));
+            try {
+                m_locationAwareSnmpClient.walk(agentConfig, tracker)
+                    .withDescription("system/ipAddrTable/ipAddressTable")
+                    .withLocation(node.getLocation() == null ? null : node.getLocation().getLocationName())
+                    .execute()
+                    .get();
+            } catch (ExecutionException e) {
+                // pass
+            }
+
+            final Set<SnmpInstId> ifIndices = new TreeSet<>();
+
+            for(final Integer ifIndex : m_ipAddrTable.getIfIndices()) {
+                ifIndices.add(new SnmpInstId(ifIndex));
+            }
+
+            m_ifTable = new IfTable(m_address, ifIndices);
+            m_ifXTable = new IfXTable(m_address, ifIndices);
+            tracker = new AggregateTracker(Lists.newArrayList(m_systemGroup, m_ifTable, m_ifXTable));
+            try {
+                m_locationAwareSnmpClient.walk(agentConfig, tracker)
+                    .withDescription("ifTable/ifXTable")
+                    .withLocation(node.getLocation() == null ? null : node.getLocation().getLocationName())
+                    .execute()
+                    .get();
+            } catch (ExecutionException e) {
+                // pass
+            }
+
+            m_systemGroup.updateSnmpDataForNode(node);
+        
+            for(final SnmpInstId ifIndex : ifIndices) {
+                m_ifTable.updateSnmpInterfaceData(node, ifIndex.toInt());
+            }
+
+            for(final SnmpInstId ifIndex : ifIndices) {
+                m_ifXTable.updateSnmpInterfaceData(node, ifIndex.toInt());
+            }
+
+            for(final SnmpInstId ipAddr : ipAddrs) {
+                InetAddress inetAddress = InetAddressUtils.addr(ipAddr.toString());
+                boolean newIpInterfaceCreated = m_ipAddrTable.updateIpInterfaceData(node, inetAddress);
+                if(newIpInterfaceCreated) {
+                    setHostNameOnIpInterface(inetAddress, node, hostnameResolver);
+                }
+            }
+
+            for (final InetAddress addr : ipAddresses) {
+                boolean newIpInterfaceCreated = m_ipAddressTable.updateIpInterfaceData(node, addr);
+                if(newIpInterfaceCreated) {
+                    setHostNameOnIpInterface(addr, node, hostnameResolver);
+                }
+            }
+        } catch (final InterruptedException e) {
+            LOG.info("thread interrupted while updating SNMP data", e);
+            Thread.currentThread().interrupt();
+
+        }
+
+    }
+

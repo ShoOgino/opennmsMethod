@@ -1,0 +1,31 @@
+    private CompletableFuture<Optional<SnmpAgentConfig>> fitProfile(SnmpProfile snmpProfile, InetAddress inetAddress, String location, String oid) {
+
+        SnmpObjId snmpObjectId = this.snmpObjId;
+        //Get agent config from profile.
+        final SnmpAgentConfig agentConfig = agentConfigFactory.getAgentConfigFromProfile(snmpProfile, inetAddress);
+        //If OID is specified, get snmp object for that OID.
+        if (!Strings.isNullOrEmpty(oid)) {
+            snmpObjectId = SnmpObjId.get(oid);
+        }
+        CompletableFuture<Optional<SnmpAgentConfig>> future = new CompletableFuture<>();
+        CompletableFuture<SnmpValue> snmpResult = locationAwareSnmpClient.get(agentConfig, snmpObjectId)
+                .withLocation(location)
+                .withDescription("Snmp-Profile:" + snmpProfile.getLabel())
+                .execute();
+        //Logging purposes
+        final String objectId = Strings.isNullOrEmpty(oid) ? SYS_OBJECTID_INSTANCE : oid;
+        snmpResult.whenComplete(((snmpValue, throwable) -> {
+            if (throwable == null) {
+                if (snmpValue != null && !snmpValue.isError()) {
+                    future.complete(Optional.of(agentConfig));
+                } else {
+                    future.complete(Optional.empty());
+                }
+            } else {
+                LOG.info("Exception while doing SNMP get on OID '{}' with profile '{}'", objectId, snmpProfile.getLabel());
+                future.complete(Optional.empty());
+            }
+        }));
+        return future;
+    }
+

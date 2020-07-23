@@ -1,0 +1,63 @@
+    public QueueFileOffHeapDispatchQueue(Function<T, byte[]> serializer, Function<byte[], T> deserializer,
+                                         String moduleName, Path filePath, int inMemoryQueueSize, int batchSize,
+                                         long maxFileSizeInBytes) throws IOException {
+        Objects.requireNonNull(serializer);
+        Objects.requireNonNull(deserializer);
+        Objects.requireNonNull(moduleName);
+
+        if (inMemoryQueueSize < 1) {
+            throw new IllegalArgumentException("In memory queue size must be greater than 0");
+        }
+
+        if (inMemoryQueueSize % batchSize != 0) {
+            throw new IllegalArgumentException("In memory queue size must be a multiple of batch size");
+        }
+
+        if (maxFileSizeInBytes < 0) {
+            throw new IllegalArgumentException("Max file size must be either 0 or a positive integer");
+        }
+
+        this.serializer = serializer;
+        this.deserializer = deserializer;
+        this.moduleName = moduleName;
+        this.batchSize = batchSize;
+        this.maxFileSizeInBytes = maxFileSizeInBytes;
+        batch = new Batch(batchSize);
+
+        inMemoryQueue = new ArrayBlockingQueue<>(inMemoryQueueSize, true);
+
+        // Setting the max file size to 0 or less will disable the off-heap portion of this queue
+        if (maxFileSizeInBytes > 0) {
+            Objects.requireNonNull(filePath);
+            File file = Paths.get(filePath.toString(), moduleName + FILE_EXTENSION).toFile();
+
+            QueueFile qf;
+            try {
+                qf = new QueueFile.Builder(file).build();
+            } catch (Exception e) {
+                LOG.warn("Exception while loading queue file", e);
+
+                if (file.delete()) {
+                    qf = new QueueFile.Builder(file).build();
+                } else {
+                    throw new IOException("Could not delete corrupted queue file " + file.getAbsolutePath());
+                }
+            }
+            offHeapQueue = qf;
+
+            // QueueFile unfortunately does not expose its file size usage publicly so we need to access it reflectively
+            try {
+                usedBytesMethod = offHeapQueue.getClass().getDeclaredMethod("usedBytes");
+                usedBytesMethod.setAccessible(true);
+            } catch (NoSuchMethodException e) {
+                LOG.warn("Could not instantiate queue", e);
+                throw new RuntimeException(e);
+            }
+
+            checkFileSize();
+        } else {
+            offHeapQueue = null;
+            usedBytesMethod = null;
+        }
+    }
+

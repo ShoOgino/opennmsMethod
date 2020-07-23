@@ -2,12 +2,11 @@
         final KieServices ks = KieServices.Factory.get();
         kieContainer = ks.newKieContainer(releaseId);
         kieSession = kieContainer.newKieSession(kSessionName);
-
         if (usePseudoClock) {
-            this.clock = kieSession.getSessionClock();
-        } else {
-            this.clock = null;
+            clock = kieSession.getSessionClock();
         }
+        // Add the clock to the session
+        kieSession.insert(kieSession.getSessionClock());
 
         // Optionally restore any facts
         factObjects.forEach(factObject -> kieSession.insert(factObject));
@@ -20,27 +19,58 @@
         releaseIdForContainerUsedByKieSession = releaseId;
 
         // We're started!
-        started = true;
+        started.set(true);
+
+        // Schedule the liveness check
+        livenessTimer = new java.util.Timer();
+        livenessTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    if (kieSession != null) {
+                        final Timer.Context ctx = livenessTimerMetric.time();
+                        final CountDownLatch latch = new CountDownLatch(1);
+                        kieSession.submit(kieSession -> {
+                            latch.countDown();
+                            ctx.close();
+                        });
+                        latch.await();
+                    }
+                } catch (Exception e) {
+                    LOG.error("Exception occurred while performing liveness check.", e);
+                }
+            }
+        }, LIVENESS_CHECK_INTERVAL_MS, LIVENESS_CHECK_INTERVAL_MS);
 
         // Allow the base classes to seed the context before we start ticking
         onStart();
 
         if (!useManualTick) {
-            timer = new Timer();
-            timer.scheduleAtFixedRate(new TimerTask() {
-                @Override
-                public void run() {
-                    lock.lock();
+            thread = new Thread(() -> {
+                fireThreadId.set(Thread.currentThread().getId());
+                while (started.get()) {
                     try {
-                        LOG.debug("Firing rules.");
-                        kieSession.fireAllRules();
+                        LOG.debug("Firing until halt.");
+                        kieSession.fireUntilHalt();
                     } catch (Exception e) {
-                        LOG.error("Error occurred while firing rules.", e);
-                    } finally {
-                        lock.unlock();
+                        // If we're supposed to be stopped, ignore the exception
+                        if (started.get()) {
+                            LOG.error("Error occurred while firing rules. Waiting 30 seconds before starting to fire again.", e);
+                            try {
+                                Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+                            } catch (InterruptedException ex) {
+                                LOG.warn("Interrupted while waiting to start firing rules again. Exiting thread.");
+                                return;
+                            }
+                        } else {
+                            LOG.warn("Encountered exception while firing rules, but the engine is stopped. Exiting thread.", e);
+                            return;
+                        }
                     }
                 }
-            }, TimeUnit.SECONDS.toMillis(1), TimeUnit.SECONDS.toMillis(1));
+            });
+            thread.setName("DroolsSession-" + kSessionName);
+            thread.start();
         }
     }
 

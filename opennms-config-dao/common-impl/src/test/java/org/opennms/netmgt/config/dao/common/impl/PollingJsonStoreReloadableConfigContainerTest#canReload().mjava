@@ -1,0 +1,35 @@
+    @Test
+    public void canReload() throws IOException {
+        ReloadableConfigContainer<TestEntity> container =
+                new PollingJsonStoreReloadableConfigContainer<>(jsonStore, key, context, TestEntity.class, 10000,
+                        Retry.of("retryReloading", RetryConfig.custom()
+                                .maxAttempts(60)
+                                .waitDuration(Duration.ofSeconds(5))
+                                .build()));
+
+        TestEntity testEntity = new TestEntity();
+        testEntity.setTestValues(Collections.singletonList("test"));
+        String mappedJson = mapper.writeValueAsString(testEntity);
+
+        when(jsonStore.getLastUpdated(key, context)).thenReturn(OptionalLong.of(1));
+        when(jsonStore.get(key, context)).thenReturn(Optional.of(mappedJson));
+
+        // The container and the Json store should be in sync at this point
+        TestEntity fromJsonStore = container.getConfig();
+        assertThat(testEntity, equalTo(fromJsonStore));
+
+        testEntity.setTestValues(Collections.singletonList("tubes"));
+        mappedJson = mapper.writeValueAsString(testEntity);
+        when(jsonStore.getLastUpdated(key, context)).thenReturn(OptionalLong.of(System.currentTimeMillis() + 1));
+        when(jsonStore.get(key, context)).thenReturn(Optional.of(mappedJson));
+
+        // Now the container shouldn't be in sync since the poll interval will not have been exceeded
+        fromJsonStore = container.getConfig();
+        assertThat(testEntity, not(equalTo(fromJsonStore)));
+
+        // Since we do an explicit reload, the container should now be in sync with the json store again
+        container.reload();
+        fromJsonStore = container.getConfig();
+        assertThat(testEntity, equalTo(fromJsonStore));
+    }
+
