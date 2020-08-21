@@ -1,0 +1,58 @@
+    @Override
+    public Map<Integer, Map<InetAddress, Set<String>>> getNodeIPAddressServiceMap(String rule) throws FilterParseException {
+        final Map<Integer, Map<InetAddress, Set<String>>> nodeIpServices = new TreeMap<>();
+        String sqlString;
+
+        LOG.debug("Filter.getNodeIPAddressServiceMap({})", rule);
+
+        // get the database connection
+        Connection conn = null;
+        final DBUtils d = new DBUtils(getClass());
+        try {
+            conn = getDataSource().getConnection();
+            d.watch(conn);
+
+            // parse the rule and get the sql select statement
+            sqlString = getNodeIPServiceMappingStatement(rule);
+            LOG.debug("Filter.getNodeIPAddressServiceMap({}): SQL statement: {}", rule, sqlString);
+
+            // execute query
+            final Statement stmt = conn.createStatement();
+            d.watch(stmt);
+            final ResultSet rset = stmt.executeQuery(sqlString);
+            d.watch(rset);
+
+            // fill up the array list if the result set has values
+            if (rset != null) {
+                // Iterate through the result and build the array list
+                while (rset.next()) {
+                    final Integer nodeId = rset.getInt(1);
+                    final InetAddress ipaddr = addr(rset.getString(2));
+                    final String serviceName = rset.getString(3);
+                    if (ipaddr == null || serviceName == null) {
+                        continue;
+                    }
+                    Map<InetAddress, Set<String>> ifServices = nodeIpServices.computeIfAbsent(nodeId, key -> new TreeMap<>(new InetAddressComparator()));
+                    ifServices.computeIfAbsent(ipaddr, key -> new TreeSet<>()).add(serviceName);
+                }
+            }
+
+        } catch (final FilterParseException e) {
+            LOG.warn("Filter Parse Exception occurred getting IP Service List.", e);
+            throw new FilterParseException("Filter Parse Exception occurred getting IP Service List: " + e.getLocalizedMessage(), e);
+        } catch (final SQLException e) {
+            LOG.warn("SQL Exception occurred getting IP Service List.", e);
+            throw new FilterParseException("SQL Exception occurred getting IP Service List: " + e.getLocalizedMessage(), e);
+        } catch (final RuntimeException e) {
+            LOG.error("Unexpected exception getting database connection.", e);
+            throw e;
+        } catch (final Error e) {
+            LOG.error("Unexpected exception getting database connection.", e);
+            throw e;
+        } finally {
+            d.cleanUp();
+        }
+
+        return nodeIpServices;
+    }
+
