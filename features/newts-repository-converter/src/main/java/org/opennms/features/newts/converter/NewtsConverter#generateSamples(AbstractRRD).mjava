@@ -1,0 +1,46 @@
+    public static SortedMap<Long, List<Double>> generateSamples(final AbstractRRD rrd) {
+        // When having pdpPerRow = 1, the correlation function does not change the generated samples as the correlation
+        // functions are reflexive wen applied to a single sample - `sample == cf([sample])` holds for all possible cf.
+        // Therefore we use RRA with pdpPerRow = 1 which covers the longest time range regardless of its correlation
+        // function. To fill up remaining samples, we only use RRA with AVERAGE correlation function.
+        final NavigableSet<AbstractRRA> rras = Stream.concat(rrd.getRras()
+                                                                .stream()
+                                                                .filter(rra -> rra.getPdpPerRow() == 1L)
+                                                                .max(Comparator.comparingInt(rra -> rra.getRows().size()))
+                                                                .map(Stream::of)
+                                                                .orElseGet(Stream::empty),
+                                                             rrd.getRras()
+                                                                .stream()
+                                                                .filter(AbstractRRA::hasAverageAsCF))
+                                                     .collect(Collectors.toCollection(() -> new TreeSet<>(Comparator.comparing(AbstractRRA::getPdpPerRow))));
+
+        final SortedMap<Long, List<Double>> collected = new TreeMap<>();
+
+        for (final AbstractRRA rra : rras) {
+            NavigableMap<Long, List<Double>> samples = generateSamples(rrd, rra);
+
+            final AbstractRRA lowerRra = rras.lower(rra);
+            if (lowerRra != null) {
+                final long lowerRraStart = rrd.getLastUpdate() - lowerRra.getPdpPerRow() * rrd.getStep() * lowerRra.getRows().size();
+                final long rraStep = rra.getPdpPerRow() * rrd.getStep();
+                samples = samples.headMap((int) Math.ceil(((double) lowerRraStart) / ((double) rraStep)) * rraStep, false);
+            }
+
+            if (samples.isEmpty()) {
+                // The whole timespan of this RRA is covered by an RRA with an higher resolution - so there is nothing
+                // to add from this RRA
+                continue;
+            }
+
+            final AbstractRRA higherRra = rras.higher(rra);
+            if (higherRra != null) {
+                final long higherRraStep = higherRra.getPdpPerRow() * rrd.getStep();
+                samples = samples.tailMap((int) Math.ceil(((double) samples.firstKey()) / ((double) higherRraStep)) * higherRraStep, true);
+            }
+
+            collected.putAll(samples);
+        }
+
+        return collected;
+    }
+

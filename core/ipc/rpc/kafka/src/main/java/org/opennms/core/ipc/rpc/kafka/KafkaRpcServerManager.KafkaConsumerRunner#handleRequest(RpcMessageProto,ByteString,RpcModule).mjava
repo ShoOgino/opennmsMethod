@@ -9,6 +9,8 @@
             setTagsOnMinion(rpcRequestProto, request, minionSpan);
             // Modules may run the execution in their own thread pool.
             CompletableFuture<RpcResponse> future = module.execute(request);
+            final Meter requestSentMeter = getMetrics().meter(MetricRegistry.name(module.getId(), RPC_REQUESTS_RECEIVED));
+            requestSentMeter.mark();
             future.whenComplete((res, ex) -> {
                 final RpcResponse response;
                 if (ex != null) {
@@ -17,12 +19,15 @@
                     response = module.createResponseWithException(ex);
                     minionSpan.log(ex.getMessage());
                     minionSpan.setTag(TAG_RPC_FAILED, "true");
+                    Meter failedMeter = getMetrics().meter(MetricRegistry.name(module.getId(), RPC_FAILED));
+                    failedMeter.mark();
                 } else {
                     // No exception occurred, use the given response
                     response = res;
                 }
                 // Finish minion Span
                 minionSpan.finish();
+                uncheckBulkhead();
                 sendResponse(rpcRequestProto.getRpcId(), response, module);
             });
         }

@@ -1,0 +1,28 @@
+    @Test(timeout = 60000)
+    public void testBulkAheadPatternForMinion() {
+        assertEquals(500, getKafkaRpcServer().getBulkhead().getMetrics().getMaxAllowedConcurrentCalls());
+        assertEquals(500, getKafkaRpcServer().getBulkhead().getMetrics().getAvailableConcurrentCalls());
+        EchoRequest request = new EchoRequest("Kafka-RPC");
+        request.setId(System.currentTimeMillis());
+        request.setLocation(REMOTE_LOCATION_NAME);
+        request.setDelay(5000L);
+        count.set(0);
+        // Send 1000 requests.
+        int maxRequests = 1000;
+        for (int i = 0; i < maxRequests; i++) {
+            sendRequestAndVerifyResponse(request, 0);
+        }
+        await().atMost(5, TimeUnit.SECONDS).until(() -> getKafkaRpcServer().getBulkhead().getMetrics().getAvailableConcurrentCalls(), is(0));
+        Optional<Map.Entry<String, Gauge>> activeRpcThreads = getKafkaRpcServer().getMetrics().getGauges().entrySet().stream().filter(entry -> entry.getKey().contains(ACTIVE_RPC_REQUESTS)).findFirst();
+        assertTrue(activeRpcThreads.isPresent());
+        assertThat((Integer)activeRpcThreads.get().getValue().getValue(), greaterThanOrEqualTo(500));
+        Optional<Map.Entry<String, Gauge>> availableConcurrentCalls = getKafkaRpcServer().getMetrics().getGauges().entrySet().stream().filter(entry -> entry.getKey().contains(AVAILABLE_CONCURRENT_CALLS)).findFirst();
+        assertTrue(availableConcurrentCalls.isPresent());
+        assertThat(availableConcurrentCalls.get().getValue().getValue(), equalTo(0));
+        await().atMost(45, TimeUnit.SECONDS).untilAtomic(count, equalTo(maxRequests));
+        assertThat(getKafkaRpcServer().getBulkhead().getMetrics().getAvailableConcurrentCalls(), equalTo(500));
+        activeRpcThreads = getKafkaRpcServer().getMetrics().getGauges().entrySet().stream().filter(entry -> entry.getKey().contains(ACTIVE_RPC_REQUESTS)).findFirst();
+        assertTrue(activeRpcThreads.isPresent());
+        assertThat(activeRpcThreads.get().getValue().getValue(), equalTo(0));
+    }
+

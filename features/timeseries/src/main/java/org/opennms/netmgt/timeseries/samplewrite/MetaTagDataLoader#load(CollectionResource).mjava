@@ -1,0 +1,42 @@
+    public Map<String, String> load(final CollectionResource resource) {
+        return sessionUtils.withReadOnlyTransaction(() -> {
+
+            final Map<String, String> tags = new HashMap<>();
+            List<Scope> scopes = new ArrayList<>();
+
+            // node related scopes
+            String nodeCriteria = getNodeCriteriaFromResource(resource);
+            Optional<OnmsNode> nodeOptional = getNode(nodeCriteria);
+            if(nodeOptional.isPresent()) {
+                OnmsNode node = nodeOptional.get();
+                scopes.add(this.entityScopeProvider.getScopeForNode(node.getId()));
+                if (resource.getResourceTypeName().equals(CollectionResource.RESOURCE_TYPE_IF)) {
+                    // We expect #getInstance to return the ifIndex for interface-level resources
+                    try {
+                        int ifIndex = Integer.parseInt(resource.getInstance());
+                        scopes.add(this.entityScopeProvider.getScopeForInterfaceByIfIndex(node.getId(), ifIndex));
+                    } catch(NumberFormatException nfe) {
+                        // pass
+                    }
+                }
+                // We cannot retrieve service meta-data - resource time resources contain the IP address and service name, but not the node
+            }
+
+            // create tags for scopes
+            Scope scope = new FallbackScope(scopes);
+            Map<String, String> configuredMetaTags = this.config.getConfiguredMetaTags();
+            for(Map.Entry<String, String> entry: configuredMetaTags.entrySet()) {
+                final String value = Interpolator.interpolate(entry.getValue(), scope);
+                // Ignore tags with empty values
+                if (Strings.isNullOrEmpty(value)) {
+                    continue;
+                }
+                tags.put(entry.getKey(), value);
+            }
+
+            // create tags for categories
+            nodeOptional.ifPresent(onmsNode -> mapCategories(tags, onmsNode));
+            return tags;
+        });
+    }
+

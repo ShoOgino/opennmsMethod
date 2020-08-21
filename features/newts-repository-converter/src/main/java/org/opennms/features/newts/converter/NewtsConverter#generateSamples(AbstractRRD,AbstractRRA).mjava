@@ -1,0 +1,64 @@
+    public static NavigableMap<Long, List<Double>> generateSamples(final AbstractRRD rrd, final AbstractRRA rra) {
+        final long step = rra.getPdpPerRow() * rrd.getStep();
+        final long start = rrd.getStartTimestamp(rra);
+        final long end = rrd.getEndTimestamp(rra);
+
+        // Initialize Values Map
+        final NavigableMap<Long, List<Double>> valuesMap = new TreeMap<>();
+        for (long ts = start; ts <= end; ts += step) {
+            final List<Double> values = new ArrayList<>();
+            for (int i = 0; i < rrd.getDataSources().size(); i++) {
+                values.add(Double.NaN);
+            }
+            valuesMap.put(ts, values);
+        }
+
+        // Initialize Last Values
+        final List<Double> lastValues = new ArrayList<>();
+        for (final AbstractDS ds : rrd.getDataSources()) {
+            final double v = ds.getLastDs() == null ? 0.0 : ds.getLastDs();
+            lastValues.add(v - v % step);
+        }
+
+        // Set Last-Value for Counters
+        for (int i = 0; i < rrd.getDataSources().size(); i++) {
+            if (rrd.getDataSource(i).isCounter()) {
+                valuesMap.get(end).set(i, lastValues.get(i));
+            }
+        }
+
+        // Process
+        // Counters must be processed in reverse order (from latest to oldest) in order to recreate the counter raw values
+        // The first sample is processed separated because the lastValues must be updated after adding each sample.
+        long ts = end - step;
+        for (int j = rra.getRows().size() - 1; j >= 0; j--) {
+            final Row row = rra.getRows().get(j);
+
+            for (int i = 0; i < rrd.getDataSources().size(); i++) {
+                if (rrd.getDataSource(i).isCounter()) {
+                    if (j > 0) {
+                        final Double last = lastValues.get(i);
+                        final Double current = row.getValue(i).isNaN() ? 0 : row.getValue(i);
+
+                        Double value = last - (current * step);
+                        if (value < 0) { // Counter-Wrap emulation
+                            value += Math.pow(2, 64);
+                        }
+                        lastValues.set(i, value);
+                        if (!row.getValue(i).isNaN()) {
+                            valuesMap.get(ts).set(i, value);
+                        }
+                    }
+                } else {
+                    if (!row.getValue(i).isNaN()) {
+                        valuesMap.get(ts + step).set(i, row.getValue(i));
+                    }
+                }
+            }
+
+            ts -= step;
+        }
+
+        return valuesMap;
+    }
+

@@ -1,0 +1,28 @@
+    private void startStreamingFor(ConnectorConfig connectorConfig, PackageConfig packageConfig, ServiceRef serviceRef) {
+        synchronized (connectorsByKey) {
+            final ConnectorKey key = toKey(connectorConfig, packageConfig, serviceRef);
+            if (connectorsByKey.containsKey(key)) {
+                LOG.debug("Connector already exists. Ignoring.");
+            }
+
+            // Flatten the parameters to a map
+            Map<String,String> parmMap = packageConfig.getParameters().stream()
+                    .collect(Collectors.toMap(
+                            Parameter::getKey,
+                            Parameter::getValue
+                    ));
+            // Interpolate meta-data in parameter values
+            parmMap = Interpolator.interpolateStrings(parmMap, new FallbackScope(
+                    entityScopeProvider.getScopeForNode(serviceRef.getNodeId()),
+                    entityScopeProvider.getScopeForInterface(serviceRef.getNodeId(), InetAddressUtils.str(serviceRef.getIpAddress())),
+                    entityScopeProvider.getScopeForService(serviceRef.getNodeId(), serviceRef.getIpAddress(), serviceRef.getServiceName())
+            ));
+
+            // Create a new connector
+            LOG.debug("Starting connector for: {}", key);
+            final Connector connector = telemetryRegistry.getConnector(connectorConfig);
+            connectorsByKey.put(key, connector);
+            connector.stream(serviceRef.getNodeId(), serviceRef.getIpAddress(), parmMap);
+        }
+    }
+

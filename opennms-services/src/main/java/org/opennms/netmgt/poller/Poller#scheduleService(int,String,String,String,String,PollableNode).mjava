@@ -1,0 +1,58 @@
+    /**
+     * <p>scheduleService</p>
+     * @param nodeId a int.
+     * @param nodeLabel a {@link String} object.
+     * @param nodeLocation a {@link String} object.
+     * @param ipAddr a {@link String} object.
+     * @param svcName a {@link String} object.
+     * @param pollableNode a {@link PollableNode} object
+     */
+    public void scheduleService(final int nodeId, final String nodeLabel, final String nodeLocation, final String ipAddr, final String svcName, PollableNode pollableNode) {
+        final String normalizedAddress = InetAddressUtils.normalize(ipAddr);
+        try {
+            /*
+             * Do this here so that we can use the treeLock for this node as we
+             * add its service and schedule it
+             */
+            PollableNode node;
+            synchronized (getNetwork()) {
+                node = getNetwork().getNode(nodeId);
+                if (node == null) {
+                    node = getNetwork().createNode(nodeId, nodeLabel, nodeLocation);
+                    // In case of module reload, all existing PollableNodes gets deleted and re-created.
+                    // It is necessary to retrieve the previous state of node and reset the change of status.
+                    // Otherwise this may produce duplicate node down events, see NMS-12681
+                    if(pollableNode != null) {
+                        node.updateStatus(pollableNode.getStatus());
+                        node.setCause(pollableNode.getCause());
+                        node.resetStatusChanged();
+                    }
+                }
+            }
+
+            final PollableNode svcNode = node;
+            final Runnable r = new Runnable() {
+                @Override
+                public void run() {
+                    m_transactionTemplate.execute(new TransactionCallbackWithoutResult() {
+
+                        @Override
+                        protected void doInTransactionWithoutResult(TransactionStatus arg0) {
+                            final OnmsMonitoredService service = m_monitoredServiceDao.get(nodeId, InetAddressUtils.addr(ipAddr), svcName);
+                            if (scheduleService(service)) {
+                                svcNode.recalculateStatus();
+                                svcNode.processStatusChange(new Date());
+                            } else {
+                                LOG.warn("Attempt to schedule service {}/{}/{} found no active service", nodeId, normalizedAddress, svcName);
+                            }
+                        }
+                    });
+                }
+            };
+            node.withTreeLock(r);
+
+        } catch (final Throwable e) {
+            LOG.error("Unable to schedule service {}/{}/{}", nodeId, normalizedAddress, svcName);
+        }
+    }
+

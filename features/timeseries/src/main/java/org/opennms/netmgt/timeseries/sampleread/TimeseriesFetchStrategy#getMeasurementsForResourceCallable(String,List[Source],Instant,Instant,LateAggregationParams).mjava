@@ -1,0 +1,47 @@
+    private Map<Source, List<Sample>> getMeasurementsForResourceCallable(final String resourceId, final List<Source> listOfSources, final Instant start, final Instant end, final LateAggregationParams lag) throws StorageException {
+
+        Map<Source, List<Sample>> allSamples = new HashMap<>(listOfSources.size());
+
+        // get results for all sources
+        for (Source source : listOfSources) {
+            // Use the datasource as the metric name if set, otherwise use the name of the attribute
+            final String metricName = source.getDataSource() != null ? source.getDataSource() : source.getAttribute();
+            final Aggregation aggregation = toAggregation(source.getAggregation());
+            final boolean shouldAggregateNatively = storageManager.get().supportsAggregation(aggregation);
+
+            final ImmutableMetric metric = ImmutableMetric.builder()
+                    .intrinsicTag(IntrinsicTagNames.resourceId, resourceId)
+                    .intrinsicTag(IntrinsicTagNames.name, metricName)
+                    .build();
+
+            Aggregation aggregationToUse = shouldAggregateNatively ? aggregation : Aggregation.NONE;
+            TimeSeriesFetchRequest request = ImmutableTimeSeriesFetchRequest.builder()
+                    .metric(metric)
+                    .start(start)
+                    .end(end)
+                    .step(Duration.ofMillis(lag.getStep()))
+                    .aggregation(aggregationToUse)
+                    .build();
+
+            List<Sample> samples;
+            try (Timer.Context context = sampleReadTsTimer.time()) {
+                LOG.debug("Querying TimeseriesStorage for resource id {} with request: {}", resourceId, request);
+                samples = storageManager.get().getTimeseries(request);
+            }
+            // aggregate if timeseries implementation didn't do it natively
+            if (!shouldAggregateNatively) {
+                final List<Source> currentSources = Collections.singletonList(source);
+                samples = NewtsLikeSampleAggregator.builder()
+                        .resource(resourceId)
+                        .start(start)
+                        .end(end)
+                        .metric(metric)
+                        .currentSources(currentSources)
+                        .lag(lag)
+                        .build().process(samplesToNewtsRowIterator(samples));
+            }
+            allSamples.put(source, samples);
+        }
+        return allSamples;
+    }
+

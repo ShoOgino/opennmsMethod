@@ -1,0 +1,108 @@
+    protected static CollectionSet toCollectionSet(CollectionAgent agent, PrometheusCollectionRequest request, List<Metric> metrics) {
+        final CollectionSetBuilder builder = new CollectionSetBuilder(agent);
+        
+        for (Group group : request.getGroups()) {
+            // First, we find the metrics that belong to this group
+            final List<Metric> metricsForGroup = filterMetrics(group.getFilterExp(), metrics);
+            if (metricsForGroup.isEmpty()) {
+                // Don't bother continuing if we have no metrics
+                LOG.debug("No metrics found in group named '{}' on agent {}.", group.getName(), agent);
+                continue;
+            }
+
+            // Next, group the metrics by instance
+            final Map<String, List<Metric>> metricsByInstance = groupMetrics(group, metricsForGroup);
+
+            // Build the resource mapper
+            final NodeLevelResource nodeLevelResource = new NodeLevelResource(agent.getNodeId());
+            Function<String, Resource> resourceMapper = (instance) -> nodeLevelResource;
+            if (!"node".equalsIgnoreCase(group.getResourceType())) {
+                resourceMapper = (instance) -> {
+                    final String sanitizedInstance = GenericTypeResource.sanitizeInstanceStrict(instance);
+                    return new DeferredGenericTypeResource(nodeLevelResource, group.getResourceType(), sanitizedInstance);
+                };
+            }
+
+            // Process the metrics by instance
+            for (Entry<String, List<Metric>> entry : metricsByInstance.entrySet()) {
+                final Resource resource = resourceMapper.apply(entry.getKey());
+
+                // First, process the numeric attributes
+                for (NumericAttribute attribute : group.getNumericAttribute()) {
+                    // Filter
+                    final List<Metric> metricsForAttribute = filterMetrics(attribute.getFilterExp(), entry.getValue());
+
+                    ExpressionParser parser = new SpelExpressionParser();
+                    Expression exp = parser.parseExpression(attribute.getAliasExp());
+                    Function<Metric, String> attributeNameMapper = (metric) -> {
+                        StandardEvaluationContext context = new StandardEvaluationContext(metric);
+                        String name = exp.getValue(context, String.class);
+                        if (attribute.isCompressAlias()) {
+                            name = CamelCaseCompressor.compress(name, RRD_DS_MAX_SIZE);
+                        }
+                        return name;
+                    };
+                    Function<AttributeType, AttributeType> attributeTypeMapper = (knownType) -> {
+                        // Use the configured type if set
+                        if (attribute.getType() != null) {
+                            return attribute.getType();
+                        }
+                        // If none set, use the given type
+                        return knownType;
+                    };
+
+                    for (Metric metric : metricsForAttribute) {
+                        final String attributeName = attributeNameMapper.apply(metric);
+                        if (attributeName == null) {
+                            LOG.info("Skipping metric with null attribute name: {}", metric);
+                            continue;
+                        }
+
+                        metric.visit(new MetricVisitor() {
+                            @Override
+                            public void visitCounter(Counter counter) {
+                                builder.withNumericAttribute(resource, group.getName(), attributeName, counter.getValue(), attributeTypeMapper.apply(AttributeType.COUNTER));
+                            }
+
+                            @Override
+                            public void visitGauge(Gauge gauge) {
+                                builder.withNumericAttribute(resource, group.getName(), attributeName, gauge.getValue(), attributeTypeMapper.apply(AttributeType.GAUGE));
+                            }
+
+                            @Override
+                            public void visitHistogram(Histogram histogram) {
+                                // pass
+                            }
+
+                            @Override
+                            public void visitSummary(Summary summary) {
+                                // pass
+                            }
+
+                            @Override
+                            public void visitTextSample(TextSample textSample) {
+                                // pass
+                            }
+                        });
+                    }
+                }
+
+                // And next, the process the string attributes
+                for (StringAttribute attribute : group.getStringAttribute()) {
+                    ExpressionParser parser = new SpelExpressionParser();
+                    Expression stringAttributeValueExp = parser.parseExpression(attribute.getValueExp());
+                    for (Metric metric : entry.getValue()) {
+                        StandardEvaluationContext context = new StandardEvaluationContext(metric);
+                        String stringValue = stringAttributeValueExp.getValue(context, String.class);
+                        if (stringValue != null) {
+                            builder.withStringAttribute(resource, group.getName(), attribute.getAlias(), stringValue);
+                            // Only process the first match
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return builder.build();
+    }
+
