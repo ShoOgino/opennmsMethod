@@ -1,0 +1,39 @@
+    @Test
+    public void testApplicationChanged() throws Exception {
+        final OnmsMonitoredService node3icmp = this.databasePopulator.getNode3().getPrimaryInterface().getMonitoredServiceByServiceType("ICMP");
+        final OnmsMonitoredService node4icmp = this.databasePopulator.getNode4().getPrimaryInterface().getMonitoredServiceByServiceType("ICMP");
+
+        assertThat(findRemotePolledService(this.node1icmp, "RDU"), is(notNullValue()));
+        assertThat(findRemotePolledService(this.node2icmp, "RDU"), is(notNullValue()));
+        assertThat(findRemotePolledService(node3icmp, "RDU"), is(nullValue()));
+        assertThat(findRemotePolledService(node4icmp, "RDU"), is(nullValue()));
+
+        this.app1.addMonitoredService(node3icmp);
+        node3icmp.addApplication(this.app1);
+
+        this.app1.removeMonitoredService(this.node1icmp);
+        this.node1icmp.removeApplication(this.app1);
+
+        this.databasePopulator.getTransactionTemplate().execute(tx -> {
+            this.applicationDao.saveOrUpdate(this.app1);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(this.node1icmp);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(this.node2icmp);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(node3icmp);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(node4icmp);
+
+            this.applicationDao.flush();
+            this.databasePopulator.getMonitoredServiceDao().flush();
+            return null;
+        });
+
+        this.eventIpcManager.sendNowSync(new EventBuilder(EventConstants.APPLICATION_CHANGED_EVENT_UEI, "test")
+                                                 .addParam(PARM_APPLICATION_ID, this.app1.getId())
+                                                 .addParam(PARM_APPLICATION_NAME, this.app1.getName())
+                                                 .getEvent());
+
+        assertThat(findRemotePolledService(this.node1icmp, "RDU"), is(nullValue()));
+        assertThat(findRemotePolledService(this.node2icmp, "RDU"), is(notNullValue()));
+        assertThat(findRemotePolledService(node3icmp, "RDU"), is(notNullValue()));
+        assertThat(findRemotePolledService(node4icmp, "RDU"), is(nullValue()));
+    }
+

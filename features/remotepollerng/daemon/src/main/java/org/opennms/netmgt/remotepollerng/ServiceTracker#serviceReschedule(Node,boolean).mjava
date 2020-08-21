@@ -1,0 +1,32 @@
+    private void serviceReschedule(final Node node,
+                                   final boolean rescheduleExisting) {
+        final Set<Service> databaseServices = Sets.newHashSet(this.queryManager.findServicesByNode(node));
+        final Set<Service> trackedServices = this.network.findByNode(node).map(ServiceEntry::getService).collect(Collectors.toSet());
+
+        // Remove the services being tracked but not in database
+        for (final Service service : Sets.difference(trackedServices, databaseServices)) {
+            this.network.remove(service)
+                        .ifPresent(this.deleteService);
+        }
+
+        // Remove remaining services if existing services should be rescheduled
+        if (rescheduleExisting) {
+            for (final Service service : trackedServices) {
+                this.network.remove(service)
+                            .ifPresent(this.deleteService);
+            }
+        }
+
+        // Add all services from database back to scheduling
+        for (final Service service : databaseServices) {
+            final Optional<E> element = this.filterService.apply(service);
+            if (!element.isPresent()) { // TODO fooker: this smells
+                continue;
+            }
+
+            if (this.network.add(service, element.get())) {
+                this.addService.accept(new ServiceEntry<>(service, element.get())); // TODO fooker: this smells
+            }
+        }
+    }
+
