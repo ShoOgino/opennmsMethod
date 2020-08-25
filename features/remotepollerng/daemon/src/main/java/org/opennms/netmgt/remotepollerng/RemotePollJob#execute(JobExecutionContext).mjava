@@ -4,10 +4,13 @@
 
         final RemotePolledService svc = Objects.requireNonNull((RemotePolledService) dataMap.get(POLLED_SERVICE), "svc required");
         final RemotePollerd backend = Objects.requireNonNull((RemotePollerd) dataMap.get(REMOTE_POLLER_BACKEND), "backend required");
+        final Tracer tracer = Objects.requireNonNull((Tracer) dataMap.get(TRACER), "tracer required");
 
         LOG.debug("Poll triggered for {}", svc);
 
-        // TODO: Use distributed tracing here to add more context around span
+        final Span span = tracer.buildSpan(RemotePollerd.NAME).start();
+        span.setTag(TracerConstants.TAG_LOCATION, svc.getPerspectiveLocation());
+        span.setTag(TracerConstants.TAG_THREAD, Thread.currentThread().getName());
 
         // Issue the call and process the results asynchronously
         backend.getLocationAwarePollerClient().poll()
@@ -30,6 +33,9 @@
                         // TODO fooker: apply thresholding here?
 
                     } else {
+                        span.setTag(TAG_RPC_FAILED, "true");
+                        span.log(ex.getMessage());
+
                         RpcExceptionUtils.handleException(ex, new RpcExceptionHandler<Void>() {
                             @Override
                             public Void onInterrupted(final Throwable t) {
@@ -56,6 +62,8 @@
                             }
                         });
                     }
+
+                    span.finish();
                 });
     }
 
