@@ -1,0 +1,26 @@
+    @Test
+    public void canWatchFilter() throws IOException, InterruptedException {
+        Closeable session = filterWatcher.watch("catincProduction", this::handleFilterResults);
+
+        assertThat(numCallbacks, equalTo(1));
+        assertThat(lastFilterResults.getServicesNamed("any"), hasSize(0));
+
+        // Sleep for a while
+        Thread.sleep(5 * filterWatcher.getRefreshRateLimitMs());
+
+        // No callbacks should have been made
+        assertThat(numCallbacks, equalTo(1));
+
+        // Mock some new results
+        when(filterDao.getNodeIPAddressServiceMap(any(String.class))).thenReturn(getNodeIPAddressServiceMap(1,1,"ICMP"));
+        // Trigger some event
+        filterWatcher.inventoryChangeEventHandler(ImmutableEvent.newBuilder()
+                .setUei(EventConstants.NODE_CATEGORY_MEMBERSHIP_CHANGED_EVENT_UEI)
+                .setSource("test")
+                .build());
+        // Wait for another callback
+        await().atMost(5, TimeUnit.SECONDS).until(() -> numCallbacks, equalTo(2));
+
+        session.close();
+    }
+
