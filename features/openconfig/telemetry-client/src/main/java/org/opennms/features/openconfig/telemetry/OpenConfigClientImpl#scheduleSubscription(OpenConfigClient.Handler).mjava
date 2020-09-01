@@ -1,0 +1,37 @@
+    private void scheduleSubscription(OpenConfigClient.Handler handler) {
+        if (scheduled.get()) {
+            // Task is already scheduled.
+            return;
+        }
+        scheduled.set(true);
+        // Try at least once.
+        boolean succeeded = trySubscribing(handler);
+        if (succeeded) {
+            scheduled.set(false);
+            return;
+        }
+        // If it's not subscribed, schedule this to run after configured timeout
+        Integer timeout = StringUtils.parseInt(parameters.get("interval"), DEFAULT_INTERVAL_IN_SEC);
+        // When retries is null or <= 0, scheduling will happen indefinitely until it succeeds.
+        Integer retries = StringUtils.parseInt(parameters.get("retries"), null);
+        while (!closed.get()) {
+            ScheduledFuture<Boolean> future = scheduledExecutor.schedule(() -> trySubscribing(handler), timeout, TimeUnit.SECONDS);
+            try {
+                succeeded = future.get();
+                if (succeeded) {
+                    scheduled.set(false);
+                    break;
+                }
+            } catch (InterruptedException | ExecutionException e) {
+                LOG.warn("Exception while scheduling subscription at host `{}` ", InetAddressUtils.str(host), e);
+            }
+            if (retries != null && retries > 0) {
+                retries--;
+                if (retries == 0) {
+                    scheduled.set(false);
+                    break;
+                }
+            }
+        }
+    }
+
