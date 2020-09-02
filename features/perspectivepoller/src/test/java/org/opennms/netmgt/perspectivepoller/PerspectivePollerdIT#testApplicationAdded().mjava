@@ -1,0 +1,36 @@
+    @Test
+    public void testApplicationAdded() throws Exception {
+        final OnmsMonitoredService node3icmp = this.databasePopulator.getNode3().getPrimaryInterface().getMonitoredServiceByServiceType("ICMP");
+        final OnmsMonitoredService node4icmp = this.databasePopulator.getNode4().getPrimaryInterface().getMonitoredServiceByServiceType("ICMP");
+
+        await().atMost(5, TimeUnit.SECONDS).until(() -> findPerspectivePolledService(node3icmp, "RDU"), is(nullValue()));
+        await().atMost(5, TimeUnit.SECONDS).until(() -> findPerspectivePolledService(node4icmp, "RDU"), is(nullValue()));
+
+        final OnmsApplication app = new OnmsApplication();
+        app.setName("App Test");
+        app.addPerspectiveLocation(this.databasePopulator.getLocRDU());
+        app.addMonitoredService(node3icmp);
+        app.addMonitoredService(node4icmp);
+
+        node3icmp.addApplication(app);
+        node4icmp.addApplication(app);
+
+        this.databasePopulator.getTransactionTemplate().execute(tx -> {
+            this.databasePopulator.getApplicationDao().save(app);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(node3icmp);
+            this.databasePopulator.getMonitoredServiceDao().saveOrUpdate(node4icmp);
+
+            this.databasePopulator.getApplicationDao().flush();
+            this.databasePopulator.getMonitoredServiceDao().flush();
+            return null;
+        });
+
+        this.eventIpcManager.sendNowSync(new EventBuilder(EventConstants.APPLICATION_CREATED_EVENT_UEI, "test")
+                                                 .addParam(PARM_APPLICATION_ID, app.getId())
+                                                 .addParam(PARM_APPLICATION_NAME, app.getName())
+                                                 .getEvent());
+
+        await().atMost(5, TimeUnit.SECONDS).until(() -> findPerspectivePolledService(node3icmp, "RDU"), is(notNullValue()));
+        await().atMost(5, TimeUnit.SECONDS).until(() -> findPerspectivePolledService(node4icmp, "RDU"), is(notNullValue()));
+    }
+

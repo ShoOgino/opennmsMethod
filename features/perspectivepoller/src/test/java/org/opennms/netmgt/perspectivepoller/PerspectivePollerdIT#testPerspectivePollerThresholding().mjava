@@ -1,0 +1,34 @@
+    @Test
+    public void testPerspectivePollerThresholding() throws Exception {
+        // this will return 192.168.1.1 for each call for active IPs
+        final FilterDao filterDao = EasyMock.createMock(FilterDao.class);
+        EasyMock.expect(filterDao.getActiveIPAddressList((String) EasyMock.anyObject())).andReturn(Collections.singletonList(addr("192.168.1.1"))).anyTimes();
+        filterDao.flushActiveIpAddressListCache();
+        EasyMock.expectLastCall().anyTimes();
+        FilterDaoFactory.setInstance(filterDao);
+        EasyMock.replay(filterDao);
+
+        // load the thresholds.xml and thresd-configuration.xml configuration
+        this.thresholdingDao.overrideConfig(getClass().getResourceAsStream("/thresholds.xml"));
+        this.threshdDao.overrideConfig(getClass().getResourceAsStream("/threshd-configuration.xml"));
+
+        final Package pkg = PollerConfigFactory.getInstance().getPackage("foo1");
+        final Package.ServiceMatch serviceMatch = pkg.findService("ICMP").get();
+        final ServiceMonitor svcMon = PollerConfigFactory.getInstance().getServiceMonitor("ICMP");
+
+        final PerspectivePolledService perspectivePolledService = findPerspectivePolledService(this.node1icmp, "RDU");
+
+        this.eventIpcManager.getEventAnticipator().anticipateEvent(new EventBuilder(EventConstants.HIGH_THRESHOLD_EVENT_UEI, "PerspectivePollerd")
+                                                                           .setNodeid(this.node1icmp.getNodeId())
+                                                                           .setInterface(this.node1icmp.getIpAddress())
+                                                                           .setService(this.node1icmp.getServiceName())
+                                                                           .setParam("location", this.node1icmp.getIpInterface().getNode().getLocation().getLocationName())
+                                                                           .getEvent());
+
+        final PollStatus pollStatus = PollStatus.available();
+        pollStatus.setProperty(PollStatus.PROPERTY_RESPONSE_TIME, 51);
+        this.perspectivePollerd.persistResponseTimeData(perspectivePolledService, pollStatus);
+
+        this.eventIpcManager.getEventAnticipator().verifyAnticipated();
+    }
+
