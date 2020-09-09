@@ -1,0 +1,49 @@
+    @Override
+    protected void addAdditionalCriteriaOptions(Criteria criteria, Page page, boolean doOrder) {
+
+        // filter out application ids
+        Collection<Integer> applicationIds = criteria.getRestrictions().stream()
+                .filter(r -> r.getType().equals(Restriction.RestrictionType.IN))
+                .map(r-> ((InRestriction)r).getValues())
+                .flatMap(Collection::stream)
+                .map(o-> (Integer)o)
+                .collect(Collectors.toList());
+
+        // remove id restriction since we don't want to see the application itself but its outages
+        Collection<Restriction> restrictionsWithoutIdFilter = criteria.getRestrictions().stream()
+                .filter(r -> !r.getType().equals(Restriction.RestrictionType.IN))
+                .collect(Collectors.toList());
+        criteria.setRestrictions(restrictionsWithoutIdFilter);
+
+        // show only unresolved outages
+        criteria.addRestriction(Restrictions.isNull("ifRegainedService"));
+
+        // show only outages detected by a perspective poller
+        criteria.addRestriction(Restrictions.isNotNull("perspective"));
+
+        // limit to the displayed applications
+        List<OnmsApplication> applications;
+        if(applicationIds.isEmpty()) {
+            applications = Collections.emptyList();
+        } else {
+            Criteria appCriteria = new CriteriaBuilder(OnmsApplication.class).in("id", applicationIds).toCriteria();
+            applications = this.applicationDao.findMatching(appCriteria);
+        }
+        Set<OnmsMonitoredService> services = new HashSet<>();
+        for(OnmsApplication application : applications) {
+            services.addAll(application.getMonitoredServices());
+        }
+        if(services.isEmpty()) {
+            criteria.addRestriction(Restrictions.sql("1=2")); // we don't want to find anything
+        } else {
+            criteria.addRestriction(Restrictions.in("monitoredService", services));
+        }
+
+        // set aliases so that the columns can be found
+        criteria.setAliases(Arrays.asList(
+                new Alias("monitoredService.ipInterface.node", "nodeLabel", Alias.JoinType.LEFT_JOIN),
+                new Alias("monitoredService.ipInterface", "ipAddress", Alias.JoinType.LEFT_JOIN),
+                new Alias("monitoredService.serviceType", "serviceName", Alias.JoinType.LEFT_JOIN),
+                new Alias("perspective", "perspective", Alias.JoinType.LEFT_JOIN)));
+    }
+

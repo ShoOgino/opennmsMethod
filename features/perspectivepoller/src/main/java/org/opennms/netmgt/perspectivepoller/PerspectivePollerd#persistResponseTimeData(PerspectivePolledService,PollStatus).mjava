@@ -1,0 +1,64 @@
+    public void persistResponseTimeData(final PerspectivePolledService polledService, final PollStatus pollStatus) {
+        if (polledService.getRrdRepository() == null) {
+            return;
+        }
+
+        String dsName = getServiceParameter(polledService.getServiceConfig(), "ds-name");
+        if (dsName == null) {
+            dsName = PollStatus.PROPERTY_RESPONSE_TIME;
+        }
+
+        String rrdBaseName = getServiceParameter(polledService.getServiceConfig(), "rrd-base-name");
+        if (rrdBaseName == null) {
+            rrdBaseName = dsName;
+        }
+
+        // Prefer ds-name over "response-time" for primary response-time value
+        final Map<String, Number> properties = Maps.newHashMap(pollStatus.getProperties());
+        if (!properties.containsKey(dsName) && properties.containsKey(PollStatus.PROPERTY_RESPONSE_TIME)) {
+            properties.put(dsName, properties.get(PollStatus.PROPERTY_RESPONSE_TIME));
+            properties.remove(PollStatus.PROPERTY_RESPONSE_TIME);
+        }
+
+        // Build collection agent
+        final CollectionAgentDTO agent = new CollectionAgentDTO();
+        agent.setAddress(polledService.getIpAddress());
+        agent.setForeignId(polledService.getForeignId());
+        agent.setForeignSource(polledService.getForeignSource());
+        agent.setNodeId(polledService.getNodeId());
+        agent.setNodeLabel(polledService.getNodeLabel());
+        agent.setLocationName(polledService.getPerspectiveLocation());
+        agent.setStorageResourcePath(ResourcePath.get(LocationUtils.isDefaultLocationName(polledService.getResidentLocation())
+                                                      ? ResourcePath.get()
+                                                      : ResourcePath.get(ResourcePath.sanitize(polledService.getResidentLocation())),
+                                                      InetAddressUtils.str(polledService.getIpAddress())));
+        agent.setStoreByForeignSource(false);
+
+        // Create collection set from response times as gauges and persist
+        final CollectionSetBuilder collectionSetBuilder = new CollectionSetBuilder(agent);
+        final PerspectiveResponseTimeResource resource = new PerspectiveResponseTimeResource(polledService.getPerspectiveLocation(), InetAddressUtils.str(polledService.getIpAddress()), polledService.getServiceName());
+        for (final Map.Entry<String, Number> e: properties.entrySet()) {
+            final String key = PollStatus.PROPERTY_RESPONSE_TIME.equals(e.getKey())
+                               ? dsName
+                               : e.getKey();
+
+            collectionSetBuilder.withGauge(resource, rrdBaseName, key, e.getValue());
+        }
+
+        final CollectionSetDTO collectionSetDTO = collectionSetBuilder.build();
+
+        collectionSetDTO.visit(this.persisterFactory.createPersister(new ServiceParameters(Collections.emptyMap()),
+                                                                         polledService.getRrdRepository(),
+                                                                         false,
+                                                                         true,
+                                                                         true));
+
+        try {
+            if (polledService.getThresholdingSession() != null) {
+                polledService.getThresholdingSession().accept(collectionSetDTO);
+            }
+        } catch (final Throwable e) {
+            LOG.error("Failed to threshold on {} for {} because of an exception", polledService, dsName, e);
+        }
+    }
+

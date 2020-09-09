@@ -1,0 +1,37 @@
+    @EventHandler(uei = EventConstants.PERSPECTIVE_NODE_REGAINED_SERVICE_UEI)
+    public void handlePerspectiveNodeGainedService(final IEvent e) {
+        if (e.hasNodeid() && e.getInterfaceAddress() != null && e.getService() != null && e.getParm("perspective") != null) {
+            final OnmsEvent onmsEvent = eventDao.get(e.getDbid());
+            final OnmsMonitoredService service = this.monitoredServiceDao.get(onmsEvent.getNodeId(), onmsEvent.getIpAddr(), onmsEvent.getServiceType().getId());
+            final OnmsMonitoringLocation perspective = monitoringLocationDao.get(e.getParm("perspective").getValue().getContent());
+
+            final Criteria criteria = new CriteriaBuilder(OnmsOutage.class)
+                    .eq("perspective", perspective)
+                    .isNull("serviceRegainedEvent")
+                    .isNull("ifRegainedService")
+                    .eq("monitoredService", service).toCriteria();
+
+            final List<OnmsOutage> onmsOutages = outageDao.findMatching(criteria);
+
+            if (onmsOutages.size() == 1) {
+                final OnmsOutage onmsOutage = onmsOutages.get(0);
+                onmsOutage.setIfRegainedService(onmsEvent.getEventCreateTime());
+                onmsOutage.setServiceRegainedEvent(onmsEvent);
+                outageDao.update(onmsOutage);
+
+                final Event outageEvent = new EventBuilder(EventConstants.OUTAGE_RESOLVED_EVENT_UEI, NAME)
+                        .setNodeid(onmsEvent.getNodeId())
+                        .setInterface(onmsEvent.getIpAddr())
+                        .setService(service.getServiceName())
+                        .setTime(onmsEvent.getEventCreateTime())
+                        .setParam("perspective", perspective.getLocationName())
+                        .getEvent();
+                eventForwarder.sendNow(outageEvent);
+            } else {
+                LOG.warn("Found more than one outages for {} event: {}", EventConstants.PERSPECTIVE_NODE_REGAINED_SERVICE_UEI, e);
+            }
+        } else {
+            LOG.warn("Received incomplete {} event: {}", EventConstants.PERSPECTIVE_NODE_REGAINED_SERVICE_UEI, e);
+        }
+    }
+

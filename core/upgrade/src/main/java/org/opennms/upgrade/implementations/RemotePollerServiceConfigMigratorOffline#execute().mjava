@@ -1,0 +1,69 @@
+    @Override
+    public void execute() throws OnmsUpgradeException {
+        try {
+            final ServiceConfiguration currentCfg = JaxbUtils.unmarshal(ServiceConfiguration.class, configFile);
+            boolean skipRemovePollerNgEntryCreation = false;
+            boolean deprecatedServiceEnabled = true;
+
+            log("Current configuration: " + currentCfg.getServices().size() + " services.\n");
+
+            for (int i = currentCfg.getServices().size() - 1; i >= 0; i--) {
+                final Service localSvc = currentCfg.getServices().get(i);
+                final String name = localSvc.getName();
+
+                if (DEPRECATED_REMOTE_POLLER_SERVICENAME.equals(name)) {
+                    // Perhaps the administrator has intentionally disabled it, so PerspectivePoller should only be
+                    // enabled if deprecated RemotePoller was enabled. If no entry was found this value defaults to true.
+                    deprecatedServiceEnabled = localSvc.isEnabled();
+
+                    // remove the entry from the configuration
+                    currentCfg.getServices().remove(i);
+                    log("Removing deprecated '%s' entry\n", DEPRECATED_REMOTE_POLLER_SERVICENAME);
+                }
+
+
+                if (PERSPECTIVE_POLLER_SERVICENAME.equals(name)) {
+                    // if a existing PerspectivePoller entry exists, do not touch it's configuration
+                    skipRemovePollerNgEntryCreation = true;
+                }
+            }
+
+            if (skipRemovePollerNgEntryCreation) {
+                log("A service entry named '%s' already exists.\n", PERSPECTIVE_POLLER_SERVICENAME);
+            } else {
+                final Service service = new Service();
+                service.setEnabled(deprecatedServiceEnabled);
+                service.setName(PERSPECTIVE_POLLER_SERVICENAME);
+                service.setClassName("org.opennms.netmgt.daemon.SimpleSpringContextJmxServiceDaemon");
+                service.getAttributes().add(new Attribute("LoggingPrefix", "java.lang.String", "perspectivepollerd"));
+                service.getAttributes().add(new Attribute("SpringContext", "java.lang.String", "perspectivepollerdContext"));
+                service.setInvokes(Lists.newArrayList(
+                        new Invoke(InvokeAtType.START, 0, "init", Collections.emptyList()),
+                        new Invoke(InvokeAtType.START, 1, "start", Collections.emptyList()),
+                        new Invoke(InvokeAtType.STATUS, 0, "status", Collections.emptyList()),
+                        new Invoke(InvokeAtType.STOP, 0, "stop", Collections.emptyList())
+                ));
+
+                log("Adding new 'OpenNMS:Name=PerspectivePoller' entry\n");
+                currentCfg.addService(service);
+            }
+
+            log("Final configuration: " + currentCfg.getServices().size() + " services.\n");
+
+            final StringWriter sw = new StringWriter();
+            sw.write("<?xml version=\"1.0\"?>\n");
+            sw.write("<!-- NOTE!!!!!!!!!!!!!!!!!!!\n");
+            sw.write("The order in which these services are specified is important - for example, Eventd\n");
+            sw.write("will need to come up last so that none of the event topic subcribers loose any event.\n");
+            sw.write("\nWhen splitting services to run on mutiple VMs, the order of the services should be\n");
+            sw.write("maintained\n");
+            sw.write("-->\n");
+            JaxbUtils.marshal(currentCfg, sw);
+            final FileWriter fw = new FileWriter(configFile);
+            fw.write(sw.toString());
+            fw.close();
+        } catch (Exception e) {
+            throw new OnmsUpgradeException("Can't migrate service-configuration.xml because " + e.getMessage(), e);
+        }
+    }
+

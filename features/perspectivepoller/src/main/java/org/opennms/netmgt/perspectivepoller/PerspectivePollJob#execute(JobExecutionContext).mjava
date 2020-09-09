@@ -1,0 +1,67 @@
+    @Override
+    public void execute(JobExecutionContext context) {
+        final JobDataMap dataMap = context.getJobDetail().getJobDataMap();
+
+        final PerspectivePolledService svc = Objects.requireNonNull((PerspectivePolledService) dataMap.get(SERVICE), "service required");
+        final PerspectivePollerd backend = Objects.requireNonNull((PerspectivePollerd) dataMap.get(BACKEND), "backend required");
+        final Tracer tracer = Objects.requireNonNull((Tracer) dataMap.get(TRACER), "tracer required");
+
+        LOG.debug("Poll triggered for {}", svc);
+
+        final Span span = tracer.buildSpan(PerspectivePollerd.NAME).start();
+        span.setTag(TracerConstants.TAG_LOCATION, svc.getPerspectiveLocation());
+        span.setTag(TracerConstants.TAG_THREAD, Thread.currentThread().getName());
+
+        // Issue the call and process the results asynchronously
+        backend.getLocationAwarePollerClient().poll()
+                .withService(svc.getMonitoredService())
+                .withTimeToLive(svc.getServiceConfig().getInterval())
+                .withMonitor(svc.getServiceMonitor())
+                .withAttributes(createParameterMap(svc.getServiceConfig()))
+                .withPatternVariables(svc.getPatternVariables())
+                .execute()
+                .whenComplete((res, ex) -> {
+                    if (ex == null) {
+                        LOG.debug("Poll for {} completed successfully: {}", svc, res);
+
+                        // Report the result to the backend
+                        backend.reportResult(svc, res.getPollStatus());
+
+                        // Persist the response times from the result
+                        backend.persistResponseTimeData(svc, res.getPollStatus());
+
+                    } else {
+                        span.setTag(TracerConstants.TAG_THREAD, "true");
+                        span.log(ex.getMessage());
+
+                        RpcExceptionUtils.handleException(ex, new RpcExceptionHandler<Void>() {
+                            @Override
+                            public Void onInterrupted(final Throwable t) {
+                                LOG.warn("Interrupted.");
+                                return null;
+                            }
+
+                            @Override
+                            public Void onTimedOut(final Throwable t) {
+                                LOG.warn("RPC timed out.", t);
+                                return null;
+                            }
+
+                            @Override
+                            public Void onRejected(final Throwable t) {
+                                LOG.warn("Rejected call.", t);
+                                return null;
+                            }
+
+                            @Override
+                            public Void onUnknown(final Throwable t) {
+                                LOG.warn("Unknown exception.", t);
+                                return null;
+                            }
+                        });
+                    }
+
+                    span.finish();
+                });
+    }
+
