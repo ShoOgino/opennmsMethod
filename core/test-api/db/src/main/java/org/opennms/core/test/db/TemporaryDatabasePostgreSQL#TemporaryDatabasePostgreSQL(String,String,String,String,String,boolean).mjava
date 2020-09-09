@@ -1,11 +1,36 @@
-    public TemporaryDatabasePostgreSQL(String testDatabase, String driver, String url,
-                             String adminUser, String adminPassword, boolean useExisting) {
+    public TemporaryDatabasePostgreSQL(String testDatabase, String driver, String urlBase,
+            String adminUser, String adminPassword, boolean useExisting) throws TemporaryDatabaseException {
         // Append the current object's hashcode to make this value truly unique
         m_testDatabase = testDatabase != null ? testDatabase : getDatabaseName(this);
         m_driver = driver;
-        m_url = url;
-        m_adminUser = adminUser;
-        m_adminPassword = adminPassword;
+        m_urlBase = urlBase;
         m_useExisting = useExisting;
+
+        m_jdbcTemplate = new JdbcTemplate(this);
+
+        m_migrator.setAdminUser(adminUser);
+        m_migrator.setAdminPassword(adminPassword);
+        m_migrator.setDatabaseUser(adminUser);
+        m_migrator.setDatabasePassword(adminPassword);
+
+        m_migrator.setValidateDatabaseVersion(true);
+        m_migrator.setCreateUser(false);
+        m_migrator.setCreateDatabase(true);
+
+        m_migrator.setApplicationContext(new StaticApplicationContext());
+
+        try {
+            m_dataSource = new SimpleDataSource(m_driver, m_urlBase + getTestDatabase(), m_migrator.getAdminUser(), m_migrator.getAdminPassword());
+            m_adminDataSource = new SimpleDataSource(m_driver, m_urlBase + DEFAULT_ADMIN_USER, m_migrator.getAdminUser(), m_migrator.getAdminPassword());
+            m_xaDataSource = createPgXADataSource(m_urlBase + getTestDatabase(), m_migrator.getAdminUser(), m_migrator.getAdminPassword());
+            m_adminXaDataSource = createPgXADataSource(m_urlBase + DEFAULT_ADMIN_USER, m_migrator.getAdminUser(), m_migrator.getAdminPassword());
+        } catch (final ClassNotFoundException e) {
+            throw new TemporaryDatabaseException("Failed to initialize driver " + m_driver + ": " + e.getMessage(), e);
+        }
+
+        m_migrator.setDataSource(m_dataSource);
+        m_migrator.setAdminDataSource(m_adminDataSource);
+
+        ensureLiquibaseFilesInClassPath();
     }
 

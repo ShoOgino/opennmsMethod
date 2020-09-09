@@ -3,14 +3,46 @@
         try {
             adminConnection = getAdminDataSource().getConnection();
         } catch (final SQLException e) {
-            throw new TemporaryDatabaseException("Failed to get admin connection.", e);
+            throw new TemporaryDatabaseException("Failed to get admin connection: " + e.getMessage(), e);
         }
+
+        String dbSource;
+        String create;
+        if (m_populateSchema) {
+            try {
+                dbSource = getIntegrationTestTemplateDatabaseName();
+            } catch (Throwable e) {
+                throw new TemporaryDatabaseException("Failed to get integration test template database name: " + e.getMessage(), e);
+            }
+            create = "CREATE DATABASE " + getTestDatabase() + " WITH TEMPLATE " + dbSource + " OWNER opennms";
+            LOG.debug("Populating schema from template database.");
+        } else {
+            dbSource = "template1";
+            create = "CREATE DATABASE " + getTestDatabase() + " WITH ENCODING='UNICODE'";
+            LOG.debug("Populating schema.");
+        }
+
         Statement st = null;
         try {
             st = adminConnection.createStatement();
-            st.execute("CREATE DATABASE " + getTestDatabase() + " WITH ENCODING='UNICODE'");
-        } catch (final SQLException e) {
-            throw new TemporaryDatabaseException("Failed to create Unicode test database " + getTestDatabase(), e);
+            st.execute(create);
+            registerDestruction();
+        } catch (final Throwable e) {
+            try {
+                st = adminConnection.createStatement();
+                String query = "SELECT pid,usename,query,usename FROM pg_stat_activity where datname = '" + dbSource + "'";
+                ResultSet rs = st.executeQuery(query);
+                System.err.println("*** database activity immediately after exception '" + e + "' ***");
+                System.err.println("*** query: '" + query + "' ***");
+                while (rs.next()) {
+                    System.err.println("pg_stat_activity: " + rs.getInt(1) + ", " + rs.getString(2) + ", " + rs.getString(3) + ", " + rs.getString(4));
+                }
+                System.err.println("*** end database activity ***");
+            } catch (SQLException sqlE) {
+                System.err.println("Got an exception while trying to run pg_stat_activity query after a previous exception: " + sqlE);
+                sqlE.printStackTrace();
+            }
+            throw new TemporaryDatabaseException("Failed to create test database " + getTestDatabase() + ": " + e, e);
         } finally {
             SQLException failed = null;
             if (st != null) {
@@ -23,14 +55,23 @@
             try {
                 adminConnection.close();
             } catch (final SQLException e) {
-                if (failed == null) failed = e;
+                if (failed == null) {
+                    failed = e;
+                }
             }
             if (failed != null) {
-                throw new TemporaryDatabaseException("Failed while cleaning up database resources.", failed);
+                throw new TemporaryDatabaseException("Failed while cleaning up database resources: " + failed, failed);
             }
         }
 
-        setupShutdownHook();
-        s_toDestroy.add(this);
+        if (m_plpgsqlIplike) {
+            try {
+                m_migrator.dropExistingIpLike();
+                m_migrator.createLangPlPgsql();
+                m_migrator.setupPlPgsqlIplike();
+            } catch (MigrationException e) {
+                throw new TemporaryDatabaseException("Failed to load PL/pgSQL iplike function: " + e.getMessage(), e);
+            }
+        }
     }
 

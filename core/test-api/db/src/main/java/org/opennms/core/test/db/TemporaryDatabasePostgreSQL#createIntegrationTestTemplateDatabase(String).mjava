@@ -1,0 +1,42 @@
+    protected void createIntegrationTestTemplateDatabase(String dbName)
+            throws ClassNotFoundException, MigrationException, Throwable, SQLException {
+        m_migrator.setDatabaseName(dbName);
+
+        /*
+        // if it's hashed based on liquibase, shouldn't we not need to drop it?
+        if (m_migrator.databaseExists()) {
+            m_migrator.dropDatabase();
+        }
+        */
+
+        try {
+            // We temporarily use a new data source for the template database with the Migrator
+            DataSource templateDataSource;
+            try {
+                templateDataSource = new SimpleDataSource(m_driver, m_urlBase + m_migrator.getDatabaseName(), m_migrator.getAdminUser(), m_migrator.getAdminPassword());
+            } catch (final ClassNotFoundException e) {
+                throw new TemporaryDatabaseException("Failed to initialize driver " + m_driver + ": " + e.getMessage(), e);
+            }
+
+            m_migrator.setDataSource(templateDataSource);
+
+            m_migrator.setupDatabase(true, true, true, true);
+
+            Integer count = new JdbcTemplate(templateDataSource).queryForObject("SELECT count(id) FROM databasechangelog WHERE id = '" + SAMPLE_CHANGELOG_ID + "'", Integer.class);
+            assertTrue("couldn't find a sample databasechangelog entry after setting up template database. Looking for ID " + SAMPLE_CHANGELOG_ID, count == 1);
+        } catch (Throwable t) {
+            if (m_migrator.databaseExists()) {
+                try {
+                    LOG.warn("Got an exception while setting up database, so removing");
+                    m_migrator.dropDatabase();
+                } catch (MigrationException e) {
+                    System.err.println("Got an exception while setting up database and then got another exception while removing database: " + e.getMessage());
+                    e.printStackTrace(System.err);
+                }
+            }
+            throw t;
+        } finally {
+            m_migrator.setDataSource(m_dataSource);
+        }
+    }
+

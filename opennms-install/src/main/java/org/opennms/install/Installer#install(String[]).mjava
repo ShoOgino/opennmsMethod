@@ -9,16 +9,12 @@
         loadProperties();
         parseArguments(argv);
 
-        final boolean doDatabase = (m_update_database || m_do_inserts || m_update_iplike || m_update_unicode || m_fix_constraint);
+        final boolean doDatabase = (m_update_database || m_update_iplike);
 
-        if (!doDatabase && m_tomcat_conf == null && !m_install_webapp && m_library_search_path == null) {
-            usage(options, m_commandLine, "Nothing to do.  Use -h for help.", null);
-            System.exit(1);
-        }
-
+        GenericApplicationContext context = null;
         if (doDatabase) {
-        	final File cfgFile = ConfigFileConstants.getFile(ConfigFileConstants.OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
-            
+            final File cfgFile = ConfigFileConstants.getFile(ConfigFileConstants.OPENNMS_DATASOURCE_CONFIG_FILE_NAME);
+
             InputStream is = new FileInputStream(cfgFile);
             final JdbcDataSource adminDsConfig = new DataSourceConfigurationFactory(is).getJdbcDataSource(ADMIN_DATA_SOURCE_NAME);
             final DataSource adminDs = new SimpleDataSource(adminDsConfig);
@@ -29,25 +25,22 @@
             final DataSource ds = new SimpleDataSource(dsConfig);
             is.close();
 
-            m_installerDb.setForce(m_force);
-            m_installerDb.setIgnoreNotNull(m_ignore_not_null);
-            m_installerDb.setNoRevert(m_do_not_revert);
-            m_installerDb.setAdminDataSource(adminDs);
-            m_installerDb.setPostgresOpennmsUser(dsConfig.getUserName());
-            m_installerDb.setDataSource(ds);
-            m_installerDb.setDatabaseName(dsConfig.getDatabaseName());
+            context = new GenericApplicationContext();
+            context.setClassLoader(Bootstrap.loadClasses(new File(m_opennms_home), true));
+
+            m_migrator.setApplicationContext(context);
+            m_migrator.getLiquibaseChangelogs(true);
 
             m_migrator.setDataSource(ds);
             m_migrator.setAdminDataSource(adminDs);
             m_migrator.setValidateDatabaseVersion(!m_ignore_database_version);
 
-            m_migration.setDatabaseName(dsConfig.getDatabaseName());
-            m_migration.setSchemaName(dsConfig.getSchemaName());
-            m_migration.setAdminUser(adminDsConfig.getUserName());
-            m_migration.setAdminPassword(adminDsConfig.getPassword());
-            m_migration.setDatabaseUser(dsConfig.getUserName());
-            m_migration.setDatabasePassword(dsConfig.getPassword());
-            m_migration.setChangeLog("classpath*:/changelog.xml");
+            m_migrator.setDatabaseName(dsConfig.getDatabaseName());
+            m_migrator.setSchemaName(dsConfig.getSchemaName());
+            m_migrator.setAdminUser(adminDsConfig.getUserName());
+            m_migrator.setAdminPassword(adminDsConfig.getPassword());
+            m_migrator.setDatabaseUser(dsConfig.getUserName());
+            m_migrator.setDatabasePassword(dsConfig.getPassword());
         }
 
         checkIPv6();
@@ -64,7 +57,7 @@
             File rrd_binary = new File(System.getProperty("rrd.binary"));
             if (!rrd_binary.canExecute()) {
                 throw new Exception("Cannot execute the rrdtool binary '" + rrd_binary.getAbsolutePath()
-                        + "' required by the current RRD strategy. Update the rrd.binary field in opennms.properties appropriately.");
+                + "' required by the current RRD strategy. Update the rrd.binary field in opennms.properties appropriately.");
             }
         }
 
@@ -93,53 +86,28 @@
             checkServerXmlOldOpennmsContext();
         }
 
-        if (m_update_database || m_fix_constraint) {
-            // OLDINSTALL m_installerDb.readTables();
-        }
-
-        m_installerDb.disconnect();
         if (doDatabase) {
-            m_migrator.validateDatabaseVersion();
-
-            System.out.println(String.format("* using '%s' as the PostgreSQL user for OpenNMS", m_migration.getAdminUser()));
-            System.out.println(String.format("* using '%s' as the PostgreSQL database name for OpenNMS", m_migration.getDatabaseName()));
-            if (m_migration.getSchemaName() != null) {
-            	System.out.println(String.format("* using '%s' as the PostgreSQL schema name for OpenNMS", m_migration.getSchemaName()));
+            LOG.info(String.format("* using '%s' as the PostgreSQL user for OpenNMS", m_migrator.getAdminUser()));
+            LOG.info(String.format("* using '%s' as the PostgreSQL database name for OpenNMS", m_migrator.getDatabaseName()));
+            if (m_migrator.getSchemaName() != null) {
+                LOG.info(String.format("* using '%s' as the PostgreSQL schema name for OpenNMS", m_migrator.getSchemaName()));
             }
+
+            m_migrator.setupDatabase(m_update_database, m_do_vacuum, m_do_vacuum, m_update_iplike);
+
+            // XXX why do both options need to be set to remove the database?
+            if (m_update_database && m_remove_database) {
+                m_migrator.dropDatabase();
+            }
+
+            if (m_update_database) {
+                createConfiguredFile();
+            }
+
+            context.close();
         }
 
-        if (m_update_database) {
-            m_migrator.prepareDatabase(m_migration);
-        }
-
-        if (doDatabase) {
-            m_installerDb.checkUnicode();
-            m_installerDb.checkTime();
-        }
-        
         handleConfigurationChanges();
-
-        final GenericApplicationContext context = new GenericApplicationContext();
-        context.setClassLoader(Bootstrap.loadClasses(new File(m_opennms_home), true));
-
-        if (m_update_database) {
-            m_installerDb.databaseSetUser();
-            m_installerDb.disconnect();
-
-            for (final Resource resource : context.getResources("classpath*:/changelog.xml")) {
-                System.out.println("- Running migration for changelog: " + resource.getDescription());
-                m_migration.setChangeLog(resource);
-                m_migrator.migrate(m_migration);
-            }
-        }
-
-        if (m_update_unicode) {
-            System.out.println("WARNING: the -U option is deprecated, it does nothing now");
-        }
-
-        if (m_do_vacuum) {
-            m_installerDb.vacuumDatabase(m_do_full_vacuum);
-        }
 
         if (m_install_webapp) {
             installWebApp();
@@ -149,23 +117,6 @@
             updateTomcatConf();
         }
 
-        if (m_update_iplike) {
-            m_installerDb.updateIplike();
-        }
-
-        if (m_update_database && m_remove_database) {
-            m_installerDb.disconnect();
-            m_installerDb.databaseRemoveDB();
-        }
-
-        if (doDatabase) {
-            m_installerDb.disconnect();
-        }
-        
-        if (m_update_database) {
-            createConfiguredFile();
-        }
-
         System.out.println();
         System.out.println("Installer completed successfully!");
 
@@ -173,7 +124,5 @@
             System.setProperty("opennms.manager.class", "org.opennms.upgrade.support.Upgrade");
             Bootstrap.main(new String[] {});
         }
-
-        context.close();
     }
 

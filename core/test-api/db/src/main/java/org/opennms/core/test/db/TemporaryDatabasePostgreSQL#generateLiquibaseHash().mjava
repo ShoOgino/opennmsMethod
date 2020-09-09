@@ -1,0 +1,40 @@
+    public String generateLiquibaseHash()
+            throws NoSuchAlgorithmException, IOException, Exception, ChangeLogParseException, LiquibaseException {
+        final long start = System.currentTimeMillis();
+
+        ChangeLogParameters changeLogParameters = new ChangeLogParameters();
+        changeLogParameters.setContexts(new Contexts(StringUtils.splitAndTrim(Migrator.getLiquibaseContexts(), ",")));
+
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        List<URI> seenChangeLogs = new LinkedList<>();
+
+        for (Resource resource : m_migrator.getLiquibaseChangelogs(true)) {
+            seenChangeLogs.add(resource.getURI());
+            DigestUtils.updateDigest(md, resource.getInputStream());
+
+            ResourceAccessor accessor = new ExistingResourceAccessor(resource);
+            DatabaseChangeLog changeLog = ChangeLogParserFactory.getInstance().getParser(Migrator.LIQUIBASE_CHANGELOG_FILENAME, accessor).parse(Migrator.LIQUIBASE_CHANGELOG_FILENAME, changeLogParameters, accessor);
+
+            for (ChangeSet c : changeLog.getChangeSets()) {
+                URI uri = resource.createRelative(c.getFilePath()).getURI();
+                if (!seenChangeLogs.contains(uri)) {
+                    seenChangeLogs.add(uri);
+                    for (InputStream s : accessor.getResourcesAsStream(c.getFilePath())) {
+                        DigestUtils.updateDigest(md, s);
+                    }
+                }
+            }
+        }
+
+        if (seenChangeLogs.isEmpty()) {
+            throw new AssertionError("No change logs were found. ClassPath: " + m_migrator.getContextClassLoaderUrls());
+        }
+
+        String hash = Hex.encodeHexString(md.digest());
+
+        final long end = System.currentTimeMillis();
+        LOG.info("Computed Liquibase schema hash {} in {} seconds on change logs: {}.", hash, (float) (end - start) / 1000, Joiner.on(", ").join(seenChangeLogs));
+
+        return hash;
+    }
+
