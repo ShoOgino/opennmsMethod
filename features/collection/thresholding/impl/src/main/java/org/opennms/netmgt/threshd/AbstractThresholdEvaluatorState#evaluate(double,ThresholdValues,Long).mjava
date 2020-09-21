@@ -1,0 +1,27 @@
+    @Override
+    public synchronized Status evaluate(double dsValue, ThresholdValues thresholdValues, Long sequenceNumber) {
+        if (sequenceNumber != null) {
+            // If a sequence number was provided, only fetch the state if this is the first sequence number we have seen
+            // or if this was not the next sequence number (indicating someone else processed the last one)
+            if (this.sequenceNumber == null || sequenceNumber != this.sequenceNumber + 1) {
+                fetchState();
+            }
+            this.sequenceNumber = sequenceNumber;
+        } else {
+            // Always fetch the state to make sure we have the latest if we don't know the sequence number
+            fetchState();
+        }
+
+        Status status = evaluateAfterFetch(dsValue, thresholdValues);
+        if (firstEvaluation) {
+            firstEvaluation = false;
+            // We don't bother advertising ourselves until the first time we perform an evaluation since we will have
+            // default values until that point (being reinitialized would have no effect)
+            thresholdingSession.getThresholdStateMonitor().trackState(key, this);
+        }
+        // Persist the state if it has changed and is now dirty
+        persistStateIfNeeded();
+        firstEvaluation = false;
+        return status;
+    }
+
