@@ -11,7 +11,8 @@
      * @return a future for a table containing the time series
      */
     private <T> CompletableFuture<Table<Directional<T>, Long, Double>> getTopNSeries(int N, long step, boolean includeOther, List<Filter> filters,
-                                                                                       GroupedBy groupedBy, Types.Type<T> type) {
+                                                                                     GroupedBy groupedBy, Types.Type<T> type,
+                                                                                     final Function<T, CompletableFuture<T>> transform) {
         // Time is a must for *time* series
         final TimeRangeFilter timeRangeFilter = Filter.find(filters, TimeRangeFilter.class)
                 .orElseThrow(() -> new IllegalArgumentException("Time range filter is required to derive time series."));
@@ -24,9 +25,8 @@
                     type.getKey(), step, timeRangeFilter.getStart(),
                     timeRangeFilter.getEnd(), filters);
             seriesFuture = searchAsync(seriesFromTopNQuery, timeRangeFilter)
-                    .thenApply(res -> {
-                        toTableFromBuckets(builder, type::toEntity, res);
-                        return null;
+                    .thenCompose(res -> {
+                        return toTableFromBuckets(builder, key -> transform.apply(type.toEntity(key)), res);
                     });
         } else {
             seriesFuture = CompletableFuture.completedFuture(null);

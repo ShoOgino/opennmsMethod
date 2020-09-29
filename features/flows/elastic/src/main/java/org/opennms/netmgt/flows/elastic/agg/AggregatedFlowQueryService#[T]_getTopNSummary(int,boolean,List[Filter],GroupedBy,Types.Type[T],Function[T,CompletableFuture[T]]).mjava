@@ -10,35 +10,38 @@
      * @return a future for a list containing the summary for the different entities
      */
     private <T> CompletableFuture<List<TrafficSummary<T>>> getTopNSummary(int N, boolean includeOther, List<Filter> filters,
-                                                                          GroupedBy groupedBy, Types.Type<T> type) {
+                                                                          GroupedBy groupedBy, Types.Type<T> type,
+                                                                          final Function<T, CompletableFuture<T>> transform) {
         CompletableFuture<List<TrafficSummary<T>>> summaryFutures;
         if (N > 0) {
             final String query = searchQueryProvider.getTopNQuery(N, groupedBy, type.getKey(), filters);
             summaryFutures = searchAsync(query, Filter.find(filters, TimeRangeFilter.class).orElse(null))
-                    .thenApply(searchResult -> {
+                    .thenCompose(searchResult -> {
                         final MetricAggregation aggs = searchResult.getAggregations();
                         if (aggs == null) {
                             // No results
-                            return Collections.emptyList();
+                            return CompletableFuture.completedFuture(Collections.emptyList());
                         }
                         final TermsAggregation byKeyAgg = aggs.getTermsAggregation("by_key");
                         if (byKeyAgg == null) {
                             // No results
-                            return Collections.emptyList();
+                            return CompletableFuture.completedFuture(Collections.emptyList());
                         }
 
-                        List<TrafficSummary<T>> trafficSummaries = new ArrayList<>(N);
+                        List<CompletableFuture<TrafficSummary<T>>> trafficSummaries = new ArrayList<>(N);
                         for (TermsAggregation.Entry bucket : byKeyAgg.getBuckets()) {
                             SumAggregation ingress = bucket.getSumAggregation("bytes_ingress");
                             SumAggregation egress = bucket.getSumAggregation("bytes_egress");
 
-                            trafficSummaries.add(TrafficSummary.<T>builder()
-                                    .withEntity(type.toEntity(bucket.getKeyAsString()))
-                                    .withBytesIn(ingress.getSum().longValue())
-                                    .withBytesOut(egress.getSum().longValue())
-                                    .build());
+                            trafficSummaries.add(transform.apply(type.toEntity(bucket.getKeyAsString()))
+                                                          .thenApply(entity -> TrafficSummary.<T>builder()
+                                                                  .withEntity(entity)
+                                                                  .withBytesIn(ingress.getSum().longValue())
+                                                                  .withBytesOut(egress.getSum().longValue())
+                                                                  .build()));
                         }
-                        return trafficSummaries;
+
+                        return transpose(trafficSummaries, Collectors.toList());
                     });
         } else {
             summaryFutures = CompletableFuture.completedFuture(Collections.emptyList());
@@ -48,8 +51,8 @@
             return summaryFutures;
         }
 
-        CompletableFuture<TrafficSummary<T>> totalTrafficFuture = getOtherTraffic(groupedBy.getParent(), type.getOtherEntity(), filters);
-        return summaryFutures.thenCombine(totalTrafficFuture, (topK,total) -> {
+        CompletableFuture<TrafficSummary<String>> totalTrafficFuture = getOtherTraffic(groupedBy.getParent(), filters);
+        return summaryFutures.thenCombine(totalTrafficFuture, (topK, total) -> {
             BytesInOut totalBytes = total.getBytesInOut();
             BytesInOut bytesFromTopK = BytesInOut.sum(topK);
 
