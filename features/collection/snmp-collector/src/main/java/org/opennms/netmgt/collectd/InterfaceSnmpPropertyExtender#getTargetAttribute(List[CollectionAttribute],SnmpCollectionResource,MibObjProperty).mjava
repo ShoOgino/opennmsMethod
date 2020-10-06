@@ -1,0 +1,70 @@
+    @Override
+    public SnmpAttribute getTargetAttribute(List<CollectionAttribute> sourceAttributes, SnmpCollectionResource targetResource, MibObjProperty property) {
+        if (! StringUtils.isBlank(property.getParameterValue("source-type"))) {
+            LOG.warn("Hint: The interfaceSnmp property extender does not take a source-type parameter. Ignoring the one provided.");
+        }
+
+        final String sourceAttribute = property.getParameterValue(SOURCE_ATTRIBUTE);
+        if (StringUtils.isBlank(sourceAttribute)) {
+            LOG.warn("Cannot execute the interfaceSnmp property extender because: missing parameter {}", SOURCE_ATTRIBUTE);
+            return null;
+        }
+
+        final String ifIndexPointerColumn = property.getParameterValue(IFINDEX_POINTER_COLUMN);
+        if (StringUtils.isBlank(ifIndexPointerColumn)) {
+            LOG.warn("Cannot execute the interfaceSnmp property extender because: missing parameter {}", IFINDEX_POINTER_COLUMN);
+            return null;
+        }
+        
+        final String ifIndexSourceColumn = property.getParameterValue(SOURCE_IFINDEX_ATTRIBUTE, "ifIndex");
+        
+
+        String targetIfIndex = null;
+        Optional<CollectionAttribute> target = null;
+
+        for(AttributeGroup group:targetResource.getGroups()) {
+            for (CollectionAttribute attribute : group.getAttributes()) {
+                try {
+                    if (ifIndexPointerColumn.equals(attribute.getName())) {
+                        targetIfIndex = attribute.getStringValue();
+                    }
+                } catch (Exception e) {
+                    LOG.error("Error: " + e, e);
+                }
+            }
+        }
+        
+        if (targetIfIndex == null) {
+            LOG.warn("Could not identify ifIndex-equivalent pointer column {} on target resource {}", ifIndexPointerColumn, targetResource);
+            return null;
+        }
+        
+        CollectionResource sourceResource = null;
+        final String targetIfIndexStr = targetIfIndex;
+        for (CollectionAttribute srcAttr:sourceAttributes) {
+            try {
+                if (ifIndexSourceColumn.equals(srcAttr.getName()) && targetIfIndexStr.equals(srcAttr.getStringValue())) {
+                    sourceResource = srcAttr.getResource();
+                }
+            } catch (Exception e) {
+                LOG.error("Error: " + e, e);
+            }
+        }
+
+        if (sourceResource != null) {
+            final CollectionResource srcRsrc = sourceResource;
+            target = sourceAttributes.stream().filter(a -> matches(sourceAttribute, srcRsrc, a)).findFirst();
+        }
+
+        if (target != null && target.isPresent()) {
+            AttributeGroupType groupType = targetResource.getGroupType(property.getGroupName());
+            if (groupType != null) {
+                MibPropertyAttributeType type = new MibPropertyAttributeType(targetResource.getResourceType(), property, groupType);
+                SnmpValue value = SnmpUtils.getValueFactory().getOctetString(target.get().getStringValue().getBytes());
+                return new SnmpAttribute(targetResource, type, value);
+            }
+        }
+
+        return null;
+    }
+
