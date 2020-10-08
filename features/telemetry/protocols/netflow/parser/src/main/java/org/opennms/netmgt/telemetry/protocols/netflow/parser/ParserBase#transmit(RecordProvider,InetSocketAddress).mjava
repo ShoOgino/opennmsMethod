@@ -23,7 +23,33 @@
                     // if we can't keep up
                     final Runnable dispatch = () -> {
                         // Let's serialize
-                        byte[] flowMessage = buildMessage(record, enrichment);
+                        byte[] flowMessage = new byte[0];
+                        try {
+                            flowMessage = buildMessage(record, enrichment);
+                        } catch (IllegalFlowException e) {
+                            final Optional<Instant> instant = illegalFlowEventCache.getUnchecked(remoteAddress.getAddress());
+
+                            if (!instant.isPresent() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
+                                illegalFlowEventCache.put(remoteAddress.getAddress(), Optional.of(Instant.now()));
+
+                                eventForwarder.sendNow(new EventBuilder()
+                                        .setUei(ILLEGAL_FLOW_EVENT_UEI)
+                                        .setTime(new Date())
+                                        .setSource(getName())
+                                        .setInterface(remoteAddress.getAddress())
+                                        .setDistPoller(identity.getId())
+                                        .addParam("monitoringSystemId", identity.getId())
+                                        .addParam("monitoringSystemLocation", identity.getLocation())
+                                        .setParam("cause", e.getMessage())
+                                        .setParam("protocol", protocol.name())
+                                        .setParam("illegalFlowEventRate", (int) getIllegalFlowEventRate())
+                                        .getEvent());
+
+                                LOG.warn("Illegal flow detected from exporter {}", remoteAddress.getAddress(), e);
+                            }
+
+                            return;
+                        }
 
                         // Build the message to dispatch
                         final TelemetryMessage msg = new TelemetryMessage(remoteAddress, ByteBuffer.wrap(flowMessage));
