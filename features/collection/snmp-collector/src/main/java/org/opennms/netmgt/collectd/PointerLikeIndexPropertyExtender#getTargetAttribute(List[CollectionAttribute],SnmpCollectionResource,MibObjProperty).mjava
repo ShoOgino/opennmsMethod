@@ -1,0 +1,55 @@
+    @Override
+    public SnmpAttribute getTargetAttribute(List<CollectionAttribute> sourceAttributes, SnmpCollectionResource targetResource, MibObjProperty property) {
+        final String sourceType = property.getParameterValue(SOURCE_TYPE);
+        if (StringUtils.isBlank(sourceType)) {
+            LOG.warn("Cannot execute the pointer-like-index property extender because: missing parameter {}", SOURCE_TYPE);
+            return null;
+        }
+
+        final String sourceAttribute = property.getParameterValue(SOURCE_ATTRIBUTE);
+        if (StringUtils.isBlank(sourceAttribute)) {
+            LOG.warn("Cannot execute the pointer-like-index property extender because: missing parameter {}", SOURCE_ATTRIBUTE);
+            return null;
+        }
+
+        final String targetIndexPointerColumn = property.getParameterValue(TARGET_INDEX_POINTER_COLUMN);
+        if (StringUtils.isBlank(targetIndexPointerColumn)) {
+            LOG.warn("Cannot execute the pointer-like-index property extender because: missing parameter {}", TARGET_INDEX_POINTER_COLUMN);
+            return null;
+        }
+        
+        String pointerLikeIndexValue = null;
+        Optional<CollectionAttribute> pointedToAttribute = null;
+
+        for(AttributeGroup group:targetResource.getGroups()) {
+            for (CollectionAttribute attribute : group.getAttributes()) {
+                try {
+                    if (targetIndexPointerColumn.equals(attribute.getName())) {
+                        pointerLikeIndexValue = attribute.getStringValue();
+                    }
+                } catch (Exception e) {
+                    LOG.error("Error: " + e, e);
+                }
+            }
+        }
+        
+        if (pointerLikeIndexValue == null) {
+            LOG.warn("Could not identify pointer-like-index column {} on target resource {}", targetIndexPointerColumn, targetResource);
+            return null;
+        }
+
+        final String desiredIndex = pointerLikeIndexValue;
+        pointedToAttribute = sourceAttributes.stream().filter(a -> matches(sourceType, sourceAttribute, desiredIndex, a)).findFirst();
+
+        if (pointedToAttribute != null && pointedToAttribute.isPresent()) {
+            AttributeGroupType groupType = targetResource.getGroupType(property.getGroupName());
+            if (groupType != null) {
+                MibPropertyAttributeType type = new MibPropertyAttributeType(targetResource.getResourceType(), property, groupType);
+                SnmpValue value = SnmpUtils.getValueFactory().getOctetString(pointedToAttribute.get().getStringValue().getBytes());
+                return new SnmpAttribute(targetResource, type, value);
+            }
+        }
+
+        return null;
+    }
+
