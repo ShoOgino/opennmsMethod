@@ -1,0 +1,30 @@
+    StatusInfo buildStatusForApplication(final GenericVertex eachRoot, final EnrichmentGraphBuilder graphBuilder, final Map<String, StatusInfo> childStatusMap) {
+        boolean allChildrenHaveActiveAlarms = true;
+        final StatusInfo.StatusInfoBuilder rootStatusBuilder = StatusInfo.from(DEFAULT_STATUS);
+        // Calculate max severity
+        for (GenericEdge eachEdge : graphBuilder.getView().getConnectingEdges(eachRoot)) {
+            final GenericVertex serviceVertex = graphBuilder.getView().resolveVertex(eachEdge.getTarget());
+            final StatusInfo childStatus = childStatusMap.get(toId(serviceVertex));
+            final Severity childSeverity = childStatus.getSeverity();
+
+            // check if all children have alarms
+            if(childSeverity == null || Severity.Normal.isEqual(childSeverity) || Severity.Unknown.isEqual(childSeverity)){
+                allChildrenHaveActiveAlarms = false;  // at least one child has no active alarm
+            }
+
+            // check for the highest severity
+            if (rootStatusBuilder.getSeverity().isLessThan(childStatus.getSeverity())) {
+                rootStatusBuilder.severity(childStatus.getSeverity());
+            }
+
+            // sum up all alarm counts from children
+            rootStatusBuilder.count(rootStatusBuilder.getCount() + childStatus.getCount());
+        }
+
+        // if all children have active alarms, the application status must be at least major
+        if (allChildrenHaveActiveAlarms && rootStatusBuilder.getSeverity().isLessThan(Severity.Major)) {
+            rootStatusBuilder.severity(Severity.Major);
+        }
+        return rootStatusBuilder.build();
+    }
+
