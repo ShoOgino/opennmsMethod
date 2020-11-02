@@ -1,0 +1,34 @@
+    private CollectionAgent getCollectionAgent(TelemetryMessageLog messageLog, String systemId) {
+        CollectionAgent agent = null;
+        try {
+            // Match source address to the interface.
+            final InetAddress inetAddress = InetAddress.getByName(messageLog.getSourceAddress());
+            final Optional<Integer> nodeId = interfaceToNodeCache.getFirstNodeId(messageLog.getLocation(), inetAddress);
+            if (nodeId.isPresent()) {
+                // NOTE: This will throw a IllegalArgumentException if the
+                // nodeId/inetAddress pair does not exist in the database
+                agent = collectionAgentFactory.createCollectionAgent(Integer.toString(nodeId.get()), inetAddress);
+            }
+        } catch (UnknownHostException e) {
+            LOG.debug("Could not convert resolve from source address: {}", messageLog.getSourceAddress());
+        }
+
+        if (agent == null && !Strings.isNullOrEmpty(systemId)) {
+            // We were unable to build the agent from source address,
+            // try finding a node with a matching label
+            agent = transactionTemplate.execute(new TransactionCallback<CollectionAgent>() {
+                @Override
+                public CollectionAgent doInTransaction(TransactionStatus status) {
+
+                    final OnmsNode node = Iterables.getFirst(nodeDao.findByLabel(systemId), null);
+                    if (node != null) {
+                        final OnmsIpInterface primaryInterface = node.getPrimaryInterface();
+                        return collectionAgentFactory.createCollectionAgent(primaryInterface);
+                    }
+                    return null;
+                }
+            });
+        }
+        return agent;
+    }
+
