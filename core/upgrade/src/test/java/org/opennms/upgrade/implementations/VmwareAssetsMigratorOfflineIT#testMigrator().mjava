@@ -1,0 +1,44 @@
+    @Test
+    public void testMigrator() throws Exception {
+        // assert that columns exists before migrator run
+        assertEquals(true, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagedobjectid')", Boolean.class));
+        assertEquals(true, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwarestate')", Boolean.class));
+        assertEquals(true, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagedentitytype')", Boolean.class));
+        assertEquals(true, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagementserver')", Boolean.class));
+        assertEquals(true, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaretopologyinfo')", Boolean.class));
+
+        // assert that no metadata is set in the VMware context for node #2
+        assertEquals(Optional.empty(), databasePopulator.getNode2().findMetaDataForContextAndKey("VMware", "managedObjectId"));
+        assertEquals(Optional.empty(), databasePopulator.getNode2().findMetaDataForContextAndKey("VMware", "state"));
+        assertEquals(Optional.empty(), databasePopulator.getNode2().findMetaDataForContextAndKey("VMware", "managedEntityType"));
+        assertEquals(Optional.empty(), databasePopulator.getNode2().findMetaDataForContextAndKey("VMware", "managementServer"));
+        assertEquals(Optional.empty(), databasePopulator.getNode2().findMetaDataForContextAndKey("VMware", "topologyInfo"));
+
+        // set VMware-related asset data for node #2
+        temporaryDatabase.getJdbcTemplate().execute("UPDATE ASSETS SET vmwaremanagedobjectid = 'fooId', vmwarestate = 'fooState', vmwaremanagedentitytype ='fooType', vmwaremanagementserver = 'fooServer', vmwaretopologyinfo = 'fooTopology' WHERE nodeid = " + databasePopulator.getNode2().getId());
+
+        // run the migrator
+        final VmwareAssetsMigratorOffline vmwareAssetsMigratorOffline = new VmwareAssetsMigratorOffline();
+        vmwareAssetsMigratorOffline.execute();
+
+        sessionUtils.withReadOnlyTransaction(new Runnable() {
+            @Override
+            public void run() {
+                final OnmsNode reloadedNode = databasePopulator.getNodeDao().get(databasePopulator.getNode2().getId());
+                // assert that the metadata is correctly set for node #2
+                assertEquals("fooId", reloadedNode.findMetaDataForContextAndKey("VMware", "managedObjectId").get().getValue());
+                assertEquals("fooState", reloadedNode.findMetaDataForContextAndKey("VMware", "state").get().getValue());
+                assertEquals("fooType", reloadedNode.findMetaDataForContextAndKey("VMware", "managedEntityType").get().getValue());
+                assertEquals("fooServer", reloadedNode.findMetaDataForContextAndKey("VMware", "managementServer").get().getValue());
+                assertEquals("fooTopology", reloadedNode.findMetaDataForContextAndKey("VMware", "topologyInfo").get().getValue());
+            }
+        });
+
+        // assert that the columns do not exist anymore
+        assertEquals(false, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagedobjectid')", Boolean.class));
+        assertEquals(false, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwarestate')", Boolean.class));
+        assertEquals(false, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagedentitytype')", Boolean.class));
+        assertEquals(false, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaremanagementserver')", Boolean.class));
+        assertEquals(false, temporaryDatabase.getJdbcTemplate().queryForObject("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='vmwaretopologyinfo')", Boolean.class));
+    }
+

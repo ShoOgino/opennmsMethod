@@ -8,39 +8,52 @@
             m_vmwareConfigDao = BeanUtils.getBean("daoContext", "vmwareConfigDao", VmwareConfigDao.class);
         }
 
-        final OnmsNode onmsNode = m_nodeDao.get(svc.getNodeId());
-        if (onmsNode == null) {
-            throw new IllegalArgumentException("No node found with ID: " + svc.getNodeId());
+        if (m_transactionTemplate == null) {
+            m_transactionTemplate = BeanUtils.getBean("daoContext", "transactionTemplate", TransactionTemplate.class);
         }
 
-        // retrieve the assets
+        final Map<String, Object> runtimeAttributes = new HashMap<>();
 
-        final String vmwareManagementServer = VmwareImporter.getManagementServer(onmsNode);
-        final String vmwareManagedEntityType = VmwareImporter.getManagedEntityType(onmsNode);
+        m_transactionTemplate.execute(new TransactionCallback<Object>() {
+            @Override
+            public Object doInTransaction(TransactionStatus transactionStatus) {
+                final OnmsNode onmsNode = m_nodeDao.get(svc.getNodeId());
+                if (onmsNode == null) {
+                    throw new IllegalArgumentException("No node found with ID: " + svc.getNodeId());
+                }
 
-        final String vmwareManagedObjectId = onmsNode.getForeignId();
+                // retrieve the assets
 
-        String vmwareMangementServerUsername = null;
-        String vmwareMangementServerPassword = null;
-        final Map<String, VmwareServer> serverMap = m_vmwareConfigDao.getServerMap();
-        if (serverMap == null) {
-            logger.error("Error getting vmware-config.xml's server map.");
-        } else {
-            final VmwareServer vmwareServer = serverMap.get(vmwareManagementServer);
-            if (vmwareServer == null) {
-                logger.error("Error getting credentials for VMware management server '{}'.", vmwareManagementServer);
-            } else {
-                vmwareMangementServerUsername = vmwareServer.getUsername();
-                vmwareMangementServerPassword = vmwareServer.getPassword();
+                final String vmwareManagementServer = VmwareImporter.getManagementServer(onmsNode);
+                final String vmwareManagedEntityType = VmwareImporter.getManagedEntityType(onmsNode);
+
+                final String vmwareManagedObjectId = onmsNode.getForeignId();
+
+                String vmwareMangementServerUsername = null;
+                String vmwareMangementServerPassword = null;
+                final Map<String, VmwareServer> serverMap = m_vmwareConfigDao.getServerMap();
+                if (serverMap == null) {
+                    logger.error("Error getting vmware-config.xml's server map.");
+                } else {
+                    final VmwareServer vmwareServer = serverMap.get(vmwareManagementServer);
+                    if (vmwareServer == null) {
+                        logger.error("Error getting credentials for VMware management server '{}'.", vmwareManagementServer);
+                    } else {
+                        vmwareMangementServerUsername = vmwareServer.getUsername();
+                        vmwareMangementServerPassword = vmwareServer.getPassword();
+                    }
+                }
+
+                runtimeAttributes.put(VmwareImporter.METADATA_MANAGEMENT_SERVER, vmwareManagementServer);
+                runtimeAttributes.put(VmwareImporter.METADATA_MANAGED_ENTITY_TYPE, vmwareManagedEntityType);
+                runtimeAttributes.put(VmwareImporter.METADATA_MANAGED_OBJECT_ID, vmwareManagedObjectId);
+                runtimeAttributes.put(VmwareImporter.VMWARE_MANAGEMENT_SERVER_USERNAME_KEY, vmwareMangementServerUsername);
+                runtimeAttributes.put(VmwareImporter.VMWARE_MANAGEMENT_SERVER_PASSWORD_KEY, vmwareMangementServerPassword);
+
+                return null;
             }
-        }
+        });
 
-        return new ImmutableMap.Builder<String, Object>()
-                .put(VmwareImporter.METADATA_MANAGEMENT_SERVER, vmwareManagementServer)
-                .put(VmwareImporter.METADATA_MANAGED_ENTITY_TYPE, vmwareManagedEntityType)
-                .put(VmwareImporter.METADATA_MANAGED_OBJECT_ID, vmwareManagedObjectId)
-                .put(VmwareImporter.VMWARE_MANAGEMENT_SERVER_USERNAME_KEY, vmwareMangementServerUsername)
-                .put(VmwareImporter.VMWARE_MANAGEMENT_SERVER_PASSWORD_KEY, vmwareMangementServerPassword)
-                .build();
+        return runtimeAttributes;
     }
 
