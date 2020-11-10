@@ -4,6 +4,8 @@
         // Perform the record enrichment and serialization in a thread pool allowing these to be parallelized
         final CompletableFuture<CompletableFuture[]> futureOfFutures = CompletableFuture.supplyAsync(() -> {
             return packet.getRecords().map(record -> {
+                this.recordsReceived.mark();
+
                 final CompletableFuture<AsyncDispatcher.DispatchStatus> future = new CompletableFuture<>();
                 final Timer.Context timerContext = recordEnrichmentTimer.time();
                 // Trigger record enrichment (performing DNS reverse lookups for example)
@@ -11,6 +13,8 @@
                 recordEnricher.enrich(record).whenComplete((enrichment, ex) -> {
                     timerContext.close();
                     if (ex != null) {
+                        this.recordEnrichmentErrors.inc();
+
                         // Enrichment failed
                         future.completeExceptionally(ex);
                         return;
@@ -27,6 +31,8 @@
                         try {
                             flowMessage = buildMessage(record, enrichment);
                         } catch (IllegalFlowException e) {
+                            this.invalidFlows.mark();
+
                             final Optional<Instant> instant = illegalFlowEventCache.getUnchecked(remoteAddress.getAddress());
 
                             if (!instant.isPresent() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
@@ -57,10 +63,12 @@
                         // Dispatch
                         dispatcher.send(msg).whenComplete((b, exx) -> {
                             if (exx != null) {
+                                this.recordDispatchErrors.inc();
                                 future.completeExceptionally(exx);
-                                return;
+                            } else {
+                                this.recordsCompleted.mark();
+                                future.complete(b);
                             }
-                            future.complete(b);
                         });
 
                         recordsDispatched.mark();
@@ -74,6 +82,8 @@
                         // We're not in one of the parsers threads, execute the dispatch in the pool
                         executor.execute(dispatch);
                     }
+
+                    this.recordsScheduled.mark();
                 });
                 return future;
             }).toArray(CompletableFuture[]::new);
