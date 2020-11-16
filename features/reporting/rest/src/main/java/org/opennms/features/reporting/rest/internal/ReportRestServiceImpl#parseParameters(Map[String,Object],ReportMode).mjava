@@ -1,4 +1,4 @@
-    private ReportParameters parseParameters(final Map<String, Object> inputParameters, final ReportMode mode) {
+    ReportParameters parseParameters(final Map<String, Object> inputParameters, final ReportMode mode) {
         final String reportId = (String) inputParameters.get("id");
         final ReportParameters actualParameters = reportWrapperService.getParameters(reportId);
         final ReportFormat reportFormat = parseReportFormat((String) inputParameters.get("format"));
@@ -39,8 +39,24 @@
                     if (jsonParameter.has("date")) {
                         final String dateString = jsonParameter.getString("date");
                         try {
-                            final Date parsedDate = new SimpleDateFormat("yyyy-MM-dd").parse(dateString);
-                            reportParameterBuilder.withDate(parameterName, parsedDate, hours, minutes);
+                            /*
+                             * Since time zones can change the window of the actual dates, we have
+                             * to parse them _in_ the zone the report specifies, or the Date objects
+                             * will have the wrong epoch.
+                             *
+                             * This is pretty hacky to avoid changing the way parameters get passed
+                             * into the ReST API, so we can retain API compatibility.
+                             */
+                            final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+                            final TimeZone reportTimeZone = TimeZone.getTimeZone(getZoneFromParameters(jsonParameters));
+                            sdf.setTimeZone(reportTimeZone);
+                            LOG.debug("using time zone: {}", reportTimeZone);
+
+                            final Date parsedDate = sdf.parse(dateString);
+                            LOG.debug("parsed date: {}", parsedDate);
+                            final Date adjusted = new Date(parsedDate.getTime() + Duration.of(hours, HOURS).toMillis() + Duration.of(minutes, MINUTES).toMillis());
+                            LOG.debug("adjusted date: {}", adjusted);
+                            reportParameterBuilder.withDate(parameterName, adjusted, hours, minutes, true);
                         } catch (ParseException e) {
                             throw new SchedulerContextException(parameterName, "The provided value ''{0}'' cannot be parsed as a date. Expected format is yyyy-MM-dd", dateString);
                         }
