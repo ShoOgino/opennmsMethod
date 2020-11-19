@@ -1,4 +1,10 @@
-    protected CompletableFuture<?> transmit(final RecordProvider packet, final InetSocketAddress remoteAddress) {
+    protected CompletableFuture<?> transmit(final RecordProvider packet, final Session session, final InetSocketAddress remoteAddress) {
+        // Verify that flows sequences are in order
+        if (!session.verifySequenceNumber(packet.getObservationDomainId(), packet.getSequenceNumber())) {
+            SEQUENCE_ERRORS_LOGGER.warn("Error in flow sequence detected: from {}", session.getRemoteAddress());
+            this.sequenceErrors.inc();
+        }
+
         // The packets are coming in hot - performance here is critical
         //   LOG.trace("Got packet: {}", packet);
         // Perform the record enrichment and serialization in a thread pool allowing these to be parallelized
@@ -32,16 +38,16 @@
                         } catch (IllegalFlowException e) {
                             this.invalidFlows.mark();
 
-                            final Optional<Instant> instant = illegalFlowEventCache.getUnchecked(remoteAddress.getAddress());
+                            final Optional<Instant> instant = illegalFlowEventCache.getUnchecked(session.getRemoteAddress());
 
                             if (!instant.isPresent() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
-                                illegalFlowEventCache.put(remoteAddress.getAddress(), Optional.of(Instant.now()));
+                                illegalFlowEventCache.put(session.getRemoteAddress(), Optional.of(Instant.now()));
 
                                 eventForwarder.sendNow(new EventBuilder()
                                         .setUei(ILLEGAL_FLOW_EVENT_UEI)
                                         .setTime(new Date())
                                         .setSource(getName())
-                                        .setInterface(remoteAddress.getAddress())
+                                        .setInterface(session.getRemoteAddress())
                                         .setDistPoller(identity.getId())
                                         .addParam("monitoringSystemId", identity.getId())
                                         .addParam("monitoringSystemLocation", identity.getLocation())
@@ -50,7 +56,7 @@
                                         .setParam("illegalFlowEventRate", (int) getIllegalFlowEventRate())
                                         .getEvent());
 
-                                LOG.warn("Illegal flow detected from exporter {}", remoteAddress.getAddress(), e);
+                                LOG.warn("Illegal flow detected from exporter {}", session.getRemoteAddress().getAddress(), e);
                             }
 
                             future.complete(null);
