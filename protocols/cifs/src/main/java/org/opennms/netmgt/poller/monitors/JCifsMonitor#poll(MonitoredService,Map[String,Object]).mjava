@@ -81,69 +81,81 @@
         CIFSContext authedCtx = baseCtx.withCredentials(new NtlmPasswordAuthenticator(domain, username, password));
 
         // Setting default PollStatus
-        PollStatus serviceStatus = PollStatus.unknown();
+        PollStatus serviceStatus = PollStatus.unknown("unknown CIFS failure");
 
+        try {
+            for (tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt()) {
+                SmbFile smbFile = null;
 
-        for (tracker.reset(); tracker.shouldRetry() && !serviceStatus.isAvailable(); tracker.nextAttempt()) {
+                try {
+                    // Creating SmbFile object
+                    smbFile = new SmbFile(fullUrl, authedCtx);
+                    // Setting the defined timeout
+                    smbFile.setConnectTimeout(tracker.getConnectionTimeout());
+                    // Does the file exists?
+                    boolean smbFileExists = smbFile.exists();
 
-
-            try {
-                // Creating SmbFile object
-                SmbFile smbFile = new SmbFile(fullUrl, authedCtx);
-                // Setting the defined timeout
-                smbFile.setConnectTimeout(tracker.getConnectionTimeout());
-                // Does the file exists?
-                boolean smbFileExists = smbFile.exists();
-
-                switch (enumMode) {
-                    case PATH_EXIST:
-                        if (smbFileExists) {
-                            serviceStatus = PollStatus.up();
-                        } else {
-                            serviceStatus = PollStatus.down("File " + fullUrl + " should exists but doesn't!");
-                        }
-                        break;
-                    case PATH_NOT_EXIST:
-                        if (!smbFileExists) {
-                            serviceStatus = PollStatus.up();
-                        } else {
-                            serviceStatus = PollStatus.down("File " + fullUrl + " should not exists but does!");
-                        }
-                        break;
-                    case FOLDER_EMPTY:
-                        if (smbFileExists) {
-                            if (smbFile.list(smbFilenameFilter).length == 0) {
+                    switch (enumMode) {
+                        case PATH_EXIST:
+                            if (smbFileExists) {
                                 serviceStatus = PollStatus.up();
                             } else {
-                                serviceStatus = PollStatus.down("Directory " + fullUrl + " should be empty but isn't!");
+                                serviceStatus = PollStatus.down("File " + fullUrl + " should exists but doesn't!");
                             }
-                        } else {
-                            serviceStatus = PollStatus.down("Directory " + fullUrl + " should exists but doesn't!");
-                        }
-                        break;
-                    case FOLDER_NOT_EMPTY:
-                        if (smbFileExists) {
-                            if (smbFile.list(smbFilenameFilter).length > 0) {
+                            break;
+                        case PATH_NOT_EXIST:
+                            if (!smbFileExists) {
                                 serviceStatus = PollStatus.up();
                             } else {
-                                serviceStatus = PollStatus.down("Directory " + fullUrl + " should not be empty but is!");
+                                serviceStatus = PollStatus.down("File " + fullUrl + " should not exists but does!");
                             }
-                        } else {
-                            serviceStatus = PollStatus.down("Directory " + fullUrl + " should exists but doesn't!");
+                            break;
+                        case FOLDER_EMPTY:
+                            if (smbFileExists) {
+                                if (smbFile.list(smbFilenameFilter).length == 0) {
+                                    serviceStatus = PollStatus.up();
+                                } else {
+                                    serviceStatus = PollStatus.down("Directory " + fullUrl + " should be empty but isn't!");
+                                }
+                            } else {
+                                serviceStatus = PollStatus.down("Directory " + fullUrl + " should exists but doesn't!");
+                            }
+                            break;
+                        case FOLDER_NOT_EMPTY:
+                            if (smbFileExists) {
+                                if (smbFile.list(smbFilenameFilter).length > 0) {
+                                    serviceStatus = PollStatus.up();
+                                } else {
+                                    serviceStatus = PollStatus.down("Directory " + fullUrl + " should not be empty but is!");
+                                }
+                            } else {
+                                serviceStatus = PollStatus.down("Directory " + fullUrl + " should exists but doesn't!");
+                            }
+                            break;
+                        default:
+                            logger.warn("There is no implementation for the specified mode '{}'", mode);
+                            break;
+                    }
+
+                } catch (final MalformedURLException exception) {
+                    logger.error("Malformed URL on '{}' with error: '{}'", smbHost, exception.getMessage());
+                    serviceStatus = PollStatus.down(exception.getMessage());
+                } catch (final SmbException exception) {
+                    logger.error("SMB error on '{}' with error: '{}'", smbHost, exception.getMessage());
+                    serviceStatus = PollStatus.down(exception.getMessage());
+                } finally {
+                    if (smbFile != null) {
+                        try {
+                            smbFile.close();
+                        } catch (final Exception e) {
+                            LOG.warn("Unable to close {}", fullUrl, e);
                         }
-                        break;
-                    default:
-                        logger.warn("There is no implementation for the specified mode '{}'", mode);
-                        break;
+                    }
                 }
-
-            } catch (MalformedURLException exception) {
-                logger.error("Malformed URL on '{}' with error: '{}'", smbHost, exception.getMessage());
-                serviceStatus = PollStatus.down(exception.getMessage());
-            } catch (SmbException exception) {
-                logger.error("SMB error on '{}' with error: '{}'", smbHost, exception.getMessage());
-                serviceStatus = PollStatus.down(exception.getMessage());
             }
+        } finally {
+            closeContext(authedCtx);
+            closeContext(baseCtx);
         }
 
         return serviceStatus;
