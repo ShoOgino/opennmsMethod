@@ -1,0 +1,44 @@
+    private Function<Map<String, TrafficSummary<String>>, CompletableFuture<Map<String, TrafficSummary<String>>>>
+    addTotalBytesForOther(FilterAndGroupBy fag, Collection<String> from, boolean includeOther, String keyForMissingTerm) {
+        if (includeOther) {
+            // We also want to tally up traffic from other elements not part of the Top N
+            final boolean missingTermIncluded = keyForMissingTerm != null && from.contains(keyForMissingTerm);
+            final String bytesFromOthersQuery =
+                    searchQueryProvider.getSeriesFromOthersQuery(from, fag.step, fag.start, fag.end, fag.groupByTerm, missingTermIncluded, fag.filters);
+            val otherFuture = searchAsync(bytesFromOthersQuery, fag.timeRangeFilter);
+            return summaries -> otherFuture.thenApply(results -> {
+                    final MetricAggregation aggs = results.getAggregations();
+                    if (aggs == null) {
+                        // No results
+                        return summaries;
+                    }
+                    final TermsAggregation directionAgg = aggs.getTermsAggregation("direction");
+                    if (directionAgg == null) {
+                        // No results
+                        return summaries;
+                    }
+                    final TrafficSummary.Builder<String> trafficSummary = TrafficSummary.from(OTHER_NAME);
+                    for (TermsAggregation.Entry directionBucket : directionAgg.getBuckets()) {
+                        final boolean isIngress = isIngress(directionBucket);
+                        final ProportionalSumAggregation sumAgg = directionBucket.getAggregation("bytes", ProportionalSumAggregation.class);
+                        final List<ProportionalSumAggregation.DateHistogram> sumBuckets = sumAgg.getBuckets();
+                        // There should only be a single bucket here
+                        if (sumBuckets.size() != 1) {
+                            throw new IllegalStateException("Expected 1 bucket, but got: " + sumBuckets);
+                        }
+                        final Double sum = sumBuckets.iterator().next().getValue();
+                        if (!isIngress) {
+                            trafficSummary.withBytesOut(sum.longValue());
+                        } else {
+                            trafficSummary.withBytesIn(sum.longValue());
+                        }
+                    }
+                    summaries.put(OTHER_NAME, trafficSummary.build());
+                    return summaries;
+
+            });
+        } else {
+            return keepValue();
+        }
+    }
+

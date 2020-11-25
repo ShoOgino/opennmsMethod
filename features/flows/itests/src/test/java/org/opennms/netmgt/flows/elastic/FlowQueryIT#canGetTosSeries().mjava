@@ -1,0 +1,54 @@
+    @Test
+    public void canGetTosSeries() throws Exception {
+        loadDefaultFlows();
+
+        val step = 8;
+
+        val memoryResult = DEFAULT_FLOWS
+                .stream()
+                .map(fd -> flowDoc2Pair(fd, step, fd.getTos().toString()))
+                // collect the pairs of directionals and maps (of indexes into bytes) into a map
+                // -> the key is the directional and the value are the merged maps for that key
+                .collect(Collectors.groupingBy(
+                        Pair::getLeft,
+                        Collectors.reducing(
+                                Collections.<Long, Double>emptyMap(),
+                                Pair::getRight,
+                                FlowQueryIT::mergeSeries
+                        )
+                        )
+                );
+
+        val elasticResult = flowRepository.getTosSeries(step, getFilters()).get();
+
+        // The result calculated in memory (seriesByDirectonal) and the result returned by elastic (series.rowMap())
+        // can not be asserted for equality because of rounding errors
+        // -> construct a specific hamcrest matcher that allows for some discrepancy when comparing the
+        //    number of transferred bytes (that are represented by doubles)
+        // -> this assertion checks that there is a matching entry in elastic's result for each entry of the memory result
+        assertThat(
+                elasticResult.rowMap(),
+                allOf(memoryResult
+                        .entrySet()
+                        .stream()
+                        .map(dme -> hasEntry(
+                                equalTo(dme.getKey()),
+                                allOf(dme.getValue()
+                                        .entrySet()
+                                        .stream()
+                                        .map(ime -> hasEntry(
+                                                equalTo(ime.getKey()),
+                                                closeTo(ime.getValue(), 0.1)
+                                        ))
+                                        .collect(Collectors.toList())
+                                )
+                        ))
+                        .collect(Collectors.toList())
+                )
+        );
+
+        // check the other way round:
+        // -> check that there is a matching entry in the memory result for each entry in elastic's result
+        assertThat(memoryResult, allOf(elasticResult.rowKeySet().stream().map(k -> hasKey(k)).collect(Collectors.toList())));
+    }
+
