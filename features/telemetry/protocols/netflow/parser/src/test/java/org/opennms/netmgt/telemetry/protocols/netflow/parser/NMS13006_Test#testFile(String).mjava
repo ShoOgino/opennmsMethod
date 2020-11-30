@@ -1,0 +1,41 @@
+    public void testFile(final String filename) throws Exception {
+        final Session session = new TcpSession(InetAddress.getLoopbackAddress());
+
+        try (final FileChannel channel = FileChannel.open(FOLDER.resolve(filename))) {
+            final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
+            channel.read(buffer);
+            buffer.flip();
+
+            final ByteBuf buf = Unpooled.wrappedBuffer(buffer);
+
+            do {
+                final Header header = new Header(slice(buf, Header.SIZE));
+                final Packet packet = new Packet(session, header, buf);
+
+                final RecordEnrichment enrichment = (address -> Optional.empty());
+
+                packet.getRecords().forEach(r -> {
+                            final Netflow9MessageBuilder builder = new Netflow9MessageBuilder(r, enrichment);
+                            final FlowMessage flowMessage;
+
+                            try {
+                                flowMessage = FlowMessage.parseFrom(builder.buildData());
+                                Assert.assertEquals(true, flowMessage.hasFirstSwitched());
+                                Assert.assertEquals(true, flowMessage.hasLastSwitched());
+                                Assert.assertEquals(true, flowMessage.hasDeltaSwitched());
+                            } catch (InvalidProtocolBufferException e) {
+                                e.printStackTrace();
+                                fail(e.getMessage());
+                            } catch (IllegalFlowException e) {
+                                e.printStackTrace();
+                                fail(e.getMessage());
+                            }
+                        }
+                );
+
+                assertThat(packet.header.versionNumber, is(0x0009));
+
+            } while (buf.isReadable());
+        }
+    }
+

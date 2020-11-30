@@ -2,22 +2,31 @@
     public void handleMessageLog(TelemetryMessageLog messageLog) {
         LOG.debug("Received {} telemetry messages", messageLog.getMessageList().size());
 
-        final List<P> flowPackets = new LinkedList<>();
+        int flowPackets = 0;
+
         final List<Flow> flows = new LinkedList<>();
         try (Timer.Context ctx = logParsingTimer.time()) {
             for (TelemetryMessageLogEntry eachMessage : messageLog.getMessageList()) {
+                this.entriesReceived.mark();
+
                 LOG.trace("Parsing packet: {}", eachMessage);
                 final P flowPacket = parse(eachMessage);
                 if (flowPacket != null) {
-                    flowPackets.add(flowPacket);
-                    flows.addAll(converter.convert(flowPacket));
+                    this.entriesParsed.mark();
+
+                    flowPackets += 1;
+
+                    final List<Flow> converted = converter.convert(flowPacket);
+                    flows.addAll(converted);
+
+                    this.entriesConverted.mark(converted.size());
                 }
             }
-            packetsPerLogHistogram.update(flowPackets.size());
+            packetsPerLogHistogram.update(flowPackets);
         }
 
         try {
-            LOG.debug("Persisting {} packets, {} flows.", flowPackets.size(), flows.size());
+            LOG.debug("Persisting {} packets, {} flows.", flowPackets, flows.size());
             final FlowSource source = new FlowSource(messageLog.getLocation(),
                     messageLog.getSourceAddress(),
                     contextKey);
