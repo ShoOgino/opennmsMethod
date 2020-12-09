@@ -1,0 +1,60 @@
+    private void canGetFieldSeriesOfLoadedFlows(LimitedCardinalityField field, Function<FlowDocument, Integer> aggregateBy, Filter filter) throws Exception {
+
+        int step = 8;
+
+        List<Filter> filters = filter != null ? getFilters(filter) : getFilters();
+
+        Predicate<FlowDocument> predicate = filters
+                .stream()
+                .map(FlowQueryIT::filterPredicate)
+                .reduce(fd -> true, (p1, p2) -> fd -> p1.test(fd) && p2.test(fd));
+
+        Map<Directional<String>, Map<Long, Double>> memoryResult = DEFAULT_FLOWS
+                .stream()
+                .filter(predicate)
+                .map(fd -> flowDoc2Pair(fd, step, aggregateBy.apply(fd).toString()))
+                // collect the pairs of directionals and maps (of indexes into bytes) into a map
+                // -> the key is the directional and the value are the merged maps for that key
+                .collect(Collectors.groupingBy(
+                        Pair::getLeft,
+                        Collectors.reducing(
+                                Collections.<Long, Double>emptyMap(),
+                                Pair::getRight,
+                                FlowQueryIT::mergeSeries
+                        )
+                        )
+                );
+
+        Table<Directional<String>, Long, Double> elasticResult = smartQueryService.getFieldSeries(field, step, filters).get();
+
+        // The result calculated in memory the result returned by elastic
+        // can not be asserted for equality because of rounding errors
+        // -> construct a specific hamcrest matcher that allows for some discrepancy when comparing the
+        //    numbers of transferred bytes (that are represented by doubles)
+        // -> this assertion checks that there is a matching entry in elastic's result for each entry of the memory result
+        assertThat(
+                elasticResult.rowMap(),
+                allOf(memoryResult
+                        .entrySet()
+                        .stream()
+                        .map(dme -> hasEntry(
+                                equalTo(dme.getKey()),
+                                allOf(dme.getValue()
+                                        .entrySet()
+                                        .stream()
+                                        .map(ime -> hasEntry(
+                                                equalTo(ime.getKey()),
+                                                closeTo(ime.getValue(), 0.1)
+                                        ))
+                                        .collect(Collectors.toList())
+                                )
+                        ))
+                        .collect(Collectors.toList())
+                )
+        );
+
+        // check the other way round:
+        // -> check that there is a matching entry in the memory result for each entry in elastic's result
+        assertThat(memoryResult, allOf(elasticResult.rowKeySet().stream().map(k -> hasKey(k)).collect(Collectors.toList())));
+    }
+
