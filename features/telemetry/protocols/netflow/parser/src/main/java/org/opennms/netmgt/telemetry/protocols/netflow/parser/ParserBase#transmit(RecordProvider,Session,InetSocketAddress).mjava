@@ -33,10 +33,16 @@
                     // if we can't keep up
                     final Runnable dispatch = () -> {
                         // Let's serialize
-                        byte[] flowMessage = new byte[0];
+                        final FlowMessage.Builder flowMessage;
                         try {
-                            flowMessage = buildMessage(record, enrichment);
-                        } catch (IllegalFlowException e) {
+                            flowMessage = this.messageBuilder.buildMessage(record, enrichment);
+                        } catch (final  Exception e) {
+                            throw new RuntimeException(e);
+                        }
+
+                        // Check if the flow is valid (and maybe correct it)
+                        final List<String> corrections = this.correctFlow(flowMessage);
+                        if (!corrections.isEmpty()) {
                             this.invalidFlows.mark();
 
                             final Optional<Instant> instant = illegalFlowEventCache.getUnchecked(session.getRemoteAddress());
@@ -52,20 +58,19 @@
                                         .setDistPoller(identity.getId())
                                         .addParam("monitoringSystemId", identity.getId())
                                         .addParam("monitoringSystemLocation", identity.getLocation())
-                                        .setParam("cause", e.getMessage())
+                                        .setParam("cause", Joiner.on('\n').join(corrections))
                                         .setParam("protocol", protocol.name())
                                         .setParam("illegalFlowEventRate", (int) getIllegalFlowEventRate())
                                         .getEvent());
 
-                                LOG.warn("Illegal flow detected from exporter {}", session.getRemoteAddress().getAddress(), e);
+                                for (final String correction : corrections) {
+                                    LOG.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
+                                }
                             }
-
-                            future.complete(null);
-                            return;
                         }
 
                         // Build the message to dispatch
-                        final TelemetryMessage msg = new TelemetryMessage(remoteAddress, ByteBuffer.wrap(flowMessage));
+                        final TelemetryMessage msg = new TelemetryMessage(remoteAddress, ByteBuffer.wrap(flowMessage.build().toByteArray()));
 
                         // Dispatch
                         dispatcher.send(msg).whenComplete((b, exx) -> {
