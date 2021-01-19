@@ -1,0 +1,55 @@
+    @Test
+    @JUnitSnmpAgents({
+            @JUnitSnmpAgent(host="192.168.3.1", port=161, resource="classpath:/snmpwalk-space.properties"),
+            @JUnitSnmpAgent(host="10.0.0.4", port=161, resource="classpath:/snmpwalk-space.properties")
+    })
+    public void testScanSpaceDevice() throws Exception {
+        final String[] ueis = { EventConstants.PROVISION_SCAN_COMPLETE_UEI, EventConstants.PROVISION_SCAN_ABORTED_UEI, EventConstants.IMPORT_SUCCESSFUL_UEI };
+        final CountDownLatch eventReceived = anticipateEvents(1, ueis);
+
+        // import the requisition
+        m_provisioner.importModelFromResource(m_resourceLoader.getResource("classpath:/NMS-12990.xml"), Boolean.TRUE.toString());
+        waitForEverything();
+        eventReceived.await(5, TimeUnit.MINUTES);
+
+        List<OnmsNode> nodes = m_nodeDao.findAll();
+
+        // check that only one node exists
+        assertEquals(1, nodes.size());
+
+        // get the node
+        OnmsNode node = nodes.get(0);
+
+        // run a node scan, so policies are applied for node and interfaces
+        final NodeScan scan = m_provisioner.createNodeScan(node.getId(), "foobar", "1", new OnmsMonitoringLocation());
+        final Task t = scan.createTask();
+        t.schedule();
+        t.waitFor();
+
+        // check that all metadata is correctly set
+        assertThat(node.getMetaData().size(), is(2));
+        assertThat(node.getMetaData(), containsInAnyOrder(new OnmsMetaData("nodeCustomContext1", "nodeKey1", "nodeValue1"),new OnmsMetaData("nodeCustomContext2", "nodeKey2", "nodeValue2")));
+        assertThat(node.getIpInterfaceByIpAddress("10.0.0.4").getMetaData().size(), is(0));
+        assertThat(node.getIpInterfaceByIpAddress("192.168.3.1").getMetaData().size(), is(1));
+        assertThat(node.getIpInterfaceByIpAddress("192.168.3.1").getMetaData(), containsInAnyOrder(new OnmsMetaData("interfaceCustomContext3","interfaceKey3","interfaceValue3")));
+
+        // import again without scanning the node
+        m_provisioner.importModelFromResource(m_resourceLoader.getResource("classpath:/NMS-12990.xml"), "dbonly");
+        waitForEverything();
+        eventReceived.await(5, TimeUnit.MINUTES);
+
+        // check that still only one node exists
+        nodes = m_nodeDao.findAll();
+        assertEquals(1, nodes.size());
+
+        // get the node
+        node = nodes.get(0);
+
+        // check that the metadata still exists
+        assertThat(node.getMetaData().size(), is(2));
+        assertThat(node.getMetaData(), containsInAnyOrder(new OnmsMetaData("nodeCustomContext1", "nodeKey1", "nodeValue1"),new OnmsMetaData("nodeCustomContext2", "nodeKey2", "nodeValue2")));
+        assertThat(node.getIpInterfaceByIpAddress("10.0.0.4").getMetaData().size(), is(0));
+        assertThat(node.getIpInterfaceByIpAddress("192.168.3.1").getMetaData().size(), is(1));
+        assertThat(node.getIpInterfaceByIpAddress("192.168.3.1").getMetaData(), containsInAnyOrder(new OnmsMetaData("interfaceCustomContext3","interfaceKey3","interfaceValue3")));
+    }
+
