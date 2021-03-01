@@ -1,0 +1,54 @@
+    static void handleRouteMonitoringMessage(final BmpMessageHandler messageHandler, final Transport.Message message,
+                                              final Transport.RouteMonitoringPacket routeMonitoring,
+                                              final Context context, final AtomicLong sequence) {
+        final List<Record> unicastPrefixRecords = new ArrayList<>(routeMonitoring.getWithdrawsCount() + routeMonitoring.getReachablesCount());
+
+        // Handle withdraws
+        for (org.opennms.netmgt.telemetry.protocols.bmp.transport.Transport.RouteMonitoringPacket.Route route : routeMonitoring.getWithdrawsList()) {
+            final UnicastPrefix unicastPrefix = toUnicastPrefixRecord(routeMonitoring, route, null, context, sequence);
+            unicastPrefix.action = UnicastPrefix.Action.DELETE;
+
+            unicastPrefixRecords.add(unicastPrefix);
+        }
+
+        final BaseAttribute baseAttr ;
+        if (routeMonitoring.getReachablesCount() > 0) {
+            // Generate base attribute record - the same attributes apply to all reachables in the packet
+            baseAttr = toBaseAttributeRecord(routeMonitoring, context, sequence);
+
+            // Handle reachables
+            for (final org.opennms.netmgt.telemetry.protocols.bmp.transport.Transport.RouteMonitoringPacket.Route route : routeMonitoring.getReachablesList()) {
+                final UnicastPrefix unicastPrefix = toUnicastPrefixRecord(routeMonitoring, route, baseAttr, context, sequence);
+                unicastPrefix.action = UnicastPrefix.Action.ADD;
+                unicastPrefixRecords.add(unicastPrefix);
+            }
+
+            final List<Transport.RouteMonitoringPacket.PathAttribute.MultiprotocolReachableNrli> mpReachNlriList = routeMonitoring.getAttributesList().stream()
+                    .filter(a -> a.hasMpReachNrli())
+                    .map(a -> a.getMpReachNrli())
+                    .collect(Collectors.toList());
+
+            for(final Transport.RouteMonitoringPacket.PathAttribute.MultiprotocolReachableNrli multiprotocolReachableNrli : mpReachNlriList) {
+                for (final org.opennms.netmgt.telemetry.protocols.bmp.transport.Transport.RouteMonitoringPacket.Route route : multiprotocolReachableNrli.getAdvertisedList()) {
+                    final UnicastPrefix unicastPrefix = toUnicastPrefixRecord(routeMonitoring, route, baseAttr, context, sequence);
+                    unicastPrefix.action = UnicastPrefix.Action.ADD;
+                    unicastPrefixRecords.add(unicastPrefix);
+                }
+                for (final org.opennms.netmgt.telemetry.protocols.bmp.transport.Transport.RouteMonitoringPacket.Route route : multiprotocolReachableNrli.getVpnAdvertisedList()) {
+                    final UnicastPrefix unicastPrefix = toUnicastPrefixRecord(routeMonitoring, route, baseAttr, context, sequence);
+                    unicastPrefix.action = UnicastPrefix.Action.ADD;
+                    unicastPrefixRecords.add(unicastPrefix);
+                }
+            }
+        } else {
+            baseAttr = null;
+        }
+
+        // Forward the messages to the handler
+        if (baseAttr != null) {
+            messageHandler.handle(new Message(context.collectorHashId, Type.BASE_ATTRIBUTE, ImmutableList.of(baseAttr)), context);
+        }
+
+        messageHandler.handle(new Message(context.collectorHashId, Type.UNICAST_PREFIX, unicastPrefixRecords), context);
+    }
+

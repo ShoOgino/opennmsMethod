@@ -1,0 +1,33 @@
+    @Override
+    public List<StatsByAsn> getStatsByAsnForInterval(String interval) {
+
+        List<StatsByAsn> statsByAsnList = getHibernateTemplate().execute(session -> (List<StatsByAsn>) session.createSQLQuery(
+                "SELECT to_timestamp((cast((extract(epoch from last_updated)) as bigint)/60)*60) at time zone 'utc' as IntervalTime," +
+                        " peer_hash_id," +
+                        " origin_as," +
+                        " count(case WHEN bmp_ip_rib_log.is_withdrawn = true THEN 1 ELSE null END) as withdraws," +
+                        " count(case WHEN bmp_ip_rib_log.is_withdrawn = false THEN 1 ELSE null END) as updates" +
+                        " FROM bmp_ip_rib_log" +
+                        " WHERE last_updated >= to_timestamp((cast((extract(epoch from now())) as bigint)/60)*60)  - INTERVAL '5 min' " +
+                        " AND last_updated < to_timestamp((cast((extract(epoch from now())) as bigint)/60)*60)" +
+                        " GROUP BY IntervalTime, peer_hash_id, origin_as;"
+        ).setResultTransformer(new ResultTransformer() {
+
+            private static final long serialVersionUID = -6130733293672991513L;
+
+            @Override
+            public Object transformTuple(Object[] tuple, String[] aliases) {
+                return new StatsByAsn((Date) (tuple[0]), (String) tuple[1], (BigInteger) tuple[2], (BigInteger) tuple[3], (BigInteger) tuple[4]);
+            }
+
+
+            @SuppressWarnings("rawtypes")
+            @Override
+            public List transformList(List collection) {
+                return collection;
+            }
+        }).list());
+
+        return statsByAsnList;
+    }
+

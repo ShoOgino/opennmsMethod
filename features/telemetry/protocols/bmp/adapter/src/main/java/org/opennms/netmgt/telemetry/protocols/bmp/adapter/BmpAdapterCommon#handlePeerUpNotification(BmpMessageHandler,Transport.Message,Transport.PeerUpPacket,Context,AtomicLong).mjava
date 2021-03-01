@@ -1,0 +1,46 @@
+    public static void handlePeerUpNotification(final BmpMessageHandler messageHandler, final Transport.Message message,
+                                          final Transport.PeerUpPacket peerUp,
+                                          final Context context,
+                                          final AtomicLong sequence) {
+        final Transport.Peer bgpPeer = peerUp.getPeer();
+
+        final Peer peer = new Peer();
+        peer.action = Peer.Action.UP;
+        peer.sequence = sequence.getAndIncrement();
+        peer.name = !Strings.isNullOrEmpty(bgpPeer.getHostname())
+                ? bgpPeer.getHostname()
+                : addressAsStr(bgpPeer.getAddress());
+        peer.hash = Record.hash(bgpPeer.getAddress(),
+                bgpPeer.getDistinguisher(),
+                context.routerHashId);
+        peer.routerHash = context.routerHashId;
+        peer.remoteBgpId = address(peerUp.getRecvMsg().getId());
+        peer.routerIp = context.sourceAddress;
+        peer.timestamp = timestamp(bgpPeer.getTimestamp());
+        peer.remoteAsn = uint32(peerUp.getRecvMsg().getAs());
+        peer.remoteIp = address(bgpPeer.getAddress());
+        peer.peerRd = asAttr((int) bgpPeer.getDistinguisher());
+        peer.remotePort = peerUp.getRemotePort();
+        peer.localAsn = uint32(peerUp.getSendMsg().getAs());
+        peer.localIp = address(peerUp.getLocalAddress());
+        peer.localPort = peerUp.getLocalPort();
+        peer.localBgpId = address(peerUp.getSendMsg().getId());
+        peer.infoData = peerUp.getMessage();
+        peer.advertisedCapabilities = peerUp.getSendMsg().getCapabilities().getCapabilityList().stream().map(c -> generateCapabilityMessage(c.getCode(), c.getValue())).collect(Collectors.joining(","));
+        peer.receivedCapabilities = peerUp.getRecvMsg().getCapabilities().getCapabilityList().stream().map(c -> generateCapabilityMessage(c.getCode(), c.getValue())).collect(Collectors.joining(","));
+        peer.remoteHolddown = uint32(peerUp.getRecvMsg().getHoldTime());
+        peer.advertisedHolddown = uint32(peerUp.getSendMsg().getHoldTime());
+        peer.bmpReason = null;
+        peer.bgpErrorCode = null;
+        peer.bgpErrorSubcode = null;
+        peer.errorText = null;
+        peer.l3vpn = bgpPeer.getType() == Transport.Peer.Type.RD_INSTANCE;
+        peer.prePolicy = bgpPeer.hasPeerFlags() && bgpPeer.getPeerFlags().getPolicy() == Transport.Peer.PeerFlags.Policy.PRE_POLICY;
+        peer.ipv4 = isV4(bgpPeer.getAddress());
+        peer.locRib = bgpPeer.getType() == Transport.Peer.Type.LOC_RIB_INSTANCE;
+        peer.locRibFiltered = bgpPeer.hasLocRibFlags() && bgpPeer.getLocRibFlags().getFiltered();
+        peer.tableName = peerUp.getTableName();
+
+        messageHandler.handle(new Message(context.collectorHashId, Type.PEER, ImmutableList.of(peer)), context);
+    }
+

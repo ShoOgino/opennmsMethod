@@ -1,0 +1,34 @@
+    @Override
+    public List<StatsByPrefix> getStatsByPrefixForInterval(String interval) {
+
+        List<StatsByPrefix> statsByPrefixList = getHibernateTemplate().execute(session -> (List<StatsByPrefix>) session.createSQLQuery(
+                "SELECT to_timestamp((cast((extract(epoch from last_updated)) as bigint)/60)*60) at time zone 'utc' as IntervalTime," +
+                        " peer_hash_id," +
+                        " prefix," +
+                        " prefix_len, " +
+                        " count(case WHEN bmp_ip_rib_log.is_withdrawn = true THEN 1 ELSE null END) as withdraws," +
+                        " count(case WHEN bmp_ip_rib_log.is_withdrawn = false THEN 1 ELSE null END) as updates" +
+                        " FROM bmp_ip_rib_log" +
+                        " WHERE last_updated >= to_timestamp((cast((extract(epoch from now())) as bigint)/60)*60)  - INTERVAL '5 min' " +
+                        " AND last_updated < to_timestamp((cast((extract(epoch from now())) as bigint)/60)*60)" +
+                        " GROUP BY IntervalTime, peer_hash_id, prefix, prefix_len;"
+        ).setResultTransformer(new ResultTransformer() {
+
+            private static final long serialVersionUID = -6130733293672991513L;
+
+            @Override
+            public Object transformTuple(Object[] tuple, String[] aliases) {
+                return new StatsByPrefix((Date) (tuple[0]), (String) tuple[1], (String) tuple[2], (Integer) tuple[3], (BigInteger) tuple[4], (BigInteger) tuple[5]);
+            }
+
+
+            @SuppressWarnings("rawtypes")
+            @Override
+            public List transformList(List collection) {
+                return collection;
+            }
+        }).list());
+
+        return statsByPrefixList;
+    }
+

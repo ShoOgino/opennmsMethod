@@ -1,0 +1,88 @@
+    @Override
+    public void handle(Message message, Context context) {
+        sessionUtils.withTransaction(() -> {
+            switch (message.getType()) {
+                case COLLECTOR:
+                    List<BmpCollector> bmpCollectors = buildBmpCollectors(message);
+                    // Update routers state to down when collector is just starting or going into stopped state.
+                    bmpCollectors.forEach(collector -> {
+                        try {
+                            bmpCollectorDao.saveOrUpdate(collector);
+                        } catch (Exception e) {
+                            LOG.error("Exception while persisting BMP collector {}", collector, e);
+                        }
+                    });
+                    break;
+                case ROUTER:
+                        List<BmpRouter> bmpRouters = buildBmpRouters(message);
+                        bmpRouters.forEach(router -> {
+                            Integer connections = router.getConnectionCount();
+                            // Upon initial router message in INIT/FIRST state,  update all corresponding peer state to down.
+                            boolean state = !router.getAction().equals(Router.Action.TERM.value);
+                            if (connections == 0 && state) {
+                                router.getBmpPeers().forEach(bmpPeer -> {
+                                    if (bmpPeer.getTimestamp().getTime() < router.getTimestamp().getTime()) {
+                                        bmpPeer.setState(State.DOWN);
+                                    }
+                                });
+                            }
+                            Integer count = state ? ++connections : --connections;
+                            router.setConnectionCount(count);
+                            try {
+                                bmpRouterDao.saveOrUpdate(router);
+                            } catch (Exception e) {
+                                LOG.error("Exception while persisting BMP router {}", router, e);
+                            }
+
+                        });
+                    break;
+                case PEER:
+                    List<BmpPeer> bmpPeers = buildBmpPeers(message);
+                    // Only retain unicast prefixes that are updated after current peer UP/down message.
+                    bmpPeers.forEach(peer -> {
+                        Set<BmpUnicastPrefix> unicastPrefixes = peer.getBmpUnicastPrefixes().stream().filter(bmpUnicastPrefix ->
+                                bmpUnicastPrefix.getTimestamp().getTime() > peer.getTimestamp().getTime()
+                        ).collect(Collectors.toSet());
+                        peer.setBmpUnicastPrefixes(unicastPrefixes);
+                        try {
+                            bmpPeerDao.saveOrUpdate(peer);
+                        } catch (Exception e) {
+                            LOG.error("Exception while persisting BMP peer {}", peer, e);
+                        }
+                    });
+                    break;
+                case BASE_ATTRIBUTE:
+                    List<BmpBaseAttribute> bmpBaseAttributes = buildBmpBaseAttributes(message);
+                    bmpBaseAttributes.forEach(bmpBaseAttribute -> {
+                        try {
+                            bmpBaseAttributeDao.saveOrUpdate(bmpBaseAttribute);
+                        } catch (Exception e) {
+                            LOG.error("Exception while persisting BMP base attribute {}", bmpBaseAttribute, e);
+                        }
+                        String asPath = bmpBaseAttribute.getAsPath();
+                        List<BmpAsnPathAnalysis> asnPaths = buildBmpAsnPath(asPath);
+                        asnPaths.forEach(asnPath -> {
+                            try {
+                                bmpAsnPathAnalysisDao.saveOrUpdate(asnPath);
+                            } catch (Exception e) {
+                                LOG.error("Exception while persisting BMP asn path {}", asnPath, e);
+                            }
+                        });
+
+                    });
+                    break;
+                case UNICAST_PREFIX:
+                    List<BmpUnicastPrefix> bmpUnicastPrefixes = buildBmpUnicastPrefix(message);
+                    bmpUnicastPrefixes.forEach(unicastPrefix -> {
+                        try {
+                            updateStats(unicastPrefix, context.location);
+                            bmpUnicastPrefixDao.saveOrUpdate(unicastPrefix);
+                        } catch (Exception e) {
+                            LOG.error("Exception while persisting BMP unicast prefix {}", unicastPrefix, e);
+                        }
+                    });
+                    break;
+            }
+        });
+    }
+
