@@ -2,7 +2,7 @@
         //noinspection InfiniteLoopStatement
         while (true) {
             try {
-                KafkaRecord kafkaRecord = kafkaSendQueue.take();
+                KafkaRecord kafkaRecord = kafkaSendDeque.take();
                 ProducerRecord<byte[], byte[]> producerRecord = kafkaRecord.getProducerRecord();
                 Consumer<RecordMetadata> consumer = kafkaRecord.getConsumer();
 
@@ -10,6 +10,16 @@
                     producer.send(producerRecord, (recordMetadata, e) -> {
                         if (e != null) {
                             LOG.warn("Failed to send record to producer: {}.", producerRecord, e);
+                            if (e instanceof TimeoutException) {
+                                // If Kafka is Offline, buffer the record again for events.
+                                // This is best effort to keep the order although in-flight elements may still miss the order.
+                                if (producerRecord != null &&
+                                        this.eventTopic.equalsIgnoreCase(producerRecord.topic())) {
+                                    if(!kafkaSendDeque.offerFirst(kafkaRecord)) {
+                                        RATE_LIMITED_LOGGER.warn("Dropped a Kafka record due to queue capacity being full.");
+                                    }
+                                }
+                            }
                             return;
                         }
                         if (consumer != null) {
