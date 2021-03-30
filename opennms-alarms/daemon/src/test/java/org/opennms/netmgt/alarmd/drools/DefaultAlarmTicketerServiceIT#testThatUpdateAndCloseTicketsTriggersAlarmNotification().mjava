@@ -1,6 +1,5 @@
     @Test
-    public void canUpdateLastAutomationTime() {
-
+    public void testThatUpdateAndCloseTicketsTriggersAlarmNotification() {
 
         alarmLifecycleListenerManager.onListenerRegistered(this, Collections.emptyMap());
         // Create some alarm
@@ -13,22 +12,26 @@
             alarmDao.saveOrUpdate(alarm);
             return alarm;
         });
-
-        // Use the ticketer service to trigger a create ticket event for the alarm, which should
-        // also update the last automation time
         Date now = new Date();
-        alarmTicketerService.createTicket(a1, now);
+        // Set different ticket Id that should be in cancelled state.
+        a1.setTTicketId("testId2");
+        alarmTicketerService.updateTicket(a1, now);
         // Verifies that ticket state changes gets notified.
         await().atMost(10, TimeUnit.SECONDS).untilTrue(ticketStateUpdated);
-        // clear again.
+        assertEquals(TroubleTicketState.CANCELLED, troubleTicketState);
+        // clear again
         ticketStateUpdated.set(false);
 
-        // Use a separate transaction to verify that the last automation time wa updated
+        // Close the ticket and verify that ticket state gets notified.
+        a1.setSeverity(OnmsSeverity.CLEARED);
         transactionTemplate.execute(status -> {
-            final OnmsAlarm alarmInTrans = alarmDao.get(a1.getId());
-            assertThat(alarmInTrans.getLastAutomationTime().getTime(), equalTo(now.getTime()));
-            return null;
+            alarmDao.saveOrUpdate(a1);
+            return a1;
         });
+        alarmTicketerService.closeTicket(a1, now);
+        await().atMost(10, TimeUnit.SECONDS).untilTrue(ticketStateUpdated);
+        assertEquals(TroubleTicketState.CLOSED, troubleTicketState);
+        // clear again
         ticketStateUpdated.set(false);
 
     }
