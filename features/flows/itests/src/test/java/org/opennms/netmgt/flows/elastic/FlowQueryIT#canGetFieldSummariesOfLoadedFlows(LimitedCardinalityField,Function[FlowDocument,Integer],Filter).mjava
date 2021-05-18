@@ -1,0 +1,30 @@
+    private void canGetFieldSummariesOfLoadedFlows(LimitedCardinalityField field, Function<FlowDocument, Integer> aggregateBy, Filter filter) throws Exception {
+
+        List<Filter> filters = filter != null ? getFilters(filter) : getFilters();
+
+        Predicate<FlowDocument> predicate = filters
+                .stream()
+                .map(FlowQueryIT::filterPredicate)
+                .reduce(fd -> true, (p1, p2) -> fd -> p1.test(fd) && p2.test(fd));
+
+        Object[] memoryResult = DEFAULT_FLOWS
+                .stream()
+                .filter(predicate)
+                .map(fd -> FlowQueryIT.flowDoc2TrafficSummary(fd, aggregateBy.apply(fd).toString()))
+                // collect the traffic summaries into a map
+                // -> the map key is the traffic summary key and the map value is the merged traffic summary for that key
+                .collect(Collectors.groupingBy(
+                        TrafficSummary::getEntity,
+                        Collectors.reducing(FlowQueryIT::mergeTrafficSummaries)
+                ))
+                .values()
+                .stream()
+                .map(o -> o.get())
+                .sorted(Comparator.comparing(s -> new Integer(s.getEntity())))
+                .toArray();
+
+        List<TrafficSummary<String>> elasticResult = smartQueryService.getFieldSummaries(field, filters).get();
+
+        assertThat(elasticResult, contains(memoryResult));
+    }
+
