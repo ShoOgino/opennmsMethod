@@ -2,18 +2,19 @@
                                                                                           String keyForMissingTerm,
                                                                                           boolean includeOther, List<Filter> filters) {
         final TimeRangeFilter timeRangeFilter = getRequiredTimeRangeFilter(filters);
-        final ImmutableTable.Builder<Directional<String>, Long, Double> builder = ImmutableTable.builder();
-        CompletableFuture<Void> seriesFuture;
+
+        CompletableFuture<ImmutableTable.Builder<Directional<String>, Long, Double>> seriesFuture;
         if (topN.size() < 1) {
             // If there are no entries, skip the query
-            seriesFuture = CompletableFuture.completedFuture(null);
+            seriesFuture = CompletableFuture.completedFuture(ImmutableTable.builder());
         } else {
             final String seriesFromTopNQuery = searchQueryProvider.getSeriesFromQuery(topN, step, timeRangeFilter.getStart(),
                     timeRangeFilter.getEnd(), groupByTerm, filters);
             seriesFuture = searchAsync(seriesFromTopNQuery, timeRangeFilter)
                     .thenApply(res -> {
+                        final ImmutableTable.Builder<Directional<String>, Long, Double> builder = ImmutableTable.builder();
                         toTable(builder, res);
-                        return null;
+                        return builder;
                     });
         }
 
@@ -23,9 +24,9 @@
             final String seriesFromMissingQuery = searchQueryProvider.getSeriesFromMissingQuery(step,
                     timeRangeFilter.getStart(), timeRangeFilter.getEnd(), groupByTerm, keyForMissingTerm, filters);
             seriesFuture = seriesFuture
-                    .thenCombine(searchAsync(seriesFromMissingQuery, extractTimeRangeFilter(filters)), (ignored,res) -> {
+                    .thenCombine(searchAsync(seriesFromMissingQuery, extractTimeRangeFilter(filters)), (builder, res) -> {
                         toTable(builder, res);
-                        return null;
+                        return builder;
                     });
         }
 
@@ -34,10 +35,10 @@
             final String seriesFromOthersQuery = searchQueryProvider.getSeriesFromOthersQuery(topN, step,
                     timeRangeFilter.getStart(), timeRangeFilter.getEnd(), groupByTerm, missingTermIncludedInTopN, filters);
             seriesFuture = seriesFuture.thenCombine(searchAsync(seriesFromOthersQuery, timeRangeFilter),
-                    (ignored,res) -> processOthersResult(res, builder));
+                    (builder, res) -> processOthersResult(res, builder));
         }
 
         // Sort the table to ensure that the rows as in the same order as the Top N
-        return seriesFuture.thenApply(ignored -> TableUtils.sortTableByRowKeys(builder.build(), topN));
+        return seriesFuture.thenApply(builder -> TableUtils.sortTableByRowKeys(builder.build(), topN));
     }
 
